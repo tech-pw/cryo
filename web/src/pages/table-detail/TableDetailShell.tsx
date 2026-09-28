@@ -3,12 +3,10 @@ import { lazy, Suspense } from "react";
 import { Link } from "react-router-dom";
 import { PlanPreview } from "../../components/PlanPreview";
 import { ConfirmAction } from "../../components/confirm";
-import { AssetHeader } from "../../components/table-detail/AssetHeader";
-import { EngineActionStrip } from "../../components/table-detail/EngineActionStrip";
+import { TableDetailHeaderBar } from "../../components/table-detail/header/TableDetailHeaderBar";
 import { TableSettingsSheet } from "../../components/table-detail/TableSettingsSheet";
 import { AsyncBoundary } from "../../components/AsyncBoundary";
 import {
-  ActivityTabLabel,
   CostTabLabel,
   HealthQualityTabLabel,
   LineageTabLabel,
@@ -21,26 +19,24 @@ import { EmptyState } from "../../components/ui/empty-state";
 import { PageHeader } from "../../components/ui/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { formatTime } from "../../lib/format";
+import { useWriteControl } from "../../lib/useWriteControl";
 import { TableDetailProvider } from "./TableDetailContext";
 import { useTableDetail } from "./useTableDetail";
 
 const OverviewTabPanel = lazy(() =>
-  import("../../components/table-detail/OverviewTabPanel").then((m) => ({ default: m.OverviewTabPanel }))
+  import("../../components/table-detail/overview/OverviewPanel").then((m) => ({ default: m.OverviewPanel }))
 );
 const StructureTabPanel = lazy(() =>
-  import("../../components/table-detail/StructureTabPanel").then((m) => ({ default: m.StructureTabPanel }))
+  import("../../components/table-detail/files/FilesTabPanel").then((m) => ({ default: m.FilesTabPanel }))
 );
 const HealthQualityTabPanel = lazy(() =>
-  import("../../components/table-detail/HealthQualityTabPanel").then((m) => ({ default: m.HealthQualityTabPanel }))
+  import("../../components/table-detail/quality/QualityTabPanel").then((m) => ({ default: m.QualityTabPanel }))
 );
 const CostTabPanel = lazy(() =>
-  import("../../components/table-detail/CostTabPanel").then((m) => ({ default: m.CostTabPanel }))
+  import("../../components/table-detail/cost/TableCostPanel").then((m) => ({ default: m.TableCostPanel }))
 );
 const LineageTabPanel = lazy(() =>
-  import("../../components/table-detail/LineageTabPanel").then((m) => ({ default: m.LineageTabPanel }))
-);
-const ActivityTabPanel = lazy(() =>
-  import("../../components/table-detail/ActivityTabPanel").then((m) => ({ default: m.ActivityTabPanel }))
+  import("../../components/table-detail/usage/UsageTabPanel").then((m) => ({ default: m.UsageTabPanel }))
 );
 const SnapshotsTabPanel = lazy(() =>
   import("./SnapshotsTab").then((m) => ({ default: m.SnapshotsTab }))
@@ -80,28 +76,10 @@ const MaintenanceTabLabel = () => (
 
 export const TableDetailShell = () => {
   const ctx = useTableDetail();
-  const {
-    row,
-    table,
-    navigate,
-    stats,
-    sourceName,
-    lastSnapshotCommittedAt,
-    score,
-    savingsDisplay,
-    reclaimableBytes,
-    partitionColLabel,
-    hideSinglePartitionKpi,
-    scan,
-    queuedScanRunId,
-    handleScanAction,
-    silentLoss,
-    repairSilentLoss,
-    previewOpen,
-    setPreviewOpen,
-    settingsOpen,
-    setSettingsOpen
-  } = ctx;
+  const dryRunAccess = useWriteControl("silentLossDryRun");
+  const runAccess = useWriteControl("runMaintenance");
+  const { row, table, silentLoss, repairSilentLoss, previewOpen, setPreviewOpen, settingsOpen, setSettingsOpen } =
+    ctx;
 
   if (!row && !table.isLoading) {
     return (
@@ -128,38 +106,15 @@ export const TableDetailShell = () => {
     );
   }
 
-  const requestedTab = ctx.searchParams.get("tab");
-  const activeTab =
-    requestedTab === "snapshots" || requestedTab === "maintenance" ? requestedTab : ctx.activeTab;
+  const activeTab = ctx.activeTab;
   const handleTabChange = (tabKey: string) => {
-    if (tabKey === "snapshots" || tabKey === "maintenance") {
-      const next = new URLSearchParams(ctx.searchParams);
-      next.set("tab", tabKey);
-      ctx.setSearchParams(next, { replace: true });
-      return;
-    }
     ctx.handleTabChange(tabKey);
   };
 
   return (
     <TableDetailProvider value={ctx}>
       <div className="table-detail">
-        <AssetHeader
-          navigate={navigate}
-          row={row}
-          stats={stats}
-          sourceName={sourceName}
-          lastSnapshotCommittedAt={lastSnapshotCommittedAt}
-          score={score}
-          savingsDisplay={savingsDisplay}
-          reclaimableBytes={reclaimableBytes}
-          partitionColLabel={partitionColLabel}
-          hideSinglePartitionKpi={hideSinglePartitionKpi}
-          scan={scan}
-          queuedScanRunId={queuedScanRunId}
-          handleScanAction={handleScanAction}
-        />
-        <EngineActionStrip onOpenSettings={() => setSettingsOpen(true)} />
+        <TableDetailHeaderBar />
 
         <div className="td-main-column">
           {silentLoss.data && !silentLoss.data.is_clean ? (
@@ -188,6 +143,8 @@ export const TableDetailShell = () => {
                       size="sm"
                       variant="primary"
                       loading={repairSilentLoss.isPending}
+                      disabled={!dryRunAccess.allowed}
+                      title={dryRunAccess.reason ?? undefined}
                     >
                       Run Spark dry-run check
                     </Button>
@@ -198,24 +155,28 @@ export const TableDetailShell = () => {
           ) : null}
 
           <Tabs value={activeTab} onValueChange={handleTabChange} className="td-main-tabs">
-            <TabsList className="mb-5 h-auto w-full justify-start rounded-none border-b border-[var(--line,#e1e6ed)] bg-transparent p-0">
+            <label className="mb-3 block md:hidden">
+              <span className="sr-only">Table section</span>
+              <select
+                className="h-[var(--control-height)] w-full rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
+                value={activeTab}
+                onChange={(event) => handleTabChange(event.target.value)}
+              >
+                <option value="overview">Overview</option>
+                <option value="files">Schema & files</option>
+                <option value="snapshots">Snapshots</option>
+                <option value="maintenance">Maintenance</option>
+                <option value="usage">Usage</option>
+                <option value="quality">Quality</option>
+                <option value="cost">Cost</option>
+              </select>
+            </label>
+            <TabsList className="mb-5 hidden h-auto w-full justify-start rounded-none border-b border-[var(--line,#e1e6ed)] bg-transparent p-0 md:flex">
               <TabsTrigger value="overview" className={tabTriggerClass}>
                 <OverviewTabLabel />
               </TabsTrigger>
-              <TabsTrigger value="structure" className={tabTriggerClass}>
+              <TabsTrigger value="files" className={tabTriggerClass}>
                 <StructureTabLabel />
-              </TabsTrigger>
-              <TabsTrigger value="health-quality" className={tabTriggerClass}>
-                <HealthQualityTabLabel />
-              </TabsTrigger>
-              <TabsTrigger value="cost" className={tabTriggerClass}>
-                <CostTabLabel />
-              </TabsTrigger>
-              <TabsTrigger value="lineage" className={tabTriggerClass}>
-                <LineageTabLabel />
-              </TabsTrigger>
-              <TabsTrigger value="activity" className={tabTriggerClass}>
-                <ActivityTabLabel />
               </TabsTrigger>
               <TabsTrigger value="snapshots" className={tabTriggerClass}>
                 <SnapshotsTabLabel />
@@ -223,24 +184,21 @@ export const TableDetailShell = () => {
               <TabsTrigger value="maintenance" className={tabTriggerClass}>
                 <MaintenanceTabLabel />
               </TabsTrigger>
+              <TabsTrigger value="usage" className={tabTriggerClass}>
+                <LineageTabLabel />
+              </TabsTrigger>
+              <TabsTrigger value="quality" className={tabTriggerClass}>
+                <HealthQualityTabLabel />
+              </TabsTrigger>
+              <TabsTrigger value="cost" className={tabTriggerClass}>
+                <CostTabLabel />
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="overview" className="td-tab-content mt-0">
               {lazyPanel(OverviewTabPanel)}
             </TabsContent>
-            <TabsContent value="structure" className="td-tab-content mt-0">
+            <TabsContent value="files" className="td-tab-content mt-0">
               {lazyPanel(StructureTabPanel)}
-            </TabsContent>
-            <TabsContent value="health-quality" className="td-tab-content mt-0">
-              {lazyPanel(HealthQualityTabPanel)}
-            </TabsContent>
-            <TabsContent value="cost" className="td-tab-content mt-0">
-              {lazyPanel(CostTabPanel)}
-            </TabsContent>
-            <TabsContent value="lineage" className="td-tab-content mt-0">
-              {lazyPanel(LineageTabPanel)}
-            </TabsContent>
-            <TabsContent value="activity" className="td-tab-content mt-0">
-              {lazyPanel(ActivityTabPanel)}
             </TabsContent>
             <TabsContent value="snapshots" className="td-tab-content mt-0">
               {lazyPanel(SnapshotsTabPanel)}
@@ -248,10 +206,32 @@ export const TableDetailShell = () => {
             <TabsContent value="maintenance" className="td-tab-content mt-0">
               {lazyPanel(MaintenanceTabPanel)}
             </TabsContent>
+            <TabsContent value="usage" className="td-tab-content mt-0">
+              {lazyPanel(LineageTabPanel)}
+            </TabsContent>
+            <TabsContent value="quality" className="td-tab-content mt-0">
+              {lazyPanel(HealthQualityTabPanel)}
+            </TabsContent>
+            <TabsContent value="cost" className="td-tab-content mt-0">
+              {lazyPanel(CostTabPanel)}
+            </TabsContent>
           </Tabs>
         </div>
 
-        <PlanPreview open={previewOpen} tables={row ? [row] : []} onClose={() => setPreviewOpen(false)} />
+        <PlanPreview
+          open={previewOpen}
+          tables={row ? [row] : []}
+          onClose={() => setPreviewOpen(false)}
+          onRunTable={
+            runAccess.allowed
+              ? async () => {
+                  const result = await ctx.run.mutateAsync();
+                  return { run_id: result.run_id };
+                }
+              : undefined
+          }
+          runDisabledReason={runAccess.reason}
+        />
         <TableSettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
       </div>
     </TableDetailProvider>

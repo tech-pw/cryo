@@ -22,6 +22,7 @@ import { formatBytesGb, formatGb, formatNumber, formatTime } from "../../lib/for
 import { useWriteControl } from "../../lib/useWriteControl";
 import { qualifiedTableName } from "../../lib/tableLabels";
 import type { TableDetailState } from "../../pages/table-detail/useTableDetail";
+import { useShellOptional } from "../shell/ShellContext";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
@@ -48,7 +49,6 @@ export const AssetHeader = ({
   stats,
   sourceName,
   lastSnapshotCommittedAt,
-  score,
   savingsDisplay,
   reclaimableBytes,
   partitionColLabel,
@@ -58,35 +58,32 @@ export const AssetHeader = ({
   handleScanAction
 }: AssetHeaderProps) => {
   const scanAccess = useWriteControl("triggerScan");
+  const shell = useShellOptional();
   return (
   <>
-    <div className="td-breadcrumbs">
-      <span className="td-breadcrumb-item td-breadcrumb-interactive" onClick={() => navigate("/")}>
-        Home
-      </span>
-      <span className="td-breadcrumb-separator">/</span>
-      <span className="td-breadcrumb-item td-breadcrumb-interactive" onClick={() => navigate("/catalogs")}>
-        Catalogs
-      </span>
-      <span className="td-breadcrumb-separator">/</span>
+    <nav className="td-breadcrumbs" aria-label="Breadcrumb">
       <span
         className="td-breadcrumb-item td-breadcrumb-interactive"
-        onClick={() => navigate(`/catalogs?source=${row?.source_id}`)}
+        onClick={() => navigate(row?.source_id ? `/catalogs?source=${row.source_id}` : "/catalogs")}
       >
-        {sourceName}
+        {row?.catalog_name?.trim() || sourceName || "Not measured"}
       </span>
-      <span className="td-breadcrumb-separator">/</span>
-      <span className="td-breadcrumb-item">{row?.schema_name ?? "schema"}</span>
-      <span className="td-breadcrumb-separator">/</span>
-      <span className="td-breadcrumb-item active">{row?.table_name ?? "table"}</span>
-    </div>
+      <span className="td-breadcrumb-separator" aria-hidden>
+        ›
+      </span>
+      <span className="td-breadcrumb-item">{row?.schema_name ?? "Not measured"}</span>
+      <span className="td-breadcrumb-separator" aria-hidden>
+        ›
+      </span>
+      <span className="td-breadcrumb-item active">{row?.table_name ?? "Not measured"}</span>
+    </nav>
 
     <div className="td-header-row">
       <div className="td-header-info">
         <div className="td-header-primary">
           <h1 className="td-header-title">{row ? qualifiedTableName(row) : "Loading..."}</h1>
           <div className="td-header-tags">
-            {stats?.grade ? <GradePill grade={stats.grade} /> : null}
+            {stats?.grade ? <GradePill grade={stats.grade} /> : row ? <span>Not scanned</span> : null}
             {stats?.compaction_priority ? <PriorityTag priority={stats.compaction_priority} /> : null}
             <CompactionTag needsCompaction={stats?.needs_compaction} />
           </div>
@@ -139,6 +136,17 @@ export const AssetHeader = ({
 
       <div className="td-interaction-toolbar">
         <Button
+          variant="secondary"
+          size="sm"
+          disabled={!row?.id}
+          onClick={() => {
+            if (!row?.id) return;
+            shell?.openAssistant("Explain this table's condition", { table_id: row.id });
+          }}
+        >
+          Explain
+        </Button>
+        <Button
           variant="ghost"
           size="sm"
           loading={scan.isPending}
@@ -157,11 +165,30 @@ export const AssetHeader = ({
     <section className="td-metrics-panel" aria-label="Table summary">
       <div className="td-key-metrics">
         <AttributionItem
-          icon={<Heart style={{ color: healthScoreColor(score) }} className="size-3.5" />}
+          icon={
+            <Heart
+              style={
+                stats?.overall_score != null && Number.isFinite(stats.overall_score)
+                  ? { color: healthScoreColor(stats.overall_score) }
+                  : undefined
+              }
+              className="size-3.5"
+            />
+          }
           label="Health Score"
-          value={formatNumber(score)}
+          value={
+            stats?.overall_score != null && Number.isFinite(stats.overall_score)
+              ? formatNumber(stats.overall_score)
+              : row
+                ? "Not scanned"
+                : "—"
+          }
           valueClassName="td-health-score"
-          valueStyle={{ color: healthScoreColor(score) }}
+          valueStyle={
+            stats?.overall_score != null && Number.isFinite(stats.overall_score)
+              ? { color: healthScoreColor(stats.overall_score) }
+              : undefined
+          }
         />
         <AttributionItem
           icon={<AlertTriangle className="size-3.5" />}

@@ -1,0 +1,12 @@
+# Paths are relative to web/src.
+# Existing recharts importers outside components/charts/.
+# This allowlist shrinks as later tasks move charts into components/charts/.
+# Do not add new paths. New chart code imports recharts only under components/charts/.
+components/CostSavingsWaterfall.tsx
+components/table-detail/OverviewTab.tsx
+components/table-detail/PartitionAccessChart.tsx
+components/table-detail/StructureTabPanel.tsx
+components/ui/chart-panel.tsx
+pages/SLAStatus.tsx
+pages/cost/CostOverviewTab.tsx
+pages/dev/Styleguide.tsx

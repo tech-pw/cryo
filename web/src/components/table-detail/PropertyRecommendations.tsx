@@ -22,6 +22,7 @@ import {
   type PropertyRecommendationRead
 } from "../../api/client";
 import { useAuth } from "../../lib/auth";
+import { useWriteControl } from "../../lib/useWriteControl";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
 import { AsyncBoundary } from "../AsyncBoundary";
 import { EmptyState } from "../common";
@@ -76,6 +77,9 @@ const PropertyRecommendationsSkeleton = () => (
 
 export const PropertyRecommendations = () => {
   const { tableId, run } = useTableDetailContext();
+  const applyAccess = useWriteControl("applyProperty");
+  const bloomAccess = useWriteControl("enableBloom");
+  const compactionAccess = useWriteControl("runPropertyCompaction");
   const { api } = useAuth();
   const queryClient = useQueryClient();
   const [riskyConfirm, setRiskyConfirm] = useState<RiskyConfirmState>({ open: false, item: null });
@@ -137,14 +141,24 @@ export const PropertyRecommendations = () => {
   const actionButton = (item: PropertyRecommendationRead): ReactNode => {
     if (item.action === "apply" && item.recommended_value) {
       return (
-        <Button
-          size="sm"
-          variant="primary"
-          loading={applyMutation.isPending && applyMutation.variables?.property_key === item.property_key}
-          onClick={() => confirmApply(item)}
-        >
-          Apply
-        </Button>
+        <>
+          <Button
+            size="sm"
+            variant="primary"
+            loading={applyMutation.isPending && applyMutation.variables?.property_key === item.property_key}
+            disabled={!applyAccess.allowed}
+            title={applyAccess.reason ?? undefined}
+            onClick={() => {
+              if (!applyAccess.allowed) return;
+              confirmApply(item);
+            }}
+          >
+            Apply
+          </Button>
+          {applyAccess.reason ? (
+            <span className="mt-1 block max-w-48 text-right text-[11px] text-muted-foreground">{applyAccess.reason}</span>
+          ) : null}
+        </>
       );
     }
     if (item.action === "link_layout") {
@@ -167,29 +181,47 @@ export const PropertyRecommendations = () => {
     }
     if (item.action === "link_bloom" && item.bloom_filter_column) {
       return (
-        <Button
-          size="sm"
-          loading={applyMutation.isPending && applyMutation.variables?.property_key === item.property_key}
-          onClick={() =>
-            applyMutation.mutate({
-              ...item,
-              recommended_value: "true"
-            })
-          }
-        >
-          Enable bloom
-        </Button>
+        <>
+          <Button
+            size="sm"
+            loading={applyMutation.isPending && applyMutation.variables?.property_key === item.property_key}
+            disabled={!bloomAccess.allowed}
+            title={bloomAccess.reason ?? undefined}
+            onClick={() => {
+              if (!bloomAccess.allowed) return;
+              applyMutation.mutate({
+                ...item,
+                recommended_value: "true"
+              });
+            }}
+          >
+            Enable bloom
+          </Button>
+          {bloomAccess.reason ? (
+            <span className="mt-1 block max-w-48 text-right text-[11px] text-muted-foreground">{bloomAccess.reason}</span>
+          ) : null}
+        </>
       );
     }
     if (item.action === "link_run") {
       return (
-        <Button
-          size="sm"
-          loading={run.isPending}
-          onClick={() => run.mutate()}
-        >
-          Run compaction
-        </Button>
+        <>
+          <Button
+            size="sm"
+            loading={run.isPending}
+            disabled={!compactionAccess.allowed}
+            title={compactionAccess.reason ?? undefined}
+            onClick={() => {
+              if (!compactionAccess.allowed) return;
+              run.mutate();
+            }}
+          >
+            Run compaction
+          </Button>
+          {compactionAccess.reason ? (
+            <span className="mt-1 block max-w-48 text-right text-[11px] text-muted-foreground">{compactionAccess.reason}</span>
+          ) : null}
+        </>
       );
     }
     return null;
@@ -288,7 +320,9 @@ export const PropertyRecommendations = () => {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onConfirmRisky}>Apply</AlertDialogAction>
+            <AlertDialogAction onClick={onConfirmRisky} disabled={!applyAccess.allowed} title={applyAccess.reason ?? undefined}>
+              Apply
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

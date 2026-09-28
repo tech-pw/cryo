@@ -184,6 +184,30 @@ def run_fast_path_check(
     return findings
 
 
+class FastPathTableNotFound(LookupError):
+    """The requested table is not in this database. Not a reason to sweep the fleet."""
+
+
+def load_fast_path_findings(
+    session: Session,
+    *,
+    table_id: uuid.UUID | None = None,
+    now: datetime | None = None,
+) -> list[FastPathFinding]:
+    """Fleet sweep when table_id is omitted; one table when it is set.
+
+    The table-detail page must pass table_id. A missing table raises
+    FastPathTableNotFound instead of falling through to the fleet sweep.
+    """
+    detected_at = now or datetime.now(UTC)
+    if table_id is not None:
+        table = session.get(Table, table_id)
+        if table is None:
+            raise FastPathTableNotFound(str(table_id))
+        return _evaluate_table(session, table, detected_at)
+    return run_fast_path_check(session, persist=False, respect_cooldown=False, now=detected_at)
+
+
 def list_fast_path_findings_from_audit(
     session: Session,
     *,

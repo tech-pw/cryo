@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import {
-  Area,
   CartesianGrid,
   Line,
   LineChart,
@@ -77,9 +76,109 @@ import type { ScoreFactor as HealthScoreFactor } from "../HealthScoreBreakdown";
 import { ActNowSection } from "./ActNowSection";
 import { HealthGauge } from "./HealthGauge";
 import { buildDiagnosisVerdict, type DiagnosisVerdict } from "../TableDiagnosisPanel";
-import { chartTooltipProps, cryoColors } from "../../lib/theme";
+import { chartTooltipProps } from "../../lib/theme";
+import type { PointDeduction } from "../HealthScoreBreakdown";
 import { formatBytesGb, formatDuration, formatNumber, formatTime } from "../../lib/format";
 import { formatPartitionColumnLabel } from "./helpers";
+
+export function measuredNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+const GRADE_POINT: Record<string, string> = {
+  A: "var(--gradeA)",
+  B: "var(--gradeB)",
+  C: "var(--gradeC)",
+  D: "var(--gradeD)",
+  F: "var(--gradeF)"
+};
+
+export function gradePointColor(grade: string | null | undefined): string {
+  if (!grade) return "var(--muted, #5c667a)";
+  return GRADE_POINT[grade] ?? "var(--muted, #5c667a)";
+}
+
+export interface ScoreTrendPoint {
+  timestamp: number;
+  score: number | null;
+  grade?: string | null;
+}
+
+const GradeDot = (props: { cx?: number; cy?: number; payload?: ScoreTrendPoint }) => {
+  const { cx, cy, payload } = props;
+  if (cx == null || cy == null || payload?.score == null) return <g />;
+  return <circle cx={cx} cy={cy} r={3} fill={gradePointColor(payload.grade)} />;
+};
+
+export const HealthScoreTrend = ({ points }: { points: ScoreTrendPoint[] }) => {
+  const latest = points[points.length - 1]?.score;
+  return (
+    <>
+      <p className="mb-2 text-xs text-muted-foreground">Gaps are not measured.</p>
+      <div
+        className="chart-frame"
+        style={{ height: 260 }}
+        role="img"
+        aria-label={`Health score over ${points.length} scans. Latest score ${latest == null ? "Not measured" : latest.toFixed(0)}.`}
+      >
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={points}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
+            <XAxis
+              dataKey="timestamp"
+              tickFormatter={(ts) => new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              tick={{ fontSize: 11 }}
+              interval="preserveStartEnd"
+              stroke="var(--muted, #5c667a)"
+            />
+            <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} stroke="var(--muted, #5c667a)" tickLine={false} />
+            <RechartsTooltip
+              {...chartTooltipProps}
+              labelFormatter={(ts) => new Date(Number(ts)).toLocaleString()}
+              formatter={(value) => {
+                const score = measuredNumber(value);
+                return [score == null ? "Not measured" : score.toFixed(1), "Health score"];
+              }}
+            />
+            <Line
+              type="stepAfter"
+              dataKey="score"
+              stroke="var(--muted, #5c667a)"
+              strokeWidth={2}
+              connectNulls={false}
+              dot={<GradeDot />}
+              name="score"
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <ChartDataTable
+        caption="Persisted scan scores. Gaps are not measured."
+        rows={points}
+        getRowKey={(row, index) => `${row.timestamp}-${index}`}
+        columns={[
+          {
+            key: "time",
+            header: "Time",
+            render: (row) => new Date(row.timestamp).toLocaleString()
+          },
+          {
+            key: "score",
+            header: "Health score",
+            align: "right",
+            render: (row) => (row.score == null ? "Not measured" : row.score.toFixed(1))
+          },
+          {
+            key: "grade",
+            header: "Grade",
+            align: "right",
+            render: (row) => row.grade || "Not measured"
+          }
+        ]}
+      />
+    </>
+  );
+};
 
 interface OverviewTabProps {
   score: number;
@@ -111,7 +210,7 @@ interface OverviewTabProps {
   partitionEvolution?: PartitionEvolutionRecommendationRead;
   tableQueries?: QueryPerformanceData;
   tableQueriesLoading: boolean;
-  pointDeductions: Array<{ label: string; deduction: number; severity: "critical" | "warning"; reason: string }>;
+  pointDeductions: PointDeduction[];
 }
 
 export const OverviewTab = (props: OverviewTabProps) => {
@@ -153,10 +252,12 @@ export const OverviewTab = (props: OverviewTabProps) => {
   const alertVariant: "error" | "warning" | "success" =
     verdict.level === "critical" ? "error" : verdict.level === "warning" ? "warning" : "success";
 
-  const trendData = (healthTrends?.trend_points ?? []).map((p) => ({
-    ...p,
-    timestamp: new Date(p.timestamp).getTime()
+  const trendData: ScoreTrendPoint[] = (healthTrends?.trend_points ?? []).map((p) => ({
+    timestamp: new Date(p.timestamp).getTime(),
+    score: measuredNumber(p.score),
+    grade: p.grade
   }));
+  const hasPersistedDeductions = Array.isArray(statsRaw.health_deductions);
 
   const degradationRate = healthTrends?.degradation_rate;
   const degradationBadge =
@@ -449,120 +550,7 @@ export const OverviewTab = (props: OverviewTabProps) => {
                 }
                 quiet={!trendData.length}
               >
-                {trendData.length ? (
-                  <>
-                    <div
-                      className="chart-frame"
-                      style={{ height: 260 }}
-                      role="img"
-                      aria-label={`Health score and small-file count over ${trendData.length} scans. Latest score ${Number(trendData[trendData.length - 1]?.score ?? 0).toFixed(0)}.`}
-                    >
-                      <ResponsiveContainer width="100%" height={260}>
-                        <LineChart data={trendData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
-                        <XAxis
-                          dataKey="timestamp"
-                          tickFormatter={(ts) =>
-                            new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })
-                          }
-                          tick={{ fontSize: 11 }}
-                          interval="preserveStartEnd"
-                          stroke="var(--muted, #5c667a)"
-                        />
-                        <YAxis
-                          yAxisId="left"
-                          domain={[0, 100]}
-                          tick={{ fontSize: 11 }}
-                          stroke="var(--muted, #5c667a)"
-                          tickLine={false}
-                        />
-                        <YAxis
-                          yAxisId="right"
-                          orientation="right"
-                          tick={{ fontSize: 11 }}
-                          stroke="var(--muted, #5c667a)"
-                          tickLine={false}
-                        />
-                        <RechartsTooltip
-                          {...chartTooltipProps}
-                          labelFormatter={(ts) => new Date(ts).toLocaleString()}
-                          formatter={(value, name) => {
-                            const n = Number(value ?? 0);
-                            const label = String(name);
-                            if (label === "score") return [n.toFixed(1), "Health Score"];
-                            if (label === "small_files") return [n.toLocaleString(), "Small Files"];
-                            if (label === "total_size_gb") return [n.toFixed(1) + " GB", "Size"];
-                            return [n, label];
-                          }}
-                        />
-                        <defs>
-                          <linearGradient id="scoreGrad2" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={cryoColors.gradeA} stopOpacity={0.15} />
-                            <stop offset="100%" stopColor={cryoColors.gradeA} stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <Area
-                          yAxisId="left"
-                          type="monotone"
-                          dataKey="score"
-                          fill="url(#scoreGrad2)"
-                          stroke="none"
-                          tooltipType="none"
-                        />
-                        <Line
-                          yAxisId="left"
-                          type="monotone"
-                          dataKey="score"
-                          stroke={cryoColors.gradeA}
-                          strokeWidth={2.5}
-                          dot={false}
-                          name="score"
-                        />
-                        <Line
-                          yAxisId="right"
-                          type="monotone"
-                          dataKey="small_files"
-                          stroke={cryoColors.chartPrimary}
-                          strokeWidth={2}
-                          dot={false}
-                          name="small_files"
-                          strokeDasharray="4 3"
-                        />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <ChartDataTable
-                      caption="Table health, small-file count, and size over the last 30 days"
-                      rows={trendData}
-                      getRowKey={(row, index) => `${row.timestamp}-${index}`}
-                      columns={[
-                        {
-                          key: "time",
-                          header: "Time",
-                          render: (row) => new Date(row.timestamp).toLocaleString()
-                        },
-                        {
-                          key: "score",
-                          header: "Health score",
-                          align: "right",
-                          render: (row) => row.score.toFixed(1)
-                        },
-                        {
-                          key: "small-files",
-                          header: "Small files",
-                          align: "right",
-                          render: (row) => row.small_files.toLocaleString()
-                        },
-                        {
-                          key: "size",
-                          header: "Size",
-                          align: "right",
-                          render: (row) => `${row.total_size_gb.toFixed(1)} GB`
-                        }
-                      ]}
-                    />
-                  </>
-                ) : (
+                {trendData.length ? <HealthScoreTrend points={trendData} /> : (
                   <EmptyState
                     title="No trends yet"
                     description="Health trends appear after multiple scans over time."
@@ -758,141 +746,15 @@ export const OverviewTab = (props: OverviewTabProps) => {
                 )}
               </ChartCard>
             </div>
-            <ChartCard title="Score Factors" className="h-full">
-                {rowExists ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                    <div className="td-sidebar-score-bars">
-                      <HealthScoreBreakdown factors={scoreFactors} />
-                    </div>
-                    {pointDeductions.length > 0 ? (
-                      <div>
-                        <div
-                          className="td-diagnosis-section-title"
-                          style={{
-                            fontWeight: 600,
-                            fontSize: 11,
-                            marginBottom: 8,
-                            color: "var(--muted, #5c667a)",
-                            textTransform: "uppercase",
-                            letterSpacing: "0.5px"
-                          }}
-                        >
-                          Deduction Breakdown
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 6,
-                            padding: "10px 12px",
-                            borderRadius: 6,
-                            backgroundColor:
-                              score < 60
-                                ? "rgba(220, 53, 69, 0.025)"
-                                : score < 80
-                                  ? "rgba(240, 160, 32, 0.025)"
-                                  : "rgba(92, 102, 122, 0.015)",
-                            border:
-                              score < 60
-                                ? "1px solid rgba(220, 53, 69, 0.12)"
-                                : score < 80
-                                  ? "1px solid rgba(240, 160, 32, 0.15)"
-                                  : "1px solid var(--line, #e1e6ed)"
-                          }}
-                        >
-                          {pointDeductions.map((item, idx) => (
-                            <div
-                              key={idx}
-                              style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                fontSize: 11,
-                                gap: 12
-                              }}
-                            >
-                              <div
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 6,
-                                  minWidth: 0,
-                                  flex: 1
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    color:
-                                      item.severity === "critical"
-                                        ? "var(--error, #dc3545)"
-                                        : "var(--warning, #f0a020)",
-                                    fontWeight: 700,
-                                    flexShrink: 0
-                                  }}
-                                >
-                                  •
-                                </span>
-                                <span
-                                  style={{
-                                    color: "var(--foreground, #1a202c)",
-                                    fontWeight: 600,
-                                    flexShrink: 0
-                                  }}
-                                >
-                                  {item.label}
-                                </span>
-                                <span
-                                  style={{
-                                    color: "var(--muted, #5c667a)",
-                                    opacity: 0.8,
-                                    fontSize: 10,
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap"
-                                  }}
-                                  title={item.reason}
-                                >
-                                  {item.reason}
-                                </span>
-                              </div>
-                              <span
-                                style={{
-                                  fontWeight: 700,
-                                  color:
-                                    item.severity === "critical"
-                                      ? "var(--error, #dc3545)"
-                                      : "var(--warning, #f0a020)",
-                                  flexShrink: 0
-                                }}
-                              >
-                                -{item.deduction} pts
-                              </span>
-                            </div>
-                          ))}
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "center",
-                              borderTop: "1px dashed var(--line, #e1e6ed)",
-                              paddingTop: 6,
-                              marginTop: 4,
-                              fontWeight: 700,
-                              fontSize: 11
-                            }}
-                          >
-                            <span style={{ color: "var(--foreground, #1a202c)" }}>Total Deductions:</span>
-                            <span style={{ color: "var(--error, #dc3545)" }}>
-                              -{pointDeductions.reduce((acc, curr) => acc + curr.deduction, 0)} pts
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <EmptyState title="No health details" description="Fetch or scan table to load diagnostics." />
-                )}
+            <ChartCard title="Why this grade" className="h-full">
+              {rowExists ? (
+                <HealthScoreBreakdown
+                  factors={scoreFactors}
+                  deductions={hasPersistedDeductions ? pointDeductions : undefined}
+                />
+              ) : (
+                <EmptyState title="No health details" description="Fetch or scan table to load diagnostics." />
+              )}
             </ChartCard>
           </div>
         ) : null}

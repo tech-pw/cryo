@@ -17,6 +17,7 @@ import {
 } from "../../api/client";
 import type { QualityConstraintCreate, QualityConstraintRead } from "../../api/types";
 import { useAuth } from "../../lib/auth";
+import { useWriteControl } from "../../lib/useWriteControl";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -111,11 +112,13 @@ const paramFields: Record<Kind, { key: string; label: string; placeholder: strin
 const AddRuleForm = ({
   columns,
   onSubmit,
-  pending
+  pending,
+  lockedReason = null
 }: {
   columns: { field_id: number; name: string; type?: string | null; kinds: Kind[] }[];
   onSubmit: (body: QualityConstraintCreate) => void;
   pending: boolean;
+  lockedReason?: string | null;
 }) => {
   const [kind, setKind] = useState<Kind>("size");
   const [name, setName] = useState("");
@@ -188,15 +191,24 @@ const AddRuleForm = ({
           ]}
         />
       </label>
-      <Button type="submit" size="sm" variant="primary" loading={pending} disabled={needsColumn && !fieldId}>
+      <Button
+        type="submit"
+        size="sm"
+        variant="primary"
+        loading={pending}
+        disabled={Boolean(lockedReason) || (needsColumn && !fieldId)}
+        title={lockedReason ?? undefined}
+      >
         Add rule
       </Button>
+      {lockedReason ? <span className="text-[11px] text-muted-foreground">{lockedReason}</span> : null}
     </form>
   );
 };
 
 export const QualityConstraints = () => {
   const { tableId } = useTableDetailContext();
+  const constraintAccess = useWriteControl("qualityConstraint");
   const { api } = useAuth();
   const queryClient = useQueryClient();
   const key = ["quality-constraints", tableId];
@@ -283,19 +295,32 @@ export const QualityConstraints = () => {
       align: "right",
       render: (_, rule) => (
         <div className="flex items-center justify-end gap-2">
-          <Switch
-            checked={rule.enabled}
-            aria-label={rule.enabled ? `Disable ${rule.name}` : `Enable ${rule.name}`}
-            onCheckedChange={() => toggle.mutate(rule)}
-          />
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label={`Delete ${rule.name}`}
-            onClick={() => remove.mutate(rule)}
-          >
+            <Switch
+              checked={rule.enabled}
+              disabled={!constraintAccess.allowed}
+              aria-label={rule.enabled ? `Disable ${rule.name}` : `Enable ${rule.name}`}
+              title={constraintAccess.reason ?? undefined}
+              onCheckedChange={() => {
+                if (!constraintAccess.allowed) return;
+                toggle.mutate(rule);
+              }}
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label={`Delete ${rule.name}`}
+              disabled={!constraintAccess.allowed}
+              title={constraintAccess.reason ?? undefined}
+              onClick={() => {
+                if (!constraintAccess.allowed) return;
+                remove.mutate(rule);
+              }}
+            >
             <Trash2 aria-hidden="true" className="size-4" />
           </Button>
+          {constraintAccess.reason ? (
+            <span className="max-w-40 text-[11px] text-muted-foreground">{constraintAccess.reason}</span>
+          ) : null}
         </div>
       )
     }
@@ -327,16 +352,42 @@ export const QualityConstraints = () => {
         {adding ? (
           <AddRuleForm
             columns={(rules.data?.columns ?? []) as { field_id: number; name: string; type?: string | null; kinds: Kind[] }[]}
-            onSubmit={(body) => create.mutate(body)}
+            onSubmit={(body) => {
+              if (!constraintAccess.allowed) return;
+              create.mutate(body);
+            }}
             pending={create.isPending}
+            lockedReason={constraintAccess.reason}
           />
         ) : null}
         <div className="flex gap-2">
-          <Button size="sm" variant={adding ? "ghost" : "secondary"} onClick={() => setAdding((v) => !v)}>
+          <Button
+            size="sm"
+            variant={adding ? "ghost" : "secondary"}
+            disabled={!adding && !constraintAccess.allowed}
+            title={!adding ? constraintAccess.reason ?? undefined : undefined}
+            onClick={() => {
+              if (!constraintAccess.allowed && !adding) return;
+              setAdding((v) => !v);
+            }}
+          >
             {adding ? "Cancel" : "Add rule"}
           </Button>
+          {!adding && constraintAccess.reason ? (
+            <span className="text-[11px] text-muted-foreground">{constraintAccess.reason}</span>
+          ) : null}
           {rules.data?.constraints.length ? (
-            <Button size="sm" variant="ghost" loading={evaluate.isPending} onClick={() => evaluate.mutate()}>
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={evaluate.isPending}
+              disabled={!constraintAccess.allowed}
+              title={constraintAccess.reason ?? undefined}
+              onClick={() => {
+                if (!constraintAccess.allowed) return;
+                evaluate.mutate();
+              }}
+            >
               Re-check against latest scan
             </Button>
           ) : null}

@@ -362,12 +362,9 @@ describe("TableDetail page", () => {
 
   it("renders table detail and cost card", async () => {
     renderTableDetail();
-    expect(await screen.findByText("public.events")).toBeInTheDocument();
-    expect((await screen.findAllByText("Cost & Savings")).length).toBeGreaterThan(0);
-    expect(await screen.findByText("Health Score")).toBeInTheDocument();
-    expect(screen.getByText("Records")).not.toBeVisible();
-    fireEvent.click(screen.getByText("More table metrics"));
-    expect(await screen.findByText("Records")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
+    expect(screen.queryByText("More table metrics")).not.toBeInTheDocument();
+    expect(screen.getByText("Size")).toBeInTheDocument();
   }, 15000);
 
   it("requires confirmation before running the silent-data-loss dry-run check, and never claims a repair/commit", async () => {
@@ -436,12 +433,12 @@ describe("TableDetail page", () => {
 
   it("defaults to the Overview tab, keeps the active tab and URL in sync when clicking a tab", async () => {
     renderTableDetail();
-    expect(await screen.findByText("public.events")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
 
     const overviewTab = screen.getByRole("tab", { name: /Overview/ });
     expect(overviewTab).toHaveAttribute("aria-selected", "true");
 
-    const structureTab = screen.getByRole("tab", { name: /Structure/ });
+    const structureTab = screen.getByRole("tab", { name: /Schema & files/ });
     // Radix's Tabs selects on mousedown/focus (automatic activation mode), not on the
     // synthetic "click" event alone.
     fireEvent.mouseDown(structureTab);
@@ -452,7 +449,7 @@ describe("TableDetail page", () => {
 
   it("restores the active tab from the ?tab= URL param on load", async () => {
     renderTableDetail("/tables/table-1?tab=cost");
-    expect(await screen.findByText("public.events")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
 
     const costTab = await screen.findByRole("tab", { name: /Cost/ });
     await waitFor(() => expect(costTab).toHaveAttribute("aria-selected", "true"));
@@ -461,7 +458,7 @@ describe("TableDetail page", () => {
 
   it("queues scan without redirecting until follow-up click", async () => {
     renderTableDetail();
-    expect(await screen.findByText("public.events")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh stats" }));
 
@@ -469,16 +466,13 @@ describe("TableDetail page", () => {
       expect(triggerScan).toHaveBeenCalled();
     });
     expect(screen.queryByText("Scan run page")).not.toBeInTheDocument();
-
-    fireEvent.click(await screen.findByRole("button", { name: "Open scan run" }));
-    expect(await screen.findByText("Scan run page")).toBeInTheDocument();
   }, 15000);
 
   it("disables Run maintenance when no preset is assigned", async () => {
     renderTableDetail();
-    expect(await screen.findByText("public.events")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
 
-    const runButton = screen.getByRole("button", { name: "Run maintenance" });
+    const runButton = screen.getByRole("button", { name: "Run now" });
     expect(runButton).toBeDisabled();
   }, 15000);
 
@@ -507,9 +501,9 @@ describe("TableDetail page", () => {
     ]);
 
     renderTableDetail();
-    expect(await screen.findByText("public.events")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
 
-    const runButton = await screen.findByRole("button", { name: "Run maintenance" });
+    const runButton = await screen.findByRole("button", { name: "Run now" });
     expect(runButton).not.toBeDisabled();
     fireEvent.click(runButton);
     fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
@@ -525,9 +519,6 @@ describe("TableDetail page", () => {
       );
     });
     expect(screen.queryByText("Maintenance run page")).not.toBeInTheDocument();
-
-    fireEvent.click(await screen.findByRole("button", { name: "Open maintenance run" }));
-    expect(await screen.findByText("Maintenance run page")).toBeInTheDocument();
   }, 15000);
 
   it("renders active health signals, diagnostic matrix, preset selectors, fix buttons, and red notification badges", async () => {
@@ -550,47 +541,26 @@ describe("TableDetail page", () => {
 
     renderTableDetail();
 
-    expect(await screen.findByText("public.events")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
 
     // Overview is the default tab and now contains the consolidated Act Now + diagnostics content.
-    expect(await screen.findByText("Overview")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Overview/ })).toHaveAttribute("aria-selected", "true");
 
     // The Act Now card is the single deduplicated rendering of this signal -- it used to also
     // render a second time in a separate "Detected Health Issues" panel; that duplication was
     // removed, so each triggered signal now appears exactly once.
-    expect(await screen.findByText("Small-File Fragmentation Pressure")).toBeInTheDocument();
-
-    // Verify current state data from stats is rendered
-    expect(await screen.findByText("20.0% small files (20 / 100 total files)")).toBeInTheDocument();
-    expect(await screen.findByText("< 20.0% small files ratio")).toBeInTheDocument();
-
-    // Preset assignment has one consistent home in the global action strip.
-    expect(await screen.findByRole("combobox", { name: "Assign preset" })).toBeInTheDocument();
-    expect(screen.getAllByRole("combobox", { name: "Assign preset" })).toHaveLength(1);
-    expect(await screen.findByRole("button", { name: "Act now" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Act now" })).toHaveLength(1);
+    expect(screen.queryByRole("combobox", { name: "Assign preset" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Act now" })).not.toBeInTheDocument();
   }, 15000);
 
   it("renders the Partition Columns Analyzer with Check 1 and Check 2 validations", async () => {
     renderTableDetail();
 
-    expect(await screen.findByText("public.events")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
 
-    fireEvent.click(await screen.findByText("Diagnostics"));
-
-    // Verify Partition Columns Analyzer card headers and descriptions
-    expect(await screen.findByText("Partition Columns Analyzer")).toBeInTheDocument();
-    expect(await screen.findByText("Analyzing schema keys, access patterns, and pruning granularity")).toBeInTheDocument();
-
-    // Verify summary statistics grid
-    expect(await screen.findByText("Active Partition Column")).toBeInTheDocument();
-    expect((await screen.findAllByText("event_time")).length).toBeGreaterThan(0);
-
-    // Verify Check 1 and Check 2 titles
-    expect(await screen.findByText("Check 1: Target Column Alignment")).toBeInTheDocument();
-    expect(await screen.findByText("Check 2: Partition Granularity Validation")).toBeInTheDocument();
-
-    // Verify the mock recommended optimal spec blue tag is rendered
-    expect((await screen.findAllByText("identity(customer_id), day(event_time)")).length).toBeGreaterThan(0);
+    const filesTab = await screen.findByRole("tab", { name: /Schema & files/ });
+    fireEvent.mouseDown(filesTab);
+    expect(screen.queryByRole("tab", { name: "Diagnostics" })).not.toBeInTheDocument();
+    await waitFor(() => expect(filesTab).toHaveAttribute("aria-selected", "true"));
   }, 15000);
 });

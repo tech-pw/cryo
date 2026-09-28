@@ -6,12 +6,18 @@ import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from cryo.api.deps import SessionDep, require_operator, require_viewer
 from cryo.api.extensions_helpers import build_mcp_server, table_stats_dict
 from cryo.api.security import Principal, Role
+from cryo.api.snapshot_presence import (
+    CatalogMetadataError,
+    load_current_snapshot_ids,
+    parse_snapshot_id,
+)
 from cryo.compliance.governance import track_pending_deletions
 from cryo.db.models import AuditLog, Source, Table, TableStats
 from cryo.db.repositories.protected_snapshots import ProtectedSnapshotRepository
@@ -30,20 +36,29 @@ class ComplianceStatusResponse(BaseModel):
 
 
 class ProtectSnapshotRequest(BaseModel):
-    snapshot_id: int
+    snapshot_id: str
     label: str | None = None
+
+    @field_validator("snapshot_id", mode="before")
+    @classmethod
+    def decimal_snapshot_id(cls, value: object) -> str:
+        parsed = parse_snapshot_id(value)
+        if parsed is None:
+            raise ValueError("snapshot_id must be a non-negative decimal string")
+        return str(parsed)
 
 
 class ProtectSnapshotResponse(BaseModel):
     table_id: uuid.UUID
-    snapshot_id: int
+    snapshot_id: str
     label: str | None = None
 
 
 class ProtectedSnapshotEntry(BaseModel):
-    snapshot_id: int
+    snapshot_id: str
     label: str | None = None
     protected_at: str
+    protected_by: str | None = None
 
 
 class ProtectedSnapshotListResponse(BaseModel):
@@ -53,7 +68,7 @@ class ProtectedSnapshotListResponse(BaseModel):
 
 class UnprotectSnapshotResponse(BaseModel):
     table_id: uuid.UUID
-    snapshot_id: int
+    snapshot_id: str
     removed: bool
 
 
@@ -222,6 +237,26 @@ def get_compliance_status(table_id: uuid.UUID, session: SessionDep) -> Complianc
     )
 
 
+def _source_view(source: Source) -> dict[str, Any]:
+    return {"name": source.name, "type": source.type, "config": dict(source.config or {})}
+
+
+def _protected_by(session: Session, table_id: uuid.UUID, snapshot_id: int) -> str | None:
+    actor = session.scalar(
+        select(AuditLog.actor)
+        .where(
+            AuditLog.table_id == table_id,
+            AuditLog.action == "snapshot.protect",
+            AuditLog.detail == f"snapshot_id={snapshot_id}",
+        )
+        .order_by(AuditLog.ts.desc())
+        .limit(1)
+    )
+    if not isinstance(actor, str) or not actor.strip():
+        return None
+    return actor
+
+
 @router.post(
     "/tables/{table_id}/protected-snapshots",
     response_model=ProtectSnapshotResponse,
@@ -232,18 +267,48 @@ def protect_snapshot(
     table_id: uuid.UUID,
     payload: ProtectSnapshotRequest,
     session: SessionDep,
+    principal: Annotated[Principal, Depends(require_operator)],
 ) -> ProtectSnapshotResponse:
-    if session.get(Table, table_id) is None:
+    table = session.get(Table, table_id)
+    if table is None:
         raise HTTPException(status_code=404, detail="Table not found")
+    source = session.get(Source, table.source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+    snapshot_id = parse_snapshot_id(payload.snapshot_id)
+    if snapshot_id is None:
+        raise HTTPException(
+            status_code=400, detail="snapshot_id must be a non-negative decimal string"
+        )
+    try:
+        present = load_current_snapshot_ids(
+            _source_view(source), table.schema_name, table.table_name
+        )
+    except CatalogMetadataError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Catalog metadata read failed: {exc}"[:500]
+        ) from exc
+    if snapshot_id not in present:
+        raise HTTPException(status_code=404, detail="Snapshot not found in current table metadata")
     repo = ProtectedSnapshotRepository(session)
     row = repo.protect(
         table_id=table_id,
-        snapshot_id=payload.snapshot_id,
+        snapshot_id=snapshot_id,
         label=payload.label,
     )
+    session.add(
+        AuditLog(
+            table_id=table_id,
+            action="snapshot.protect",
+            status="OK",
+            detail=f"snapshot_id={snapshot_id}",
+            actor=principal.subject,
+        )
+    )
+    session.commit()
     return ProtectSnapshotResponse(
         table_id=table_id,
-        snapshot_id=row.snapshot_id,
+        snapshot_id=str(row.snapshot_id),
         label=row.label,
     )
 
@@ -265,9 +330,10 @@ def list_protected_snapshots(
         table_id=table_id,
         snapshots=[
             ProtectedSnapshotEntry(
-                snapshot_id=row.snapshot_id,
+                snapshot_id=str(row.snapshot_id),
                 label=row.label,
                 protected_at=row.protected_at.isoformat() if row.protected_at is not None else "",
+                protected_by=_protected_by(session, table_id, row.snapshot_id),
             )
             for row in rows
         ],
@@ -281,18 +347,34 @@ def list_protected_snapshots(
 )
 def unprotect_snapshot(
     table_id: uuid.UUID,
-    snapshot_id: int,
+    snapshot_id: str,
     session: SessionDep,
+    principal: Annotated[Principal, Depends(require_operator)],
 ) -> UnprotectSnapshotResponse:
     if session.get(Table, table_id) is None:
         raise HTTPException(status_code=404, detail="Table not found")
+    parsed = parse_snapshot_id(snapshot_id)
+    if parsed is None:
+        raise HTTPException(
+            status_code=400, detail="snapshot_id must be a non-negative decimal string"
+        )
     repo = ProtectedSnapshotRepository(session)
-    removed = repo.unprotect(table_id=table_id, snapshot_id=snapshot_id)
+    removed = repo.unprotect(table_id=table_id, snapshot_id=parsed)
     if not removed:
         raise HTTPException(status_code=404, detail="Protected snapshot not found")
+    session.add(
+        AuditLog(
+            table_id=table_id,
+            action="snapshot.unprotect",
+            status="OK",
+            detail=f"snapshot_id={parsed}",
+            actor=principal.subject,
+        )
+    )
+    session.commit()
     return UnprotectSnapshotResponse(
         table_id=table_id,
-        snapshot_id=snapshot_id,
+        snapshot_id=str(parsed),
         removed=True,
     )
 
