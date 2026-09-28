@@ -78,13 +78,14 @@ describe("TableCostPanel", () => {
       </QueryClientProvider>
     );
 
-    expect((await screen.findAllByText("estimated storage $ vs measured request $ (30 d)")).length).toBeGreaterThan(0);
+    expect(await screen.findByText(/Estimated storage \$/)).toBeInTheDocument();
+    expect(screen.getAllByText("estimated storage $ vs measured request $ (30 d)").length).toBeGreaterThan(0);
     expect(screen.getByText(/Estimated storage/)).toBeInTheDocument();
     expect(screen.getByText(/Measured request \$ \(30 d\)/)).toBeInTheDocument();
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
-    expect(screen.getByText("Delete-file bytes")).toBeInTheDocument();
+    expect(await screen.findByText("Delete-file bytes")).toBeInTheDocument();
     expect(screen.getAllByText(/Modelled/).length).toBeGreaterThan(0);
-    expect(screen.getByText("Move to Intelligent-Tiering")).toBeInTheDocument();
+    expect(await screen.findByText("Move to Intelligent-Tiering")).toBeInTheDocument();
     expect(screen.getByText("Objects have not been read recently")).toBeInTheDocument();
     expect(screen.queryByText("dt=do-not-rank/")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open compaction ranking" })).toHaveAttribute(

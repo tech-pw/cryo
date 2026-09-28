@@ -85,13 +85,18 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
     <div className="td-tab-content flex flex-col gap-4">
       <section id="cost-requests" aria-label="estimated storage $ vs measured request $ (30 d)">
         <ChartCard title="estimated storage $ vs measured request $ (30 d)">
+          {costQuery.isLoading ? <p className="text-sm text-muted-foreground">Loading cost…</p> : null}
           {costQuery.isError ? (
             <QueryErrorAlert error={costQuery.error} title="Failed to load table cost" />
           ) : null}
-          <p className="text-sm">Estimated storage {estimatedStorage == null ? "Not measured" : formatCurrency(estimatedStorage)}</p>
-          <p className="text-sm">
-            Measured request $ (30 d) {measuredRequests == null ? "Not measured" : formatCurrency(measuredRequests)}
-          </p>
+          {!costQuery.isLoading ? (
+            <>
+              <p className="text-sm">Estimated storage {estimatedStorage == null ? "Not measured" : formatCurrency(estimatedStorage)}</p>
+              <p className="text-sm">
+                Measured request $ (30 d) {measuredRequests == null ? "Not measured" : formatCurrency(measuredRequests)}
+              </p>
+            </>
+          ) : null}
           <RequestCostShare
             storageCostUsd={estimatedStorage}
             requestCostUsd={measuredRequests}
@@ -105,6 +110,9 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
 
       <section id="cost-storage" aria-label="Storage parts">
         <ChartCard title="Storage parts">
+          {costQuery.isLoading || tableQuery.isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading storage parts…</p>
+          ) : null}
           {showStack ? (
             <div className="mb-3">
               <p className="mb-1 text-xs text-muted-foreground">These parts are disjoint and sum to 100%.</p>
@@ -119,6 +127,7 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
               </div>
             </div>
           ) : null}
+          {!costQuery.isLoading && !tableQuery.isLoading ? (
           <dl className="m-0 grid gap-1 text-sm">
             {ranked.map((part) => (
               <div key={part.name} className="flex items-baseline justify-between gap-3">
@@ -127,13 +136,15 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
               </div>
             ))}
           </dl>
+          ) : null}
         </ChartCard>
       </section>
 
       <section id="cost-savings" aria-label="Modelled savings">
         <ChartCard title="Modelled">
-          <p className="text-sm">{moneyText("Modelled", modelledTotal)}</p>
-          {modelledOps.length ? (
+          {costQuery.isLoading ? <p className="text-sm text-muted-foreground">Loading modelled savings…</p> : null}
+          {!costQuery.isLoading ? <p className="text-sm">{moneyText("Modelled", modelledTotal)}</p> : null}
+          {!costQuery.isLoading && modelledOps.length ? (
             <ul className="mt-2 m-0 list-none space-y-1 p-0 text-sm">
               {modelledOps.map((item) => (
                 <li key={item.operation}>
@@ -141,9 +152,9 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
                 </li>
               ))}
             </ul>
-          ) : (
+          ) : !costQuery.isLoading ? (
             <p className="mt-2 text-sm text-muted-foreground">Not measured</p>
-          )}
+          ) : null}
         </ChartCard>
       </section>
 
