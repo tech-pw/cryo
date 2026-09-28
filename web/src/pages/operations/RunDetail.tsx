@@ -45,6 +45,8 @@ import {
 const STUCK_STATUSES = new Set(["queued", "deferred"]);
 const STALL_THRESHOLD_MS = 3 * 60 * 1000;
 const ACTIVE_RUN_STATUSES = new Set(["accepted", "queued", "running", "admitted"]);
+// Mirrors the cancellable job statuses in cryo/api/routes.py::cancel_run.
+const CANCELLABLE_JOB_STATUSES = new Set(["queued", "admitted", "running", "deferred"]);
 
 const tableRef = (job: JobRead) => {
   const planRef = job.plan?.table_ref;
@@ -131,10 +133,11 @@ export const RunDetail = () => {
   });
 
   const cancel = useMutation({
-    mutationFn: () => cancelRun(api, runId!),
-    onSuccess: () => {
-      toast.success("Run cancelled");
+    mutationFn: (_runAlreadyFinished: boolean) => cancelRun(api, runId!),
+    onSuccess: (_run, runAlreadyFinished) => {
+      toast.success(runAlreadyFinished ? "Remaining jobs cancelled" : "Run cancelled");
       void queryClient.invalidateQueries({ queryKey: ["run", runId] });
+      void queryClient.invalidateQueries({ queryKey: ["run-jobs", runId] });
     },
     onError: (error) => toast.error((error as Error).message)
   });
@@ -158,6 +161,10 @@ export const RunDetail = () => {
 
   const jobRows = useMemo(() => snapshot?.jobs ?? jobs.data ?? [], [snapshot?.jobs, jobs.data]);
   const runFinished = runTerminal || isTerminalRunStatus(runData?.status);
+  const cancellableJobs = useMemo(
+    () => jobRows.filter((job) => CANCELLABLE_JOB_STATUSES.has(job.status)).length,
+    [jobRows]
+  );
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (runFinished) return;
@@ -215,6 +222,7 @@ export const RunDetail = () => {
         if (status === "running" || status === "admitted") setAnnouncement("Run is now running.");
         else if (status === "succeeded") setAnnouncement("Run succeeded.");
         else if (status === "failed" || status === "partial_failed") setAnnouncement("Run failed.");
+        else if (status === "partial") setAnnouncement("Run finished; not every table completed.");
         else if (status === "cancelled") setAnnouncement("Run cancelled.");
       }
       prevStatusRef.current = status;
@@ -358,10 +366,20 @@ export const RunDetail = () => {
               <ConfirmAction
                 title="Cancel this run?"
                 description="Queued jobs will be stopped; jobs already running may finish."
-                onConfirm={() => cancel.mutate()}
+                onConfirm={() => cancel.mutate(false)}
               >
                 <Button variant="danger" loading={cancel.isPending}>
                   Cancel
+                </Button>
+              </ConfirmAction>
+            ) : cancellableJobs > 0 ? (
+              <ConfirmAction
+                title="Cancel the remaining jobs?"
+                description={`This run has finished and keeps its recorded outcome. This stops the ${formatNumber(cancellableJobs)} ${cancellableJobs === 1 ? "job" : "jobs"} still queued, deferred or running.`}
+                onConfirm={() => cancel.mutate(true)}
+              >
+                <Button variant="danger" loading={cancel.isPending}>
+                  Cancel remaining jobs ({formatNumber(cancellableJobs)})
                 </Button>
               </ConfirmAction>
             ) : null}

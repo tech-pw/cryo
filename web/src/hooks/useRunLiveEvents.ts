@@ -10,6 +10,7 @@ const MAX_MESSAGES = 200;
 export const TERMINAL_RUN_STATUSES = new Set([
   "succeeded",
   "failed",
+  "partial",
   "partial_failed",
   "cancelled"
 ]);

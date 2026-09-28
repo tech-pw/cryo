@@ -56,8 +56,6 @@ export const formatDuration = (ms?: number | null): string => {
 
 export const ACTIVE_RUN_STATUSES = new Set(["accepted", "queued", "running", "admitted"]);
 
-export const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "partial_failed"]);
-
 export type RunKindCategory = "scan" | "maintenance" | "other";
 
 /** Canonical run kind labels per `lld.md` §RunKind taxonomy. */

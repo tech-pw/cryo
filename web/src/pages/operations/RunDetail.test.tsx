@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { RunRead } from "../../api/types";
+import type { JobRead, RunRead } from "../../api/types";
 import { RunDetail } from "./RunDetail";
 
 vi.mock("../../lib/auth", () => ({
@@ -29,10 +29,9 @@ vi.mock("../../api/client", () => ({
 }));
 
 const mockUseRunLiveEvents = vi.fn();
-vi.mock("../../hooks/useRunLiveEvents", () => ({
-  useRunLiveEvents: (...args: unknown[]) => mockUseRunLiveEvents(...args),
-  isTerminalRunStatus: (status?: string | null) =>
-    Boolean(status && ["succeeded", "failed", "cancelled", "partial_failed"].includes(status))
+vi.mock("../../hooks/useRunLiveEvents", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useRunLiveEvents")>()),
+  useRunLiveEvents: (...args: unknown[]) => mockUseRunLiveEvents(...args)
 }));
 
 import { getRun, getRunJobs, listRuns } from "../../api/client";
@@ -54,6 +53,16 @@ const liveEventsDefault = {
   reconnectAttempt: 0,
   manualReconnect: vi.fn()
 };
+
+const job = (overrides: Partial<JobRead>): JobRead => ({
+  id: "33333333-3333-3333-3333-333333333333",
+  run_id: baseRun.id,
+  table_id: "44444444-4444-4444-4444-444444444444",
+  destination_id: "55555555-5555-5555-5555-555555555555",
+  mode: "standard",
+  status: "succeeded",
+  ...overrides
+});
 
 const renderPage = (runId = baseRun.id) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
@@ -125,6 +134,37 @@ describe("RunDetail", () => {
     renderPage();
     await screen.findByRole("heading", { name: /Run 22222222/ });
     expect(screen.queryByText(/may be stalled/i)).not.toBeInTheDocument();
+  });
+
+  it("offers no Cancel on a finished partial run with nothing left to stop", async () => {
+    vi.mocked(getRun).mockResolvedValue({
+      ...baseRun,
+      status: "partial",
+      finished_at: new Date().toISOString()
+    });
+    vi.mocked(getRunJobs).mockResolvedValue([job({ status: "succeeded" })]);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /^Cancel/ })).not.toBeInTheDocument();
+    });
+  });
+
+  it("offers to stop only the jobs a finished run still owns", async () => {
+    vi.mocked(getRun).mockResolvedValue({
+      ...baseRun,
+      status: "partial",
+      finished_at: new Date().toISOString()
+    });
+    vi.mocked(getRunJobs).mockResolvedValue([
+      job({ status: "succeeded" }),
+      job({ id: "66666666-6666-6666-6666-666666666666", status: "deferred" })
+    ]);
+
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: "Cancel remaining jobs (1)" })).toBeInTheDocument();
   });
 
   it("renders a live log console with search controls wired to live messages", async () => {
