@@ -814,3 +814,22 @@ def test_a_failed_orphan_probe_leaves_the_removal_ok_and_unmeasured(
     assert spark.executed[-1] == _ORPHAN_SQL
     orphan = _lines(capsys)[1]
     assert orphan["ok"] and "bytes_removed" not in orphan["metrics"]
+
+
+def test_an_orphan_probe_that_cannot_read_its_rows_leaves_the_removal_ok_and_unmeasured(
+    tmp_path: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = _import_runner()
+    # The dry run succeeds, but _Row has no positional access, so path extraction raises.
+    spark = _FakeSpark()
+
+    exit_code = runner._run_manifest(
+        spark, _orphan_manifest(tmp_path, measure_orphan_bytes=True), deadline_epoch=None
+    )
+
+    assert exit_code == 0
+    assert any("dry_run" in sql for sql in spark.executed)
+    assert spark.executed[-1] == _ORPHAN_SQL
+    optimize, orphan = _lines(capsys)
+    assert optimize["ok"]
+    assert orphan["ok"] and "bytes_removed" not in orphan["metrics"]

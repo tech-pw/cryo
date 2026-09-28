@@ -176,10 +176,10 @@ def _sum_input_lengths(spark: SparkSession, paths: list[str]) -> int:
 def _orphan_bytes(spark: SparkSession, sql: str) -> int | None:
     try:
         rows = spark.sql(with_orphan_dry_run(sql)).collect()
+        paths = [str(row[0]) for row in rows if row[0]]
     except Exception as exc:
         print(f"[cryo] orphan size probe failed: {exc}", file=sys.stderr)
         return None
-    paths = [str(row[0]) for row in rows if row[0]]
     try:
         return _sum_input_lengths(spark, paths)
     except Exception as exc:
