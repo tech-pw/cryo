@@ -22,19 +22,16 @@ the staleness boost does not touch the nightly batch; the event watcher is not d
 do not turn the native engine back on to recover reclaim numbers.
 
 
-Date: 2026-09-28. Status: **research-backed proposal; kill-the-competitor posture adopted
-2026-09-28 (§11); comparative wins are not yet measured**.
-Do not push to the public GitHub remote or quote outside the team; publish only the
-protocol, comparison pages and results that clear their gates.
+Date: 2026-09-28. Status: **research-backed proposal; comparative wins are not yet measured**.
+Publish only the protocol, comparison pages and results that clear their gates.
 Code baseline inspected: `4079d5840b8309e15c6c6b4b8fd8fd72b13fc323`.
 Companions: [OSS delivery plan](oss-launch-plan-2026-09-25.md),
 [cost/reliability plan](CRYO_COST_REDUCTION_PLAN.md),
 [paper implementation audit](PAPER_IMPLEMENTATION_AUDIT_2026-09-24.md).
 
-Section 10 preserves the same-day engineering addendum and contributor-reported production
-observations, reconciled with the execution paths and evidence rules in sections 1–9.
-Section 11 adds the requested competitive-displacement campaign: evaluation wins, migration,
-retained adoption and responses to competitors.
+Section 10 preserves the same-day engineering addendum, reconciled with the execution paths
+and evidence rules in sections 1–9. Its production observations (10.2), the competitive
+campaign (section 11) and Appendix A are in `docs/_private-pw/COMPETITIVE_CAMPAIGN_2026-09-28.md`.
 
 ---
 
@@ -45,6 +42,12 @@ agent executes section 0 only.** Sections 1–11 are context; they authorize no 
 Every fact below was checked against source and production on 2026-09-28 at commit
 `4079d58`. If a fact no longer matches what you find, **stop and report** — do not adapt the
 task to fit.
+
+**Execution status (2026-09-28): done on `gitlab-main`.** W1 `5078d6f`, W2 `6220ace`,
+W3 `ca98cf2` + review fix `00d1de8`, W4 `140b7ab` + review fix `d659ec0`, W5 `9ec6b8a` + the
+commit that added this line. W1–W5 reached production in deploy pin `ed250dd`; the two review
+fixes and this doc update are not deployed. Findings are listed under 0.5. Do not merge branch
+`feat/competitive-runbook` commit `7284b9d`: it is a second W4, superseded by `140b7ab`.
 
 ### 0.1 Ground rules (read all before touching code)
 
@@ -153,8 +156,8 @@ task to fit.
 
 #### W4 — Carry engine provenance in the daily impact ledger
 
-- **Why:** all 20.09 TiB of measured reclaim since 9 July came from the **native** engine
-  (`audit_log.engine = 'native'`: 13.53 TiB orphan, 6.56 TiB optimize), the engine disabled on
+- **Why:** all measured reclaim recorded since 9 July came from the **native** engine
+  (`audit_log.engine = 'native'`; totals are in the private file), the engine disabled on
   17 September for reporting success without committing. Reports must show which engine a
   byte figure came from.
 - **Change:** in `cryo/reporting/impact_history.py::record_daily_impact`, add one grouped
@@ -211,23 +214,33 @@ task to fit.
 
 ### 0.4 Correction to send with the next management update (text, not code)
 
-> Correction to the 27 September impact summary. The 20.1 TiB "measured storage reclaimed"
-> was reported entirely by Cryo's native engine between 9 July and 17 September. That engine
-> was retired on 17 September after it reported successful maintenance that had not been
-> committed, so the figure should be treated as unverified until reconciled. The current
-> Spark engine is doing the maintenance (99%+ success over the last week) but does not yet
-> record freed bytes; that is being fixed. Cryo's own infrastructure cost was about $2–3/day
-> on 25–27 September only; the namespace bill was $20–70/day on 17–23 September, so the
-> $2–3 figure is not a run rate. The file-count reduction (897,218 → 82,735) is mostly
-> native-engine runs (725,152 → 64,103); the current Spark engine's own compaction runs show
-> 172,066 → 18,632 files (about 9× fewer, 1,473 runs), which is the figure to quote going
-> forward.
+Moved to `docs/_private-pw/COMPETITIVE_CAMPAIGN_2026-09-28.md`; it quotes unretained production figures.
 
 ### 0.5 Final report the worker must produce
 
 For each of W1–W5: commit hash, files changed, tests added, the exact `make` results, and
 anything stopped or skipped with the reason. List any fact in 0.2/0.3 that did not match the
 code. Do not claim a task done without its "Done when" evidence.
+
+**Findings from the 2026-09-28 execution:**
+
+- **W1 precondition:** the grep now also lists `cryo/maintenance/coordinator.py`. W3 added that
+  caller by design.
+- **W3 manifest path:** no `retention_days` path into the manifest exists (it is a
+  `DEFAULT_PARAMS` constant rendered into SQL). The flag travels as a keyword argument set at
+  both lane-creation sites; the `ca98cf2` commit body says so. The review fix `00d1de8` moved the
+  probe's path extraction inside its `try`, which the "never fail the statement" rule required.
+- **W4:** a second agent committed it (`140b7ab`) before W1–W3 landed. Engines with no measured
+  rows are omitted rather than stored as `None`. `d659ec0` merges a NULL engine and a literal
+  `"unknown"` engine into one entry.
+- **W5:** "keep sections 0–9" conflicted with "no §10.2 figures", because §0.2 W4, §0.4,
+  §10.4 and §10.5 quoted them. §0.4 moved to the private file; the other lines were
+  generalized, with the originals kept verbatim in the private file.
+- **Open, not fixed (out of scope):** the `expire_snapshots` branch of
+  `bytes_freed_from_procedure` ignores `deleted_statistics_files_count`, so an expire that only
+  removed statistics files would record a measured `0`. Verify the column against Iceberg
+  1.11.0 before changing it. `ready_for_enforcement` is set but not shown in the API or logs,
+  and nothing reads `raw["bytes_freed_by_engine"]` yet.
 
 ## 1. Recommendation
 
@@ -262,13 +275,7 @@ The strategic advantage we seek is the combination of openness, understandable d
 safe operation and verifiable net value. No research reviewed establishes that Cryo already
 outperforms either competitor.
 
-**Adopted posture (2026-09-28): kill the competitor.** Inside the §4 segment, Cryo aims to
-become the default choice and to make both competitors easy to leave: own the free read-only
-entry point, remove switching cost from Amoro and from scripts, take the batch-heavy fleets
-Amoro's own documentation leaves on Spark rewrite, help make fast Rust compaction open
-infrastructure upstream, and win head-to-head evaluations on the §6 protocol. The aggression
-is in product, distribution, switching cost and price — never in claims. §11 has the moves,
-gates and rules of engagement.
+The competitive-displacement campaign built on this recommendation is in `docs/_private-pw/COMPETITIVE_CAMPAIGN_2026-09-28.md`.
 
 ## 2. Research method and corrections to the earlier draft
 
@@ -905,9 +912,9 @@ buyer in section 4, means the following things they can check:
 | Their claim | Our answer, after the gate | What we do not say |
 |---|---|---|
 | 95% faster than Spark, 12× queries, 76% less spend | We publish the section 6 protocol and the result, including a loss. | We do not "correct" their 221 s vs 1,612 s arithmetic in a sales post. |
-| Event-driven, every table | S2 fires on a threshold, governor-capped. We show the table that was skipped and why. | We do not say we touch all 11,554 every night. |
+| Event-driven, every table | S2 fires on a threshold, governor-capped. We show the table that was skipped and why. | We do not say we touch every table every night. |
 | Query-chosen sort, tested on a branch | C4, after receipts and a real query sample. | We do not demo the sampled predictor as a rewrite experiment. |
-| $5/TB optimized, Enterprise if you want VPC | No software fee. Self-host cost is itemized, including Spark, idle capacity, and operator time. | We do not say Cryo costs $2–3/day. That is the control-plane namespace, not the compaction. |
+| $5/TB optimized, Enterprise if you want VPC | No software fee. Self-host cost is itemized, including Spark, idle capacity, and operator time. | We do not quote a namespace-only daily cost as Cryo's cost. It leaves out the compaction. |
 | Vendor-controlled platform versus a customer-owned outcome store | The audit row is in the customer's database, exportable, with unknown distinct from zero. | We do not say they have no audit. Their docs say they do. |
 
 The LakeOps buyer who wants a managed service and a contracted SLA is not our buyer.
@@ -953,12 +960,12 @@ reconciles the evidence. Their repetition in this sell sheet would not clear the
 
 - "Cryo is the better tool."
 - "The only open optimizer." Amoro is open. LakeOps has open components.
-- "We saved $470/month" or "$1,130/month waiting." Both are models.
+- A modeled monthly saving, or a modeled amount "still waiting", quoted as money. Both are models.
 - "Coverage tripled, so next month's reclaim will too." It did not, and Spark still
   does not price the bytes.
 - "95% faster" aimed back at LakeOps, or "10× vs Spark" aimed at Amoro. Those are their
   claims. We have not reproduced them.
-- "Turn native back on and the 20 TiB returns." That engine reported success with no
+- "Turn native back on and the reclaim returns." That engine reported success with no
   commit.
 
 ### 10.6 How this increases adoption
