@@ -86,9 +86,13 @@ def test_aggregate_fleet_health_trend_groups_by_day(session) -> None:
     assert points[0].day.isoformat() == day_one.date().isoformat()
     assert points[0].avg_health_score == 60.0
     assert points[0].tables_at_grade_df == 1
+    assert points[0].tables_counted == 2
+    assert points[0].is_partial is False
     assert points[1].day.isoformat() == day_two.date().isoformat()
     assert points[1].avg_health_score == 20.0
     assert points[1].tables_at_grade_df == 1
+    assert points[1].tables_counted == 1
+    assert points[1].is_partial is False
 
 
 def test_aggregate_fleet_cost_trend_sums_daily_totals(session) -> None:
@@ -127,6 +131,8 @@ def test_aggregate_fleet_cost_trend_sums_daily_totals(session) -> None:
     assert points[0].day.isoformat() == scan_day.date().isoformat()
     assert points[0].total_monthly_cost_usd == 20.0
     assert points[0].projected_savings_usd_month == 3.5
+    assert points[0].tables_counted == 2
+    assert points[0].is_partial is False
 
 
 def test_fleet_trends_endpoint_returns_grouped_series(api_db: ApiDb) -> None:
@@ -160,4 +166,64 @@ def test_fleet_trends_endpoint_returns_grouped_series(api_db: ApiDb) -> None:
     assert len(payload["health_trend"]) >= 1
     assert len(payload["cost_trend"]) >= 1
     assert payload["health_trend"][0]["avg_health_score"] == 65.0
+    assert payload["health_trend"][0]["tables_counted"] == 1
+    assert payload["health_trend"][0]["is_partial"] is False
     assert payload["cost_trend"][0]["total_monthly_cost_usd"] == 4.25
+    assert payload["cost_trend"][0]["tables_counted"] == 1
+    assert payload["cost_trend"][0]["is_partial"] is False
+
+
+def test_fleet_trends_count_latest_row_per_table_per_day(session) -> None:
+    from cryo.db.tenant_scope import require_tenant
+
+    source = _seed_source(session)
+    table = _seed_table(session, source, schema_name="analytics", table_name="events")
+    morning = datetime.now(UTC).replace(hour=1, minute=0, second=0, microsecond=0)
+    afternoon = morning.replace(hour=7)
+    session.add_all(
+        [
+            TableStatsHistory(
+                table_id=table.id,
+                scan_at=morning,
+                grade="F",
+                overall_score=10,
+            ),
+            TableStatsHistory(
+                table_id=table.id,
+                scan_at=afternoon,
+                grade="B",
+                overall_score=80,
+            ),
+            TableCostHistory(
+                table_id=table.id,
+                scan_at=morning,
+                current_monthly_cost_usd=10.0,
+                projected_savings_usd_month=1.0,
+            ),
+            TableCostHistory(
+                table_id=table.id,
+                scan_at=afternoon,
+                current_monthly_cost_usd=4.0,
+                projected_savings_usd_month=0.25,
+            ),
+        ]
+    )
+    session.flush()
+
+    since = datetime.now(UTC) - timedelta(days=30)
+    tenant_id = require_tenant(session)
+    health = aggregate_fleet_health_trend(session, since=since, tenant_id=tenant_id)
+    cost = aggregate_fleet_cost_trend(session, since=since, tenant_id=tenant_id)
+
+    assert len(health) == 1
+    assert health[0].day == morning.date()
+    assert health[0].avg_health_score == 80.0
+    assert health[0].tables_at_grade_df == 0
+    assert health[0].tables_counted == 1
+    assert health[0].is_partial is True
+    assert len(cost) == 1
+    assert cost[0].day == morning.date()
+    assert cost[0].total_monthly_cost_usd == 4.0
+    assert cost[0].projected_savings_usd_month == 0.25
+    assert cost[0].tables_counted == 1
+    assert cost[0].is_partial is True
