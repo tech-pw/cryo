@@ -5,6 +5,7 @@ latency_benefit term, end-to-end through ROIGate.decide()."""
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from cryo.config import Settings
 from cryo.db.models import QueryLog, Source, Table, TableCost, TableStats
 from cryo.domain.enums import Mode
 from cryo.governor.admission import AdmissionJob
@@ -68,6 +69,20 @@ def _seed_queries(session, table: Table, *, bytes_read: int, count: int = 10) ->
                 bytes_read=bytes_read,
             )
         )
+
+
+def _raw_with_roi_history(count: int) -> dict[str, object]:
+    decision = {
+        "ts": datetime.now(UTC).isoformat(),
+        "action": "skip",
+        "reason": "bcr_far_below_threshold",
+        "bcr": 0.1,
+        "threshold": 1.0,
+        "shadow": True,
+        "benefit_usd_month": 0.1,
+        "cost_usd_month": 1.0,
+    }
+    return {"smart_maintenance": {"roi_decisions": [dict(decision) for _ in range(count)]}}
 
 
 def _job_for(table: Table) -> AdmissionJob:
@@ -177,3 +192,28 @@ def test_roi_gate_scan_cost_can_move_a_table_from_defer_to_proceed(session, monk
 
     assert decision.bcr >= gate._settings.roi_min_bcr
     assert decision.action.value == "proceed"
+
+
+def test_roi_gate_stays_in_shadow_after_enough_samples(session, monkeypatch):
+    """A full decision history only flags readiness. With CRYO_ROI_GATE_SHADOW_MODE at its
+    default (true), decide() must keep returning shadow decisions -- otherwise the governor
+    starts enforcing SKIP/DEFER by itself once a table reaches roi_shadow_min_samples."""
+    monkeypatch.delenv("CRYO_ROI_GATE_SHADOW_MODE", raising=False)
+    # get_settings() is lru_cached before tests run; a fresh Settings() makes the delenv apply.
+    monkeypatch.setattr("cryo.governor.roi_gate.get_settings", lambda: Settings())
+
+    ready_table = _seed_table(session, schema_name="test", table_name="roi_shadow_ready")
+    warming_table = _seed_table(session, schema_name="test", table_name="roi_shadow_warming")
+    _seed_stats(session, ready_table, raw=_raw_with_roi_history(200))
+    _seed_stats(session, warming_table, raw=_raw_with_roi_history(199))
+    session.commit()
+
+    gate = ROIGate()
+    assert gate._settings.roi_gate_shadow_mode is True
+    ready_decision = gate.decide(session, _job_for(ready_table), record=False)
+    warming_decision = gate.decide(session, _job_for(warming_table), record=False)
+
+    assert ready_decision.shadow is True
+    assert ready_decision.ready_for_enforcement is True
+    assert warming_decision.shadow is True
+    assert warming_decision.ready_for_enforcement is False
