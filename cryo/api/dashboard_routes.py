@@ -132,7 +132,7 @@ def get_multi_catalog_stats(
                 func.sum(TableStats.small_files_count).label("small_files_count"),
                 func.sum(
                     case(
-                        (TableStats.small_files_count >= 128, 1),
+                        (TableStats.needs_compaction.is_(True), 1),
                         else_=0,
                     )
                 ).label("needs_compaction"),
@@ -321,6 +321,8 @@ class FleetHealthTrendPoint(BaseModel):
     day: date
     avg_health_score: float
     tables_at_grade_df: int
+    is_partial: bool
+    tables_counted: int
 
 
 class FleetCostTrendPoint(BaseModel):
@@ -329,6 +331,8 @@ class FleetCostTrendPoint(BaseModel):
     day: date
     total_monthly_cost_usd: float
     projected_savings_usd_month: float
+    is_partial: bool
+    tables_counted: int
 
 
 class FleetTrendsResponse(BaseModel):
@@ -346,41 +350,81 @@ def _scan_day_bucket(session: Session, column: Any) -> Any:
     return func.date(column)
 
 
+def _as_trend_day(day_value: object) -> date:
+    if isinstance(day_value, datetime):
+        return day_value.date()
+    if isinstance(day_value, date):
+        return day_value
+    return date.fromisoformat(str(day_value)[:10])
+
+
+def _latest_rows_per_table_day(
+    session: Session,
+    history: Any,
+    value_columns: tuple[Any, ...],
+    *,
+    since: datetime,
+    tenant_id: UUID,
+) -> Any:
+    scan_at = history.scan_at
+    selected = [
+        _scan_day_bucket(session, scan_at).label("day"),
+        history.table_id.label("table_id"),
+        *[column.label(column.key) for column in value_columns],
+        func.row_number()
+        .over(
+            partition_by=(history.table_id, _scan_day_bucket(session, scan_at)),
+            order_by=(scan_at.desc(), history.id.desc()),
+        )
+        .label("rn"),
+    ]
+    ranked = select(*selected).join(Table, history.table_id == Table.id).where(scan_at >= since)
+    return scope_by_tenant(ranked, Table, tenant_id).subquery()
+
+
 def aggregate_fleet_health_trend(
     session: Session,
     *,
     since: datetime,
     tenant_id: UUID,
 ) -> list[FleetHealthTrendPoint]:
-    day_bucket = _scan_day_bucket(session, TableStatsHistory.scan_at).label("day")
+    latest = _latest_rows_per_table_day(
+        session,
+        TableStatsHistory,
+        (TableStatsHistory.overall_score, TableStatsHistory.grade),
+        since=since,
+        tenant_id=tenant_id,
+    )
     stmt = (
         select(
-            day_bucket,
-            func.avg(TableStatsHistory.overall_score).label("avg_score"),
+            latest.c.day,
+            func.avg(latest.c.overall_score).label("avg_score"),
             func.sum(
                 case(
-                    (TableStatsHistory.grade.in_(("D", "F")), 1),
+                    (latest.c.grade.in_(("D", "F")), 1),
                     else_=0,
                 )
             ).label("df_count"),
+            func.count(latest.c.table_id).label("tables_counted"),
         )
-        .join(Table, TableStatsHistory.table_id == Table.id)
-        .where(TableStatsHistory.scan_at >= since)
-        .group_by(day_bucket)
-        .order_by(day_bucket)
+        .where(latest.c.rn == 1)
+        .group_by(latest.c.day)
+        .order_by(latest.c.day)
     )
-    stmt = scope_by_tenant(stmt, Table, tenant_id)
     rows = session.execute(stmt).all()
+    today = datetime.now(UTC).date()
     points: list[FleetHealthTrendPoint] = []
-    for day_value, avg_score, df_count in rows:
+    for day_value, avg_score, df_count, tables_counted in rows:
         if day_value is None:
             continue
-        day = day_value.date() if isinstance(day_value, datetime) else day_value
+        day = _as_trend_day(day_value)
         points.append(
             FleetHealthTrendPoint(
                 day=day,
                 avg_health_score=round(float(avg_score or 0.0), 2),
                 tables_at_grade_df=int(df_count or 0),
+                is_partial=day == today,
+                tables_counted=int(tables_counted or 0),
             )
         )
     return points
@@ -392,34 +436,43 @@ def aggregate_fleet_cost_trend(
     since: datetime,
     tenant_id: UUID,
 ) -> list[FleetCostTrendPoint]:
-    day_bucket = _scan_day_bucket(session, TableCostHistory.scan_at).label("day")
+    latest = _latest_rows_per_table_day(
+        session,
+        TableCostHistory,
+        (
+            TableCostHistory.current_monthly_cost_usd,
+            TableCostHistory.projected_savings_usd_month,
+        ),
+        since=since,
+        tenant_id=tenant_id,
+    )
     stmt = (
         select(
-            day_bucket,
-            func.coalesce(func.sum(TableCostHistory.current_monthly_cost_usd), 0.0).label(
-                "total_cost"
-            ),
-            func.coalesce(func.sum(TableCostHistory.projected_savings_usd_month), 0.0).label(
+            latest.c.day,
+            func.coalesce(func.sum(latest.c.current_monthly_cost_usd), 0.0).label("total_cost"),
+            func.coalesce(func.sum(latest.c.projected_savings_usd_month), 0.0).label(
                 "total_savings"
             ),
+            func.count(latest.c.table_id).label("tables_counted"),
         )
-        .join(Table, TableCostHistory.table_id == Table.id)
-        .where(TableCostHistory.scan_at >= since)
-        .group_by(day_bucket)
-        .order_by(day_bucket)
+        .where(latest.c.rn == 1)
+        .group_by(latest.c.day)
+        .order_by(latest.c.day)
     )
-    stmt = scope_by_tenant(stmt, Table, tenant_id)
     rows = session.execute(stmt).all()
+    today = datetime.now(UTC).date()
     points: list[FleetCostTrendPoint] = []
-    for day_value, total_cost, total_savings in rows:
+    for day_value, total_cost, total_savings, tables_counted in rows:
         if day_value is None:
             continue
-        day = day_value.date() if isinstance(day_value, datetime) else day_value
+        day = _as_trend_day(day_value)
         points.append(
             FleetCostTrendPoint(
                 day=day,
                 total_monthly_cost_usd=round(float(total_cost or 0.0), 4),
                 projected_savings_usd_month=round(float(total_savings or 0.0), 4),
+                is_partial=day == today,
+                tables_counted=int(tables_counted or 0),
             )
         )
     return points
