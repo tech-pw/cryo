@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bytesToGb, formatBytesGb, formatPercent } from "./format";
+import { bytesToGb, formatBytesGb, formatGb, formatPercent, formatTime } from "./format";
 
 describe("format helpers", () => {
   it("converts bytes to GB", () => {
@@ -15,5 +15,22 @@ describe("format helpers", () => {
   it("formats percent edge cases", () => {
     expect(formatPercent(42.5, 1)).toBe("42.5%");
     expect(formatPercent(null)).toBe("-");
+  });
+
+  it("does not print zero for unknown or sub-0.1 GB sizes", () => {
+    expect(formatBytesGb(null)).toBe("-");
+    expect(formatBytesGb(undefined)).toBe("-");
+    expect(formatBytesGb(Number.NaN)).toBe("-");
+    expect(formatBytesGb(40 * 1024 * 1024)).toBe("40 MB");
+    expect(formatGb(40 / 1024)).toBe("40 MB");
+    expect(formatBytesGb(0)).toBe("0 GB");
+  });
+
+  it("includes the year when the date is not in the current year", () => {
+    const year = new Date().getFullYear();
+    const previous = new Date(year - 1, 7, 19, 10, 0, 0);
+    expect(formatTime(previous.toISOString())).toContain(String(year - 1));
+    const current = new Date(year, 5, 15, 12, 30, 0);
+    expect(formatTime(current.toISOString())).not.toContain(String(year));
   });
 });
