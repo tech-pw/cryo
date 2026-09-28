@@ -5,9 +5,10 @@ Built 2026-09-28 after repeatedly re-deriving the same "how much did Cryo actual
 cost/fix" numbers by hand from raw AuditLog/TableStats/MaintenanceJob queries for a management
 report -- there was no durable record of what was true on any given day, only what could be
 recomputed live (and only as far back as AuditLog retention allows). record_daily_impact writes
-one row from DailyReportData, already fully computed by generate_daily_report -- no new heavy
-queries beyond the job-status counts, which daily_report.py's own maintenance_stats doesn't
-carry at job granularity (it's keyed by AuditLog action, not MaintenanceJob status).
+one row from DailyReportData, already fully computed by generate_daily_report. The only extra
+queries are the job-status counts (daily_report.py's maintenance_stats is keyed by AuditLog
+action, not MaintenanceJob status) and one grouped AuditLog aggregate of measured reclaim by
+engine, stored on raw.
 
 Idempotent on report_date: safe to call more than once for the same day (a report re-run, a
 backfill) without duplicating history -- the later call's numbers win, matching "the report
@@ -22,8 +23,13 @@ from datetime import UTC, date, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import FleetImpactHistory, MaintenanceJob
-from cryo.reporting.impact_signals import day_bounds, measured_reclaim_gb
+from cryo.db.models import AuditLog, FleetImpactHistory, MaintenanceJob
+from cryo.reporting.impact_signals import (
+    _RECLAIM_ACTIONS,
+    _SUCCESS_STATUSES,
+    day_bounds,
+    measured_reclaim_gb,
+)
 
 # reporting.daily_report imports this module for the write call, so importing DailyReportData
 # back would be circular; callers pass the fields this needs instead of the whole dataclass.
@@ -85,6 +91,36 @@ def _job_status_counts(session: Session, *, day_start: datetime, day_end: dateti
     return counts.get("succeeded", 0), counts.get("failed", 0)
 
 
+def _bytes_freed_by_engine(
+    session: Session, *, day_start: datetime, day_end: datetime
+) -> dict[str, dict[str, int]]:
+    rows = session.execute(
+        select(
+            func.coalesce(AuditLog.engine, "unknown"),
+            func.sum(AuditLog.actual_bytes_freed),
+            func.count(AuditLog.actual_bytes_freed),
+        )
+        .where(
+            AuditLog.ts >= day_start,
+            AuditLog.ts < day_end,
+            AuditLog.action.in_(_RECLAIM_ACTIONS),
+            AuditLog.status.in_(_SUCCESS_STATUSES),
+            AuditLog.actual_bytes_freed.isnot(None),
+        )
+        .group_by(AuditLog.engine)
+    ).all()
+    by_engine: dict[str, dict[str, int]] = {}
+    for engine, freed, measured in rows:
+        actions_measured = int(measured or 0)
+        if actions_measured == 0 or freed is None:
+            continue
+        by_engine["unknown" if engine is None else str(engine)] = {
+            "bytes": int(freed),
+            "actions_measured": actions_measured,
+        }
+    return by_engine
+
+
 def record_daily_impact(
     session: Session,
     *,
@@ -103,6 +139,7 @@ def record_daily_impact(
     today = impact.today if impact is not None else None
     day_start, day_end = day_bounds(now, 1)
     jobs_succeeded, jobs_failed = _job_status_counts(session, day_start=day_start, day_end=day_end)
+    bytes_freed_by_engine = _bytes_freed_by_engine(session, day_start=day_start, day_end=day_end)
 
     values = {
         "report_date": day_start.date(),
@@ -129,6 +166,7 @@ def record_daily_impact(
                 measured_reclaim_gb(impact) if impact is not None else None
             ),
             "impact_direction": impact.direction if impact is not None else None,
+            "bytes_freed_by_engine": bytes_freed_by_engine,
         },
     }
 
