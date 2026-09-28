@@ -233,6 +233,20 @@ class Settings(BaseSettings):
     maintenance_poll_seconds: int = Field(default=30, ge=5)
     maintenance_rescan_enabled: bool = Field(default=True)
     maintenance_slack_enabled: bool = Field(default=True)
+    scan_dead_table_failure_threshold: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "consecutive_scan_failures at or above this AND zero query_logs rows in "
+            "scan_dead_table_lookback_days -> auto-deactivate the table. Both conditions must "
+            "hold: a table with any recent query traffic is never deactivated regardless of "
+            "scan failure streak. Confirmed live 2026-09-28: 148 tables past this threshold "
+            "(up to 175 consecutive failures) had zero Trino query traffic in 30 days -- "
+            "stale catalog entries (deleted __dbt_tmp/backfill metadata), not live tables "
+            "Cryo was failing to read."
+        ),
+    )
+    scan_dead_table_lookback_days: int = Field(default=30, ge=1)
     dispatch_heartbeat_stall_minutes: int = Field(
         default=1560,
         ge=1,

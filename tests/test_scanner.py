@@ -10,9 +10,9 @@ import pytest
 from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.orm import sessionmaker
 
-from cryo.config import Settings
+from cryo.config import Settings, get_settings
 from cryo.db.base import Base
-from cryo.db.models import Source, Table, TablePartition, TableStats, TableStatsHistory
+from cryo.db.models import QueryLog, Source, Table, TablePartition, TableStats, TableStatsHistory
 from cryo.domain.enums import CostPrecision
 from cryo.scanner.analyze import PartitionAnalysis, analyze_table
 from cryo.scanner.cost import GB, estimate_storage_cost
@@ -708,6 +708,87 @@ def test_record_table_scan_outcome_tracks_and_resets_consecutive_failures() -> N
         assert table.consecutive_scan_failures == 0
         assert table.last_scan_error is None
         assert table.last_scan_error_at is None
+
+
+def test_record_table_scan_outcome_deactivates_dead_table_with_no_query_traffic() -> None:
+    """A table past the failure threshold with zero query_logs rows in the lookback window is
+    a confirmed-dead catalog entry (stale metadata.json), not a live table Cryo is failing to
+    read -- auto-deactivate it so scan_failures/scan_freshness stop flagging it forever."""
+    _patch_sqlite_incompatible_defaults()
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False})
+    with engine.begin() as connection:
+        connection.execute(text("ATTACH DATABASE ':memory:' AS cryo"))
+        Base.metadata.create_all(
+            connection, tables=[Source.__table__, Table.__table__, QueryLog.__table__]
+        )
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    event.listen(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
+
+    source_id = uuid.uuid4()
+    with session_factory() as session:
+        session.add(Source(id=source_id, name="demo", type="rest", config={}))
+        session.commit()
+
+    scan_at = datetime(2026, 1, 1, tzinfo=UTC)
+    kwargs = {"source_id": source_id, "schema_name": "sch", "table_name": "gold_dbt_tmp"}
+    threshold = get_settings().scan_dead_table_failure_threshold
+
+    with session_factory() as session:
+        for n in range(threshold - 1):
+            table = record_table_scan_outcome(session, **kwargs, error="boom", scanned_at=scan_at)
+            session.commit()
+        assert table.is_active is True
+
+        table = record_table_scan_outcome(session, **kwargs, error="boom", scanned_at=scan_at)
+        session.commit()
+        assert table.consecutive_scan_failures == threshold
+        assert table.is_active is False
+
+
+def test_record_table_scan_outcome_leaves_active_table_with_recent_query_traffic() -> None:
+    """A table past the same failure threshold but with a query in the lookback window must
+    never be deactivated -- a real user is still reading it, so the failure has some other
+    cause and hiding the table would be wrong regardless of the streak length."""
+    _patch_sqlite_incompatible_defaults()
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False})
+    with engine.begin() as connection:
+        connection.execute(text("ATTACH DATABASE ':memory:' AS cryo"))
+        Base.metadata.create_all(
+            connection, tables=[Source.__table__, Table.__table__, QueryLog.__table__]
+        )
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    event.listen(session_factory, "before_flush", _assign_missing_uuid_primary_keys)
+
+    source_id = uuid.uuid4()
+    with session_factory() as session:
+        session.add(Source(id=source_id, name="demo", type="rest", config={}))
+        session.commit()
+
+    scan_at = datetime(2026, 1, 1, tzinfo=UTC)
+    kwargs = {"source_id": source_id, "schema_name": "sch", "table_name": "still_queried"}
+    threshold = get_settings().scan_dead_table_failure_threshold
+
+    with session_factory() as session:
+        table = record_table_scan_outcome(session, **kwargs, error="boom", scanned_at=scan_at)
+        session.commit()
+        session.add(
+            QueryLog(
+                id=1,
+                source_id=source_id,
+                table_id=table.id,
+                query_id="q-1",
+                engine="trino",
+                executed_at=scan_at,
+            )
+        )
+        session.commit()
+
+    with session_factory() as session:
+        for _ in range(threshold):
+            table = record_table_scan_outcome(session, **kwargs, error="boom", scanned_at=scan_at)
+            session.commit()
+        assert table.consecutive_scan_failures >= threshold
+        assert table.is_active is True
 
 
 def test_upsert_table_survives_concurrent_insert_race() -> None:
