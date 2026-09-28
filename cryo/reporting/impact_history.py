@@ -114,10 +114,12 @@ def _bytes_freed_by_engine(
         actions_measured = int(measured or 0)
         if actions_measured == 0 or freed is None:
             continue
-        by_engine["unknown" if engine is None else str(engine)] = {
-            "bytes": int(freed),
-            "actions_measured": actions_measured,
-        }
+        # NULL and a stored "unknown" are separate groups that share this key.
+        entry = by_engine.setdefault(
+            "unknown" if engine is None else str(engine), {"bytes": 0, "actions_measured": 0}
+        )
+        entry["bytes"] += int(freed)
+        entry["actions_measured"] += actions_measured
     return by_engine
 
 
