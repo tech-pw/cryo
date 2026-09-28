@@ -922,6 +922,73 @@ def test_cancel_terminates_deferred_jobs_not_just_active_ones(
     assert job_response.json()["error"] == "cancelled"
 
 
+def test_cancel_keeps_a_finished_runs_outcome_but_stops_leftover_jobs(
+    api_db: ApiDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression, 2026-09-28: every nightly run ends "partial", which neither the API nor
+    the UI treated as terminal, so Run detail offered Cancel and the endpoint overwrote the
+    recorded outcome with "cancelled". A finished run keeps its status and finished_at;
+    only jobs still waiting (here a DEFERRED one) are stopped."""
+    from cryo.api import routes
+    from cryo.domain.enums import JobStatus
+    from cryo.queue.locks import InMemoryLockStore
+    from cryo.queue.redis_queue import InMemoryMaintenanceQueue
+
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    _seed_tables(api_db.session_factory, source_id)
+    client = api_db.client
+    preset_id = _create_preset(client, "standard", destination_id, priority=100)
+
+    run_response = client.post(
+        "/api/v1/maintenance/run",
+        headers=OPERATOR_HEADERS,
+        json={
+            "destination_id": str(destination_id),
+            "preset_id": preset_id,
+            "mode": "standard",
+            "selection": {
+                "mode": "filter",
+                "filter": {"field": "small_files_count", "op": ">", "value": 50},
+            },
+        },
+    )
+    run_id = run_response.json()["run_id"]
+    job_id = run_response.json()["job_ids"][0]
+    finished_at = datetime(2026, 9, 28, 1, 30, tzinfo=UTC)
+
+    with api_db.session_factory() as session:
+        run = session.get(MaintenanceRun, uuid.UUID(run_id))
+        job = session.get(MaintenanceJob, uuid.UUID(job_id))
+        assert run is not None and job is not None
+        run.status = "partial"
+        run.finished_at = finished_at
+        job.status = JobStatus.DEFERRED.value
+        job.error = "table_locked"
+        session.commit()
+
+    class _Wiring:
+        def __init__(self) -> None:
+            self.queue = InMemoryMaintenanceQueue()
+            self.lock_store = InMemoryLockStore()
+
+    monkeypatch.setattr(routes, "build_runtime_wiring", lambda: _Wiring())
+
+    cancel_response = client.post(f"/api/v1/runs/{run_id}/cancel", headers=OPERATOR_HEADERS)
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "partial"
+
+    with api_db.session_factory() as session:
+        run = session.get(MaintenanceRun, uuid.UUID(run_id))
+        assert run is not None
+        assert run.status == "partial"
+        assert run.finished_at is not None
+        assert run.finished_at.replace(tzinfo=None) == finished_at.replace(tzinfo=None)
+
+    job_response = client.get(f"/api/v1/jobs/{job_id}", headers=VIEWER_HEADERS)
+    assert job_response.json()["status"] == "skipped"
+    assert job_response.json()["error"] == "cancelled"
+
+
 def test_maintenance_run_with_scheduled_at_creates_scheduled_status(api_db: ApiDb) -> None:
     """A future scheduled_at creates a run in "scheduled" status rather than "queued" --
     cryo/scheduler/service.py's dispatch tick is what actually enqueues it once the time
