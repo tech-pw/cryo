@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import { LoginCallback } from "./LoginCallback";
-import { OidcExchangeError } from "../lib/auth";
+import { OIDC_STATE_STORAGE_KEY, OidcExchangeError } from "../lib/auth";
 
 const navigateMock = vi.fn();
 
@@ -25,6 +25,8 @@ vi.mock("../lib/auth", async () => {
   };
 });
 
+const STATE = "expected-state";
+
 const renderAt = (path: string) =>
   render(
     <MemoryRouter initialEntries={[path]}>
@@ -32,10 +34,14 @@ const renderAt = (path: string) =>
     </MemoryRouter>
   );
 
+const callbackWithCode = (code = "abc123", state = STATE) =>
+  `/auth/callback?code=${code}&state=${state}`;
+
 describe("LoginCallback page", () => {
   beforeEach(() => {
     navigateMock.mockReset();
     completeOidcSignIn.mockReset();
+    sessionStorage.clear();
   });
 
   it("shows a missing-code outcome and no spinner when opened without a code", async () => {
@@ -49,16 +55,19 @@ describe("LoginCallback page", () => {
   });
 
   it("navigates home on a successful exchange", async () => {
+    sessionStorage.setItem(OIDC_STATE_STORAGE_KEY, STATE);
     completeOidcSignIn.mockResolvedValue(undefined);
-    renderAt("/auth/callback?code=abc123");
+    renderAt(callbackWithCode());
 
     await waitFor(() => expect(completeOidcSignIn).toHaveBeenCalledWith("abc123"));
+    expect(sessionStorage.getItem(OIDC_STATE_STORAGE_KEY)).toBeNull();
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/health", { replace: true }));
   });
 
   it("shows a rejected outcome without retry when the exchange is rejected", async () => {
+    sessionStorage.setItem(OIDC_STATE_STORAGE_KEY, STATE);
     completeOidcSignIn.mockRejectedValue(new OidcExchangeError("rejected", "invalid_grant", 400));
-    renderAt("/auth/callback?code=abc123");
+    renderAt(callbackWithCode());
 
     expect(await screen.findByText("Sign-in was rejected")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
@@ -67,8 +76,9 @@ describe("LoginCallback page", () => {
   });
 
   it("shows a network outcome with retry, and retry re-runs the exchange", async () => {
+    sessionStorage.setItem(OIDC_STATE_STORAGE_KEY, STATE);
     completeOidcSignIn.mockRejectedValueOnce(new OidcExchangeError("network", "Could not reach the identity provider."));
-    renderAt("/auth/callback?code=abc123");
+    renderAt(callbackWithCode());
 
     expect(await screen.findByText("Couldn't reach the identity provider")).toBeInTheDocument();
     const retryButton = screen.getByRole("button", { name: "Try again" });
@@ -81,10 +91,37 @@ describe("LoginCallback page", () => {
   });
 
   it("treats unrecognized errors as rejected without exposing raw technical text as the title", async () => {
+    sessionStorage.setItem(OIDC_STATE_STORAGE_KEY, STATE);
     completeOidcSignIn.mockRejectedValue(new Error("boom"));
-    renderAt("/auth/callback?code=abc123");
+    renderAt(callbackWithCode());
 
     expect(await screen.findByText("Sign-in was rejected")).toBeInTheDocument();
     expect(screen.getByText("Technical details")).toBeInTheDocument();
+  });
+
+  it("shows rejected and does not exchange when state is missing", async () => {
+    sessionStorage.setItem(OIDC_STATE_STORAGE_KEY, STATE);
+    renderAt("/auth/callback?code=abc123");
+
+    expect(await screen.findByText("Sign-in was rejected")).toBeInTheDocument();
+    expect(completeOidcSignIn).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(OIDC_STATE_STORAGE_KEY)).toBeNull();
+    expect(screen.queryByText("Technical details")).not.toBeInTheDocument();
+  });
+
+  it("shows rejected and does not exchange when state does not match", async () => {
+    sessionStorage.setItem(OIDC_STATE_STORAGE_KEY, STATE);
+    renderAt("/auth/callback?code=abc123&state=attacker-state");
+
+    expect(await screen.findByText("Sign-in was rejected")).toBeInTheDocument();
+    expect(completeOidcSignIn).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(OIDC_STATE_STORAGE_KEY)).toBeNull();
+  });
+
+  it("shows rejected and does not exchange when no state was stored", async () => {
+    renderAt("/auth/callback?code=abc123&state=attacker-state");
+
+    expect(await screen.findByText("Sign-in was rejected")).toBeInTheDocument();
+    expect(completeOidcSignIn).not.toHaveBeenCalled();
   });
 });

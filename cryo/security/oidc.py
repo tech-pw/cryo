@@ -82,7 +82,12 @@ def verify_oidc_access_token(token: str) -> dict[str, Any] | None:
     return decoded
 
 
-def exchange_authorization_code(*, code: str, redirect_uri: str) -> dict[str, Any] | None:
+def exchange_authorization_code(
+    *,
+    code: str,
+    redirect_uri: str,
+    code_verifier: str | None = None,
+) -> dict[str, Any] | None:
     settings = get_settings()
     if (
         not settings.oidc_issuer_url
@@ -99,15 +104,18 @@ def exchange_authorization_code(*, code: str, redirect_uri: str) -> dict[str, An
     import httpx
 
     try:
+        token_request = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": settings.oidc_client_id,
+            "client_secret": settings.oidc_client_secret,
+        }
+        if code_verifier:
+            token_request["code_verifier"] = code_verifier
         response = httpx.post(
             token_endpoint,
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": redirect_uri,
-                "client_id": settings.oidc_client_id,
-                "client_secret": settings.oidc_client_secret,
-            },
+            data=token_request,
             headers={"Accept": "application/json"},
             timeout=15.0,
         )

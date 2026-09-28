@@ -5,7 +5,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Alert } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { OidcExchangeError, useAuth } from "../lib/auth";
+import { OidcExchangeError, oidcCallbackStateMatches, useAuth } from "../lib/auth";
 
 type Outcome = "busy" | "missing" | "rejected" | "network";
 
@@ -48,8 +48,10 @@ export const LoginCallback = () => {
   const [detail, setDetail] = useState<string | null>(null);
   const recoveryRef = useRef<HTMLDivElement | null>(null);
   const inFlight = useRef(false);
+  const stateStatus = useRef<"unchecked" | "accepted" | "rejected">("unchecked");
 
   const code = params.get("code");
+  const returnedState = params.get("state");
 
   const runExchange = useCallback(
     (authCode: string) => {
@@ -77,6 +79,13 @@ export const LoginCallback = () => {
   useEffect(() => {
     if (!code) {
       setOutcome("missing");
+      return;
+    }
+    if (stateStatus.current === "unchecked") {
+      stateStatus.current = oidcCallbackStateMatches(returnedState) ? "accepted" : "rejected";
+    }
+    if (stateStatus.current !== "accepted") {
+      setOutcome("rejected");
       return;
     }
     runExchange(code);
