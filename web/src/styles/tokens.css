@@ -5,7 +5,8 @@
   --primitive-black: #0b0f16;
 
   --primitive-bg: #ffffff;
-  --primitive-surface: #fbfcfe;
+  --primitive-surface: #ffffff;
+  --primitive-page: #f5fafd;
   --primitive-neutral-100: #f6f8fb;
   --primitive-neutral-150: #f3f5f8;
   --primitive-neutral-200: #eef1f6;
@@ -16,21 +17,25 @@
   --primitive-neutral-700: #545f6d;
   --primitive-neutral-800: #131b24;
 
-  --primitive-accent-500: #3566c8;
-  --primitive-accent-600: #2f5bb7;
-  --primitive-accent-100: #e8effc;
+  --primitive-accent-500: #277abe;
+  --primitive-accent-600: #266fa8;
+  --primitive-accent-100: #eaf7fd;
+  --primitive-link: #266fa8;
+  --primitive-on-tint: #1f5f94;
+  --primitive-focus: #277abe;
+  --primitive-control-border: #808b9e;
 
   --primitive-success: #1e8e5a;
   --primitive-warning: #a9791e;
   --primitive-danger: #b23a2e;
 
   --primitive-grade-a: #1e8e5a;
-  --primitive-grade-b: #3d6fd4;
+  --primitive-grade-b: #277abe;
   --primitive-grade-c: #a9791e;
   --primitive-grade-d: #c1631b;
   --primitive-grade-f: #b23a2e;
 
-  --primitive-chart-primary: #3d6fd4;
+  --primitive-chart-primary: #277abe;
   --primitive-chart-grid: #e8ecf2;
   --primitive-cost-projected: #0f9b8e;
 }
@@ -38,6 +43,7 @@
 [data-theme="dark"] {
   --primitive-bg: #0b0f16;
   --primitive-surface: #0e141f;
+  --primitive-page: #0b0f16;
   --primitive-neutral-100: #0e141f;
   --primitive-neutral-150: #0e141f;
   --primitive-neutral-200: #141c28;
@@ -48,21 +54,25 @@
   --primitive-neutral-700: #a6b2c0;
   --primitive-neutral-800: #e7ecf3;
 
-  --primitive-accent-500: #5b9ce8;
-  --primitive-accent-600: #6faaf0;
-  --primitive-accent-100: #16283f;
+  --primitive-accent-500: #68c1ea;
+  --primitive-accent-600: #90d4f0;
+  --primitive-accent-100: #0f2a40;
+  --primitive-link: #90d4f0;
+  --primitive-on-tint: #90d4f0;
+  --primitive-focus: #277abe;
+  --primitive-control-border: #808b9e;
 
   --primitive-success: #3fbe85;
   --primitive-warning: #e0b03d;
   --primitive-danger: #f0665a;
 
   --primitive-grade-a: #3fbe85;
-  --primitive-grade-b: #5b9ce8;
+  --primitive-grade-b: #68c1ea;
   --primitive-grade-c: #e0b03d;
   --primitive-grade-d: #f0904f;
   --primitive-grade-f: #f0665a;
 
-  --primitive-chart-primary: #5b9ce8;
+  --primitive-chart-primary: #68c1ea;
   --primitive-chart-grid: #202a38;
   --primitive-cost-projected: #35c7b8;
 }
@@ -72,7 +82,7 @@
 :root,
 [data-theme="dark"] {
   --color-bg: var(--primitive-bg);
-  --color-layout-bg: var(--primitive-neutral-150);
+  --color-layout-bg: var(--primitive-page);
   --color-surface-0: var(--primitive-bg);
   --color-surface-1: var(--primitive-surface);
   --color-surface-2: var(--primitive-neutral-150);
@@ -95,11 +105,14 @@
   --color-border-default: var(--primitive-neutral-300);
   --color-border-strong: var(--primitive-neutral-400);
   --color-border: var(--color-border-default);
+  --color-control-border: var(--primitive-control-border);
 
   --color-primary: var(--primitive-accent-500);
   --color-primary-hover: var(--primitive-accent-600);
   --color-primary-soft: var(--primitive-accent-100);
   --color-primary-foreground: var(--primitive-white);
+  --color-link: var(--primitive-link);
+  --color-on-tint: var(--primitive-on-tint);
   --color-accent: var(--color-primary);
   --color-accent-hover: var(--color-primary-hover);
   --color-accent-subtle: var(--color-primary-soft);
@@ -126,7 +139,7 @@
   --grade-f: var(--primitive-grade-f);
 
   --color-focus-ring: var(--focus-ring-color);
-  --focus-ring-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  --focus-ring-color: var(--primitive-focus);
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
 
@@ -138,14 +151,15 @@
   --color-popover-foreground: var(--color-ink);
   --color-secondary: var(--color-surface-sunken);
   --color-secondary-foreground: var(--color-ink);
-  --color-input: var(--color-border-default);
+  --color-input: var(--color-control-border);
   --color-ring: var(--color-focus-ring);
 
-  --sidebar-bg: #0c121b;
-  --sidebar-text: #c7d2de;
-  --sidebar-text-active: #ffffff;
-  --sidebar-accent: #3d6fd4;
-  --sidebar-hover-bg: #141c28;
+  --sidebar-bg: #f5fafd;
+  --sidebar-active-bg: #eaf7fd;
+  --sidebar-text: #5c667a;
+  --sidebar-text-active: #1f5f94;
+  --sidebar-accent: #277abe;
+  --sidebar-hover-bg: #eef1f6;
   --sidebar-hover: var(--sidebar-hover-bg);
 
   /* Legacy aliases — global CSS and shell.css until styles.css is deleted */
@@ -160,7 +174,7 @@
   --muted: var(--color-muted);
   --line: var(--color-border-default);
   --line-strong: var(--color-border-strong);
-  --primary: var(--color-primary);
+  --primary: var(--color-link);
   --primary-hover: var(--color-primary-hover);
   --primary-soft: var(--color-primary-soft);
   --focus-ring: var(--focus-ring-color);
@@ -179,7 +193,19 @@
   --color-surface-raised: var(--primitive-surface);
   --color-primary-foreground: var(--primitive-black);
   --color-destructive-foreground: var(--primitive-black);
-  --focus-ring-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+  --sidebar-bg: #0e141f;
+  --sidebar-active-bg: #0f2a40;
+  --sidebar-text: #a6b2c0;
+  --sidebar-text-active: #90d4f0;
+  --sidebar-accent: #68c1ea;
+  --sidebar-hover-bg: #141c28;
+}
+
+:root .text-primary,
+:root .hover\:text-primary:hover,
+[data-theme="dark"] .text-primary,
+[data-theme="dark"] .hover\:text-primary:hover {
+  color: var(--color-link);
 }
 
 /* Layer 3 — Component */
@@ -197,7 +223,7 @@
   --control-height-sm: 28px;
   --control-height-lg: 36px;
 
-  --table-row-height-default: 40px;
+  --table-row-height-default: 48px;
   --table-row-height-compact: 36px;
 
   --motion-instant: 0ms;
@@ -241,6 +267,8 @@
   --color-border: var(--color-border);
   --color-input: var(--color-input);
   --color-ring: var(--color-ring);
+  --color-link: var(--color-link);
+  --color-on-tint: var(--color-on-tint);
 
   --radius-sm: var(--radius-sm);
   --radius-md: var(--radius-md);
