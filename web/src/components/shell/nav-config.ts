@@ -10,6 +10,7 @@ import {
   EyeOff,
   LayoutDashboard,
   Lightbulb,
+  LineChart,
   Plug,
   RadioTower,
   ScanSearch,
@@ -36,32 +37,33 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Overview",
     items: [
       { href: "/health", label: "Health", icon: BarChart3 },
+      { href: "/impact", label: "Impact", icon: LineChart },
       { href: "/sla", label: "SLA", icon: Clock }
     ]
   },
   {
-    label: "Inventory",
+    label: "Tables",
     items: [{ href: "/catalogs", label: "Catalogs", icon: LayoutDashboard }]
   },
   {
-    label: "Operations",
+    label: "Maintenance",
     items: [
       { href: "/operations", label: "Operations", icon: Activity },
-      { href: "/smart-maintenance", label: "Smart Maintenance", icon: Cloud },
+      { href: "/smart-maintenance", label: "Recommendations", icon: Cloud },
       { href: "/control-room", label: "Control Room", icon: RadioTower }
     ]
   },
   {
     label: "Insights",
     items: [
-      { href: "/ai", label: "Intelligence", icon: Bot },
-      { href: "/similarity", label: "Similarity", icon: Copy },
-      { href: "/dark-tables", label: "Dark Tables", icon: EyeOff },
-      { href: "/governance", label: "Governance", icon: Shield },
-      { href: "/anomalies", label: "Anomalies", icon: TriangleAlert },
-      { href: "/queries", label: "Queries", icon: Zap },
       { href: "/cost", label: "Cost", icon: DollarSign },
+      { href: "/queries", label: "Queries", icon: Zap },
+      { href: "/anomalies", label: "Anomalies", icon: TriangleAlert },
       { href: "/scan-cost", label: "Scan Cost", icon: ScanSearch },
+      { href: "/dark-tables", label: "Dark Tables", icon: EyeOff },
+      { href: "/similarity", label: "Similarity", icon: Copy },
+      { href: "/governance", label: "Governance", icon: Shield },
+      { href: "/ai", label: "Intelligence", icon: Bot },
       { href: "/skillsets", label: "Skillsets", icon: Lightbulb, adminOnly: true }
     ]
   },
@@ -79,7 +81,8 @@ const ACTIVE_PREFIXES: Array<{ prefix: string; navHref: string }> = [
   { prefix: "/runs", navHref: "/operations" },
   { prefix: "/presets", navHref: "/operations" },
   { prefix: "/jobs", navHref: "/operations" },
-  { prefix: "/search", navHref: "/catalogs" }
+  { prefix: "/search", navHref: "/catalogs" },
+  { prefix: "/impact", navHref: "/impact" }
 ];
 
 export const resolveActiveNavHref = (pathname: string): string => {
