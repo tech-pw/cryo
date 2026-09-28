@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CryoTooltipProvider } from "../../components/ui/tooltip";
@@ -78,19 +78,55 @@ describe("OperationsHome", () => {
     expect(screen.queryByText("Queued")).not.toBeInTheDocument();
   });
 
-  it("explains why 'New preset' is disabled via an accessible tooltip", async () => {
+  it("shows the Nightly maintenance row from batch runs and no dead preset control", async () => {
+    const older: RunRead = {
+      id: "aaaaaaaa-0000-0000-0000-000000000001",
+      kind: "scheduled",
+      status: "failed",
+      trigger: "batch-cron",
+      created_at: "2026-09-26T02:00:00Z",
+      summary: { pipeline: "batch" }
+    };
+    const newer: RunRead = {
+      id: "bbbbbbbb-0000-0000-0000-000000000002",
+      kind: "scheduled",
+      status: "partial",
+      trigger: "batch-cron",
+      created_at: "2026-09-27T02:00:00Z",
+      summary: { pipeline: "batch" }
+    };
+    const notBatch: RunRead = {
+      id: "cccccccc-0000-0000-0000-000000000003",
+      kind: "adhoc",
+      status: "succeeded",
+      created_at: "2026-09-28T02:00:00Z",
+      summary: { pipeline: "other" }
+    };
+
     vi.mocked(getScannerStatus).mockResolvedValue(scannerStatus);
     vi.mocked(listPresets).mockResolvedValue([]);
-    vi.mocked(listRuns).mockResolvedValue([]);
+    vi.mocked(listRuns).mockImplementation(async (_api, args) => (args?.kind === "scan" ? [] : [older, notBatch, newer]));
 
     renderPage();
 
-    const trigger = screen.getByText("New preset").closest("span");
-    expect(trigger).toBeTruthy();
-    fireEvent.focus(trigger as HTMLElement);
-    await waitFor(() => {
-      expect(screen.getByText(/preset creation isn't available/i)).toBeInTheDocument();
-    });
+    const nightlyLink = await screen.findByRole("link", { name: "Nightly maintenance" });
+    const row = nightlyLink.closest("tr");
+    expect(row).toBeTruthy();
+    const nightlyRow = within(row as HTMLElement);
+
+    expect(nightlyLink).toHaveAttribute("href", "/operations/runs/bbbbbbbb-0000-0000-0000-000000000002");
+    expect(nightlyRow.getByText("Nightly (CronJob)")).toBeInTheDocument();
+    expect(nightlyRow.getByText("partial")).toBeInTheDocument();
+    expect(nightlyRow.getByRole("list", { name: /last 2 runs/i })).toBeInTheDocument();
+    expect(nightlyRow.getByRole("link", { name: "Open" })).toHaveAttribute(
+      "href",
+      "/operations/runs/bbbbbbbb-0000-0000-0000-000000000002"
+    );
+    expect(screen.getByText("Maintenance is driven by the nightly batch.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /new preset/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/new preset/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/nothing configured/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/preset creation isn't available/i)).not.toBeInTheDocument();
   });
 
   it("switching to the runs tab persists the tab selection in the URL", async () => {

@@ -1,4 +1,4 @@
-import { Plus, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -13,7 +13,6 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { DataTable } from "../../components/ui/data-table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { useAuth } from "../../lib/auth";
 import { cn } from "../../lib/cn";
 import { formatNumber, formatTime } from "../../lib/format";
@@ -24,6 +23,14 @@ import {
   shortRunId,
   targetLabel
 } from "../../lib/operations";
+import { ActionsTab } from "./ActionsTab";
+import {
+  latestNightlyRunPath,
+  NIGHTLY_SCHEDULE_LABEL,
+  NIGHTLY_WORKFLOW_NAME,
+  nightlyBatchRuns,
+  NO_PRESETS_COPY
+} from "./nightlyBatch";
 
 const RUN_FILTER_VALUES = new Set(["all", "failed", "active"]);
 const isRunFilter = (value: string | null): value is "all" | "failed" | "active" =>
@@ -46,8 +53,9 @@ type WorkflowRow = {
   schedule: string;
   enabled: boolean;
   runs: RunRead[];
-  to: string;
+  to: string | null;
   isScanner: boolean;
+  isNightly: boolean;
   preset?: PresetRead;
 };
 
@@ -56,7 +64,8 @@ const RUNS_PAGE_SIZE = 12;
 export const OperationsHome = () => {
   const { api, token, role } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = searchParams.get("tab") === "runs" ? "runs" : "workflows";
+  const tabParam = searchParams.get("tab");
+  const tab = tabParam === "runs" || tabParam === "actions" ? tabParam : "workflows";
   const runFilterParam = searchParams.get("runFilter");
   const runFilter = isRunFilter(runFilterParam) ? runFilterParam : "all";
   const runsPageParam = Number.parseInt(searchParams.get("runsPage") ?? "0", 10);
@@ -156,7 +165,21 @@ export const OperationsHome = () => {
     return filteredRuns.slice(start, start + RUNS_PAGE_SIZE);
   }, [filteredRuns, runsPage]);
 
+  const nightlyRuns = useMemo(() => nightlyBatchRuns(runs), [runs]);
+  const noPresets = presets.isSuccess && (presets.data ?? []).length === 0;
+
   const workflowRows = useMemo<WorkflowRow[]>(() => {
+    const nightlyRow: WorkflowRow = {
+      key: "nightly",
+      name: NIGHTLY_WORKFLOW_NAME,
+      description: "Fleet Iceberg maintenance",
+      schedule: NIGHTLY_SCHEDULE_LABEL,
+      enabled: true,
+      runs: nightlyRuns,
+      to: latestNightlyRunPath(nightlyRuns),
+      isScanner: false,
+      isNightly: true
+    };
     const scannerRow: WorkflowRow = {
       key: "scanner",
       name: "Scanner",
@@ -165,7 +188,8 @@ export const OperationsHome = () => {
       enabled: scannerStatus.data?.config?.enabled ?? false,
       runs: scanRuns.data ?? [],
       to: "/operations/scanner",
-      isScanner: true
+      isScanner: true,
+      isNightly: false
     };
     const presetRows = (presets.data ?? []).map((preset: PresetRead) => ({
       key: preset.id,
@@ -176,10 +200,11 @@ export const OperationsHome = () => {
       runs: runsByPreset.get(preset.id) ?? [],
       to: `/operations/presets/${preset.id}`,
       isScanner: false as const,
+      isNightly: false as const,
       preset
     }));
-    return [scannerRow, ...presetRows];
-  }, [presets.data, runsByPreset, scanRuns.data, scannerStatus.data]);
+    return [nightlyRow, scannerRow, ...presetRows];
+  }, [nightlyRuns, presets.data, runsByPreset, scanRuns.data, scannerStatus.data]);
 
   const runColumns = useMemo<ColumnDef<RunRead, unknown>[]>(
     () => [
@@ -256,14 +281,22 @@ export const OperationsHome = () => {
         cell: ({ row }) => (
           <div className="flex flex-col gap-0.5">
             <div className="flex items-center gap-1.5">
-              <Link
-                to={row.original.to}
-                className="font-semibold text-primary hover:underline"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {row.original.name}
-              </Link>
-              {row.original.isScanner ? <Badge variant="secondary">System</Badge> : row.original.enabled ? null : <Badge variant="outline">Paused</Badge>}
+              {row.original.to ? (
+                <Link
+                  to={row.original.to}
+                  className="font-semibold text-primary hover:underline"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {row.original.name}
+                </Link>
+              ) : (
+                <span className="font-semibold">{row.original.name}</span>
+              )}
+              {row.original.isScanner || row.original.isNightly ? (
+                <Badge variant="secondary">System</Badge>
+              ) : row.original.enabled ? null : (
+                <Badge variant="outline">Paused</Badge>
+              )}
             </div>
             <span className="secondary-line text-xs text-muted-foreground">{row.original.description}</span>
           </div>
@@ -291,14 +324,16 @@ export const OperationsHome = () => {
         size: 160,
         cell: ({ row }) => (
           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-            <Button size="sm" variant="secondary" asChild>
-              <Link to={row.original.to}>Open</Link>
-            </Button>
+            {row.original.to ? (
+              <Button size="sm" variant="secondary" asChild>
+                <Link to={row.original.to}>Open</Link>
+              </Button>
+            ) : null}
             {row.original.isScanner ? (
               <Button size="sm" variant="primary" asChild>
                 <Link to="/operations/scanner">Trigger</Link>
               </Button>
-            ) : (
+            ) : row.original.isNightly || !row.original.to ? null : (
               <Button size="sm" variant="secondary" asChild>
                 <Link to={`${row.original.to}?tab=config`}>Edit</Link>
               </Button>
@@ -318,27 +353,12 @@ export const OperationsHome = () => {
         rootCrumb={{ label: "Operations", to: "/operations" }}
         actions={
           role !== "viewer" ? (
-            <div className="flex items-center gap-2">
-              <Button variant="secondary" asChild>
-                <Link to="/operations/scanner">
-                  <RefreshCw className="size-4" aria-hidden />
-                  Scanner
-                </Link>
-              </Button>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span tabIndex={0}>
-                    <Button variant="primary" disabled>
-                      <Plus className="size-4" aria-hidden />
-                      New preset
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  Preset creation isn&apos;t available in this UI yet. Ask an admin to create presets via the API.
-                </TooltipContent>
-              </Tooltip>
-            </div>
+            <Button variant="secondary" asChild>
+              <Link to="/operations/scanner">
+                <RefreshCw className="size-4" aria-hidden />
+                Scanner
+              </Link>
+            </Button>
           ) : undefined
         }
       />
@@ -420,10 +440,10 @@ export const OperationsHome = () => {
           onValueChange={(key) =>
             setSearchParams((prev) => {
               const next = new URLSearchParams(prev);
-              if (key === "runs") {
-                next.set("tab", "runs");
-              } else {
+              if (key === "workflows") {
                 next.delete("tab");
+              } else {
+                next.set("tab", key);
               }
               return next;
             })
@@ -432,17 +452,21 @@ export const OperationsHome = () => {
           <TabsList>
             <TabsTrigger value="workflows">Workflows</TabsTrigger>
             <TabsTrigger value="runs">All runs</TabsTrigger>
+            <TabsTrigger value="actions">Actions</TabsTrigger>
           </TabsList>
 
           <TabsContent value="workflows">
-            <DataTable
-              columns={workflowColumns}
-              data={workflowRows}
-              density="compact"
-              getRowId={(row) => row.key}
-              emptyTitle="No workflows"
-              emptyDescription="Scanner and maintenance presets appear here."
-            />
+            <div className="space-y-2">
+              {noPresets ? <p className="text-sm text-muted-foreground">{NO_PRESETS_COPY}</p> : null}
+              <DataTable
+                columns={workflowColumns}
+                data={workflowRows}
+                density="compact"
+                getRowId={(row) => row.key}
+                emptyTitle="No workflows"
+                emptyDescription="Scanner and maintenance presets appear here."
+              />
+            </div>
           </TabsContent>
 
           <TabsContent value="runs">
@@ -486,6 +510,10 @@ export const OperationsHome = () => {
                 }}
               />
             </div>
+          </TabsContent>
+
+          <TabsContent value="actions">
+            <ActionsTab />
           </TabsContent>
         </Tabs>
       </div>
