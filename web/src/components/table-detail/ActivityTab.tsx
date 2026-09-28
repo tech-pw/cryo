@@ -3,7 +3,20 @@ import { EmptyState } from "../common";
 import { Badge } from "../ui/badge";
 import { actionIcon } from "./helpers";
 import { ChartCard } from "./ChartCard";
-import { formatDuration, formatTime } from "../../lib/format";
+import { formatBytesGb, formatDuration, formatTime } from "../../lib/format";
+
+const BYTE_ACTIONS = new Set([
+  "optimize",
+  "remove_orphan_files",
+  "convert_deletes",
+  "rewrite_position_deletes"
+]);
+
+const byteLabel = (item: AuditEntry) => {
+  if (!BYTE_ACTIONS.has(item.action ?? "")) return null;
+  if (item.actual_bytes_freed == null) return <> · Bytes unknown</>;
+  return <> · Freed {formatBytesGb(item.actual_bytes_freed)}</>;
+};
 
 interface ActivityTabProps {
   entries: AuditEntry[] | undefined;
@@ -48,6 +61,10 @@ export const ActivityTab = ({ entries }: ActivityTabProps) => {
                       {formatTime(item.ts ?? item.created_at)}
                       {item.engine ? <> · {item.engine}</> : null}
                       {item.duration_ms ? <> · {formatDuration(item.duration_ms)}</> : null}
+                      {item.input_files_count != null && item.output_files_count != null
+                        ? <> · {item.input_files_count} → {item.output_files_count} files</>
+                        : null}
+                      {byteLabel(item)}
                     </div>
                   </div>
                 </div>

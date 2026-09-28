@@ -575,6 +575,9 @@ export interface AuditEntry {
   detail?: string | JsonObject | null;
   engine?: string | null;
   duration_ms?: number | null;
+  actual_bytes_freed?: number | null;
+  input_files_count?: number | null;
+  output_files_count?: number | null;
   actor?: string | null;
 }
 

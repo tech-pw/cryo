@@ -273,6 +273,11 @@ NATIVE_ENGINE_DISABLED_DETAIL = (
 )
 
 
+def fallback_is_spark(engine: object) -> bool:
+    """A disabled native destination may fall back to Spark, never to Trino."""
+    return str(engine).lower() in ("spark_emr", "enginetype.spark_emr")
+
+
 def _native_engine_globally_enabled() -> bool:
     from cryo.config import get_settings
 

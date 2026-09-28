@@ -25,8 +25,13 @@ export const realizedSavingsLabel = (run?: RunRead | null): string | null => {
   const succeeded = run?.realized_actions_succeeded;
   const measured = run?.realized_actions_measured;
   if (succeeded == null || measured == null) return null;
-  if (measured === 0) return succeeded > 0 ? "Realized savings unmeasured" : null;
-  const freed = `Freed ${formatBytesGb(run?.realized_bytes_freed ?? 0)}`;
+  if (measured === 0) return succeeded > 0 ? "Bytes unknown" : null;
+  if (run?.realized_bytes_freed == null) {
+    return measured < succeeded
+      ? `Bytes unknown (${measured} of ${succeeded} actions measured)`
+      : "Bytes unknown";
+  }
+  const freed = `Freed ${formatBytesGb(run.realized_bytes_freed)}`;
   if (measured < succeeded) return `${freed} (${measured} of ${succeeded} actions measured)`;
   return freed;
 };

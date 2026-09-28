@@ -304,7 +304,7 @@ export const DatalakeHealth = () => {
         <Alert
           className="page-alert"
           variant="info"
-          title="Dashboard endpoint is not available yet; showing a fallback view from /tables."
+          title="Datalake dashboard failed; showing a fallback view from /tables."
         />
       ) : null}
       <QueryErrorAlert error={dashboard.error} title="Failed to load datalake dashboard" />

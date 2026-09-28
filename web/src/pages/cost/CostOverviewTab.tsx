@@ -275,7 +275,7 @@ export const CostOverviewTab = () => {
         <Alert
           className="page-alert mb-3"
           variant="info"
-          title="Cost dashboard endpoint is not available yet; showing a fallback view from /tables."
+          title="Cost dashboard failed; showing a fallback view from /tables."
         />
       ) : null}
       {isLoading ? (
