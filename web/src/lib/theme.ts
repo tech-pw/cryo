@@ -1,35 +1,35 @@
-/** Hex palette for Ant Design tokens - Light theme */
+const THEME_STORAGE_KEY = "cryo-theme";
+
 export const cryoColorsLight = {
   bg: "#ffffff",
-  layoutBg: "#f3f5f8",
+  layoutBg: "#f5fafd",
   surfaceSunken: "#f6f8fb",
-  surface: "#fafafa",
+  surface: "#ffffff",
   panel: "#f3f5f8",
   panelStrong: "#eef1f6",
   ink: "#131b24",
   inkSoft: "#545f6d",
-  inkFaint: "#8791a0",
+  inkFaint: "#8b95a8",
   muted: "#5c667a",
   mutedSubtle: "#8b95a8",
   border: "#e1e6ed",
   borderStrong: "#c7d0dc",
-  primary: "#3d6fd4",
-  primaryHover: "#3566c8",
-  primarySoft: "#e8effc",
+  primary: "#277abe",
+  primaryHover: "#266fa8",
+  primarySoft: "#eaf7fd",
   tableHeader: "#f6f8fb",
   chartGrid: "#e8ecf2",
-  chartPrimary: "#3d6fd4",
+  chartPrimary: "#277abe",
   gradeA: "#1e8e5a",
-  gradeB: "#3d6fd4",
+  gradeB: "#277abe",
   gradeC: "#a9791e",
   gradeD: "#c1631b",
   gradeF: "#b23a2e",
-  costCurrent: "#3d6fd4",
+  costCurrent: "#277abe",
   costProjected: "#0f9b8e",
   savings: "#1e8e5a"
 } as const;
 
-/** Hex palette for Ant Design tokens - Dark theme */
 export const cryoColorsDark = {
   bg: "#0b0f16",
   layoutBg: "#0b0f16",
@@ -44,29 +44,38 @@ export const cryoColorsDark = {
   mutedSubtle: "#6e7a8a",
   border: "#202a38",
   borderStrong: "#2e3b4c",
-  primary: "#5b9ce8",
-  primaryHover: "#6faaf0",
-  primarySoft: "#16283f",
+  primary: "#68c1ea",
+  primaryHover: "#90d4f0",
+  primarySoft: "#0f2a40",
   tableHeader: "#0e141f",
   chartGrid: "#202a38",
-  chartPrimary: "#5b9ce8",
+  chartPrimary: "#68c1ea",
   gradeA: "#3fbe85",
-  gradeB: "#5b9ce8",
+  gradeB: "#68c1ea",
   gradeC: "#e0b03d",
   gradeD: "#f0904f",
   gradeF: "#f0665a",
-  costCurrent: "#5b9ce8",
+  costCurrent: "#68c1ea",
   costProjected: "#35c7b8",
   savings: "#3fbe85"
 } as const;
 
-/** Always-dark sidebar colors */
-export const sidebarColors = {
-  bg: "#0c121b",
-  text: "#c7d2de",
-  textActive: "#ffffff",
-  accent: "#3d6fd4",
-  hoverBg: "#141c28"
+const sidebarLight = {
+  bg: "#f5fafd",
+  text: "#5c667a",
+  textActive: "#1f5f94",
+  accent: "#277abe",
+  hoverBg: "#eef1f6",
+  activeBg: "#eaf7fd"
+} as const;
+
+const sidebarDark = {
+  bg: "#0e141f",
+  text: "#a6b2c0",
+  textActive: "#90d4f0",
+  accent: "#68c1ea",
+  hoverBg: "#141c28",
+  activeBg: "#0f2a40"
 } as const;
 
 export type CryoColors = {
@@ -99,15 +108,137 @@ export type CryoColors = {
   savings: string;
 };
 
-/** Default to light theme for backwards compatibility */
-export const cryoColors = cryoColorsLight;
+const CSS_VAR_BY_KEY: Record<keyof CryoColors, string> = {
+  bg: "--color-bg",
+  layoutBg: "--color-layout-bg",
+  surfaceSunken: "--color-surface-sunken",
+  surface: "--primitive-surface",
+  panel: "--color-panel",
+  panelStrong: "--color-panel-strong",
+  ink: "--color-ink",
+  inkSoft: "--color-ink-soft",
+  inkFaint: "--color-ink-faint",
+  muted: "--color-muted",
+  mutedSubtle: "--color-muted-subtle",
+  border: "--color-border-default",
+  borderStrong: "--color-border-strong",
+  primary: "--color-primary",
+  primaryHover: "--color-primary-hover",
+  primarySoft: "--color-primary-soft",
+  tableHeader: "--color-table-header",
+  chartGrid: "--color-chart-grid",
+  chartPrimary: "--color-chart-primary",
+  gradeA: "--grade-a",
+  gradeB: "--grade-b",
+  gradeC: "--grade-c",
+  gradeD: "--grade-d",
+  gradeF: "--grade-f",
+  costCurrent: "--color-cost-current",
+  costProjected: "--color-cost-projected",
+  savings: "--color-savings"
+};
 
-export const operationColors: Record<string, string> = {
-  optimize: "#3d6fd4",
+export type ChartTheme = "light" | "dark";
+
+export const resolveChartTheme = (): ChartTheme => {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "light" || stored === "dark") return stored;
+  } catch {
+    // localStorage unavailable
+  }
+  if (typeof document !== "undefined") {
+    const attr = document.documentElement.getAttribute("data-theme");
+    if (attr === "light" || attr === "dark") return attr;
+  }
+  if (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
+    return "dark";
+  }
+  return "light";
+};
+
+const isCssColor = (value: string): boolean => /^#|^rgb|^hsl/i.test(value) && !value.includes("var(");
+
+const readCssColor = (variable: string): string | null => {
+  if (typeof document === "undefined") return null;
+  const host = document.body ?? document.documentElement;
+  const probe = document.createElement("span");
+  const control = document.createElement("span");
+  try {
+    probe.style.color = `var(${variable})`;
+    control.style.color = "var(--cryo-missing-token)";
+    host.append(probe, control);
+    const resolved = getComputedStyle(probe).color.trim();
+    const missing = getComputedStyle(control).color.trim();
+    if (!resolved || resolved === missing || !isCssColor(resolved)) return null;
+    return resolved;
+  } catch {
+    return null;
+  } finally {
+    probe.remove();
+    control.remove();
+  }
+};
+
+const paletteFor = (theme: ChartTheme): CryoColors => (theme === "dark" ? cryoColorsDark : cryoColorsLight);
+
+const loadColors = (theme: ChartTheme): CryoColors => {
+  const fallback = paletteFor(theme);
+  if (typeof document === "undefined") return fallback;
+  const attr = document.documentElement.getAttribute("data-theme");
+  if (attr !== theme) return fallback;
+  const next: CryoColors = { ...fallback };
+  for (const key of Object.keys(CSS_VAR_BY_KEY) as (keyof CryoColors)[]) {
+    const live = readCssColor(CSS_VAR_BY_KEY[key]);
+    if (live) next[key] = live;
+  }
+  return next;
+};
+
+let colorCache: { key: string; colors: CryoColors } | null = null;
+
+export const readActiveColors = (): CryoColors => {
+  const theme = resolveChartTheme();
+  const attr = typeof document === "undefined" ? "" : (document.documentElement.getAttribute("data-theme") ?? "");
+  const key = `${theme}|${attr}`;
+  if (colorCache?.key === key) return colorCache.colors;
+  const colors = loadColors(theme);
+  colorCache = { key, colors };
+  return colors;
+};
+
+export const cryoColors: CryoColors = new Proxy(cryoColorsLight, {
+  get(target, prop, receiver) {
+    if (typeof prop === "string" && prop in target) {
+      return readActiveColors()[prop as keyof CryoColors];
+    }
+    return Reflect.get(target, prop, receiver);
+  }
+});
+
+export const sidebarColors = new Proxy(sidebarLight, {
+  get(target, prop, receiver) {
+    const palette = resolveChartTheme() === "dark" ? sidebarDark : sidebarLight;
+    if (typeof prop === "string" && prop in palette) {
+      return palette[prop as keyof typeof palette];
+    }
+    return Reflect.get(target, prop, receiver);
+  }
+});
+
+const operationColorBase: Record<string, string> = {
+  optimize: "#277abe",
   expire_snapshots: "#2f9e6b",
   remove_orphan_files: "#c9a227",
   optimize_manifests: "#8b5cf6"
 };
+
+export const operationColors: Record<string, string> = new Proxy(operationColorBase, {
+  get(target, prop, receiver) {
+    if (prop === "optimize") return readActiveColors().chartPrimary;
+    return Reflect.get(target, prop, receiver);
+  }
+});
 
 export const operationLabels: Record<string, string> = {
   optimize: "Compaction",
@@ -136,25 +267,37 @@ export const statusFromThreshold = (
 };
 
 export const sharedPieColors = [
-  cryoColors.gradeA,
-  cryoColors.gradeB,
-  cryoColors.gradeC,
-  cryoColors.gradeD,
-  cryoColors.gradeF
+  cryoColorsLight.gradeA,
+  cryoColorsLight.gradeB,
+  cryoColorsLight.gradeC,
+  cryoColorsLight.gradeD,
+  cryoColorsLight.gradeF
 ] as const;
 
-export const chartAxisTick = { fill: cryoColors.muted, fontSize: 11 };
+export const chartAxisTick = {
+  get fill() {
+    return readActiveColors().muted;
+  },
+  fontSize: 11
+};
 
 export const chartTooltipProps = {
-  contentStyle: {
-    background: cryoColors.bg,
-    border: `1px solid ${cryoColors.border}`,
-    borderRadius: 6,
-    color: cryoColors.ink,
-    boxShadow: "0 4px 12px rgb(28 36 51 / 10%)"
+  get contentStyle() {
+    const colors = readActiveColors();
+    return {
+      background: colors.bg,
+      border: `1px solid ${colors.border}`,
+      borderRadius: 6,
+      color: colors.ink,
+      boxShadow: "0 4px 12px rgb(28 36 51 / 10%)"
+    };
   },
-  itemStyle: { color: cryoColors.muted },
-  labelStyle: { color: cryoColors.ink, fontWeight: 600 }
+  get itemStyle() {
+    return { color: readActiveColors().muted };
+  },
+  get labelStyle() {
+    return { color: readActiveColors().ink, fontWeight: 600 as const };
+  }
 };
 
 export const getChartAxisTick = (colors: CryoColors) => ({ fill: colors.muted, fontSize: 11 });

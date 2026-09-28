@@ -13,10 +13,6 @@
   font-size: 12px;
 }
 
-.cryo-page-header__breadcrumbs .ant-breadcrumb {
-  margin-bottom: 0;
-}
-
 .cryo-page-header__body {
   display: flex;
   min-height: 48px;

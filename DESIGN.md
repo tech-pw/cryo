@@ -2,44 +2,52 @@
 
 ## Visual Strategy
 
-Cryo is a dense, restrained operations dashboard with a dark, always-on navigation rail and neutral content surfaces. The UI should feel calm and precise: operators should scan health and maintenance posture quickly without decorative noise.
+Cryo is a dense, restrained operations dashboard. The shell is light: a frost page, white cards, and a light sidebar. Plan owner decision, 2026-09-28: retire the dark navigation rail and replace the cobalt accent with Apache Iceberg blue. Status colours stay independent of that blue so health and failure never read as decoration.
 
-Use cool neutral surfaces, one cobalt primary, and explicit status colors for health/state transitions. Color is for action, selection, risk, and system state only.
+The UI should feel calm and precise: operators scan health and maintenance posture without decorative noise. Colour is for action, selection, risk, and system state only. PRODUCT.md bans still apply: no gradients, glass, hero metrics, decorative motion, or illustrations.
 
 ## Color Tokens
 
-Use the shipped Hex token system as canonical (see `web/src/styles.css` and `web/src/lib/theme.ts`). Keep base UI near-neutral and reserve saturated color for primary actions, selected rows, active nav, alerts, charts, and health grades.
+Canonical tokens live in `web/src/styles/tokens.css`. `web/src/lib/theme.ts` reads those CSS variables, with the same hex as fallback, so charts follow light and dark. Keep base UI near-neutral. Iceberg blue is for primary actions, selected nav, links, charts, and grade B. Do not repaint `--primitive-neutral-150`; the page colour is `--primitive-page`, aliased by `--color-layout-bg`. Cards use `--primitive-surface`.
 
 ```css
 :root {
-  --bg: #ffffff;
-  --layout-bg: #f3f5f8;
-  --panel: #f3f5f8;
-  --line: #e1e6ed;
-  --ink: #131b24;
-  --muted: #5c667a;
-  --primary: #3566c8;
-  --primary-hover: #2f5bb7;
-  --primary-soft: #e8effc;
-  --sidebar-bg: #0c121b;
-  --sidebar-text: #c7d2de;
-  --sidebar-text-active: #ffffff;
+  --primitive-page: #f5fafd;
+  --primitive-surface: #ffffff;
+  --primitive-neutral-150: #f3f5f8;
+  --color-layout-bg: var(--primitive-page);
+  --color-panel: var(--primitive-neutral-150);
+  --primitive-accent-500: #277abe;
+  --primitive-accent-600: #266fa8;
+  --primitive-accent-100: #eaf7fd;
+  --color-link: #266fa8;
+  --color-on-tint: #1f5f94;
+  --color-control-border: #808b9e;
+  --focus-ring-color: #277abe;
+  --sidebar-bg: #f5fafd;
+  --sidebar-active-bg: #eaf7fd;
+  --sidebar-text: #5c667a;
+  --sidebar-text-active: #1f5f94;
 
-  --grade-a: #2e9f6b;
-  --grade-b: #2f8fbd;
-  --grade-c: #c08c2d;
-  --grade-d: #c9791e;
-  --grade-e: #c2562b;
+  --grade-a: #1e8e5a;
+  --grade-b: #277abe;
+  --grade-c: #a9791e;
+  --grade-d: #c1631b;
   --grade-f: #b23a2e;
 }
 ```
 
-Contrast rules:
-- `--color-ink` on `--color-bg`, `--color-surface`, and `--color-panel` must exceed 7:1.
+Dark mode uses the same roles: page `#0b0f16`, sidebar `#0e141f`, solid `#68c1ea`, link and active text `#90d4f0` on `#0f2a40`. Success, warning, danger, and grades A, C, D, and F are unchanged. Legacy `--primary` is the link colour so older CSS text meets 4.5:1; `--color-primary` stays the solid `#277abe`.
+
+Contrast rules (WCAG 2.2, checked by `web/src/styles/tokens.contrast.test.ts`):
+- Text pairs are at least 4.5:1. Active and selected text on frost tints uses `#1f5f94`, not `#277abe` (4.17:1 on `#eaf7fd`, fails). Links and primary text on the frost page use `#266fa8` (5.09:1), not `#277abe` (4.33:1, fails).
+- White on `#277abe` is 4.55:1 for button labels. Dark button text is near-black on `#68c1ea`.
+- Sidebar text `#5c667a` on `#f5fafd` is 5.49:1. Muted `#5c667a` on white is 5.77:1.
+- `--color-ink` on page, card, and panel surfaces stays above 7:1.
 - `--color-muted` is for secondary labels and must stay readable at 4.5:1 on main surfaces; use `--color-muted-subtle` only for icons, dividers, metadata, or disabled text with another affordance.
-- Text on saturated fills must meet AA contrast. The light theme uses white on its darker cobalt;
-  the dark theme uses near-black on its lighter cobalt and status fills.
-- Never communicate grade, error, warning, success, or running state through color alone.
+- Form control borders (`input`, `select`, `checkbox`) use `#808b9e` so the boundary is at least 3:1 on white, the frost page, and selected frost. Card and table borders stay decorative.
+- Focus rings use `#277abe`, never the light ice blues.
+- Never communicate grade, error, warning, success, or running state through colour alone.
 
 ## Typography
 
@@ -57,14 +65,16 @@ Enable `font-variant-numeric: tabular-nums` for metrics, durations, sizes, count
 
 ## Layout
 
-Use a compact app shell: fixed left sidebar for primary sections, topbar for environment, search, user, and global actions, and a scrollable content region. Keep navigation familiar and stable.
+Use a compact app shell: a fixed light sidebar for primary sections, a white topbar for environment, search, user, and global actions, and a scrollable frost content region. Keep navigation familiar and stable. The sidebar is not a dark rail (plan owner decision, 2026-09-28).
 
 Recommended frame:
-- Sidebar width: 224px desktop, collapsible to icons at tablet, drawer on mobile.
-- Topbar height: 48px.
+- Sidebar width: 224px desktop, collapsible to icons at tablet, drawer on mobile. Frost background (`--sidebar-bg`), 1px right border, active item as a frost pill with deep-blue text and icon, section labels in muted text without uppercase.
+- Topbar height: 48px, white, 1px bottom border. In dark mode the topbar follows `--color-bg`, not a forced white.
+- Page background: frost (`--color-layout-bg` / `--primitive-page`), not `--primitive-neutral-150`.
 - Page padding: 20-24px desktop, 16px tablet, 12px mobile.
 - Content max width: none for tables and consoles; 960-1120px for forms and settings.
-- Use one surface layer for the main workspace and a subtle panel layer for filters/toolbars.
+- Cards sit on the frost page: white, 12px radius, 1px border, faint shadow. Panels and sunken toolbars stay on `--primitive-neutral-150`.
+- Operator tables keep compact density. Do not force comfortable rows onto runs, jobs, actions, or catalog.
 
 Responsive rules:
 - Table-first screens remain table-first on desktop and tablet; horizontal overflow is acceptable when paired with sticky key columns.
@@ -75,11 +85,11 @@ Responsive rules:
 
 ## Data Tables
 
-Tables are the primary product surface. Use AntD Table with server-side pagination, sorting, filtering, and row selection. Prefer virtualization for large datalakes.
+Tables are the primary product surface. Use the shared TanStack `DataTable` in `web/src/components/ui/data-table.tsx`. It is built on Radix primitives and styled with the CSS variables in `web/src/styles/tokens.css`. Pass pagination and row selection into `DataTable`; keep sorting and filtering in the page toolbar. Do not add a one-off table.
 
 Density:
-- Default row height: 40px.
-- Compact row height: 36px for operator-heavy screens.
+- Default row height: `--table-row-height-default` (48px) on table and detail pages. Operator tables (runs, jobs, actions, catalog) use compact density (36px).
+- Compact row height: `--table-row-height-compact` (36px) for operator-heavy screens.
 - Sticky header, sticky first column for table name, and sticky bulk action bar.
 - Align numbers right, labels left, statuses center or left depending on scanability.
 - Use tabular numerics, compact units, and clear empty cells (`Not scanned`, `None`, `Unknown`) instead of visual blanks.
@@ -105,20 +115,11 @@ must remain neutral and must not lift on hover unless the entire card is interac
 one label, one dominant tabular value, and optional context/delta. Emphasis uses a stronger border
 and a pale primary surface rather than a decorative side stripe.
 
-### AntD Tokens
+### Tokens And Primitives
 
-Map AntD through the Cryo tokens rather than styling each component ad hoc:
-- `colorPrimary`: `--color-primary`
-- `colorBgBase`: `--color-bg`
-- `colorBgContainer`: `--color-surface-raised`
-- `colorBorder`: `--color-border`
-- `colorText`: `--color-ink`
-- `colorTextSecondary`: `--color-muted`
-- `borderRadius`: 8
-- `fontFamily`: IBM Plex Sans/system stack
-- `controlHeight`: 32, compact 28, large 36
+Components use the CSS variables in `web/src/styles/tokens.css` and the primitives in `web/src/components/ui/`. Do not style each screen ad hoc, and do not add Ant Design.
 
-Keep component vocabulary consistent across screens. Use AntD primitives for tables, forms, modals, drawers, tabs, menus, selects, date pickers, tooltips, and notifications.
+Keep component vocabulary consistent across screens. Tables use the shared TanStack `DataTable`. Forms, dialogs, drawers, tabs, menus, selects, tooltips, and notifications use those Radix primitives.
 
 ### Buttons
 

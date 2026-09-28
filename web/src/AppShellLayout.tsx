@@ -8,11 +8,6 @@ export interface AppShellLayoutProps {
   children: ReactNode;
 }
 
-/**
- * Drop-in shell wrapper for App.tsx integration during the v5 revamp.
- * Keeps auth-gated content inside the new sidebar/topbar layout without
- * rewriting the existing Ant Design shell in one shot.
- */
 export const AppShellLayout = ({ children }: AppShellLayoutProps) => (
   <>
     <a

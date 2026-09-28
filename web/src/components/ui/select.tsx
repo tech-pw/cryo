@@ -21,8 +21,8 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
     <select
       ref={ref}
       className={cn(
-        "h-[var(--control-height)] min-w-[8rem] rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm text-foreground",
-        "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-ring focus-visible:ring-offset-[var(--focus-ring-offset)]",
+        "h-[var(--control-height)] min-w-[8rem] rounded-[var(--radius-default)] border border-[var(--color-control-border)] bg-background px-3 text-sm text-foreground",
+        "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-[var(--focus-ring-color)] focus-visible:ring-offset-[var(--focus-ring-offset)]",
         "disabled:cursor-not-allowed disabled:opacity-60",
         className
       )}
@@ -60,8 +60,8 @@ export const MultiSelect = forwardRef<HTMLSelectElement, MultiSelectProps>(
       ref={ref}
       multiple
       className={cn(
-        "min-h-[var(--control-height)] min-w-[8rem] rounded-[var(--radius-default)] border border-border bg-background px-2 py-1 text-sm text-foreground",
-        "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-ring focus-visible:ring-offset-[var(--focus-ring-offset)]",
+        "min-h-[var(--control-height)] min-w-[8rem] rounded-[var(--radius-default)] border border-[var(--color-control-border)] bg-background px-2 py-1 text-sm text-foreground",
+        "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-[var(--focus-ring-color)] focus-visible:ring-offset-[var(--focus-ring-offset)]",
         className
       )}
       value={value}
