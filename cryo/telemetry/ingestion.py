@@ -155,23 +155,42 @@ class TrinoQueryIngester:
 
             return queries
 
-    async def fetch_query_stats(self, query_id: str) -> dict[str, Any] | None:
-        """Fetch detailed stats for a specific query.
+    async def fetch_query_stats(
+        self, query_id: str, *, client: httpx.AsyncClient | None = None
+    ) -> dict[str, Any] | None:
+        """Fetch a single query's detail from Trino's per-query REST API
+        (``/v1/query/{id}``), the only surface this Trino version exposes real scan-byte
+        stats on -- confirmed live 2026-09-28: ``system.runtime.queries`` (the bulk table
+        ``fetch_recent_queries`` reads) has no ``physical_input_bytes``/rows/files columns
+        at all on this deployment (``DESCRIBE`` returns 15 columns, none of them stats;
+        that's *why* the PDAE-8277 fix narrowed the bulk SELECT to the safe subset -- there
+        was nothing to select). ``/v1/query/{id}`` does carry ``queryStats.
+        physicalInputDataSize`` (a Trino ``DataSize`` string, e.g. ``"4536702B"``) and
+        ``inputs[]`` (real per-table catalog/schema/table identity, more reliable than
+        parsing the query's SQL text).
 
-        This uses the query info API to get file-level statistics.
+        One HTTP call per query -- callers must bound how many queries they call this for
+        (see CuratorTick's curated-subset-only enrichment), never for a whole bulk fetch.
+
+        Accepts an optional shared ``client`` so callers enriching many queries in one tick
+        reuse a connection pool instead of opening one per query.
         """
-        async with httpx.AsyncClient(
+        owns_client = client is None
+        http_client = client or httpx.AsyncClient(
             timeout=30.0, auth=self.auth, verify=self.verify_ssl
-        ) as client:
-            try:
-                response = await client.get(
-                    f"{self.trino_url}/v1/query/{query_id}",
-                    headers={"X-Trino-User": self.user},
-                )
-                if response.status_code == 200:
-                    return cast(dict[str, Any], response.json())
-            except Exception as e:
-                logger.warning(f"Failed to fetch query stats for {query_id}: {e}")
+        )
+        try:
+            response = await http_client.get(
+                f"{self.trino_url}/v1/query/{query_id}",
+                headers={"X-Trino-User": self.user},
+            )
+            if response.status_code == 200:
+                return cast(dict[str, Any], response.json())
+        except Exception as e:
+            logger.warning(f"Failed to fetch query stats for {query_id}: {e}")
+        finally:
+            if owns_client:
+                await http_client.aclose()
         return None
 
 

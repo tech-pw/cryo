@@ -24,6 +24,7 @@ from cryo.telemetry.iceberg_writer import (
     QueryLogIcebergWriter,
     build_query_log_schema,
     derive_pull_cadence,
+    enrich_row_with_query_stats,
     parse_query_log_config,
     retention_for_destination,
     rows_from_trino_queries,
@@ -319,6 +320,71 @@ def test_rows_from_trino_queries_truncates_huge_text() -> None:
     )
     assert rows[0]["query_text"] is not None
     assert len(rows[0]["query_text"]) == 10_000
+
+
+# ---------------------------------------------------------------------------
+# Per-query stats enrichment (bytes_read/rows_read/files_read)
+#
+# system.runtime.queries has no scan-byte columns on this Trino deployment (confirmed
+# live 2026-09-28 via DESCRIBE -- 15 columns, none of them stats), so rows_from_trino_queries
+# always leaves bytes_read/rows_read/files_read as None. enrich_row_with_query_stats fills
+# them from the real per-query REST API (/v1/query/{id}) response, whose shapes below are
+# copied from an actual live response, not invented.
+# ---------------------------------------------------------------------------
+
+
+def test_enrich_fills_bytes_rows_files_from_real_query_detail_shape() -> None:
+    row = {"query_id": "q1", "bytes_read": None, "rows_read": None, "files_read": None}
+    # Real response shape confirmed live against trino-prod-replica-3.
+    detail = {
+        "queryStats": {
+            "physicalInputDataSize": "4536702B",
+            "physicalInputPositions": 5568,
+        },
+        "inputs": [
+            {"catalogName": "cdp", "schema": "pw_bq", "table": "silver_dbt_orders$files"},
+            {"catalogName": "cdp", "schema": "pw_bq", "table": "silver_dbt_users$files"},
+        ],
+    }
+    enriched = enrich_row_with_query_stats(row, detail)
+    assert enriched["bytes_read"] == 4536702
+    assert enriched["rows_read"] == 5568
+    assert enriched["files_read"] == 2
+    assert enriched["_trino_inputs"][0]["table"] == "silver_dbt_orders$files"
+    # Original row is untouched.
+    assert row["bytes_read"] is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_bytes"),
+    [
+        ("4536702B", 4536702),
+        ("1.5MB", int(1.5 * 1024**2)),
+        ("2GB", 2 * 1024**3),
+        ("0B", 0),
+        (None, None),
+        ("", None),
+        ("garbage", None),
+    ],
+)
+def test_enrich_parses_trino_data_size_units(raw: str | None, expected_bytes: int | None) -> None:
+    detail = {"queryStats": {"physicalInputDataSize": raw}}
+    enriched = enrich_row_with_query_stats({"query_id": "q1"}, detail)
+    assert enriched.get("bytes_read") == expected_bytes
+
+
+def test_enrich_leaves_row_unset_when_query_stats_missing() -> None:
+    """A query_detail with no queryStats key (a malformed or partial response) must not
+    raise -- the row keeps whatever it already had."""
+    row = {"query_id": "q1", "bytes_read": None}
+    enriched = enrich_row_with_query_stats(row, {})
+    assert enriched["bytes_read"] is None
+
+
+def test_enrich_leaves_files_read_none_when_inputs_missing() -> None:
+    row = {"query_id": "q1", "files_read": None}
+    enriched = enrich_row_with_query_stats(row, {"queryStats": {}})
+    assert enriched["files_read"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -695,6 +761,139 @@ def test_curator_surfaces_failure_instead_of_silent_drop() -> None:
     result = asyncio.run(curator.run(session))  # type: ignore[arg-type]
     assert not result.ok
     assert "simulated catalog outage" in (result.error or "")
+
+
+def test_curator_enrichment_calls_fetch_query_stats_when_opted_in() -> None:
+    """fetch_stats_for_curated=true makes the curator call the ingester's
+    fetch_query_stats for each worthy row and fold the result in via
+    enrich_row_with_query_stats -- verified through the real _enrich_with_query_stats
+    method, not a reimplementation of its logic."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from cryo.telemetry.curator import CuratorSettings, QueryLogCurator
+
+    class _StatsIngester(_FakeIngester):
+        def __init__(self, rows: list[dict]) -> None:
+            super().__init__(rows)
+            self.stats_calls: list[str] = []
+
+        async def fetch_query_stats(self, query_id, *, client=None):  # type: ignore[no-untyped-def]
+            self.stats_calls.append(query_id)
+            return {
+                "queryStats": {"physicalInputDataSize": "1000B", "physicalInputPositions": 10},
+                "inputs": [{"catalogName": "cdp", "schema": "s", "table": "t"}],
+            }
+
+    destination = SimpleNamespace(
+        id=uuid4(),
+        name="trino-prod",
+        query_log_config={"enabled": True, "fetch_stats_for_curated": True},
+        query_log_retention_days=30,
+    )
+    config = parse_query_log_config(destination.query_log_config)
+    assert config is not None
+    assert config.fetch_stats_for_curated is True
+
+    fake_ingester = _StatsIngester(
+        rows=[{"query_id": "q1", "query": "SELECT 1", "executed_at": datetime.now(UTC).isoformat()}]
+    )
+    curator = QueryLogCurator(
+        writer=_FakeWriter(),  # type: ignore[arg-type]
+        destination=destination,
+        source=None,  # curated spill is skipped without a Source, but enrichment is
+        # exercised directly below regardless of that gate.
+        config=config,
+        trino_ingester=fake_ingester,
+        settings=CuratorSettings(),
+    )
+
+    rows = [{"query_id": "q1", "bytes_read": None, "rows_read": None, "files_read": None}]
+    enriched = asyncio.run(curator._enrich_with_query_stats(rows))
+
+    assert fake_ingester.stats_calls == ["q1"]
+    assert enriched[0]["bytes_read"] == 1000
+    assert enriched[0]["rows_read"] == 10
+    assert enriched[0]["files_read"] == 1
+
+
+def test_curator_enrichment_is_a_noop_when_ingester_lacks_fetch_query_stats() -> None:
+    """The common case: an ingester (or test double) with no fetch_query_stats method must
+    not raise -- rows pass through unchanged, same as fetch_stats_for_curated=False."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from cryo.telemetry.curator import CuratorSettings, QueryLogCurator
+
+    destination = SimpleNamespace(
+        id=uuid4(),
+        name="trino-prod",
+        query_log_config={"enabled": True, "fetch_stats_for_curated": True},
+        query_log_retention_days=30,
+    )
+    config = parse_query_log_config(destination.query_log_config)
+    assert config is not None
+
+    fake_ingester = _FakeIngester(rows=[])  # no fetch_query_stats defined
+    curator = QueryLogCurator(
+        writer=_FakeWriter(),  # type: ignore[arg-type]
+        destination=destination,
+        source=None,
+        config=config,
+        trino_ingester=fake_ingester,
+        settings=CuratorSettings(),
+    )
+
+    rows = [{"query_id": "q1", "bytes_read": None}]
+    enriched = asyncio.run(curator._enrich_with_query_stats(rows))
+    assert enriched == rows
+
+
+def test_curator_enrichment_respects_the_per_tick_cap() -> None:
+    """max_stats_enrichment_per_tick bounds how many rows get a real HTTP call, even when
+    the curated-worthy set is larger -- protects Trino from a burst of per-query calls on
+    a chatty tick."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from cryo.telemetry.curator import CuratorSettings, QueryLogCurator
+
+    class _StatsIngester(_FakeIngester):
+        def __init__(self, rows: list[dict]) -> None:
+            super().__init__(rows)
+            self.stats_calls: list[str] = []
+
+        async def fetch_query_stats(self, query_id, *, client=None):  # type: ignore[no-untyped-def]
+            self.stats_calls.append(query_id)
+            return {"queryStats": {"physicalInputDataSize": "1B"}}
+
+    destination = SimpleNamespace(
+        id=uuid4(),
+        name="trino-prod",
+        query_log_config={
+            "enabled": True,
+            "fetch_stats_for_curated": True,
+            "max_stats_enrichment_per_tick": 2,
+        },
+        query_log_retention_days=30,
+    )
+    config = parse_query_log_config(destination.query_log_config)
+    assert config is not None
+    assert config.max_stats_enrichment_per_tick == 2
+
+    fake_ingester = _StatsIngester(rows=[])
+    curator = QueryLogCurator(
+        writer=_FakeWriter(),  # type: ignore[arg-type]
+        destination=destination,
+        source=None,
+        config=config,
+        trino_ingester=fake_ingester,
+        settings=CuratorSettings(),
+    )
+
+    rows = [{"query_id": f"q{i}", "bytes_read": None} for i in range(5)]
+    asyncio.run(curator._enrich_with_query_stats(rows))
+    assert len(fake_ingester.stats_calls) == 2
 
 
 def test_curator_dedupe_across_multi_coordinator_poll() -> None:

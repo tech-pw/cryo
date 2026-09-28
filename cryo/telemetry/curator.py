@@ -216,7 +216,7 @@ class QueryLogCurator:
         curated_inserted = 0
         patterns_updated = 0
         if sampled_in and self._source is not None:
-            curated_inserted = self._spill_curated(session, sampled_in)
+            curated_inserted = await self._spill_curated(session, sampled_in)
             patterns_updated = self._aggregate_patterns(session)
 
         # 5. Retention sweep on the Iceberg table.
@@ -320,7 +320,7 @@ class QueryLogCurator:
             filter_columns_extractor=parse_query_predicates,
         )
 
-    def _spill_curated(self, session: Session, rows: Iterable[dict[str, Any]]) -> int:
+    async def _spill_curated(self, session: Session, rows: Iterable[dict[str, Any]]) -> int:
         """Pick the summary-worthy subset and bulk-insert into Postgres ``query_logs``.
 
         Returns the count actually inserted (some rows may be skipped when they map to a
@@ -337,13 +337,24 @@ class QueryLogCurator:
         curated: list[QueryLog] = []
         unknown_tables = 0
         seen_query_ids: set[str] = set()
+        worthy_rows: list[dict[str, Any]] = []
         for row in capped:
             qid = row.get("query_id")
             if not qid or qid in seen_query_ids:
                 continue
             seen_query_ids.add(qid)
+            # bytes_read is unset for every row reaching here (system.runtime.queries has
+            # no stats columns on this Trino version -- see fetch_query_stats's docstring),
+            # so _is_summary_worthy's LARGE_SCAN_BYTES check can never fire at this point.
+            # A row is worthy without it (failed/slow state, or the sample tail); enrichment
+            # below fills the real bytes_read on whatever's already worthy, so the row that
+            # lands in Postgres carries real stats even though they couldn't gate inclusion.
             if not self._is_summary_worthy(row):
                 continue
+            worthy_rows.append(row)
+        if self._config.fetch_stats_for_curated and worthy_rows:
+            worthy_rows = await self._enrich_with_query_stats(worthy_rows)
+        for row in worthy_rows:
             table = self._resolve_table(session, row)
             if table is None:
                 unknown_tables += 1
@@ -388,6 +399,50 @@ class QueryLogCurator:
                 unknown_tables,
             )
         return len(curated)
+
+    async def _enrich_with_query_stats(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Fill real bytes_read/rows_read/files_read on the curated-worthy subset via one
+        Trino /v1/query/{id} call per row, bounded by max_stats_enrichment_per_tick and run
+        with limited concurrency so a chatty tick can't open hundreds of connections to
+        Trino at once. Best-effort: a failed or timed-out fetch leaves that row exactly as
+        rows_from_trino_queries produced it (stats fields None), never raises.
+        """
+        import asyncio
+
+        import httpx
+
+        from cryo.telemetry.iceberg_writer import enrich_row_with_query_stats
+
+        capped = rows[: self._config.max_stats_enrichment_per_tick]
+        rest = rows[self._config.max_stats_enrichment_per_tick :]
+        if not capped:
+            return rows
+
+        fetch_stats = getattr(self._ingester, "fetch_query_stats", None)
+        if fetch_stats is None:
+            return rows
+
+        semaphore = asyncio.Semaphore(20)
+
+        async def _enrich_one(client: httpx.AsyncClient, row: dict[str, Any]) -> dict[str, Any]:
+            qid = row.get("query_id")
+            if not qid:
+                return row
+            async with semaphore:
+                try:
+                    detail = await fetch_stats(qid, client=client)
+                except TypeError:
+                    # Ingester stub in tests may not accept the client kwarg.
+                    detail = await fetch_stats(qid)
+            return enrich_row_with_query_stats(row, detail) if detail else row
+
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            auth=getattr(self._ingester, "auth", None),
+            verify=getattr(self._ingester, "verify_ssl", True),
+        ) as client:
+            enriched = await asyncio.gather(*(_enrich_one(client, row) for row in capped))
+        return list(enriched) + rest
 
     def _is_summary_worthy(self, row: dict[str, Any]) -> bool:
         """Apply the curated-row filter.
