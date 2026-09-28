@@ -19,10 +19,10 @@ type CostByOp = NonNullable<CostView>["by_operation"];
 interface CostTabProps {
   costView: CostView;
   stats: TableStatsRead | null | undefined;
-  storageBytes: number;
+  storageBytes: number | null;
   hasStatsCostFallback: boolean;
-  currentCostUsd: number;
-  projectedCostUsd: number;
+  currentCostUsd: number | null;
+  projectedCostUsd: number | null;
   savingsUsd: number;
   costByOperation: CostByOp;
   s3Tiering: S3TieringView;
@@ -89,7 +89,7 @@ export const CostTab = ({
                   pricePerGbMonth={costView.price_per_gb_month}
                 />
               ) : null}
-              {costView ? (
+              {costView && currentCostUsd != null ? (
                 <RequestCostShare
                   storageCostUsd={currentCostUsd}
                   requestCostUsd={costView.request_cost_usd_month}
@@ -101,10 +101,10 @@ export const CostTab = ({
               ) : null}
             </div>
             <div>
-              {costByOperation.length ? (
+              {costByOperation.length && currentCostUsd != null ? (
                 <CostSavingsWaterfall
                   currentCostUsd={currentCostUsd}
-                  currentStorageBytes={storageBytes || (stats?.total_size_gb ?? 0) * 1024 ** 3}
+                  currentStorageBytes={storageBytes ?? (stats?.total_size_gb != null ? stats.total_size_gb * 1024 ** 3 : 0)}
                   byOperation={costByOperation}
                 />
               ) : null}

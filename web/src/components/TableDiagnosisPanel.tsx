@@ -24,7 +24,10 @@ const PRIORITY_PHRASE: Record<string, string> = {
 };
 
 export const buildDiagnosisVerdict = (stats?: TableStatsRead | null): DiagnosisVerdict => {
-  const grade = stats?.grade ?? "-";
+  const grade = stats?.grade;
+  if (!stats || grade == null || grade === "" || grade === "-") {
+    return { level: "warning", message: "Not scanned yet" };
+  }
   const needsCompaction = Boolean(stats?.needs_compaction);
   const priority = stats?.compaction_priority;
   const gradePoor = grade === "D" || grade === "F";
@@ -68,7 +71,8 @@ export const TableDiagnosisPanel = ({ tableId, stats, factors }: TableDiagnosisP
 
   const triggered = signals.data?.signals.filter((signal) => signal.triggered) ?? [];
   const verdict = buildDiagnosisVerdict(stats);
-  const accentColor = healthScoreColor(stats?.overall_score ?? 0);
+  const accentColor =
+    stats?.overall_score == null ? "var(--color-muted-foreground, #8b93a7)" : healthScoreColor(stats.overall_score);
 
   return (
     <Card
