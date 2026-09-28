@@ -11,9 +11,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from sqlalchemy import select
+
 from cryo.db.models import (
     AuditLog,
     Destination,
+    FleetImpactHistory,
     MaintenanceJob,
     MaintenanceRun,
     Source,
@@ -64,14 +67,24 @@ def _seed_job(
     return job
 
 
-def _log(session, table: Table, *, days_ago: int, bytes_freed: int | None) -> None:
+def _log(
+    session,
+    table: Table,
+    *,
+    days_ago: int,
+    bytes_freed: int | None,
+    engine: str | None = None,
+    action: str = "remove_orphan_files",
+    status: str = "OK",
+) -> None:
     day_start, _ = day_bounds(NOW, days_ago)
     session.add(
         AuditLog(
             ts=day_start + timedelta(hours=6),
             table_id=table.id,
-            action="remove_orphan_files",
-            status="OK",
+            action=action,
+            status=status,
+            engine=engine,
             actual_bytes_freed=bytes_freed,
         )
     )
@@ -175,6 +188,54 @@ class TestRecordDailyImpact:
         assert row.jobs_succeeded == 2
         assert row.jobs_failed == 1
         assert abs(row.job_success_rate_pct - (200 / 3)) < 0.01
+
+    def test_splits_measured_reclaim_by_engine(self, session) -> None:
+        """A byte figure is attributed to the engine that produced it. A success row with null
+        actual_bytes_freed is not measured: it must not increment actions_measured, and it must
+        not be stored as zero bytes."""
+        _source, table = _seed_source_table(session)
+        _log(session, table, days_ago=1, bytes_freed=5 * 1024**3, engine="native")
+        _log(session, table, days_ago=1, bytes_freed=3 * 1024**3, engine="native")
+        _log(
+            session,
+            table,
+            days_ago=1,
+            bytes_freed=2 * 1024**3,
+            engine="trino",
+            status="succeeded",
+        )
+        _log(session, table, days_ago=1, bytes_freed=1 * 1024**3, engine=None)
+        _log(session, table, days_ago=1, bytes_freed=None, engine="native")
+        _log(session, table, days_ago=1, bytes_freed=None, engine="spark")
+        _log(session, table, days_ago=1, bytes_freed=9 * 1024**3, engine="native", status="FAILED")
+        _log(
+            session,
+            table,
+            days_ago=1,
+            bytes_freed=9 * 1024**3,
+            engine="trino",
+            action="expire_snapshots",
+        )
+        _log(session, table, days_ago=2, bytes_freed=9 * 1024**3, engine="native")
+        session.commit()
+
+        signal = compute_impact_signal(session, now=NOW)
+        record_daily_impact(session, report_data=_FakeReportData(impact_signal=signal), now=NOW)
+        session.commit()
+
+        persisted = session.execute(
+            select(FleetImpactHistory).where(
+                FleetImpactHistory.report_date == day_bounds(NOW, 1)[0].date()
+            )
+        ).scalar_one()
+        assert persisted.raw is not None
+        assert persisted.raw["measured_reclaim_gb"] == 11.0
+        assert persisted.raw["impact_direction"] == "unknown"
+        assert persisted.raw["bytes_freed_by_engine"] == {
+            "native": {"bytes": 8 * 1024**3, "actions_measured": 2},
+            "trino": {"bytes": 2 * 1024**3, "actions_measured": 1},
+            "unknown": {"bytes": 1 * 1024**3, "actions_measured": 1},
+        }
 
 
 class TestFleetImpactTrend:
