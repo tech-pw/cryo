@@ -59,8 +59,9 @@ describe("UsageTabPanel", () => {
     expect(screen.getByText(/Sample size: 0/)).toBeInTheDocument();
     expect(screen.getByText(/Coverage:/)).toBeInTheDocument();
     expect(screen.queryByText(/Unused/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Window: the last 168 hours/).length).toBeGreaterThan(0);
     await waitFor(() => {
-      expect(screen.getByText(/Window: the last 168 hours/)).toBeInTheDocument();
+      expect(screen.getByText(/Sample size: 0/)).toBeInTheDocument();
     });
   });
 });
