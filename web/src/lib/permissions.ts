@@ -19,6 +19,14 @@ export type WriteAction =
   | "dismissLayout"
   | "executeLayout"
   | "protectSnapshot"
+  | "unprotectSnapshot"
+  | "scheduleMaintenance"
+  | "silentLossDryRun"
+  | "applyProperty"
+  | "enableBloom"
+  | "runPropertyCompaction"
+  | "qualityConstraint"
+  | "wairAnalyze"
   | "patchTable"
   | "editCompliance";
 
@@ -44,6 +52,14 @@ export const WRITE_MIN_ROLE: Record<WriteAction, MinRole> = {
   dismissLayout: "operator",
   executeLayout: "operator",
   protectSnapshot: "operator",
+  unprotectSnapshot: "operator",
+  scheduleMaintenance: "operator",
+  silentLossDryRun: "operator",
+  applyProperty: "operator",
+  enableBloom: "operator",
+  runPropertyCompaction: "operator",
+  qualityConstraint: "operator",
+  wairAnalyze: "operator",
   patchTable: "operator",
   editCompliance: "operator"
 };
@@ -62,7 +78,9 @@ const MAINTENANCE_WRITES: ReadonlySet<WriteAction> = new Set([
   "approveLayout",
   "dismissLayout",
   "executeLayout",
-  "protectSnapshot"
+  "protectSnapshot",
+  "unprotectSnapshot",
+  "scheduleMaintenance"
 ]);
 
 const RANK: Record<RoleToken, number> = { viewer: 0, operator: 1, admin: 2 };

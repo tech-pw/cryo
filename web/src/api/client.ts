@@ -281,12 +281,12 @@ export const deleteTableAlertSubscription = (api: ApiOptions, id: UUID, subscrip
   apiFetch<void>(`/tables/${id}/alert-subscriptions/${subscriptionId}`, api, { method: "DELETE" });
 export const getTablePartitions = (api: ApiOptions, id: UUID) =>
   apiFetch<{ items: PartitionRead[] }>(`/tables/${id}/partitions`, api).then((payload) => payload.items);
-export const getTableAudit = (api: ApiOptions, id: UUID) =>
-  apiFetch<{ items: AuditEntry[] }>(`/tables/${id}/audit`, api).then((payload) => payload.items);
+export const getTableAudit = (api: ApiOptions, id: UUID, query?: { limit?: number; offset?: number }) =>
+  apiFetch<{ items: AuditEntry[] }>(`/tables/${id}/audit`, api, { query }).then((payload) => payload.items);
 export const getTableHistory = (api: ApiOptions, id: UUID) =>
   apiFetch<{ items: Array<Record<string, unknown>> }>(`/tables/${id}/history`, api).then((payload) => payload.items);
-export const getTableRuns = (api: ApiOptions, id: UUID) =>
-  apiFetch<{ items: TableRunRead[] }>(`/tables/${id}/runs`, api).then((payload) => payload.items);
+export const getTableRuns = (api: ApiOptions, id: UUID, query?: { limit?: number; offset?: number }) =>
+  apiFetch<{ items: TableRunRead[] }>(`/tables/${id}/runs`, api, { query }).then((payload) => payload.items);
 
 export interface HealthTrendPoint {
   timestamp: string;
@@ -1150,10 +1150,13 @@ export const getPartitionEvolutionRecommendation = (
     { query: { min_query_threshold: minQueryThreshold } }
   );
 
-export const getFastPathFindings = async (api: ApiOptions): Promise<FastPathFindingRead[]> => {
+export const getFastPathFindings = async (
+  api: ApiOptions,
+  tableId?: string
+): Promise<FastPathFindingRead[]> => {
   const payload = await apiFetch<
     FastPathFindingRead[] | { findings: FastPathFindingRead[] } | { items: FastPathFindingRead[] }
-  >("/advanced/fast-path-findings", api);
+  >("/advanced/fast-path-findings", api, tableId ? { query: { table_id: tableId } } : undefined);
   if (Array.isArray(payload)) return payload;
   if (payload && "findings" in payload && Array.isArray(payload.findings)) return payload.findings;
   if (payload && "items" in payload && Array.isArray(payload.items)) return payload.items;
@@ -1810,12 +1813,12 @@ export const applyTableProperties = (
 export const protectSnapshot = (
   api: ApiOptions,
   tableId: UUID,
-  body: { snapshot_id: number; label?: string | null }
+  body: { snapshot_id: string | number; label?: string | null }
 ) =>
-  apiFetch<{ table_id: UUID; snapshot_id: number; label: string | null }>(
+  apiFetch<{ table_id: UUID; snapshot_id: string; label: string | null }>(
     `/tables/${tableId}/protected-snapshots`,
     api,
-    { method: "POST", body }
+    { method: "POST", body: { ...body, snapshot_id: String(body.snapshot_id) } }
   );
 
 export interface S3TieringRecommendationRead {

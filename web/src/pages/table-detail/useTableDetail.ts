@@ -48,6 +48,11 @@ import { buildDiagnosisVerdict } from "../../components/TableDiagnosisPanel";
 import { useAuth } from "../../lib/auth";
 import { formatCurrency } from "../../lib/format";
 import { formatPartitionColumnLabel } from "../../components/table-detail/helpers";
+import { TABLE_DETAIL_TABS, TABLE_TAB_ALIASES, translateTableDetailLocation } from "./tabAliases";
+import { tableKeys } from "./tableKeys";
+
+export { TABLE_TAB_ALIASES };
+export const TABLE_TABS = new Set<string>(TABLE_DETAIL_TABS);
 
 const finiteOrNull = (value: number | null | undefined): number | null =>
   value == null || !Number.isFinite(value) ? null : value;
@@ -108,9 +113,13 @@ export function useTableDetail() {
   // as a broken product, not a no-op. See cryo/planner/planner.py's "Skipped optimize" notes.
   const [trackedRunId, setTrackedRunId] = useState<string | null>(null);
   const [lastRunSkipNotes, setLastRunSkipNotes] = useState<string[]>([]);
-  const [protectedLocal, setProtectedLocal] = useState<Array<{ snapshot_id: number; label?: string | null }>>([]);
+  const [protectedLocal, setProtectedLocal] = useState<Array<{ snapshot_id: string; label?: string | null }>>([]);
   const [ownerEmailInput, setOwnerEmailInput] = useState("");
   const [newSubscriberEmail, setNewSubscriberEmail] = useState("");
+  const requestedTab = searchParams.get("tab");
+  const canonicalTab = requestedTab ? TABLE_TAB_ALIASES[requestedTab] ?? requestedTab : "overview";
+  const activeTab = TABLE_TABS.has(canonicalTab) ? canonicalTab : "overview";
+  const onTab = (...names: string[]) => names.includes(activeTab);
 
   useEffect(() => {
     setQueuedScanRunId(null);
@@ -169,13 +178,15 @@ export function useTableDetail() {
   }, [table.data?.owner_email]);
 
   const audit = useQuery({
-    queryKey: ["table-audit", tableId, token],
+    queryKey: tableKeys.audit(tableId, token),
     queryFn: () => getTableAudit(api, tableId),
+    enabled: onTab("maintenance"),
     retry: 1
   });
   const runs = useQuery({
-    queryKey: ["table-runs", tableId, token],
+    queryKey: tableKeys.runs(tableId, token),
     queryFn: () => getTableRuns(api, tableId),
+    enabled: onTab("maintenance"),
     retry: 1
   });
   const healthTrends = useQuery({
@@ -204,8 +215,9 @@ export function useTableDetail() {
     retry: false
   });
   const s3Tiering = useQuery({
-    queryKey: ["table-s3-tiering", tableId, token],
+    queryKey: tableKeys.tiering(tableId, token),
     queryFn: () => getTableS3Tiering(api, tableId),
+    enabled: onTab("cost"),
     retry: false
   });
   const partitionEvolution = useQuery({
@@ -214,8 +226,9 @@ export function useTableDetail() {
     retry: false
   });
   const fastPathFindings = useQuery({
-    queryKey: ["fast-path-findings", token],
-    queryFn: () => getFastPathFindings(api),
+    queryKey: tableKeys.fastPath(tableId, token),
+    queryFn: () => getFastPathFindings(api, tableId),
+    enabled: onTab("overview") && Boolean(tableId),
     retry: false
   });
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
@@ -230,46 +243,54 @@ export function useTableDetail() {
     retry: false
   });
   const partitions = useQuery({
-    queryKey: ["table-partitions", tableId, token],
+    queryKey: tableKeys.partitions(tableId, token),
     queryFn: () => getTablePartitions(api, tableId),
+    enabled: onTab("files"),
     retry: false
   });
   const partitionAccess = useQuery({
-    queryKey: ["table-partition-access", tableId, token],
+    queryKey: tableKeys.partitionAccess(tableId, token),
     queryFn: () => getTablePartitionAccess(api, tableId),
+    enabled: onTab("files", "usage"),
     retry: false
   });
   const history = useQuery({
-    queryKey: ["table-history", tableId, token],
+    queryKey: tableKeys.history(tableId, token),
     queryFn: () => getTableHistory(api, tableId) as Promise<HistoryPoint[]>,
+    enabled: onTab("files"),
     retry: false
   });
   const bloomRecommendations = useQuery({
-    queryKey: ["table-bloom-recommendations", tableId, token],
+    queryKey: tableKeys.bloom(tableId, token),
     queryFn: () => getBloomFilterRecommendations(api, tableId),
+    enabled: onTab("files"),
     retry: false
   });
   const sources = useQuery({
-    queryKey: ["sources", token],
+    queryKey: tableKeys.sources(token),
     queryFn: () => listSources(api),
+    enabled: Boolean(table.data) && !table.data.source_name,
     retry: 1
   });
 
   const pii = useQuery({
-    queryKey: ["table-pii", tableId, token],
+    queryKey: tableKeys.pii(tableId, token),
     queryFn: () => getTablePiiClassification(api, tableId),
+    enabled: onTab("files", "quality"),
     retry: false
   });
 
   const dataQuality = useQuery({
-    queryKey: ["table-dq", tableId, token],
+    queryKey: tableKeys.dataQuality(tableId, token),
     queryFn: () => getDataQualityProfile(api, tableId, 30),
+    enabled: onTab("files", "quality"),
     retry: false
   });
 
   const tableSla = useQuery({
-    queryKey: ["table-sla", tableId, token],
+    queryKey: tableKeys.sla(tableId, token),
     queryFn: () => getSlaStatusDashboard(api, false, tableId),
+    enabled: onTab("quality"),
     retry: false
   });
   const slaStatus = tableSla.data?.slas?.[0] ?? null;
@@ -283,6 +304,7 @@ export function useTableDetail() {
   const alertSubscriptions = useQuery({
     queryKey: ["table-alert-subscriptions", tableId, token],
     queryFn: () => listTableAlertSubscriptions(api, tableId),
+    enabled: settingsOpen,
     retry: false
   });
 
@@ -350,10 +372,13 @@ export function useTableDetail() {
   });
 
   const protect = useMutation({
-    mutationFn: (values: { snapshot_id: number; label?: string }) => protectSnapshot(api, tableId, values),
+    mutationFn: (values: { snapshot_id: string | number; label?: string }) =>
+      protectSnapshot(api, tableId, values),
     onSuccess: (result) => {
       toast.success("Snapshot protected");
-      setProtectedLocal((prev) => [{ snapshot_id: result.snapshot_id, label: result.label }, ...prev].slice(0, 8));
+      setProtectedLocal((prev) =>
+        [{ snapshot_id: String(result.snapshot_id), label: result.label }, ...prev].slice(0, 8)
+      );
     },
     onError: (error) => toast.error((error as Error).message)
   });
@@ -472,10 +497,10 @@ export function useTableDetail() {
   });
 
   const silentLoss = useQuery({
-    queryKey: ["silent-data-loss", tableId],
+    queryKey: ["silent-data-loss", tableId, token],
     queryFn: () => getSilentDataLoss(api, tableId),
     enabled: Boolean(tableId),
-    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
     retry: false
   });
 
@@ -597,7 +622,7 @@ export function useTableDetail() {
       : `${degradationRate > 0 ? "+" : ""}${degradationRate.toFixed(1)} pts/day`;
 
   const protectedFromAudit = useMemo(() => {
-    const items: Array<{ snapshot_id: number; label?: string | null; ts?: string | null }> = [];
+    const items: Array<{ snapshot_id: string; label?: string | null; ts?: string | null }> = [];
     for (const entry of audit.data ?? []) {
       const action = (entry.action ?? "").toLowerCase();
       if (!action.includes("protect")) continue;
@@ -605,7 +630,7 @@ export function useTableDetail() {
         typeof entry.detail === "string" ? entry.detail : entry.detail ? JSON.stringify(entry.detail) : "";
       const snapshotMatch = detail.match(/snapshot[_\s-]?id[=: ]+(\d+)/i) || detail.match(/(\d{4,})/);
       items.push({
-        snapshot_id: snapshotMatch ? Number(snapshotMatch[1]) : 0,
+        snapshot_id: snapshotMatch ? snapshotMatch[1] : "",
         label: detail || null,
         ts: entry.ts ?? entry.created_at ?? null
       });
@@ -632,7 +657,7 @@ export function useTableDetail() {
     return options;
   }, [compatiblePresets.data, presets.data, effectivePreset.data?.preset_id]);
 
-  const protectedItems: Array<{ snapshot_id: number; label?: string | null; ts?: string | null }> = [
+  const protectedItems: Array<{ snapshot_id: string; label?: string | null; ts?: string | null }> = [
     ...protectedLocal,
     ...protectedFromAudit
   ];
@@ -720,23 +745,30 @@ export function useTableDetail() {
     [history.data]
   );
 
-  const allowedTabKeys = new Set([
-    "overview",
-    "structure",
-    "health-quality",
-    "cost",
-    "lineage",
-    "activity"
-  ]);
-  const requestedTab = searchParams.get("tab");
-  const activeTab = requestedTab && allowedTabKeys.has(requestedTab) ? requestedTab : "overview";
+  useEffect(() => {
+    const hash = window.location.hash;
+    const hashId = hash.replace(/^#/, "");
+    const tabNeedsAlias = Boolean(requestedTab && TABLE_TAB_ALIASES[requestedTab] && requestedTab !== activeTab);
+    if (!hashId.startsWith("hq-") && !tabNeedsAlias) return;
+    const translated = translateTableDetailLocation(searchParams, hash);
+    const query = translated.search.toString();
+    const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${translated.hash}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (translated.search.toString() !== searchParams.toString()) {
+      setSearchParams(translated.search, { replace: true });
+    }
+    if (currentUrl !== nextUrl) {
+      window.history.replaceState(null, "", nextUrl);
+    }
+  }, [activeTab, requestedTab, searchParams, setSearchParams]);
 
   const handleTabChange = (tabKey: string) => {
     const next = new URLSearchParams(searchParams);
-    if (tabKey === "overview") {
+    const canonical = TABLE_TAB_ALIASES[tabKey] ?? tabKey;
+    if (canonical === "overview") {
       next.delete("tab");
     } else {
-      next.set("tab", tabKey);
+      next.set("tab", canonical);
     }
     setSearchParams(next, { replace: true });
   };
