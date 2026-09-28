@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   CartesianGrid,
@@ -15,25 +16,13 @@ import {
   getFastPathFindings,
   getFleetTrends,
   getSmartMaintenanceOverview,
-  listTables
+  listRuns
 } from "../api/client";
 import type { FastPathFindingRead } from "../api/client";
-import type {
-  DatalakeDashboard,
-  FleetCostTrendPoint,
-  FleetHealthTrendPoint,
-  FreshnessBucketKey,
-  TableRead
-} from "../api/types";
-import {
-  ChartFrame,
-  EmptyState,
-  QueryErrorAlert,
-  FirstRunEmptyState,
-  TruncatedResultsBanner
-} from "../components/common";
+import type { FleetCostTrendPoint, FleetHealthTrendPoint } from "../api/types";
+import { getCryoVitals } from "../api/vitals";
+import { ChartFrame, EmptyState, QueryErrorAlert, FirstRunEmptyState } from "../components/common";
 import { FleetChecklistMatrix } from "../components/ChecklistMatrix";
-import { GradeDistributionMiniBar } from "../components/GradeDistributionMiniBar";
 import { GradePill, PriorityTag } from "../components/status";
 import { Alert } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
@@ -42,17 +31,93 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { ChartDataTable } from "../components/ui/chart-data-table";
 import { MetricGrid } from "../components/ui/metric-grid";
 import { PageHeader } from "../components/ui/page-header";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { Skeleton } from "../components/ui/skeleton";
 import { MetricTile } from "../components/ui/stat";
 import { useAuth } from "../lib/auth";
 import { chartAxisTick, chartTooltipProps, cryoColors } from "../lib/theme";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../lib/format";
+import { freshnessCatalogHref } from "../lib/freshness";
 import {
-  BROKEN_TABLE_FAILURE_THRESHOLD,
-  FRESHNESS_LABELS,
-  freshnessCatalogHref
-} from "../lib/freshness";
+  latestBatchRun,
+  nightlyRunView,
+  reclaimInputFromImpact,
+  reclaimYesterdayLabel,
+  vitalsScoreLabel,
+  vitalsStatusLabel
+} from "../lib/nowStrip";
 import { qualifiedTableName } from "../lib/tableLabels";
+
+const NOT_MEASURED = "Not measured";
+const COST_UNAVAILABLE = "Cost data unavailable";
+const HEALTH_S3_TOOLTIP =
+  "Modeled from each table's cost row when one exists, otherwise the scanner's estimated monthly S3 cost, summed over active tables.";
+const TRACKED_TABLES_HINT = "Every table row Cryo tracks.";
+const GRADE_ORDER = ["F", "D", "C", "B", "A"] as const;
+
+const gradePalette: Record<string, string> = {
+  A: cryoColors.gradeA,
+  B: cryoColors.gradeB,
+  C: cryoColors.gradeC,
+  D: cryoColors.gradeD,
+  F: cryoColors.gradeF
+};
+
+export const notGradedCount = (
+  tracked: number | null | undefined,
+  distribution: Array<{ count: number }>
+): number | null => {
+  if (tracked == null || Number.isNaN(tracked)) return null;
+  const graded = distribution.reduce((sum, entry) => sum + entry.count, 0);
+  return Math.max(0, tracked - graded);
+};
+
+export const trendPointMarker = (isPartial: boolean | undefined): "hollow" | "solid" =>
+  isPartial ? "hollow" : "solid";
+
+export const trendTooltipLabel = (dayLabel: string, isPartial: boolean | undefined): string =>
+  isPartial ? `${dayLabel} (partial)` : dayLabel;
+
+export const trendDayCell = (dayLabel: string, isPartial: boolean | undefined): string =>
+  isPartial ? `${dayLabel} partial` : dayLabel;
+
+export const trendTablesCountedLabel = (count: number | null | undefined): string =>
+  count == null || Number.isNaN(count) ? NOT_MEASURED : formatNumber(count, true);
+
+export const trendTooltipFromPayload = (
+  label: unknown,
+  payload: ReadonlyArray<{ payload?: { is_partial?: boolean } }> | undefined
+): string => {
+  const partial = payload?.some((item) => item.payload?.is_partial === true) ?? false;
+  return trendTooltipLabel(typeof label === "string" ? label : "", partial);
+};
+
+export const TrendPointDot = ({
+  cx,
+  cy,
+  stroke,
+  payload
+}: {
+  cx?: number;
+  cy?: number;
+  stroke?: string;
+  payload?: { is_partial?: boolean };
+}) => {
+  if (cx == null || cy == null || trendPointMarker(payload?.is_partial) !== "hollow") return null;
+  return <circle cx={cx} cy={cy} r={4} fill="none" stroke={stroke ?? "currentColor"} strokeWidth={2} />;
+};
+
+const displayCount = (value: number | null | undefined, compact = false): string =>
+  value == null || Number.isNaN(value) ? NOT_MEASURED : formatNumber(value, compact);
+
+const displayGb = (value: number | null | undefined): string =>
+  value == null || Number.isNaN(value) ? NOT_MEASURED : formatGb(value);
+
+const displayBytes = (value: number | null | undefined): string =>
+  value == null || Number.isNaN(value) ? NOT_MEASURED : formatBytesGb(value);
+
+const displayCost = (value: number | null | undefined): string =>
+  value == null || Number.isNaN(value) ? COST_UNAVAILABLE : formatCurrency(value);
 
 const TOP_OFFENDERS_LIMIT = 50;
 const TREND_EMPTY_TITLE = "Trend available after your next scan";
@@ -157,6 +222,80 @@ const FastPathFindingsCard = ({
   );
 };
 
+const HealthGradeBar = ({
+  distribution,
+  tracked
+}: {
+  distribution: Array<{ grade: string; count: number }>;
+  tracked: number | null | undefined;
+}) => {
+  const notGraded = notGradedCount(tracked, distribution);
+  const segments = [
+    ...GRADE_ORDER.map((grade) => ({
+      key: grade,
+      label: grade,
+      count: distribution.find((entry) => entry.grade === grade)?.count ?? 0,
+      color: gradePalette[grade] ?? cryoColors.mutedSubtle
+    })),
+    ...distribution
+      .filter((entry) => !(GRADE_ORDER as readonly string[]).includes(entry.grade) && entry.count > 0)
+      .map((entry) => ({
+        key: entry.grade,
+        label: entry.grade,
+        count: entry.count,
+        color: cryoColors.inkFaint
+      })),
+    ...(notGraded != null && notGraded > 0
+      ? [
+          {
+            key: "not-graded",
+            label: "Not graded",
+            count: notGraded,
+            color: cryoColors.mutedSubtle
+          }
+        ]
+      : [])
+  ].filter((segment) => segment.count > 0);
+  const total = segments.reduce((sum, segment) => sum + segment.count, 0);
+  if (!total) return null;
+
+  return (
+    <div className="mb-4" aria-label="Grade distribution">
+      <div className="flex h-2 overflow-hidden rounded-[var(--radius-sm)] bg-muted">
+        {segments.map((segment) => (
+          <div
+            key={segment.key}
+            className="h-full min-w-[2px]"
+            style={{ width: `${(segment.count / total) * 100}%`, background: segment.color }}
+            title={`${segment.label}: ${segment.count.toLocaleString()}`}
+          />
+        ))}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        {segments.map((segment) => (
+          <span key={segment.key} className="inline-flex items-center gap-1.5 [font-variant-numeric:tabular-nums]">
+            <span className="inline-block h-2 w-2 rounded-full" style={{ background: segment.color }} />
+            {segment.label} {segment.count.toLocaleString()}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const VitalsStatusIcon = ({ status }: { status: string | null | undefined }) => {
+  if (status === "HEALTHY") {
+    return <CheckCircle2 className="size-3.5 text-[var(--color-status-success)]" aria-hidden="true" />;
+  }
+  if (status === "DEGRADED") {
+    return <AlertTriangle className="size-3.5 text-[var(--color-status-warning)]" aria-hidden="true" />;
+  }
+  if (status === "CRITICAL") {
+    return <XCircle className="size-3.5 text-[var(--color-status-danger)]" aria-hidden="true" />;
+  }
+  return null;
+};
+
 const FleetTrendChartPanel = <T extends FleetHealthTrendPoint | FleetCostTrendPoint>({
   title,
   points,
@@ -211,11 +350,6 @@ export const DatalakeHealth = () => {
     queryFn: () => getDatalakeDashboard(api, { top_limit: TOP_OFFENDERS_LIMIT }),
     retry: 1
   });
-  const tables = useQuery({
-    queryKey: ["dashboard-fallback-tables", token],
-    queryFn: () => listTables(api, { limit: 500, offset: 0 }),
-    enabled: dashboard.isError
-  });
   const smartOverview = useQuery({
     queryKey: ["smart-maintenance-overview", token],
     queryFn: () => getSmartMaintenanceOverview(api),
@@ -231,16 +365,22 @@ export const DatalakeHealth = () => {
     queryFn: () => getFastPathFindings(api),
     retry: 1
   });
+  const vitals = useQuery({
+    queryKey: ["cryo-vitals", token],
+    queryFn: () => getCryoVitals(api),
+    retry: 1
+  });
+  const nightlyRuns = useQuery({
+    queryKey: ["health-nightly-runs", token],
+    queryFn: () => listRuns(api, { limit: 200 }),
+    retry: 1
+  });
 
-  const data = dashboard.data ?? deriveDashboard(tables.data?.items ?? []);
-  const topOffenders = data.top_offenders ?? [];
-  // top_offenders rows come from two shapes depending on whether the real dashboard API or the
-  // client-side deriveDashboard fallback is active (TableRead.id vs the dashboard payload's
-  // table_id) -- accept either rather than picking one and silently dropping rows on the other path.
+  const data = dashboard.data;
+  const topOffenders = data?.top_offenders ?? [];
   const topOffenderIds = topOffenders
     .map((row) => (row as { id?: string; table_id?: string }).id ?? (row as { id?: string; table_id?: string }).table_id)
     .filter((id): id is string => Boolean(id));
-  const tableTotal = tables.data?.total;
   const healthTrend = fleetTrends.data?.health_trend ?? [];
   const costTrend = fleetTrends.data?.cost_trend ?? [];
   const healthTrendChartData = healthTrend.map((point) => ({
@@ -251,9 +391,9 @@ export const DatalakeHealth = () => {
     ...point,
     label: formatTrendDay(point.day)
   }));
-  const gradeDistribution = data.grade_distribution ?? [];
-  const freshnessAsOf = data.freshness_as_of ?? new Date().toISOString();
-  const freshnessDistribution = data.freshness_distribution ?? [];
+  const gradeDistribution = data?.grade_distribution ?? [];
+  const freshnessAsOf = data?.freshness_as_of ?? new Date().toISOString();
+  const freshnessDistribution = data?.freshness_distribution ?? [];
   const freshnessTotal = freshnessDistribution.reduce((sum, bucket) => sum + bucket.count, 0);
   const freshnessChartData = freshnessDistribution.map((bucket) => ({
     ...bucket,
@@ -264,6 +404,20 @@ export const DatalakeHealth = () => {
   const gradeDfCount = gradeDistribution
     .filter((entry) => entry.grade === "D" || entry.grade === "F")
     .reduce((sum, entry) => sum + entry.count, 0);
+  const vitalsPayload = vitals.data;
+  const vitalsScore = vitals.isLoading ? "…" : vitals.isError ? "Vitals unavailable" : vitalsScoreLabel(vitalsPayload?.score);
+  const vitalsStatus = vitals.isLoading || vitals.isError ? null : vitalsStatusLabel(vitalsPayload?.status);
+  const deductions = vitalsPayload?.deductions ?? [];
+  const nightly = nightlyRuns.isLoading
+    ? null
+    : nightlyRuns.isError
+      ? null
+      : nightlyRunView(latestBatchRun(nightlyRuns.data ?? []));
+  const reclaimLabel = vitals.isLoading
+    ? "…"
+    : vitals.isError
+      ? NOT_MEASURED
+      : reclaimYesterdayLabel(reclaimInputFromImpact(vitalsPayload?.impact));
   const dfTrendDelta = (() => {
     if (healthTrend.length < 2) return undefined;
     const prev = healthTrend[healthTrend.length - 2].tables_at_grade_df;
@@ -295,30 +449,91 @@ export const DatalakeHealth = () => {
           </>
         }
       />
-      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {gradeDfCount > 0
-          ? `${formatNumber(gradeDfCount, true)} tables at grade D or F. ${formatNumber(data.totals?.needs_compaction ?? 0)} tables need compaction.`
-          : "No tables currently at grade D or F."}
-      </p>
+      <section aria-label="Now" className="mb-4 grid gap-3 border-b border-border pb-3 sm:grid-cols-3">
+        <div>
+          <p className="text-[11px] font-semibold text-muted-foreground">Cryo vitals</p>
+          {vitals.isError ? (
+            <p className="mt-1 text-sm text-foreground">Vitals unavailable</p>
+          ) : (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button type="button" className="mt-1 inline-flex items-center gap-1.5 text-sm text-foreground">
+                  <VitalsStatusIcon status={vitalsPayload?.status} />
+                  <span className="[font-variant-numeric:tabular-nums]">{vitalsScore}</span>
+                  {vitalsStatus ? <span>{vitalsStatus}</span> : null}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-80">
+                <p className="text-xs font-semibold">Deductions</p>
+                {deductions.length === 0 ? (
+                  <p className="mt-2 text-xs text-muted-foreground">No deductions</p>
+                ) : (
+                  <ul className="mt-2 space-y-1 text-xs">
+                    {deductions.map((deduction, index) => (
+                      <li key={`${deduction.reason}-${index}`}>
+                        {deduction.reason}
+                        {typeof deduction.points === "number" ? ` (${deduction.points})` : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </PopoverContent>
+            </Popover>
+          )}
+        </div>
+        <div>
+          <p className="text-[11px] font-semibold text-muted-foreground">Last nightly run</p>
+          {nightlyRuns.isLoading ? (
+            <p className="mt-1 text-sm text-foreground">…</p>
+          ) : nightlyRuns.isError || !nightly ? (
+            <p className="mt-1 text-sm text-foreground">Nightly run unavailable</p>
+          ) : nightly.href ? (
+            <p className="mt-1 text-sm text-foreground">
+              <Link to={nightly.href} className="text-primary hover:underline">
+                {nightly.status}
+              </Link>
+              <span className="text-muted-foreground"> · {nightly.succeededSelected} · {nightly.finished}</span>
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-foreground">
+              {nightly.status}
+              <span className="text-muted-foreground"> · {nightly.succeededSelected}</span>
+            </p>
+          )}
+        </div>
+        <div>
+          <p className="text-[11px] font-semibold text-muted-foreground">Reclaim yesterday</p>
+          <p className="mt-1 text-sm text-foreground [font-variant-numeric:tabular-nums]">{reclaimLabel}</p>
+        </div>
+      </section>
+      {data ? (
+        <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {gradeDfCount > 0
+            ? `${formatNumber(gradeDfCount, true)} tables at grade D or F. ${
+                data.totals?.needs_compaction == null
+                  ? "Compaction need is not measured."
+                  : `${formatNumber(data.totals.needs_compaction)} tables need compaction.`
+              }`
+            : "No tables currently at grade D or F."}
+        </p>
+      ) : null}
       {dashboard.isError ? (
         <Alert
           className="page-alert"
-          variant="info"
-          title="Datalake dashboard failed; showing a fallback view from /tables."
+          variant="error"
+          title="Dashboard unavailable"
+          description={
+            <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={() => void dashboard.refetch()}>
+              Retry
+            </Button>
+          }
         />
       ) : null}
       <QueryErrorAlert error={dashboard.error} title="Failed to load datalake dashboard" />
       <QueryErrorAlert error={fleetTrends.error} title="Failed to load fleet trends" />
-      {dashboard.isError ? (
-        <TruncatedResultsBanner
-          shown={tables.data?.items.length ?? 0}
-          total={tableTotal ?? tables.data?.items.length ?? 0}
-          noun="tables"
-        />
-      ) : null}
-      {dashboard.isLoading || tables.isLoading ? (
+      {dashboard.isLoading ? (
         <HealthPageSkeleton />
-      ) : (
+      ) : data ? (
         <>
           <MetricGrid columns={2} className="mb-3">
             <MetricTile
@@ -334,14 +549,22 @@ export const DatalakeHealth = () => {
                 ) : undefined
               }
             />
-            <MetricTile label="Tracked tables" value={formatNumber(data.totals?.tables, true)} />
+            <MetricTile
+              label="Tracked tables"
+              value={displayCount(data.totals?.tables, true)}
+              hint={
+                <span title={TRACKED_TABLES_HINT} className="cursor-help">
+                  ⓘ
+                </span>
+              }
+            />
           </MetricGrid>
-          <GradeDistributionMiniBar distribution={gradeDistribution} />
+          <HealthGradeBar distribution={gradeDistribution} tracked={data.totals?.tables} />
           <h2 className="mb-2 mt-0 text-sm font-semibold text-foreground">Health</h2>
           <MetricGrid columns={4} className="mb-4">
             <MetricTile
               label="Total data size"
-              value={formatGb(data.totals?.size_gb)}
+              value={displayGb(data.totals?.size_gb)}
               hint={
                 <span title="Combined size of every table Cryo is tracking, across all schemas." className="cursor-help">
                   ⓘ
@@ -350,7 +573,7 @@ export const DatalakeHealth = () => {
             />
             <MetricTile
               label="Small files"
-              value={formatNumber(data.totals?.small_files, true)}
+              value={displayCount(data.totals?.small_files, true)}
               hint={
                 <span title="Files under the target size threshold — too many of these slows down queries." className="cursor-help">
                   ⓘ
@@ -359,7 +582,7 @@ export const DatalakeHealth = () => {
             />
             <MetricTile
               label="Needs compaction"
-              value={formatNumber(data.totals?.needs_compaction)}
+              value={displayCount(data.totals?.needs_compaction)}
               emphasis={(data.totals?.needs_compaction ?? 0) > 0}
               hint={
                 (data.totals?.needs_compaction ?? 0) > 0 ? (
@@ -371,7 +594,7 @@ export const DatalakeHealth = () => {
             />
             <MetricTile
               label="Reclaimable storage"
-              value={formatBytesGb(data.totals?.reclaimable_bytes)}
+              value={displayBytes(data.totals?.reclaimable_bytes)}
               hint={
                 <span
                   title="Dead/expired snapshots, orphan files, and metadata bloat accumulated across each table's full unexpired history."
@@ -477,17 +700,25 @@ export const DatalakeHealth = () => {
             </Link>
           </div>
           <MetricGrid columns={3} className="mb-4">
-            <MetricTile label="S3 monthly now" value={formatCurrency(data.totals?.monthly_cost_usd)} />
+            <MetricTile
+              label="S3 monthly now"
+              value={displayCost(data.totals?.monthly_cost_usd)}
+              hint={
+                <span title={HEALTH_S3_TOOLTIP} className="cursor-help text-[11px] font-semibold text-muted-foreground">
+                  Modeled
+                </span>
+              }
+            />
             <MetricTile
               label="After maintenance"
-              value={formatCurrency(data.totals?.projected_monthly_cost_usd ?? data.totals?.monthly_cost_usd)}
+              value={displayCost(data.totals?.projected_monthly_cost_usd)}
               hint={
                 <span title="Projected S3 storage cost if all recommended maintenance ran today." className="cursor-help">
                   ⓘ
                 </span>
               }
             />
-            <MetricTile label="Monthly savings" value={formatCurrency(data.totals?.projected_savings_usd_month)} />
+            <MetricTile label="Monthly savings" value={displayCost(data.totals?.projected_savings_usd_month)} />
           </MetricGrid>
           <FastPathFindingsCard
             findings={fastPathFindings.data ?? []}
@@ -527,8 +758,8 @@ export const DatalakeHealth = () => {
                   caption="Fleet average health score and count of tables at grade D or F, per scan day."
                   rows={healthTrendChartData}
                   getRowKey={(row) => row.day}
-                  columns={[
-                    { key: "day", header: "Day", render: (row) => row.label },
+                    columns={[
+                    { key: "day", header: "Day", render: (row) => trendDayCell(row.label, row.is_partial) },
                     {
                       key: "avg_health_score",
                       header: "Avg health score",
@@ -540,6 +771,12 @@ export const DatalakeHealth = () => {
                       header: "D/F tables",
                       align: "right",
                       render: (row) => formatNumber(row.tables_at_grade_df, true)
+                    },
+                    {
+                      key: "tables_counted",
+                      header: "Tables counted",
+                      align: "right",
+                      render: (row) => trendTablesCountedLabel(row.tables_counted)
                     }
                   ]}
                 />
@@ -550,7 +787,7 @@ export const DatalakeHealth = () => {
                 <XAxis dataKey="label" tickLine={false} axisLine={false} tick={chartAxisTick} interval="preserveStartEnd" />
                 <YAxis yAxisId="score" tickLine={false} axisLine={false} tick={chartAxisTick} domain={[0, 100]} />
                 <YAxis yAxisId="count" orientation="right" tickLine={false} axisLine={false} tick={chartAxisTick} />
-                <RechartsTooltip {...chartTooltipProps} />
+                <RechartsTooltip {...chartTooltipProps} labelFormatter={trendTooltipFromPayload} />
                 <Legend />
                 <Line
                   yAxisId="score"
@@ -559,7 +796,7 @@ export const DatalakeHealth = () => {
                   name="Avg health score"
                   stroke={cryoColors.primary}
                   strokeWidth={2}
-                  dot={false}
+                  dot={TrendPointDot}
                 />
                 <Line
                   yAxisId="count"
@@ -568,7 +805,7 @@ export const DatalakeHealth = () => {
                   name="D/F tables"
                   stroke={cryoColors.gradeD}
                   strokeWidth={2}
-                  dot={false}
+                  dot={TrendPointDot}
                 />
               </LineChart>
             </FleetTrendChartPanel>
@@ -581,8 +818,8 @@ export const DatalakeHealth = () => {
                   caption="Fleet monthly S3 storage cost and projected savings, per scan day."
                   rows={costTrendChartData}
                   getRowKey={(row) => row.day}
-                  columns={[
-                    { key: "day", header: "Day", render: (row) => row.label },
+                    columns={[
+                    { key: "day", header: "Day", render: (row) => trendDayCell(row.label, row.is_partial) },
                     {
                       key: "total_monthly_cost_usd",
                       header: "Monthly cost",
@@ -594,6 +831,12 @@ export const DatalakeHealth = () => {
                       header: "Projected savings",
                       align: "right",
                       render: (row) => formatCurrency(row.projected_savings_usd_month)
+                    },
+                    {
+                      key: "tables_counted",
+                      header: "Tables counted",
+                      align: "right",
+                      render: (row) => trendTablesCountedLabel(row.tables_counted)
                     }
                   ]}
                 />
@@ -603,7 +846,13 @@ export const DatalakeHealth = () => {
                 <CartesianGrid vertical={false} stroke={cryoColors.chartGrid} />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} tick={chartAxisTick} interval="preserveStartEnd" />
                 <YAxis tickLine={false} axisLine={false} tick={chartAxisTick} />
-                <RechartsTooltip {...chartTooltipProps} formatter={(value) => formatCurrency(Number(value))} />
+                <RechartsTooltip
+                  {...chartTooltipProps}
+                  labelFormatter={trendTooltipFromPayload}
+                  formatter={(value) =>
+                    value == null || value === "" ? COST_UNAVAILABLE : formatCurrency(Number(value))
+                  }
+                />
                 <Legend />
                 <Line
                   type="monotone"
@@ -611,7 +860,7 @@ export const DatalakeHealth = () => {
                   name="Monthly cost"
                   stroke={cryoColors.costCurrent}
                   strokeWidth={2}
-                  dot={false}
+                  dot={TrendPointDot}
                 />
                 <Line
                   type="monotone"
@@ -619,7 +868,7 @@ export const DatalakeHealth = () => {
                   name="Projected savings"
                   stroke={cryoColors.savings}
                   strokeWidth={2}
-                  dot={false}
+                  dot={TrendPointDot}
                 />
               </LineChart>
             </FleetTrendChartPanel>
@@ -628,17 +877,23 @@ export const DatalakeHealth = () => {
             <Card className="xl:col-span-8">
               <CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
                 <CardTitle className="text-sm font-semibold">Top offenders</CardTitle>
-                {(data.totals?.needs_compaction ?? 0) > topOffenders.length ? (
+                {typeof data.totals?.needs_compaction === "number" &&
+                data.totals.needs_compaction > topOffenders.length ? (
                   <p className="text-xs text-muted-foreground">
                     Showing top {topOffenders.length.toLocaleString()} of{" "}
-                    {(data.totals?.needs_compaction ?? topOffenders.length).toLocaleString()} tables needing attention
+                    {data.totals.needs_compaction.toLocaleString()} tables needing attention
                   </p>
                 ) : null}
               </CardHeader>
               <CardContent className="p-0 pt-0">
                 {topOffenders.length === 0 ? (
                   <div className="p-4">
-                    {(data.totals?.tables ?? 0) === 0 ? (
+                    {data.totals?.tables == null ? (
+                      <EmptyState
+                        title="Not scanned"
+                        description="Fleet totals appear after a catalog scan."
+                      />
+                    ) : data.totals.tables === 0 ? (
                       <FirstRunEmptyState />
                     ) : (
                       <EmptyState
@@ -668,16 +923,16 @@ export const DatalakeHealth = () => {
                               </Link>
                             </td>
                             <td>
-                              <GradePill grade={row.stats?.grade} />
+                              {row.stats?.grade ? <GradePill grade={row.stats.grade} /> : "Not scanned"}
                             </td>
                             <td>
                               <PriorityTag priority={row.stats?.compaction_priority} />
                             </td>
                             <td className="text-right [font-variant-numeric:tabular-nums]">
-                              {formatNumber(row.stats?.small_files_count, true)}
+                              {displayCount(row.stats?.small_files_count, true)}
                             </td>
                             <td className="text-right [font-variant-numeric:tabular-nums]">
-                              {formatGb(row.stats?.total_size_gb)}
+                              {displayGb(row.stats?.total_size_gb)}
                             </td>
                           </tr>
                         ))}
@@ -713,101 +968,7 @@ export const DatalakeHealth = () => {
           </div>
           {topOffenderIds.length > 0 ? <FleetChecklistMatrix tableIds={topOffenderIds} /> : null}
         </>
-      )}
+      ) : null}
     </div>
   );
-};
-
-const deriveDashboard = (tables: TableRead[]): DatalakeDashboard => {
-  const grades = new Map<string, number>();
-  const schemaCosts = new Map<
-    string,
-    { schema_name: string; cost_usd: number; projected_usd: number; savings_usd: number; size_gb: number }
-  >();
-  let size = 0;
-  let smallFiles = 0;
-  let cost = 0;
-  let projected = 0;
-  let savings = 0;
-  let reclaimable = 0;
-  let needsCompaction = 0;
-  const freshnessAsOf = new Date();
-  const freshness = new Map<FreshnessBucketKey, number>(
-    (Object.keys(FRESHNESS_LABELS) as FreshnessBucketKey[]).map((key) => [key, 0])
-  );
-
-  tables.forEach((table) => {
-    const stats = table.stats;
-    const grade = stats?.grade ?? "-";
-    grades.set(grade, (grades.get(grade) ?? 0) + 1);
-    size += stats?.total_size_gb ?? 0;
-    smallFiles += stats?.small_files_count ?? 0;
-    const cur = stats?.estimated_monthly_s3_cost_usd ?? 0;
-    const proj = stats?.projected_monthly_s3_cost_usd ?? cur;
-    const sav = stats?.projected_savings_usd_month ?? Math.max(0, cur - proj);
-    cost += cur;
-    projected += proj;
-    savings += sav;
-    reclaimable += stats?.reclaimable_bytes ?? 0;
-    if (stats?.needs_compaction) needsCompaction += 1;
-    const freshnessKey = tableFreshnessBucket(table, freshnessAsOf);
-    freshness.set(freshnessKey, (freshness.get(freshnessKey) ?? 0) + 1);
-    const schema =
-      schemaCosts.get(table.schema_name) ??
-      { schema_name: table.schema_name, cost_usd: 0, projected_usd: 0, savings_usd: 0, size_gb: 0 };
-    schema.cost_usd += cur;
-    schema.projected_usd += proj;
-    schema.savings_usd += sav;
-    schema.size_gb += stats?.total_size_gb ?? 0;
-    schemaCosts.set(table.schema_name, schema);
-  });
-
-  return {
-    totals: {
-      tables: tables.length,
-      size_gb: size,
-      small_files: smallFiles,
-      monthly_cost_usd: cost,
-      projected_monthly_cost_usd: projected,
-      projected_savings_usd_month: savings,
-      reclaimable_bytes: reclaimable,
-      needs_compaction: needsCompaction
-    },
-    grade_distribution: Array.from(grades.entries()).map(([grade, count]) => ({ grade, count })),
-    freshness_distribution: (Object.keys(FRESHNESS_LABELS) as FreshnessBucketKey[]).map((key) => ({
-      key,
-      label: FRESHNESS_LABELS[key],
-      count: freshness.get(key) ?? 0
-    })),
-    freshness_as_of: freshnessAsOf.toISOString(),
-    cost_by_schema: Array.from(schemaCosts.values())
-      .map((item) => ({
-        schema_name: item.schema_name,
-        cost_usd: item.cost_usd,
-        projected_usd: item.projected_usd,
-        savings_usd: item.savings_usd,
-        size_gb: item.size_gb
-      }))
-      .sort((a, b) => (b.savings_usd || b.cost_usd) - (a.savings_usd || a.cost_usd)),
-    top_offenders: [...tables].sort((a, b) => (b.stats?.small_files_count ?? 0) - (a.stats?.small_files_count ?? 0)).slice(0, 10)
-  };
-};
-
-const tableFreshnessBucket = (table: TableRead, asOf: Date): FreshnessBucketKey => {
-  if ((table.consecutive_scan_failures ?? 0) >= BROKEN_TABLE_FAILURE_THRESHOLD) return "failed";
-  const rawTimestamp = table.stats?.raw?.last_snapshot_committed_at;
-  const value = table.stats?.last_snapshot_committed_at ?? (typeof rawTimestamp === "string" ? rawTimestamp : null);
-  if (!value) return "unknown";
-  const committedAt = new Date(value);
-  if (Number.isNaN(committedAt.getTime())) return "unknown";
-  const ageDays = (asOf.getTime() - committedAt.getTime()) / (24 * 60 * 60 * 1000);
-  if (ageDays < 1) return "within_24h";
-  if (ageDays < 3) return "1_3d";
-  if (ageDays < 7) return "3_7d";
-  if (ageDays < 15) return "7_15d";
-  if (ageDays < 30) return "15_30d";
-  if (ageDays < 90) return "1_3m";
-  if (ageDays < 180) return "3_6m";
-  if (ageDays < 365) return "6_12m";
-  return "over_1y";
 };
