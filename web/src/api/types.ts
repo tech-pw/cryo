@@ -815,7 +815,7 @@ export interface DatalakeDashboard {
     small_files?: number;
     monthly_cost_usd?: number;
     projected_monthly_cost_usd?: number;
-    projected_savings_usd_month?: number;
+  projected_savings_usd_month?: number | null;
     reclaimable_bytes?: number;
     needs_compaction?: number;
     running_jobs?: number;
@@ -857,12 +857,16 @@ export interface FleetHealthTrendPoint {
   day: string;
   avg_health_score: number;
   tables_at_grade_df: number;
+  is_partial?: boolean;
+  tables_counted?: number;
 }
 
 export interface FleetCostTrendPoint {
   day: string;
   total_monthly_cost_usd: number;
   projected_savings_usd_month: number;
+  is_partial?: boolean;
+  tables_counted?: number;
 }
 
 export interface FleetTrendsResponse {
@@ -880,7 +884,7 @@ export interface CostByOperation {
 export interface CostTrendPoint {
   scan_at: string;
   current_monthly_cost_usd?: number;
-  projected_savings_usd_month?: number;
+  projected_savings_usd_month?: number | null;
   realized_usd_month?: number | null;
 }
 

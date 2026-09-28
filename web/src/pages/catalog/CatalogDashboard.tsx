@@ -32,6 +32,17 @@ interface CatalogStats {
 
 type MultiCatalogResponse = MultiCatalogDashboard;
 
+const CATALOG_FLEET_COST_TOOLTIP =
+  "Modeled sum of scanner-estimated monthly S3 cost for tables with stats on enabled catalogs. Not the Health figure, and not a bill.";
+const COST_UNAVAILABLE = "Cost data unavailable";
+const NOT_MEASURED = "Not measured";
+
+const displayCount = (value: number | null | undefined): string | number =>
+  value == null || Number.isNaN(value) ? NOT_MEASURED : value;
+
+const displayModeledCost = (value: number | null | undefined): string =>
+  value == null || Number.isNaN(value) ? COST_UNAVAILABLE : `${formatCurrency(value)}/mo`;
+
 const KpiSkeleton = () => (
   <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
     {Array.from({ length: 4 }).map((_, index) => (
@@ -123,7 +134,7 @@ export const CatalogDashboard = () => {
       },
       {
         accessorKey: "table_count",
-        header: "Tables",
+        header: "Tables with stats",
         size: 88,
         cell: ({ getValue }) => (
           <span className="catalogs-table-numeric block text-right font-medium">
@@ -216,7 +227,7 @@ export const CatalogDashboard = () => {
     >
       <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricTile label="Catalogs enabled" value={enabledCatalogs} suffix={`/ ${data?.total_catalogs ?? 0}`} />
-        <MetricTile label="Tables scanned" value={data?.total_tables ?? 0} />
+        <MetricTile label="Tables with stats" value={displayCount(data?.total_tables)} />
         <MetricTile label="Needs compaction" value={needsCompaction} emphasis={needsCompaction > 0} />
         <MetricTile
           label="Preset coverage"
@@ -229,7 +240,9 @@ export const CatalogDashboard = () => {
         title="Catalogs"
         actions={
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>Fleet cost {formatCurrency(data?.total_cost_usd ?? 0)}/mo</span>
+            <span title={CATALOG_FLEET_COST_TOOLTIP} className="cursor-help">
+              Fleet cost · Modeled {displayModeledCost(data?.total_cost_usd)}
+            </span>
             <Link to="/cost">
               <Button size="sm" variant="ghost">
                 Open Cost →
