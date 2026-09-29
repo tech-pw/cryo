@@ -31,6 +31,7 @@ import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { ColumnVisibilityMenu, DataTable, type ColumnVisibilityOption } from "../../components/ui/data-table";
 import { Input } from "../../components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { Select } from "../../components/ui/select";
 import { useAuth } from "../../lib/auth";
 import { filterPresetsForSources } from "../../lib/catalogBindings";
@@ -992,6 +993,14 @@ export const TableExplorerSection = () => {
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Button variant="secondary" onClick={() => void (groupByField ? grouped.refetch() : tables.refetch())}>
+          Refresh
+        </Button>
+        <ColumnVisibilityMenu
+          options={COLUMN_VISIBILITY_OPTIONS}
+          visibility={columnVisibility}
+          onChange={setColumnVisibility}
+        />
         <Button
           variant={savingsView ? "primary" : "secondary"}
           onClick={() => {
@@ -1005,74 +1014,59 @@ export const TableExplorerSection = () => {
         >
           Savings view
         </Button>
-        <Button
-          variant="secondary"
-          aria-label="Export CSV"
-          onClick={() => void exportMatchingTablesCsv()}
-          disabled={!matchingTotal || Boolean(groupByField) || exportingCsv}
-        >
-          {exportingCsv ? "Exporting..." : `Export ${matchingTotal.toLocaleString()} CSV`}
-        </Button>
-        <Button variant="secondary" onClick={() => void (groupByField ? grouped.refetch() : tables.refetch())}>
-          Refresh
-        </Button>
-        <Select
-          aria-label="Group tables by"
-          className="w-[200px]"
-          value={groupByField ?? ""}
-          onChange={(next) => updateParams({ groupBy: (next as string) || null, page: null })}
-          allowClear
-          placeholder="No grouping"
-          options={[
-            { label: "Group by catalog", value: "catalog" },
-            { label: "Group by schema", value: "schema_name" },
-            { label: "Group by grade", value: "grade" },
-            { label: "Group by priority", value: "compaction_priority" },
-            { label: "Group by compaction", value: "needs_compaction" },
-            { label: "Group by size", value: "size_bucket" }
-          ]}
-        />
-        <div className="ml-auto flex max-w-full flex-wrap items-center gap-2 max-sm:ml-0 max-sm:w-full">
-          <Select
-            aria-label="Catalog view"
-            className="w-[200px]"
-            value=""
-            placeholder="Load a view..."
-            onChange={(next) => {
-              const view = allViews.find((candidate) => candidate.name === next);
-              if (view) applyView(view);
-            }}
-            options={allViews.map((view) => ({ label: view.name, value: view.name }))}
-          />
-          <Button type="button" variant="secondary" onClick={saveCurrentAsView}>
-            Save view
-          </Button>
-          {userViews.length ? (
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="secondary">Views</Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-72 space-y-2.5">
             <Select
-              aria-label="Delete saved view"
-              className="w-[160px]"
-              value=""
-              placeholder="Delete view..."
-              onChange={(next) => next && deleteSavedView(next)}
-              options={userViews.map((view) => ({ label: view.name, value: view.name }))}
+              aria-label="Group tables by"
+              value={groupByField ?? ""}
+              onChange={(next) => updateParams({ groupBy: (next as string) || null, page: null })}
+              allowClear
+              placeholder="No grouping"
+              options={[
+                { label: "Group by catalog", value: "catalog" },
+                { label: "Group by schema", value: "schema_name" },
+                { label: "Group by grade", value: "grade" },
+                { label: "Group by priority", value: "compaction_priority" },
+                { label: "Group by compaction", value: "needs_compaction" },
+                { label: "Group by size", value: "size_bucket" }
+              ]}
             />
-          ) : null}
-          {userViews.length ? (
             <Select
-              aria-label="Set default catalog view"
-              className="w-[170px]"
+              aria-label="Catalog view"
               value=""
-              placeholder="Set default..."
-              onChange={(next) => next && setCurrentAsDefaultView(next)}
-              options={allViews.map((view) => ({ label: view.name, value: view.name }))}
+              placeholder="Load a view..."
+              onChange={(next) => {
+                const saved = allViews.find((candidate) => candidate.name === next);
+                if (saved) applyView(saved);
+              }}
+              options={allViews.map((saved) => ({ label: saved.name, value: saved.name }))}
             />
-          ) : null}
-          <ColumnVisibilityMenu
-            options={COLUMN_VISIBILITY_OPTIONS}
-            visibility={columnVisibility}
-            onChange={setColumnVisibility}
-          />
-        </div>
+            <Button type="button" variant="secondary" onClick={saveCurrentAsView}>
+              Save view
+            </Button>
+            {userViews.length ? (
+              <Select
+                aria-label="Delete saved view"
+                value=""
+                placeholder="Delete view..."
+                onChange={(next) => next && deleteSavedView(next)}
+                options={userViews.map((saved) => ({ label: saved.name, value: saved.name }))}
+              />
+            ) : null}
+            {userViews.length ? (
+              <Select
+                aria-label="Set default catalog view"
+                value=""
+                placeholder="Set default..."
+                onChange={(next) => next && setCurrentAsDefaultView(next)}
+                options={allViews.map((saved) => ({ label: saved.name, value: saved.name }))}
+              />
+            ) : null}
+          </PopoverContent>
+        </Popover>
       </div>
       <div className="mb-2.5 flex w-full flex-col gap-1.5">
         <form
@@ -1151,6 +1145,16 @@ export const TableExplorerSection = () => {
         filterSelectionActive={filterSelectionActive}
         onSelectAllMatching={viewSpec ? undefined : selectAllMatching}
         onClearSelection={clearSelection}
+        bulkActions={
+          <Button
+            variant="secondary"
+            aria-label="Export CSV"
+            onClick={() => void exportMatchingTablesCsv()}
+            disabled={!matchingTotal || Boolean(groupByField) || exportingCsv}
+          >
+            {exportingCsv ? "Exporting..." : `Export ${matchingTotal.toLocaleString()} CSV`}
+          </Button>
+        }
         onChange={(next) => {
           const nextSchema = (next as TableFilterState & { schema?: string }).schema;
           applyFilters(next, typeof nextSchema === "string" ? nextSchema : undefined);

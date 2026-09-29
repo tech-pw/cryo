@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { type ReactNode, useMemo } from "react";
 import { buildFilterChips, filterScopeLabel, type CatalogFilterOption } from "../lib/filterChips";
 import { NO_PRESET_FILTER, type TableFilterState } from "../lib/predicate";
 import { Badge } from "./ui/badge";
@@ -23,6 +23,7 @@ interface Props {
   filterSelectionActive?: boolean;
   onSelectAllMatching?: () => void;
   onClearSelection?: () => void;
+  bulkActions?: ReactNode;
 }
 
 export const FilterBar = ({
@@ -34,15 +35,19 @@ export const FilterBar = ({
   hasSelection = false,
   filterSelectionActive = false,
   onSelectAllMatching,
-  onClearSelection
+  onClearSelection,
+  bulkActions
 }: Props) => {
   const patch = (next: Partial<TableFilterState>) => onChange({ ...value, ...next });
-  const showBulkSelect = onSelectAllMatching !== undefined;
-
   const chips = useMemo(
     () => buildFilterChips(value, catalogOptions, patch, presetOptions),
     [value, catalogOptions, presetOptions]
   );
+  const showBulkSelect = onSelectAllMatching !== undefined;
+  const filterActive = chips.length > 0;
+  const showSelectAll = showBulkSelect && (filterActive || hasSelection) && !filterSelectionActive;
+  const showClear = showBulkSelect && hasSelection;
+  const showBulk = showSelectAll || showClear || (showBulkSelect && filterSelectionActive);
   const scopeLabel = useMemo(() => filterScopeLabel(value, chips), [value, chips]);
   const matchLabel =
     matchingTotal === 1 ? "1 table matches" : `${matchingTotal.toLocaleString()} tables match`;
@@ -56,10 +61,10 @@ export const FilterBar = ({
     <div className="filter-bar">
       <div className="filter-bar__controls">
         <div className="flex flex-wrap items-center gap-2">
-          {showBulkSelect ? (
+          {showBulk || bulkActions ? (
             <div className="flex items-center gap-1.5">
               {filterSelectionActive ? <Badge variant="default">Filter selection</Badge> : null}
-              {!filterSelectionActive ? (
+              {showSelectAll ? (
                 <Button
                   title="Select every table that matches the current filters, including tables on other pages."
                   disabled={matchingTotal === 0}
@@ -68,54 +73,60 @@ export const FilterBar = ({
                   Select all matching tables
                 </Button>
               ) : null}
-              {hasSelection ? (
+              {showClear ? (
                 <Button title="Clear all selected tables." size="sm" onClick={onClearSelection}>
                   Clear selection
                 </Button>
               ) : null}
+              {bulkActions}
             </div>
           ) : null}
-          <Input
-            aria-label="Schema or table search"
-            placeholder="Schema or table"
-            value={value.schemaSearch ?? ""}
-            onChange={(event) => patch({ schemaSearch: event.target.value || undefined })}
-            style={{ width: 220 }}
-          />
-          {catalogOptions.length > 0 ? (
-            <MultiSelect
-              aria-label="Filter by catalog"
-              placeholder="Catalog"
-              value={value.sourceIds ?? []}
-              onChange={(sourceIds) => patch({ sourceIds })}
-              options={catalogOptions}
-              className="min-w-[10rem]"
-            />
-          ) : null}
-          <MultiSelect
-            aria-label="Filter by preset assignment"
-            placeholder="Preset"
-            value={value.presetFilter ?? []}
-            onChange={(presetFilter) => patch({ presetFilter: presetFilter.length ? presetFilter : undefined })}
-            options={presetSelectOptions}
-            className="min-w-[10rem]"
-          />
-          <MultiSelect
-            aria-label="Filter by health grade"
-            placeholder="Grade"
-            value={value.grades ?? []}
-            onChange={(grades) => patch({ grades })}
-            options={["A", "B", "C", "D", "F"].map((grade) => ({ label: grade, value: grade }))}
-            className="min-w-[8rem]"
-          />
-          <MultiSelect
-            aria-label="Filter by compaction priority"
-            placeholder="Priority"
-            value={value.priorities ?? []}
-            onChange={(priorities) => patch({ priorities })}
-            options={["HIGH", "MEDIUM", "LOW"].map((priority) => ({ label: priority, value: priority }))}
-            className="min-w-[9rem]"
-          />
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="secondary">
+                Filters
+                {filterActive ? ` · ${chips.length}` : ""}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-80 space-y-2.5">
+              <Input
+                aria-label="Schema or table search"
+                placeholder="Schema or table"
+                value={value.schemaSearch ?? ""}
+                onChange={(event) => patch({ schemaSearch: event.target.value || undefined })}
+              />
+              {catalogOptions.length > 0 ? (
+                <MultiSelect
+                  aria-label="Filter by catalog"
+                  placeholder="Catalog"
+                  value={value.sourceIds ?? []}
+                  onChange={(sourceIds) => patch({ sourceIds })}
+                  options={catalogOptions}
+                />
+              ) : null}
+              <MultiSelect
+                aria-label="Filter by preset assignment"
+                placeholder="Preset"
+                value={value.presetFilter ?? []}
+                onChange={(presetFilter) => patch({ presetFilter: presetFilter.length ? presetFilter : undefined })}
+                options={presetSelectOptions}
+              />
+              <MultiSelect
+                aria-label="Filter by health grade"
+                placeholder="Grade"
+                value={value.grades ?? []}
+                onChange={(grades) => patch({ grades })}
+                options={["A", "B", "C", "D", "F"].map((grade) => ({ label: grade, value: grade }))}
+              />
+              <MultiSelect
+                aria-label="Filter by compaction priority"
+                placeholder="Priority"
+                value={value.priorities ?? []}
+                onChange={(priorities) => patch({ priorities })}
+                options={["HIGH", "MEDIUM", "LOW"].map((priority) => ({ label: priority, value: priority }))}
+              />
+            </PopoverContent>
+          </Popover>
           <Segmented
             value={typeof value.needsCompaction === "boolean" ? String(value.needsCompaction) : "all"}
             onChange={(next) => patch({ needsCompaction: next === "all" ? undefined : next === "true" })}
@@ -177,23 +188,20 @@ export const FilterBar = ({
             </PopoverContent>
           </Popover>
           <Button onClick={() => onChange({ activeOnly: true })}>Reset</Button>
+          {chips.map((chip, idx) => (
+            <Badge key={`${chip.key ?? "chip"}-${idx}`} variant="secondary" className="gap-1">
+              {chip.label}
+              <button type="button" className="ml-1 text-xs" onClick={chip.onRemove} aria-label={`Remove ${chip.label}`}>
+                ×
+              </button>
+            </Badge>
+          ))}
         </div>
       </div>
       <div className="filter-bar__footer">
         <div className="filter-bar__summary">
           <p className="filter-bar__scope text-sm text-muted-foreground">{scopeLabel}</p>
-          {chips.length ? (
-            <div className="filter-bar__chips flex flex-wrap gap-1.5">
-              {chips.map((chip, idx) => (
-                <Badge key={`${chip.key ?? "chip"}-${idx}`} variant="secondary" className="gap-1">
-                  {chip.label}
-                  <button type="button" className="ml-1 text-xs" onClick={chip.onRemove} aria-label={`Remove ${chip.label}`}>
-                    ×
-                  </button>
-                </Badge>
-              ))}
-            </div>
-          ) : null}
+
         </div>
         {showBulkSelect ? (
           <p className="filter-bar__match-count text-sm text-muted-foreground">{matchLabel}</p>
