@@ -50,6 +50,58 @@ const StatusIcon = ({ status }: { status: string | null | undefined }) => {
   return null;
 };
 
+const ScoreGauge = ({ score, status }: { score: number; status: string | null | undefined }) => {
+  const clamped = Math.min(100, Math.max(0, score));
+  const arc = 150.8;
+  const color =
+    status === "CRITICAL"
+      ? "var(--color-status-danger)"
+      : status === "DEGRADED"
+        ? "var(--color-status-warning)"
+        : "var(--color-status-success)";
+  const label = vitalsStatusLabel(status);
+  return (
+    <div className="relative h-[108px] w-[168px]">
+      <svg viewBox="0 0 120 78" className="h-full w-full" role="img" aria-label={`${vitalsScoreLabel(score)} out of 100`}>
+        <path
+          d="M 14 66 A 46 46 0 0 1 106 66"
+          fill="none"
+          stroke="var(--color-chart-grid)"
+          strokeWidth="10"
+          strokeLinecap="round"
+        />
+        <path
+          d="M 14 66 A 46 46 0 0 1 106 66"
+          fill="none"
+          stroke={color}
+          strokeWidth="10"
+          strokeLinecap="round"
+          strokeDasharray={`${(clamped / 100) * arc} ${arc}`}
+        />
+      </svg>
+      <div className="absolute inset-x-0 bottom-1 text-center">
+        <p className="text-lg font-semibold leading-6 text-foreground [font-variant-numeric:tabular-nums]">
+          {vitalsScoreLabel(score)}
+          <span className="ml-1 text-sm font-normal text-[var(--color-muted)]">/ 100</span>
+        </p>
+        {label !== "Not measured" ? (
+          <p
+            className={`text-xs font-medium ${
+              status === "CRITICAL"
+                ? "text-[var(--color-status-danger)]"
+                : status === "DEGRADED"
+                  ? "text-[var(--color-status-warning)]"
+                  : "text-foreground"
+            }`}
+          >
+            {label}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
 const VitalsBlock = ({
   vitals,
   loading,
@@ -60,8 +112,6 @@ const VitalsBlock = ({
   error: boolean;
 }) => {
   const score = finite(vitals?.score) ? vitals.score : null;
-  const status = vitalsStatusLabel(vitals?.status);
-  const statusKnown = status !== "Not measured";
   const deduction = topDeduction(vitals);
   const rest = (vitals?.deductions ?? []).filter((row) => row !== deduction);
 
@@ -78,52 +128,10 @@ const VitalsBlock = ({
       ) : score == null ? (
         <p className="mt-1 text-lg font-medium leading-[26px] text-[var(--color-muted)]">Not measured</p>
       ) : (
-        <>
-          <div className="mt-1 flex h-[26px] items-center gap-2">
-            <StatusIcon status={vitals?.status} />
-            <p className="text-lg leading-[26px]">
-              <span className="font-semibold tracking-[-0.025em] text-foreground [font-variant-numeric:tabular-nums]">
-                {vitalsScoreLabel(score)}
-              </span>
-              <span className="ml-1.5 font-normal text-[var(--color-muted)] [font-variant-numeric:tabular-nums]">
-                / 100
-              </span>
-              {statusKnown ? (
-                <span
-                  className={`ml-3 font-medium ${
-                    vitals?.status === "CRITICAL"
-                      ? "text-[var(--color-status-danger)]"
-                      : vitals?.status === "DEGRADED"
-                        ? "text-[var(--color-status-warning)]"
-                        : "text-foreground"
-                  }`}
-                >
-                  {status}
-                </span>
-              ) : null}
-            </p>
-          </div>
-          <div className="relative mt-2 h-2">
-            <div className="flex h-2 gap-0.5 overflow-hidden rounded-[var(--radius-sm)] bg-[var(--color-chart-grid)]">
-              <span className="h-full flex-[4] bg-[var(--grade-f)]" />
-              <span className="h-full flex-[3] bg-[var(--grade-d)]" />
-              <span className="h-full flex-[3] bg-[var(--grade-a)]" />
-            </div>
-            <span
-              aria-hidden="true"
-              className="absolute top-[-2px] h-3 w-0.5 bg-foreground"
-              style={{ left: `${Math.min(100, Math.max(0, score))}%`, transform: "translateX(-50%)" }}
-            />
-          </div>
-          <div className="mt-1 flex text-[11px] font-medium leading-4 text-[var(--color-muted)]">
-            <span className="flex-[4]">0–39</span>
-            <span className="flex-[3]">40–69</span>
-            <span className="flex-[3]">70–100</span>
-          </div>
-          <p className="text-[11px] font-medium leading-4 text-[var(--color-muted)]">
-            Score position. Status is separate.
-          </p>
-        </>
+        <div className="mt-1 flex items-end gap-3">
+          <ScoreGauge score={score} status={vitals?.status} />
+          <StatusIcon status={vitals?.status} />
+        </div>
       )}
       {deduction ? (
         <p className="mt-2 text-sm leading-5 text-foreground" title={deduction.reason}>

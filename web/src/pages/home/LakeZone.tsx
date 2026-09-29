@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { MetricGrid, MetricTile } from "../../components/ui/metric-grid";
 import { Skeleton } from "../../components/ui/skeleton";
 import { formatBytesGb, formatGb, formatNumber } from "../../lib/format";
 
@@ -145,40 +146,48 @@ const CountSentence = ({ count, tracked }: { count: number; tracked: number | nu
   );
 };
 
-const InventoryStat = ({
-  label,
-  title,
-  text,
-  missing,
-  href
-}: {
-  label: string;
-  title: string;
-  text: string;
-  missing: boolean;
-  href?: string;
-}) => {
-  const valueClass = href
-    ? "text-[13px] font-semibold leading-5 tabular-nums text-[var(--color-link)] underline underline-offset-2"
-    : missing
-      ? "text-[13px] font-normal leading-5 tabular-nums text-muted-foreground"
-      : "text-[13px] font-normal leading-5 tabular-nums text-foreground";
-  const body = (
-    <>
-      <span className="text-[11px] font-medium leading-4 text-muted-foreground" title={title}>
-        {label}
-      </span>
-      <span className={valueClass}>{text}</span>
-    </>
-  );
-  if (!href) return <span className="inline-flex items-baseline gap-1.5">{body}</span>;
+const pieSlice = (cx: number, cy: number, r: number, start: number, end: number): string => {
+  const sweep = end - start;
+  if (sweep >= 359.99) {
+    return `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx - 0.01} ${cy - r} Z`;
+  }
+  const rad = (angle: number) => ((angle - 90) * Math.PI) / 180;
+  const x1 = cx + r * Math.cos(rad(start));
+  const y1 = cy + r * Math.sin(rad(start));
+  const x2 = cx + r * Math.cos(rad(end));
+  const y2 = cy + r * Math.sin(rad(end));
+  const large = sweep > 180 ? 1 : 0;
+  return `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
+};
+
+const GradePie = ({ segments }: { segments: Segment[] }) => {
+  const total = segments.reduce((sum, segment) => sum + segment.count, 0);
+  if (total <= 0) return null;
+  let cursor = 0;
+  const slices = segments.map((segment) => {
+    const start = (cursor / total) * 360;
+    cursor += segment.count;
+    const end = (cursor / total) * 360;
+    return { ...segment, start, end };
+  });
   return (
-    <Link
-      to={href}
-      className="inline-flex items-baseline gap-1.5 no-underline hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring-color)]"
-    >
-      {body}
-    </Link>
+    <div className="mt-3 flex flex-wrap items-center gap-4">
+      <svg viewBox="0 0 120 120" className="h-[140px] w-[140px] shrink-0" role="img" aria-label="Grade distribution">
+        {slices.map((slice) => (
+          <path key={slice.key} d={pieSlice(60, 60, 52, slice.start, slice.end)} fill={slice.color}>
+            <title>{`${slice.label}: ${slice.count.toLocaleString()}`}</title>
+          </path>
+        ))}
+      </svg>
+      <ul aria-label="Grade distribution" className="flex list-none flex-col gap-1 p-0 text-xs text-muted-foreground tabular-nums">
+        {segments.map((segment) => (
+          <li key={segment.key} className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 rounded-full" style={{ background: segment.color }} aria-hidden="true" />
+            {segment.label} {segment.count.toLocaleString()}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 };
 
@@ -249,46 +258,26 @@ export const LakeZone = ({
           </span>
         ) : null}
       </div>
-      {barTotal > 0 ? (
-        <>
-          <div
-            className="mt-2 flex h-2 overflow-hidden rounded-[var(--radius-sm)] bg-[var(--color-surface-sunken)]"
-            aria-hidden="true"
-          >
-            {segments.map((segment) => (
-              <div
-                key={segment.key}
-                className="h-full min-w-[2px]"
-                style={{ width: `${(segment.count / barTotal) * 100}%`, background: segment.color }}
-                title={`${segment.label}: ${segment.count.toLocaleString()}`}
-              />
-            ))}
-          </div>
-          <ul
-            aria-label="Grade distribution"
-            className="mt-2 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-xs font-normal text-muted-foreground tabular-nums"
-          >
-            {segments.map((segment) => (
-              <li key={segment.key} className="inline-flex items-center gap-1.5">
-                <span className="inline-block h-2 w-2 rounded-full" style={{ background: segment.color }} aria-hidden="true" />
-                {segment.label} {segment.count.toLocaleString()}
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
-      <div className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-1">
-        <InventoryStat label="Data size" title={DATA_SIZE_TITLE} text={size.text} missing={size.missing} />
-        <InventoryStat label="Small files" title={SMALL_FILES_TITLE} text={files.text} missing={files.missing} />
-        <InventoryStat
+      {barTotal > 0 ? <GradePie segments={segments} /> : null}
+      <MetricGrid columns={4} className="mt-3">
+        <MetricTile label="Data size" value={size.text} hint={<span title={DATA_SIZE_TITLE}>ⓘ</span>} />
+        <MetricTile label="Small files" value={files.text} hint={<span title={SMALL_FILES_TITLE}>ⓘ</span>} />
+        <MetricTile
           label="Needs compaction"
-          title={NEEDS_COMPACTION_TITLE}
-          text={compaction.text}
-          missing={compaction.missing}
-          href={compactionHref}
+          value={compaction.text}
+          emphasis={Boolean(compactionHref)}
+          hint={
+            compactionHref ? (
+              <Link to={compactionHref} className="text-xs text-primary hover:underline">
+                Fix in catalog
+              </Link>
+            ) : (
+              <span title={NEEDS_COMPACTION_TITLE}>ⓘ</span>
+            )
+          }
         />
-        <InventoryStat label="Reclaimable now" title={RECLAIMABLE_TITLE} text={reclaimable.text} missing={reclaimable.missing} />
-      </div>
+        <MetricTile label="Reclaimable now" value={reclaimable.text} hint={<span title={RECLAIMABLE_TITLE}>ⓘ</span>} />
+      </MetricGrid>
     </section>
   );
 };
