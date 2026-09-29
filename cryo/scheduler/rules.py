@@ -143,9 +143,17 @@ def effective_preset(
             rule_id=winning_rule.id,
         )
 
-    # No platform-default fallback by design. Tables without an explicit assignment or
-    # matching rule resolve to None (provenance="none"); the UI/API must require an
-    # explicit preset selection before maintenance can run.
+    # Product decision 2026-09-29: tables with no explicit assignment and no matching rule
+    # fall through to the tenant's is_default preset (Spark-on-K8s compaction) rather than
+    # staying unmaintained. Ephemeral tables are still excluded, same as the rule-match path
+    # above -- a fleet-wide default must not sweep up temp/scratch tables just because they
+    # never matched an explicit rule. Ties (should not happen: DB partial unique index
+    # enforces at most one is_default=true per tenant) resolve to the first one found.
+    if is_ephemeral_maintenance_table(table.schema_name, table.table_name):
+        return None
+    for preset in presets_by_id.values():
+        if preset.is_default:
+            return EffectivePreset(preset=preset, provenance="default")
     return None
 
 
