@@ -1,7 +1,7 @@
 import type { RunRead } from "../api/types";
 import type { CryoVitalsImpact } from "../api/vitals";
 import { batchCounts, isBatchPipeline } from "./batchSummary";
-import { formatGb, formatTime } from "./format";
+import { formatGb, formatNumber, formatTime } from "./format";
 
 export const NOT_MEASURED = "Not measured";
 
@@ -21,6 +21,52 @@ export const reclaimInputFromImpact = (impact: CryoVitalsImpact | null | undefin
   measured: finite(impact?.actions_with_bytes_evidence) ?? finite(impact?.measured),
   succeeded: finite(impact?.actions_succeeded) ?? finite(impact?.succeeded)
 });
+
+export interface ReclaimDisplay {
+  hero: string;
+  unit: string | null;
+  caption: string | null;
+  tone: "number" | "muted" | "plain";
+}
+
+const splitMagnitude = (formatted: string): { hero: string; unit: string | null } => {
+  const space = formatted.lastIndexOf(" ");
+  if (space <= 0) return { hero: formatted, unit: null };
+  return { hero: formatted.slice(0, space), unit: formatted.slice(space + 1) };
+};
+
+const partialCaption = (measured: number | null, succeeded: number | null): string => {
+  if (measured == null || succeeded == null || succeeded <= 0) return "partial";
+  return `partial · ${formatNumber(measured)} of ${formatNumber(succeeded)} measured`;
+};
+
+export const reclaimYesterdayDisplay = (
+  input: ReclaimImpact | null | undefined,
+  counts?: { measured?: number | null; succeeded?: number | null }
+): ReclaimDisplay => {
+  const state = input?.measurement_state;
+  const measured = finite(counts?.measured) ?? finite(input?.measured);
+  const succeeded = finite(counts?.succeeded) ?? finite(input?.succeeded);
+  if (state == null || state === "" || state === "unmeasured") {
+    return { hero: NOT_MEASURED, unit: null, caption: null, tone: "muted" };
+  }
+  if (state === "no_actions") {
+    return { hero: "No actions", unit: null, caption: null, tone: "plain" };
+  }
+  if (state === "partial") {
+    const gb = finite(input?.gb_freed_yesterday);
+    if (gb == null) {
+      return { hero: "—", unit: null, caption: "partial · bytes not reported", tone: "muted" };
+    }
+    return { ...splitMagnitude(formatGb(gb)), caption: partialCaption(measured, succeeded), tone: "number" };
+  }
+  if (state === "complete") {
+    const gb = finite(input?.gb_freed_yesterday);
+    if (gb == null) return { hero: NOT_MEASURED, unit: null, caption: null, tone: "muted" };
+    return { ...splitMagnitude(formatGb(gb)), caption: null, tone: "number" };
+  }
+  return { hero: NOT_MEASURED, unit: null, caption: null, tone: "muted" };
+};
 
 export const reclaimYesterdayLabel = (input: ReclaimImpact | null | undefined): string => {
   const state = input?.measurement_state;

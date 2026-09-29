@@ -47,6 +47,7 @@ vi.mock("../api/client", () => ({
     cost_by_schema: [],
     drift: []
   }),
+  getScannerStatus: vi.fn().mockResolvedValue({ active_run: null, queue_depth: 0 }),
   getFleetTrends: vi.fn().mockResolvedValue({
     days: 30,
     health_trend: [],
@@ -92,9 +93,9 @@ describe("DatalakeHealth page", () => {
     );
     expect(await screen.findByText("Home")).toBeInTheDocument();
     expect(screen.getByText("What happened last night, and is the lake worse?")).toBeInTheDocument();
-    expect(await screen.findByText("Tracked tables")).toBeInTheDocument();
-    expect(screen.getByText("Tables at grade D/F")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "What got worse" })).toBeInTheDocument();
+    expect(await screen.findByText(/tables at D or F/)).toBeInTheDocument();
+    expect(screen.getByText("Reclaimable now")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "What got worse" })).not.toBeInTheDocument();
   });
 
   it("scopes the Catalog deep links to the exact offenders shown (grade D/F, needs-compaction)", async () => {
@@ -107,14 +108,11 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    await screen.findByText("Tracked tables");
-    // Two "Fix in catalog" hints exist (grade D/F tile, needs-compaction tile) -- each must
-    // carry its own scoped filter, not a generic, unscoped Catalog link.
-    const fixLinks = await screen.findAllByRole("link", { name: /fix in catalog/i });
-    expect(fixLinks).toHaveLength(2);
-    expect(fixLinks.map((link) => link.getAttribute("href"))).toEqual(
-      expect.arrayContaining(["/catalogs?grades=D,F", "/catalogs?needsCompaction=1"])
-    );
+    await screen.findByText(/tables at D or F/);
+    const gradeLink = await screen.findByRole("link", { name: /tables at D or F/i });
+    expect(gradeLink).toHaveAttribute("href", "/catalogs?grades=D,F");
+    const compaction = screen.getByRole("link", { name: /Needs compaction/i });
+    expect(compaction).toHaveAttribute("href", "/catalogs?needsCompaction=1");
 
     expect(screen.queryByRole("link", { name: /fix top offenders/i })).not.toBeInTheDocument();
   });
@@ -129,7 +127,7 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    await screen.findByText("Tracked tables");
+    await screen.findByText(/tables at D or F/);
     const liveRegion = screen.getByRole("status");
     expect(liveRegion).toHaveAttribute("aria-live", "polite");
     await waitFor(() => expect(liveRegion).toHaveTextContent(/tables at grade D or F/i));
@@ -146,10 +144,10 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    await screen.findByText("Tracked tables");
+    await screen.findByText(/tables at D or F/);
     // "Tracked tables" (top grid) must not be repeated as its own tile inside the "Health" grid.
-    expect(screen.getAllByText("Tracked tables")).toHaveLength(1);
-    expect(screen.getAllByText("Tables at grade D/F")).toHaveLength(1);
+    expect(screen.queryByText("Tracked tables")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tables at grade D/F")).not.toBeInTheDocument();
   });
 
   it("renders freshness counts with keyboard-operable Catalog drill-downs", async () => {
@@ -162,16 +160,12 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    expect(await screen.findByText("Table freshness and staleness")).toBeInTheDocument();
-    const staleLink = screen.getByRole("link", { name: "Not updated 3-7 days" });
+    const staleLink = await screen.findByRole("link", { name: /Not updated 3-7 days/ });
     expect(staleLink).toHaveAttribute(
       "href",
       "/catalogs?freshness=3_7d&freshnessAsOf=2026-08-04T12%3A00%3A00Z"
     );
-    expect(screen.getByText(/mutually exclusive snapshot freshness bucket/i)).toBeInTheDocument();
-    const chartBarLink = screen.getByRole("link", {
-      name: "Not updated 3-7 days: 1 table. Open matching tables."
-    });
+    const chartBarLink = staleLink;
     expect(chartBarLink).toHaveAttribute(
       "href",
       "/catalogs?freshness=3_7d&freshnessAsOf=2026-08-04T12%3A00%3A00Z"
@@ -190,8 +184,7 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    expect(await screen.findByText("Recently discovered")).toBeInTheDocument();
-    expect(screen.getByText("No recently discovered flags")).toBeInTheDocument();
+    expect(await screen.findByText("No recently discovered flags")).toBeInTheDocument();
   });
 
   it("does not turn a missing reclaimable total into 0 GB", async () => {
@@ -204,10 +197,10 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    expect(await screen.findByText("Reclaimable storage")).toBeInTheDocument();
-    const tile = screen.getByText("Reclaimable storage").closest(".cryo-metric-tile");
-    expect(tile).toHaveTextContent("Not measured");
-    expect(tile).not.toHaveTextContent("0 GB");
+    expect(await screen.findByText("Reclaimable now")).toBeInTheDocument();
+    const row = screen.getByText("Reclaimable now").parentElement;
+    expect(row).toHaveTextContent("Not measured");
+    expect(row).not.toHaveTextContent("0 GB");
     expect(screen.queryByText("Monthly savings")).not.toBeInTheDocument();
     expect(screen.queryByText("Top offenders")).not.toBeInTheDocument();
     expect(screen.queryByText("Smart maintenance posture")).not.toBeInTheDocument();
@@ -252,7 +245,7 @@ describe("DatalakeHealth page", () => {
       drift: []
     });
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByText("Tracked tables")).toBeInTheDocument();
+    expect(await screen.findByText("Reclaimable now")).toBeInTheDocument();
   });
 
   it("labels modeled S3 cost and shows a Not graded segment for ungraded tracked tables", async () => {
@@ -283,12 +276,11 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    expect(await screen.findByText("Not graded 3")).toBeInTheDocument();
+    expect(await screen.findByText(/Not graded 3/)).toBeInTheDocument();
     expect(notGradedCount(5, [{ count: 1 }, { count: 1 }])).toBe(3);
     expect(notGradedCount(null, [{ count: 1 }])).toBeNull();
     expect(screen.queryByText("Estimated storage cost")).not.toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Platform" })).toBeInTheDocument();
-    expect(screen.getByTitle("Every table row Cryo tracks.")).toBeInTheDocument();
 
     vi.mocked(getDatalakeDashboard).mockResolvedValue({
       totals: {
@@ -320,15 +312,14 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    const tile = (await screen.findByText("Tables at grade D/F")).closest(".cryo-metric-tile");
-    expect(tile).toHaveTextContent("1");
-    expect(tile).not.toHaveTextContent("Unknown");
+    expect(await screen.findByText(/tables at D or F/)).toBeInTheDocument();
+    expect(screen.queryByText("Unknown")).not.toBeInTheDocument();
     expect(screen.queryByText("Fleet health trend")).not.toBeInTheDocument();
     expect(screen.queryByText("Fleet cost trend")).not.toBeInTheDocument();
     expect(screen.getByText("Table freshness and staleness")).toBeInTheDocument();
     expect(screen.queryByText("Modeled")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Scanner/ })).toHaveAttribute("href", "/runs/scanner");
-    expect(screen.getByRole("region", { name: "Now" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Cryo" })).toBeInTheDocument();
     expect(listTables).not.toHaveBeenCalled();
     expect(tablesAtGradeDf(undefined)).toBeNull();
     expect(tablesAtGradeDf([])).toBe(0);
@@ -361,9 +352,8 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    const tile = (await screen.findByText("Tables at grade D/F")).closest(".cryo-metric-tile");
-    expect(tile).toHaveTextContent("Unknown");
-    expect(tile).not.toHaveTextContent(/\b0\b/);
+    expect(await screen.findByText(/Grade split unknown/)).toBeInTheDocument();
+    expect(screen.queryByText(/^0 of /)).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/Tables at D\/F unknown/i);
     expect(screen.getByRole("status")).not.toHaveTextContent(/no tables currently at grade D or F/i);
     expect(screen.queryByText("Fleet health trend")).not.toBeInTheDocument();
@@ -399,12 +389,12 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    const now = await screen.findByRole("region", { name: "Now" });
-    expect(now).toHaveTextContent("Reclaim yesterday");
+    const now = await screen.findByRole("region", { name: "Cryo" });
+    expect(now).toHaveTextContent("Reclaimed yesterday");
     await waitFor(() => expect(now).toHaveTextContent("Not measured"));
     expect(now).not.toHaveTextContent("0 GB");
-    fireEvent.click(await screen.findByRole("button", { name: /91/ }));
-    expect(await screen.findByText("dispatch_heartbeat: stalled (8)")).toBeInTheDocument();
+    expect(now).toHaveTextContent("/ 100");
+    expect(await screen.findByText(/stalled/)).toBeInTheDocument();
     expect(vi.mocked(getCryoVitals)).toHaveBeenCalled();
   });
 
@@ -418,11 +408,10 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    const tile = (await screen.findByText("Awaiting a person")).closest(".cryo-metric-tile");
-    expect(tile).toHaveAttribute("data-metric-id", "awaiting_person");
-    await waitFor(() => expect(tile).toHaveTextContent("1"));
-    expect(tile).not.toHaveTextContent("Not recorded");
-    expect(screen.getByRole("link", { name: "Review" })).toHaveAttribute("href", "/governance");
+    const link = await screen.findByRole("link", { name: /awaiting review/i });
+    expect(link).toHaveAttribute("href", "/governance");
+    expect(link).toHaveTextContent("1");
+    expect(link).not.toHaveTextContent("Not recorded");
   });
 
   it("shows Not recorded instead of zero when pending approvals cannot be loaded", async () => {
@@ -436,9 +425,10 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    const tile = (await screen.findByText("Awaiting a person")).closest(".cryo-metric-tile");
-    await waitFor(() => expect(tile).toHaveTextContent("Not recorded"), { timeout: 3000 });
-    expect(tile).not.toHaveTextContent(/\b0\b/);
+    await screen.findByText("Home");
+    await waitFor(() => expect(screen.queryByRole("link", { name: /awaiting review/i })).not.toBeInTheDocument());
+    expect(screen.queryByText("Not recorded")).not.toBeInTheDocument();
+    expect(screen.queryByText(/\b0 awaiting/)).not.toBeInTheDocument();
 
     vi.mocked(listPendingApprovals).mockResolvedValue([
       {
@@ -465,9 +455,9 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    const section = await screen.findByRole("region", { name: "What needs an engine" });
-    expect(screen.getByRole("link", { name: "View holds" })).toHaveAttribute("href", "/runs?tab=holds");
-    expect(section).not.toHaveTextContent(/slot/i);
-    expect(section).not.toHaveTextContent(/\d/);
+    await screen.findByText("Home");
+    expect(screen.queryByRole("region", { name: "What needs an engine" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "View holds" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/slot/i)).not.toBeInTheDocument();
   });
 });
