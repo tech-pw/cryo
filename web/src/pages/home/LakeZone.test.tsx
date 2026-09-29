@@ -40,7 +40,7 @@ describe("LakeZone", () => {
     renderZone();
     expect(screen.queryByText("Tracked tables")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading")).not.toBeInTheDocument();
-    expect(document.querySelector(".cryo-metric-tile")).toBeNull();
+    expect(screen.getByText("Data size")).toBeInTheDocument();
   });
 
   it("labels reclaimable stock as Reclaimable now", () => {
@@ -101,7 +101,7 @@ describe("LakeZone", () => {
       </MemoryRouter>
     );
     expect(container.querySelector(".h-\\[88px\\]")).toBeNull();
-    expect(container.querySelector(".h-2")).not.toBeNull();
+    expect(screen.getByLabelText("Lake")).toHaveAttribute("aria-busy", "true");
     expect(screen.getByLabelText("Lake")).toBeInTheDocument();
   });
 });

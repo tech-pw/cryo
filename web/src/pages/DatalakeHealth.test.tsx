@@ -111,7 +111,7 @@ describe("DatalakeHealth page", () => {
     await screen.findByText(/tables at D or F/);
     const gradeLink = await screen.findByRole("link", { name: /tables at D or F/i });
     expect(gradeLink).toHaveAttribute("href", "/catalogs?grades=D,F");
-    const compaction = screen.getByRole("link", { name: /Needs compaction/i });
+    const compaction = screen.getByRole("link", { name: /Fix in catalog/i });
     expect(compaction).toHaveAttribute("href", "/catalogs?needsCompaction=1");
 
     expect(screen.queryByRole("link", { name: /fix top offenders/i })).not.toBeInTheDocument();
@@ -198,7 +198,7 @@ describe("DatalakeHealth page", () => {
     );
 
     expect(await screen.findByText("Reclaimable now")).toBeInTheDocument();
-    const row = screen.getByText("Reclaimable now").parentElement;
+    const row = screen.getByText("Reclaimable now").closest(".cryo-metric-tile");
     expect(row).toHaveTextContent("Not measured");
     expect(row).not.toHaveTextContent("0 GB");
     expect(screen.queryByText("Monthly savings")).not.toBeInTheDocument();
