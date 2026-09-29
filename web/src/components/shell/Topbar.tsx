@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Moon, Search, Sparkles, Sun, User } from "lucide-react";
+import { Layers, Moon, Search, Sparkles, Sun, User } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { getAssistantCapabilities } from "../../api/assistant";
@@ -89,8 +89,8 @@ export const Topbar = ({ onMenuClick }: TopbarProps) => {
       </div>
 
       <div className="cryo-shell__topbar-right">
-        <Button type="button" variant="secondary" size="sm" onClick={openBatch} aria-label="Review batch">
-          Batch · {batchCount}
+        <Button type="button" variant="secondary" size="sm" onClick={openBatch} aria-label="Review batch" title={`Review batch: ${batchCount}`} className="cryo-shell__batch-button">
+          <Layers size={14} aria-hidden className="cryo-shell__batch-icon" /><span>Batch · {batchCount}</span>
         </Button>
         {askHidden ? null : (
           <Button
@@ -102,7 +102,7 @@ export const Topbar = ({ onMenuClick }: TopbarProps) => {
             title={`Ask Cryo (${askLabel})`}
           >
             <Sparkles size={14} aria-hidden />
-            Ask Cryo
+            <span className="cryo-shell__ask-label">Ask Cryo</span>
           </Button>
         )}
         <Button

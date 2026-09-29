@@ -95,11 +95,11 @@ const FindingRow = ({ finding, reasonId }: { finding: Discovery; reasonId: strin
   return (
     <li
       className={cn(
-        "relative h-8 border-b border-border last:border-b-0 hover:bg-[var(--color-panel)]",
+        "relative min-h-8 border-b border-border last:border-b-0 hover:bg-[var(--color-panel)]",
         focused && "z-20"
       )}
     >
-      <div className="grid h-full grid-cols-[minmax(0,1fr)_88px_120px_36px] items-center gap-x-4 whitespace-nowrap px-4">
+      <div className="grid min-h-8 grid-cols-[minmax(0,1fr)_88px_120px_36px] items-center gap-x-4 whitespace-nowrap px-4 max-sm:grid-cols-[minmax(0,1fr)_88px] max-sm:gap-y-1 max-sm:py-2">
         <div className="relative min-w-0">
           <Link
             to={`/tables/${finding.table_id}`}
