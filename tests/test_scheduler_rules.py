@@ -36,9 +36,10 @@ def test_evaluate_predicate_supports_shared_filter_grammar() -> None:
     )
 
 
-def test_effective_preset_returns_none_when_unconfigured() -> None:
-    # No platform-default fallback exists by design; tables without an assignment or
-    # matching rule resolve to None (provenance="none").
+def test_effective_preset_falls_back_to_default_when_unconfigured() -> None:
+    # Product decision 2026-09-29: tables without an assignment or matching rule fall
+    # through to the tenant's is_default preset (provenance="default") instead of staying
+    # unmaintained.
     default_native = PresetConfig(
         "default-native",
         "default-native-deep",
@@ -49,6 +50,27 @@ def test_effective_preset_returns_none_when_unconfigured() -> None:
     )
     table = TableCandidate("table-1", "demo", "orders", {"total_size_gb": 5})
     effective = effective_preset(table, [default_native], rules=())
+    assert effective is not None
+    assert effective.preset.id == "default-native"
+    assert effective.provenance == "default"
+
+
+def test_effective_preset_returns_none_when_no_default_and_unconfigured() -> None:
+    # With no is_default preset in scope at all, an unmatched table still resolves to None.
+    standard = PresetConfig("standard", "standard", "trino", priority=100)
+    table = TableCandidate("table-1", "demo", "orders", {"total_size_gb": 5})
+    effective = effective_preset(table, [standard], rules=())
+    assert effective is None
+
+
+def test_effective_preset_skips_default_for_ephemeral_tables() -> None:
+    # The default-preset fallback must not sweep up temp/scratch tables, same exclusion the
+    # rule-match path already applies (PDAE-8347).
+    default_native = PresetConfig(
+        "default-native", "default-native-deep", "native", priority=0, is_default=True
+    )
+    table = TableCandidate("table-1", "temp", "scratch_orders", {"total_size_gb": 5})
+    effective = effective_preset(table, [default_native], rules=())
     assert effective is None
 
 
@@ -56,7 +78,8 @@ def test_effective_preset_prefers_rule_over_unassigned() -> None:
     standard = PresetConfig("standard", "standard", "trino", priority=100)
     large = PresetConfig("large", "large", "spark", priority=200)
     manual = PresetConfig("manual", "manual", "trino", priority=50)
-    # An is_default preset exists but is no longer used as a fallback.
+    # An is_default preset exists and is used as a fallback only when nothing else matches --
+    # rule and assignment provenance must still win over it.
     default_native = PresetConfig(
         "default-native",
         "default-native-deep",
@@ -92,9 +115,11 @@ def test_effective_preset_prefers_rule_over_unassigned() -> None:
     assert assigned.preset.id == "manual"
     assert assigned.provenance == "assignment"
 
-    # No rules, no assignment -> None even with an is_default preset present.
+    # No rules, no assignment -> falls back to the is_default preset.
     unassigned = effective_preset(table, [standard, large, manual, default_native], rules=())
-    assert unassigned is None
+    assert unassigned is not None
+    assert unassigned.preset.id == "default-native"
+    assert unassigned.provenance == "default"
 
 
 def test_effective_preset_falls_through_to_rules_when_pinned_preset_is_disabled() -> None:
@@ -275,8 +300,8 @@ def test_ephemeral_skip_carves_out_testpress_and_ignores_test_in_the_middle() ->
     assert effective_preset(suffix_test, [standard], [catch_all]) is None
 
 
-def test_tables_for_preset_skips_unassigned_when_no_default_fallback() -> None:
-    # Without rules or assignments, no tables match — even if the preset has is_default.
+def test_tables_for_preset_matches_unassigned_tables_via_default_fallback() -> None:
+    # Without rules or assignments, tables now match the is_default preset (2026-09-29).
     default_native = PresetConfig(
         "default-native",
         "default-native-deep",
@@ -289,4 +314,4 @@ def test_tables_for_preset_skips_unassigned_when_no_default_fallback() -> None:
         TableCandidate("table-2", "demo", "events", {"total_size_gb": 1}),
     ]
     matched = tables_for_preset(default_native, tables, [default_native], rules=())
-    assert matched == []
+    assert {table.id for table in matched} == {"table-1", "table-2"}
