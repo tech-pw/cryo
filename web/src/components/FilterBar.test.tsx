@@ -7,7 +7,7 @@ describe("FilterBar", () => {
     const onSelectAllMatching = vi.fn();
     render(
       <FilterBar
-        value={{ activeOnly: true }}
+        value={{ activeOnly: true, grades: ["D"] }}
         onChange={vi.fn()}
         matchingTotal={13}
         onSelectAllMatching={onSelectAllMatching}
@@ -34,6 +34,7 @@ describe("FilterBar", () => {
       />
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
     expect(screen.getByLabelText("Filter by catalog")).toBeInTheDocument();
     expect(screen.getByText("Catalog: Prod")).toBeInTheDocument();
     expect(screen.getByText("13 tables match")).toBeInTheDocument();
