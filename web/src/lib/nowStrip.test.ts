@@ -5,6 +5,7 @@ import {
   latestBatchRun,
   nightlyRunView,
   reclaimInputFromImpact,
+  reclaimYesterdayDisplay,
   reclaimYesterdayLabel,
   vitalsScoreLabel
 } from "./nowStrip";
@@ -17,29 +18,36 @@ describe("reclaimYesterdayLabel", () => {
     expect(reclaimYesterdayLabel({ measurement_state: "unmeasured", gb_freed_yesterday: 0 })).not.toBe("0 GB");
   });
 
-  it("says Partial N of M and does not print the partial subtotal as gigabytes", () => {
-    const label = reclaimYesterdayLabel({
-      measurement_state: "partial",
-      gb_freed_yesterday: 0.2,
-      measured: 2,
-      succeeded: 9
-    });
-    expect(label).toBe("Partial 2 of 9");
-    expect(label).not.toContain("GB");
-    expect(label).not.toContain("0");
+  it("keeps the old partial label for callers that still want one string", () => {
+    expect(
+      reclaimYesterdayLabel({
+        measurement_state: "partial",
+        gb_freed_yesterday: 0.2,
+        measured: 2,
+        succeeded: 9
+      })
+    ).toBe("Partial 2 of 9");
   });
 
-  it("does not invent Partial 0 of 0 when the impact block has no action counts", () => {
+  it("shows the partial byte subtotal and does not invent 0 of 0", () => {
     const fromPayload = reclaimInputFromImpact({
       measurement_state: "partial",
       gb_freed_yesterday: 0
     });
     expect(fromPayload.measured).toBeNull();
-    expect(fromPayload.succeeded).toBeNull();
-    const label = reclaimYesterdayLabel(fromPayload);
-    expect(label).toBe("Partial");
-    expect(label).not.toBe("Partial 0 of 0");
-    expect(label).not.toContain("GB");
+    const display = reclaimYesterdayDisplay(fromPayload);
+    expect(display.hero).not.toBe("Partial");
+    expect(display.caption).toBe("partial");
+    expect(display.caption).not.toContain("0 of 0");
+  });
+
+  it("prints partial gigabytes as the hero and keeps partial as the caption", () => {
+    const display = reclaimYesterdayDisplay(
+      { measurement_state: "partial", gb_freed_yesterday: 1.5, measured: 2, succeeded: 9 }
+    );
+    expect(display.tone).toBe("number");
+    expect(`${display.hero} ${display.unit}`).toBe(formatGb(1.5));
+    expect(display.caption).toBe("partial · 2 of 9 measured");
   });
 
   it("prints gigabytes only when measurement is complete", () => {
