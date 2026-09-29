@@ -1,9 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { RefreshCw } from "lucide-react";
 import {
   getDatalakeDashboard,
   getFastPathFindings,
-  getFleetTrends,
   getScannerStatus,
   listPendingApprovals,
   listRuns
@@ -19,7 +18,6 @@ import { formatNumber } from "../lib/format";
 import { freshnessCatalogHref } from "../lib/freshness";
 import {
   latestBatchRun,
-  nightlyRunView,
   reclaimInputFromImpact,
   reclaimYesterdayDisplay
 } from "../lib/nowStrip";
@@ -27,17 +25,12 @@ import { DiscoveredList } from "./home/DiscoveredList";
 import { FreshnessCard } from "./home/FreshnessCard";
 import { LakeZone } from "./home/LakeZone";
 import { StatusZone } from "./home/StatusZone";
+import { MaintenanceCard } from "./home/MaintenanceCard";
+import { ImpactCard } from "./home/ImpactCard";
+import { AttentionCard } from "./home/AttentionCard";
+import "./home/home.css";
 
-const TOP_OFFENDERS_LIMIT = 50;
-
-export const notGradedCount = (
-  tracked: number | null | undefined,
-  distribution: Array<{ count: number }>
-): number | null => {
-  if (tracked == null || Number.isNaN(tracked)) return null;
-  const graded = distribution.reduce((sum, entry) => sum + entry.count, 0);
-  return Math.max(0, tracked - graded);
-};
+const TOP_OFFENDERS_LIMIT = 1;
 
 export const tablesAtGradeDf = (
   distribution: Array<{ grade: string; count: number }> | null | undefined
@@ -45,25 +38,11 @@ export const tablesAtGradeDf = (
   if (distribution == null) return null;
   let total = 0;
   for (const entry of distribution) {
+    if (!Number.isFinite(entry.count) || entry.count < 0) return null;
     if (entry.grade !== "D" && entry.grade !== "F") continue;
-    if (!Number.isFinite(entry.count)) return null;
     total += entry.count;
   }
   return total;
-};
-
-const previousDfCount = (
-  points: Array<{ day: string; tables_at_grade_df: number; tables_counted?: number; is_partial?: boolean }> | undefined,
-  currentGraded: number | null
-): number | null => {
-  if (!points || currentGraded == null) return null;
-  const today = new Date().toISOString().slice(0, 10);
-  const prior = [...points]
-    .filter((point) => point.day < today && !point.is_partial && Number.isFinite(point.tables_at_grade_df))
-    .sort((left, right) => right.day.localeCompare(left.day))[0];
-  if (!prior) return null;
-  if (prior.tables_counted != null && currentGraded > 0 && prior.tables_counted < currentGraded / 5) return null;
-  return prior.tables_at_grade_df;
 };
 
 export const DatalakeHealth = () => {
@@ -103,15 +82,8 @@ export const DatalakeHealth = () => {
     queryFn: () => listPendingApprovals(api),
     retry: 1
   });
-  const fleetTrends = useQuery({
-    queryKey: ["fleet-trends", token],
-    queryFn: () => getFleetTrends(api, { days: 8 }),
-    retry: false
-  });
-
   const data = dashboard.data;
   const latest = nightlyRuns.isSuccess ? latestBatchRun(nightlyRuns.data ?? []) : null;
-  const nightly = nightlyRuns.isLoading || nightlyRuns.isError ? null : nightlyRunView(latest);
   const failedCount = latest ? optionalNumber(latest.summary, "failed") : null;
   const reclaim = vitals.isLoading
     ? { hero: "…", unit: null, caption: null, tone: "muted" as const }
@@ -129,7 +101,7 @@ export const DatalakeHealth = () => {
     percentage: freshnessTotal ? (bucket.count / freshnessTotal) * 100 : 0,
     href: freshnessCatalogHref(bucket.key, freshnessAsOf ?? new Date().toISOString())
   }));
-  const approvalCount = pendingApprovals.isSuccess ? pendingApprovals.data.length : 0;
+  const approvalCount = pendingApprovals.isSuccess ? pendingApprovals.data.length : null;
   const scannerLabel = scannerStatus.isPending
     ? null
     : scannerStatus.isError
@@ -143,13 +115,17 @@ export const DatalakeHealth = () => {
     ? null
     : engineLoad.isError
       ? "Unavailable"
-      : engineLoad.data
+      : Array.isArray(engineLoad.data?.engines)
         ? `${engineLoad.data.engines.length} configured`
-        : null;
+        : "Unavailable";
+  const queries = [dashboard, scannerStatus, engineLoad, fastPathFindings, vitals, nightlyRuns, pendingApprovals];
+  const refreshing = queries.some((query) => query.isFetching);
 
   return (
-    <div className="min-w-0">
-      <PageHeader title="Home" subtitle="What happened last night, and is the lake worse?" />
+    <div className="home-overview">
+      <PageHeader title="Home" subtitle="Your lake at a glance. Health, maintenance and the next best action."
+        actions={<Button variant="secondary" size="sm" disabled={refreshing} onClick={() => void Promise.allSettled(queries.map((query) => query.refetch()))}><RefreshCw size={14} aria-hidden="true" className={refreshing ? "motion-safe:animate-spin" : ""} />{refreshing ? "Refreshing…" : "Refresh overview"}</Button>}
+      />
       {dashboard.isError ? (
         <Alert
           className="page-alert"
@@ -162,21 +138,6 @@ export const DatalakeHealth = () => {
           }
         />
       ) : null}
-      <StatusZone
-        vitals={vitals.data}
-        vitalsLoading={vitals.isLoading}
-        vitalsError={vitals.isError}
-        nightly={nightly}
-        nightlyLoading={nightlyRuns.isLoading}
-        nightlyError={nightlyRuns.isError}
-        failedCount={failedCount}
-        reclaim={reclaim}
-        scannerLabel={scannerLabel}
-        scannerHref="/runs/scanner"
-        queueDepth={scannerStatus.data?.queue_depth ?? null}
-        engineLabel={engineLabel}
-        engineHref="/runs"
-      />
       {data ? (
         <p className="sr-only" role="status" aria-live="polite">
           {tablesAtGradeDf(data.grade_distribution) == null
@@ -188,13 +149,7 @@ export const DatalakeHealth = () => {
               }`}
         </p>
       ) : null}
-      {approvalCount > 0 ? (
-        <p className="mb-6">
-          <Link to="/governance" className="text-sm text-[var(--color-link)] hover:underline">
-            <span className="[font-variant-numeric:tabular-nums]">{formatNumber(approvalCount)}</span> awaiting review
-          </Link>
-        </p>
-      ) : null}
+      <div className="home-grid">
       <LakeZone
         tracked={data?.totals?.tables ?? null}
         distribution={data?.grade_distribution ?? null}
@@ -202,21 +157,31 @@ export const DatalakeHealth = () => {
         error={dashboard.isError}
         sizeGb={data?.totals?.size_gb ?? null}
         smallFiles={data?.totals?.small_files ?? null}
-        needsCompaction={data?.totals?.needs_compaction ?? null}
-        reclaimableBytes={data?.totals?.reclaimable_bytes ?? null}
-        previousDf={previousDfCount(fleetTrends.data?.health_trend, tablesAtGradeDf(data?.grade_distribution))}
-        hotDf={null}
       />
+      <StatusZone
+        vitals={vitals.data}
+        vitalsLoading={vitals.isLoading}
+        vitalsError={vitals.isError}
+        scannerLabel={scannerLabel}
+        queueDepth={scannerStatus.isError ? null : scannerStatus.data?.queue_depth ?? null}
+        engineLabel={engineLabel}
+      />
+      <MaintenanceCard run={latest} loading={nightlyRuns.isLoading} error={nightlyRuns.isError} />
+      <ImpactCard reclaim={reclaim} reclaimableBytes={data?.totals?.reclaimable_bytes ?? null} loading={dashboard.isLoading} error={dashboard.isError} />
       {dashboard.isError ? null : (
-        <>
-          <FreshnessCard rows={dashboard.isLoading ? [] : freshnessRows} asOf={freshnessAsOf} loading={dashboard.isLoading} />
+        <FreshnessCard rows={dashboard.isLoading ? [] : freshnessRows} asOf={freshnessAsOf} loading={dashboard.isLoading} />
+      )}
+      <AttentionCard approvals={approvalCount} approvalsLoading={pendingApprovals.isLoading} approvalsError={pendingApprovals.isError}
+        needsCompaction={dashboard.isError ? null : data?.totals?.needs_compaction ?? null} failed={failedCount} runHref={latest ? `/runs/${latest.id}` : null} dashboardLoading={dashboard.isLoading} />
+      <div className="home-discoveries">
           <DiscoveredList
             findings={fastPathFindings.data ?? []}
             loading={fastPathFindings.isLoading}
             error={fastPathFindings.error}
           />
-        </>
-      )}
+      </div>
+      </div>
+      <p className="home-refresh-note">Overview uses the latest stored scans and maintenance results. Refreshing does not start a scan.</p>
     </div>
   );
 };

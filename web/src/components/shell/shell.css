@@ -364,6 +364,15 @@
   gap: 8px;
 }
 
+.cryo-shell__batch-icon { display: none; }
+
+@media (max-width: 480px) {
+  .cryo-shell__topbar { gap: 8px; padding-inline: 10px; }
+  .cryo-shell__topbar-right { gap: 6px; }
+  .cryo-shell__batch-button > span, .cryo-shell__ask-label { display: none; }
+  .cryo-shell__batch-icon { display: block; }
+}
+
 .cryo-shell__menu-btn {
   display: none;
 }
