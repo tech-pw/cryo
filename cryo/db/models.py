@@ -26,6 +26,8 @@ from sqlalchemy.types import TIMESTAMP
 
 from cryo.db.base import Base
 
+_sa_text = text
+
 JsonDict = dict[str, Any]
 JsonList = list[JsonDict]
 
@@ -1500,6 +1502,9 @@ class AuditLog(Base):
     input_files_count: Mapped[int | None] = mapped_column(Integer)
     output_files_count: Mapped[int | None] = mapped_column(Integer)
     actor: Mapped[str | None] = mapped_column(Text)
+    origin: Mapped[str | None] = mapped_column(Text)
+    proposal_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    committed_snapshot_id: Mapped[str | None] = mapped_column(Text)
     # Async fallback-dispatch tracking (PDAE-8352): engine_ref is the dispatched Spark
     # job's K8s Job name, set when status="SUBMITTED" so a later sweep can look up its
     # real outcome without run_wave() blocking on it. resolved_at marks when that sweep
@@ -2406,6 +2411,8 @@ class LLMObservation(Base):
     )
     error: Mapped[str | None] = mapped_column(Text)
     extra: Mapped[JsonDict | None] = mapped_column(JSONB)
+    principal_subject: Mapped[str | None] = mapped_column(Text)
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
 
 class RunFailureDiagnosis(Base):
@@ -2604,6 +2611,226 @@ class SavedExplorerView(Base):
     )
 
 
+class AssistantConversation(Base):
+    __tablename__ = "assistant_conversations"
+    __table_args__ = (
+        Index("ix_assistant_conversations_owner_updated", "owner_subject", "updated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    owner_subject: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str | None] = mapped_column(Text)
+    context: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
+    share_token_hash: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class AssistantMessage(Base):
+    __tablename__ = "assistant_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id", "client_message_id", name="uq_assistant_messages_client"
+        ),
+        UniqueConstraint("conversation_id", "seq", name="uq_assistant_messages_seq"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.assistant_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    text: Mapped[str | None] = mapped_column(Text)
+    blocks: Mapped[JsonList | None] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=_sa_text("'streaming'")
+    )
+    verified_handler: Mapped[str | None] = mapped_column(Text)
+    grounding: Mapped[str | None] = mapped_column(Text)
+    client_message_id: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class AssistantToolCall(Base):
+    __tablename__ = "assistant_tool_calls"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.assistant_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    step: Mapped[int] = mapped_column(Integer, nullable=False)
+    tool_name: Mapped[str] = mapped_column(Text, nullable=False)
+    arguments: Mapped[JsonDict | None] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    row_count: Mapped[int | None] = mapped_column(Integer)
+    truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    error_category: Mapped[str | None] = mapped_column(Text)
+    evidence_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AssistantEvidence(Base):
+    __tablename__ = "assistant_evidence"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    tool_call_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.assistant_tool_calls.id", ondelete="SET NULL")
+    )
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    scope: Mapped[JsonDict | None] = mapped_column(JSONB)
+    observed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    retrieved_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    classification: Mapped[str] = mapped_column(Text, nullable=False)
+    coverage: Mapped[JsonDict | None] = mapped_column(JSONB)
+    source_refs: Mapped[JsonList | None] = mapped_column(JSONB)
+    result: Mapped[JsonDict | None] = mapped_column(JSONB)
+    result_digest: Mapped[str | None] = mapped_column(Text)
+
+
+class AssistantActionProposal(Base):
+    __tablename__ = "assistant_action_proposals"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.assistant_conversations.id", ondelete="SET NULL")
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.assistant_messages.id", ondelete="SET NULL")
+    )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    owner_subject: Mapped[str] = mapped_column(Text, nullable=False)
+    action_type: Mapped[str] = mapped_column(Text, nullable=False)
+    tier: Mapped[int] = mapped_column(Integer, nullable=False)
+    arguments: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict)
+    preview: Mapped[JsonDict | None] = mapped_column(JSONB)
+    plan_hash: Mapped[str | None] = mapped_column(Text)
+    target_digest: Mapped[str | None] = mapped_column(Text)
+    selection: Mapped[JsonDict | None] = mapped_column(JSONB)
+    required_role: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.runs.id"))
+    job_ids: Mapped[list[Any] | None] = mapped_column(JSONB)
+    superseded_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AssistantAuthorization(Base):
+    __tablename__ = "assistant_authorizations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    proposal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.assistant_action_proposals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    principal_subject: Mapped[str] = mapped_column(Text, nullable=False)
+    channel: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    correlation_id: Mapped[str | None] = mapped_column(Text)
+    authorized_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AssistantFeedback(Base):
+    __tablename__ = "assistant_feedback"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.assistant_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    principal_subject: Mapped[str] = mapped_column(Text, nullable=False)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AssistantSettingsRow(Base):
+    __tablename__ = "assistant_settings"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    allowed_min_role: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'viewer'")
+    )
+    enabled_tiers: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[0]'::jsonb")
+    )
+    send_row_values: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    retention_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("90"))
+    team_instructions_skillset: Mapped[str | None] = mapped_column(Text)
+    updated_by: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AssistantApiKey(Base):
+    __tablename__ = "assistant_api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    key_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    scopes: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[\"read\"]'::jsonb")
+    )
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
 __all__ = [
     "AIProvider",
     "AWSCostInsightConfig",
@@ -2652,4 +2879,13 @@ __all__ = [
     "TableStats",
     "TableStatsHistory",
     "TierPolicyRecord",
+    "AssistantConversation",
+    "AssistantMessage",
+    "AssistantToolCall",
+    "AssistantEvidence",
+    "AssistantActionProposal",
+    "AssistantAuthorization",
+    "AssistantFeedback",
+    "AssistantSettingsRow",
+    "AssistantApiKey",
 ]

@@ -14,6 +14,7 @@ from cryo.cost.model import CostStatsInput
 from cryo.engines.native.payload import source_catalog_config
 from cryo.engines.native.runner import resolve_binary_path
 from cryo.scanner.analyze import (
+    FILE_SIZE_BIN_COUNT,
     HEALTH_SMALL_FILE_BYTES,
     PartitionAnalysis,
     TableAnalysis,
@@ -372,6 +373,7 @@ def table_analysis_from_go_payload(
         "location": location,
         "iceberg_properties": dict(payload.get("iceberg_properties") or {}),
         "gc_enabled": payload.get("gc_enabled"),
+        "file_size_bins": _file_size_bins(payload),
         "manifest_stats": {
             "manifest_count": manifest_count,
             "avg_files_per_manifest": round(total_files / max(manifest_count, 1), 2),
@@ -525,6 +527,19 @@ def run_aggregate_fixture(
             payload.get("error") or f"aggregate-fixture failed (exit={proc.returncode})"
         )
     return payload
+
+
+def _file_size_bins(payload: Mapping[str, Any]) -> dict[str, object]:
+    raw = payload.get("file_size_bins")
+    bins = raw if isinstance(raw, Mapping) else {}
+    data = bins.get("data")
+    delete = bins.get("delete")
+    empty = [0] * FILE_SIZE_BIN_COUNT
+    return {
+        "data": [int(value) for value in data] if isinstance(data, list) else empty,
+        "delete": [int(value) for value in delete] if isinstance(delete, list) else list(empty),
+        "unknown": int(bins.get("unknown") or 0),
+    }
 
 
 def _below_target_stats(payload: Mapping[str, Any]) -> dict[str, int]:

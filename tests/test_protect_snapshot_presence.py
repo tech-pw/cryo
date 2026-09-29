@@ -48,7 +48,9 @@ def _seed(session: Session) -> Table:
 def _count(session: Session, table_id: uuid.UUID) -> int:
     return int(
         session.scalar(
-            select(func.count()).select_from(ProtectedSnapshot).where(ProtectedSnapshot.table_id == table_id)
+            select(func.count())
+            .select_from(ProtectedSnapshot)
+            .where(ProtectedSnapshot.table_id == table_id)
         )
         or 0
     )
@@ -88,7 +90,9 @@ def test_protect_missing_snapshot_is_404_and_stores_nothing(session: Session, mo
     assert _count(session, table.id) == 0
 
 
-def test_protect_exact_id_above_2_53_round_trips_as_a_decimal_string(session: Session, monkeypatch) -> None:
+def test_protect_exact_id_above_2_53_round_trips_as_a_decimal_string(
+    session: Session, monkeypatch
+) -> None:
     table = _seed(session)
     monkeypatch.setattr(
         "cryo.api.extensions_routes.compliance.load_current_snapshot_ids",
@@ -109,7 +113,9 @@ def test_protect_exact_id_above_2_53_round_trips_as_a_decimal_string(session: Se
     assert stored.snapshot_id == BIG
 
 
-def test_protect_does_not_store_a_row_when_metadata_cannot_be_read(session: Session, monkeypatch) -> None:
+def test_protect_does_not_store_a_row_when_metadata_cannot_be_read(
+    session: Session, monkeypatch
+) -> None:
     table = _seed(session)
 
     def _fail(*_args, **_kwargs):

@@ -55,23 +55,6 @@ export const StatStrip = ({ items }: { items: StatItem[] }) => (
   </div>
 );
 
-export const Sparkline = ({ values }: { values: Array<number | null | undefined> }) => {
-  const clean = values.map((value) => (Number.isFinite(value) ? Number(value) : 0));
-  const max = Math.max(...clean, 1);
-  const width = 72;
-  const height = 20;
-  const step = clean.length > 1 ? width / (clean.length - 1) : width;
-  const points = clean
-    .map((value, index) => `${index * step},${height - (value / max) * (height - 2) - 1}`)
-    .join(" ");
-
-  return (
-    <svg className="sparkline" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Small-file pressure">
-      <polyline points={points} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  );
-};
-
 export const JsonHelpButton = ({ value }: { value: unknown }) => (
   <Button
     size="sm"

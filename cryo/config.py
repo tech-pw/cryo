@@ -154,6 +154,15 @@ class Settings(BaseSettings):
     maintenance_max_lanes: int = Field(default=4, ge=1, le=16, description="Max Spark pods.")
     maintenance_lane_max_cpu_milli: int = Field(default=4000, ge=500)
     maintenance_lane_max_mem_mib: int = Field(default=16384, ge=2048)
+    maintenance_lane_max_node_cpu: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Optional inclusive Karpenter node vCPU ceiling for maintenance lanes. "
+            "Zero disables it; enabling requires karpenter.k8s.aws/instance-cpu node labels. "
+            "Prevents small protected lanes from pinning very large shared nodes."
+        ),
+    )
     maintenance_lane_target_gb: float = Field(
         default=200.0,
         gt=0,
@@ -689,6 +698,10 @@ class Settings(BaseSettings):
     slack_daily_report_enabled: bool = Field(
         default=False,
         description="Enable daily anomaly report to Slack.",
+    )
+    slack_signing_secret: str | None = Field(
+        default=None,
+        description="Signing secret for Slack interactive requests. Unset rejects those requests.",
     )
 
     # Maintenance policy defaults
@@ -1242,6 +1255,24 @@ class Settings(BaseSettings):
     mcp_run_preset_enabled: bool = Field(
         default=False,
         description="Allow write-capable MCP run_preset tool. Disabled by default for safety.",
+    )
+    assistant_enabled: bool = Field(
+        default=False,
+        description="Master switch for Ask Cryo. Stays off until an operator enables it.",
+    )
+    assistant_writes_enabled: bool = Field(
+        default=False,
+        description="Assistant-only kill switch, separate from maintenance_writes_enabled.",
+    )
+    assistant_max_tool_calls: int = Field(default=8, ge=1, le=32)
+    assistant_max_parallel_reads: int = Field(default=4, ge=1, le=16)
+    assistant_turn_timeout_s: int = Field(default=45, ge=5, le=120)
+    assistant_proposal_ttl_s: int = Field(default=600, ge=60)
+    assistant_max_active_turns_per_user: int = Field(default=2, ge=1, le=8)
+    assistant_retention_days: int = Field(default=90, ge=1)
+    assistant_mcp_enabled: bool = Field(
+        default=False,
+        description="Expose the streamable HTTP MCP adapter. Off until BOT-09 is qualified.",
     )
 
     # Plan Verifier (arXiv:2510.09567)

@@ -15,8 +15,13 @@ const ROUTE_LABELS: Record<string, string> = {
   "/health": "Health",
   "/catalogs": "Catalogs",
   "/tables": "Tables",
-  "/operations": "Operations",
+  "/operations": "Runs",
   "/operations/scanner": "Scanner",
+  "/runs": "Runs",
+  "/runs/scanner": "Scanner",
+  "/decisions": "Decisions",
+  "/insights": "Insights",
+  "/settings": "Settings",
   "/ai": "Intelligence",
   "/governance": "Governance",
   "/anomalies": "Anomalies",
@@ -30,15 +35,18 @@ const ROUTE_LABELS: Record<string, string> = {
   "/attribution": "Attribution",
   "/skillsets": "Skillsets",
   "/scans": "Scanner",
-  "/presets": "Operations",
-  "/runs": "Operations"
+  "/presets": "Runs",
 };
 
 const labelFor = (segment: string, acc: string): string => {
   if (ROUTE_LABELS[acc]) return ROUTE_LABELS[acc];
-  if (acc.startsWith("/operations/runs/")) return `Run ${shortRunId(segment)}`;
-  if (acc.startsWith("/operations/presets/")) return segment;
-  if (acc.startsWith("/operations/jobs/") || acc.startsWith("/jobs/")) return `Job ${shortRunId(segment)}`;
+  if (acc.startsWith("/operations/runs/") || /^\/runs\/[^/]+$/.test(acc)) {
+    return `Run ${shortRunId(segment)}`;
+  }
+  if (acc.startsWith("/operations/presets/") || acc.startsWith("/runs/workflows/")) return segment;
+  if (acc.startsWith("/operations/jobs/") || acc.startsWith("/jobs/") || acc.startsWith("/runs/jobs/")) {
+    return `Job ${shortRunId(segment)}`;
+  }
   return decodeURIComponent(segment);
 };
 

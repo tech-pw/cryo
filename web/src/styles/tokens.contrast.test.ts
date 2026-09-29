@@ -111,7 +111,9 @@ describe("tokens.css Iceberg palette", () => {
     expect(lightValue("--primitive-surface")).toBe("#ffffff");
     expect(lightValue("--color-card")).toBe("#ffffff");
     expect(lightValue("--primitive-chart-primary")).toBe("#277abe");
-    expect(lightValue("--primitive-grade-b")).toBe("#277abe");
+    expect(lightValue("--primitive-grade-b")).toBe("#4d7c0f");
+    expect(lightValue("--grade-b")).toBe("#4d7c0f");
+    expect(lightValue("--gradeB")).toBe("#4d7c0f");
     expect(lightValue("--sidebar-bg")).toBe("#f5fafd");
     expect(lightValue("--sidebar-active-bg")).toBe("#eaf7fd");
     expect(lightValue("--sidebar-text")).toBe("#5c667a");
@@ -135,7 +137,9 @@ describe("tokens.css Iceberg palette", () => {
     expect(darkValue("--primitive-neutral-150")).toBe("#0e141f");
     expect(darkValue("--primitive-surface")).toBe("#0e141f");
     expect(darkValue("--primitive-chart-primary")).toBe("#68c1ea");
-    expect(darkValue("--primitive-grade-b")).toBe("#68c1ea");
+    expect(darkValue("--primitive-grade-b")).toBe("#8cc152");
+    expect(darkValue("--grade-b")).toBe("#8cc152");
+    expect(darkValue("--gradeB")).toBe("#8cc152");
     expect(darkValue("--sidebar-bg")).toBe("#0e141f");
     expect(darkValue("--sidebar-active-bg")).toBe("#0f2a40");
     expect(darkValue("--sidebar-text")).toBe("#a6b2c0");

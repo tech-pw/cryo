@@ -91,12 +91,24 @@ Do not let layout research delay a working installation or reliable daily mainte
 
 ### DP-00 — Establish the candidate and supported scope
 
-- [ ] Record the candidate commit, relevant uncommitted changes, current CI failures, and the
+- [x] Record the candidate commit, relevant uncommitted changes, current CI failures, and the
   owners of overlapping W/OSS/CS tasks. Treat an in-progress patch as unverified until its gate passes.
-- [ ] Inventory actual dispatch paths: scheduled batch lanes, worker/governor, manual execution,
+  Candidate for the in-repo slice is `4b88aba` on `gitlab-main`. `make lint` and `make typecheck`
+  still fail on pre-existing errors outside that slice. W1–W5 are owned by the competitive
+  strategy runbook and are committed. OSS-0–5 still own DP-02.
+- [x] Inventory actual dispatch paths: scheduled batch lanes, worker/governor, manual execution,
   and any enabled event/native paths. Record the planner, admission, lock, execution, result,
   and reporting entrypoints for each. Dormant code does not establish deployment support.
-- [ ] Choose the initial public profile: standard REST catalog + S3-compatible storage + Spark
+
+  | Path | Selects | Admits | Writes | Deployed |
+  |---|---|---|---|---|
+  | Nightly batch | `BatchMaintenance._select` → `selection.py` | Lane budget in the coordinator. Does not call `pack_fleet_budget` or `ROIGate.decide`. | Spark lane pods | Yes, CronJob |
+  | Worker | Queue claim | Governor admission, then `process_next` | Destination engine. Disabled native falls back to Spark only. | Yes |
+  | Governor SQL fallback | Native-unsupported ops | Same wave, then `_dispatch_fallback_operations` | Configured SQL fallback. Refuses when writes are disabled. | Only if native admission runs. Prod native engine is off. |
+  | Manual API run | Caller-selected tables | `BatchMaintenance.run` | Spark, unless dry-run | Yes |
+  | Event watcher | Signal | Not on the nightly path | Would write if deployed | No Helm template |
+
+- [x] Choose the initial public profile: standard REST catalog + S3-compatible storage + Spark
   on Kubernetes, with Trino query observation optional. Certify further combinations separately;
   do not infer support for a cross-product from factory adapters. Retain configured existing
   Trino execution behavior while certifying its separate profile.
@@ -116,9 +128,10 @@ and blockers are reviewable. No undocumented private dependency is required by t
 [runner](../cryo_spark_runner.py), audit models, and
 [impact reporting](../cryo/reporting/impact_history.py).
 
-- [ ] Reconcile W1/W3/W4 against the current code and complete their missing tests. Rewritten
+- [x] Reconcile W1/W3/W4 against the current code and complete their missing tests. Rewritten
   bytes must never be reported as reclaimed storage. A logical reduction in delete-file bytes
-  is also not proof of physical deletion or a billing reduction.
+  is also not proof of physical deletion or a billing reduction. `AuditLogRead.effect_status`
+  is `files_reported` or `bytes_reported`, never a verified commit.
 - [ ] Extend existing result/audit contracts with a versioned evidence payload. Preserve legacy
   readers; add an additive migration where indexed fields or durable constraints require one.
   Do not reinterpret historical values silently or bulk-backfill unproven measurements.
@@ -175,8 +188,10 @@ operator time, wall-clock time, prerequisites, and dataset size separately. Publ
 [commit signals](../cryo/scanner/commit_signals.py), both scanners,
 [quality API](../cryo/api/routes_quality_constraints.py), and existing table-detail UI.
 
-- [ ] Offer a catalog-only discovery and quality workflow with no maintenance destination
+- [x] Offer a catalog-only discovery and quality workflow with no maintenance destination
   required. Use read-only credentials and ensure the selected mode cannot enqueue write jobs.
+  `maintenance_writes_enabled=false` blocks enqueue, batch runs, worker claims, and SQL fallback
+  dispatch. Quality rules already live on the table page and do not require a destination.
 - [ ] Expose the supported rules: size, completeness, numeric/temporal range, size change, and
   freshness. Show the latest scanned snapshot, observation age, metric coverage, and unknown reason.
 - [ ] Keep data arrival distinct from maintenance activity. After the source scan becomes stale,
@@ -215,7 +230,7 @@ admission, scheduler/worker, domain DTOs, and durable repositories.
   an estimated budget cannot guarantee an exact cloud invoice ceiling.
 - [ ] Preserve the AutoComp ranking and its labeled query-heat extension. Treat absent query
   telemetry as unknown, with a documented fallback; do not classify an unobserved table as unused.
-- [ ] Keep shadow/enforced mode an explicit setting. Resolve W2; sample count may mark readiness
+- [x] Keep shadow/enforced mode an explicit setting. Resolve W2; sample count may mark readiness
   but must not silently enable enforcement. Record policy version and mode in every decision.
 - [ ] Add reserved capacity or explicit operator escalation for overdue required work. Weak
   benefit evidence must not indefinitely suppress policy-required cleanup, and cleanup must still
@@ -234,9 +249,10 @@ procedure. Skipped-job savings remain counterfactual estimates until controlled 
 - [ ] Preserve precomputed partition stats, GB/chunk caps, oversize-partition isolation,
   small-table behavior, cooldowns, per-table locks, and canonical operation order from
   [guardrails](../cryo/planner/guardrails.py). Preserve load probes on paths that execute on Trino.
-- [ ] Verify source-to-destination capability checks before dispatch. A Spark-isolated profile
+- [x] Verify source-to-destination capability checks before dispatch. A Spark-isolated profile
   should not fall back into Trino writes implicitly; separately configured Trino maintenance
-  remains supported only with its own protection and evidence gates.
+  remains supported only with its own protection and evidence gates. Disabled native falls
+  back only when `fallback_is_spark` is true.
 - [ ] Test position/equality deletes, mixed file sizes, partition evolution, concurrent writers,
   branches/tags, retention, lock loss, engine cancellation, restart, and partial success on
   the exact supported Iceberg/engine versions. Mark V3 or other unsupported shapes explicitly.

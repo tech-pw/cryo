@@ -113,6 +113,7 @@ from cryo.api.schemas import (
 )
 from cryo.api.security import Principal, Role, principal_from_token
 from cryo.api.serializers import table_to_read
+from cryo.api.table_view_filters import build_table_view_filter
 from cryo.api.validators import validate_cron_field
 from cryo.config import Settings, get_settings
 from cryo.db.models import (
@@ -157,8 +158,6 @@ from cryo.engines.spark.sql import render as render_spark
 from cryo.engines.trino.engine import TrinoEngine
 from cryo.engines.trino.sql import render as render_trino
 from cryo.infra.wiring import build_runtime_wiring
-from cryo.intents.binding import build_and_bind_job_intent
-from cryo.observability.correlation import correlation_summary
 from cryo.planner.guardrails import (
     sort_operations_canonically,
     validate_guardrails,
@@ -166,7 +165,6 @@ from cryo.planner.guardrails import (
     validate_params,
 )
 from cryo.planner.planner import build_plan
-from cryo.queue.run_events import build_job_status, build_log_line, safe_publish
 from cryo.scanner.orphans import estimate_orphan_scan_cost
 from cryo.security.crypto import encrypt_secret
 from cryo.sources.factory import catalog_from_config, source_catalog_for
@@ -875,9 +873,20 @@ def list_tables(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
     cursor: Annotated[str | None, Query()] = None,
+    freshness_breach: Annotated[bool, Query()] = False,
+    maintenance_overdue: Annotated[bool, Query()] = False,
+    p95_breach: Annotated[bool, Query()] = False,
+    no_reads_days: Annotated[int | None, Query(ge=1, le=3660)] = None,
 ) -> PaginatedTables:
     predicate = _parse_filter(filter)
     tenant_id = require_tenant(session)
+    view = build_table_view_filter(
+        freshness_breach=freshness_breach,
+        maintenance_overdue=maintenance_overdue,
+        p95_breach=p95_breach,
+        no_reads_days=no_reads_days,
+    )
+    cursor_filter = view.cursor_filter(filter)
     stmt = (
         select(Table)
         .outerjoin(TableStats)
@@ -902,7 +911,13 @@ def list_tables(
         stmt = stmt.where(predicate)
         count_stmt = count_stmt.where(predicate)
 
-    total = session.scalar(count_stmt) or 0
+    view_metrics = None
+    if view.clause is not None:
+        view_metrics = session.execute(view.metrics_query(count_stmt)).one()
+        total = int(view_metrics.matched or 0)
+        stmt = stmt.where(view.clause)
+    else:
+        total = session.scalar(count_stmt) or 0
 
     # Server-side cursor takes precedence over offset — clients pass back the
     # previous page's cursor instead of computing `offset += limit`. The two
@@ -916,7 +931,7 @@ def list_tables(
         except Exception as exc:  # noqa: BLE001 - any decode problem ⇒ 400 with the message
             raise HTTPException(status_code=400, detail=f"Invalid cursor: {exc}") from exc
         if not decoded.matches_request(
-            filter_repr=make_filter_repr(filter), sort_repr=make_sort_repr(sort)
+            filter_repr=make_filter_repr(cursor_filter), sort_repr=make_sort_repr(sort)
         ):
             raise HTTPException(
                 status_code=409,
@@ -940,10 +955,11 @@ def list_tables(
         next_cursor = PageCursor(
             key=str(items[-1].id),
             offset_within_key=actual_offset + len(items),
-            filter_repr=make_filter_repr(filter),
+            filter_repr=make_filter_repr(cursor_filter),
             sort_repr=make_sort_repr(sort),
         ).encode()
 
+    view_fields = view.response_fields(view_metrics)
     return PaginatedTables(
         items=[table_to_read(item) for item in items],
         total=total,
@@ -951,6 +967,11 @@ def list_tables(
         offset=actual_offset,
         cursor=next_cursor,
         has_more=has_more,
+        unknown_count=view_fields["unknown_count"],
+        telemetry_window_days=view_fields["telemetry_window_days"],
+        telemetry_source=view_fields["telemetry_source"],
+        telemetry_coverage=view_fields["telemetry_coverage"],
+        telemetry_gap_tables=view_fields["telemetry_gap_tables"],
     )
 
 
@@ -1685,9 +1706,7 @@ def _adaptive_routing_destinations_for_run(
                 else:
                     broken = True
             if streak:
-                failure_history.setdefault(str(row_table_id), {})[str(row_destination_id)] = (
-                    streak
-                )
+                failure_history.setdefault(str(row_table_id), {})[str(row_destination_id)] = streak
 
     routed: dict[str, str] = {}
     for table in tables:
@@ -1716,199 +1735,9 @@ def _adaptive_routing_destinations_for_run(
 def create_maintenance_run(
     payload: MaintenanceRunRequest, session: SessionDep, principal: CurrentPrincipal
 ) -> MaintenanceRunResponse:
-    if session.get(Destination, payload.destination_id) is None:
-        raise HTTPException(status_code=400, detail="Destination does not exist")
-    preset = session.get(Preset, payload.preset_id)
-    if preset is None:
-        raise HTTPException(status_code=400, detail="Preset does not exist")
+    from cryo.maintenance.run_service import start_maintenance_run
 
-    requested_ops: list[str] = []
-    if preset is not None:
-        for op in preset.operations or []:
-            if isinstance(op, str):
-                requested_ops.append(op)
-            elif isinstance(op, dict) and "type" in op:
-                requested_ops.append(str(op["type"]))
-    # Presets are stored canonically (sorted on write, plus a backfill migration), but a
-    # hand-edited row must not brick the run: build_plan sorts by CORRECT_ORDER regardless,
-    # so the executed order is canonical either way. Normalizing here keeps what we hand the
-    # planner consistent with what actually runs, rather than rejecting the request.
-    requested_ops = sort_operations_canonically(requested_ops)
-
-    if payload.scheduled_at is not None:
-        now = datetime.now(UTC)
-        scheduled_at = payload.scheduled_at
-        if scheduled_at.tzinfo is None:
-            scheduled_at = scheduled_at.replace(tzinfo=UTC)
-        if scheduled_at <= now:
-            raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
-
-    selection = (
-        _resolve_selection(session, payload.selection)
-        if payload.selection is not None
-        else _resolve_selection(
-            session,
-            AssignmentSelection(mode="ids", ids=payload.table_ids, filter=None),
-        )
-    )
-
-    run = MaintenanceRun(
-        kind="adhoc",
-        preset_id=payload.preset_id,
-        trigger=payload.trigger,
-        status="scheduled" if payload.scheduled_at is not None else "queued",
-        scheduled_at=payload.scheduled_at,
-        summary=correlation_summary({"actor": principal.subject}),
-    )
-    session.add(run)
-    session.flush()
-
-    # Plan Verifier (arXiv:2510.09567) -- when the preset exposes a parsed MaintenancePlan via
-    # params.operations (Planner-emitted), run the verifier once per table before enqueue and
-    # persist the verdict onto the job. If the verifier reports a critical violation, refuse
-    # to enqueue.
-    settings = get_settings()
-    verifier_enabled = settings.plan_verifier_enabled
-    # Computed once for the whole run, not per-table -- avoids an N+1 query pattern and matches
-    # how the scheduler's cron path (_apply_routing) resolves routing for a run as a batch.
-    adaptive_destinations = _adaptive_routing_destinations_for_run(
-        session, preset, selection.table_ids
-    )
-    jobs: list[MaintenanceJob] = []
-    for table_id in selection.table_ids:
-        if preset is not None and requested_ops:
-            for op_name in requested_ops:
-                from cryo.domain.enums import OperationType
-                from cryo.security.abac_enforcement import evaluate_maintenance_allowed
-
-                try:
-                    op_enum = OperationType(op_name)
-                except ValueError:
-                    op_enum = op_name  # type: ignore[assignment]
-                allowed, reason = evaluate_maintenance_allowed(
-                    session, table_id, principal, op_enum
-                )
-                if not allowed:
-                    raise HTTPException(status_code=403, detail=reason)
-        plan_for_verifier = (
-            None
-            if settings.durable_intents_enabled
-            else _build_plan_for_table(session, table_id, preset, payload.mode)
-        )
-        verified_flag = True
-        plan_hash_value: str | None = None
-        verifier_version_value: str | None = None
-        violations_value: list[dict[str, object]] = []
-        if verifier_enabled and plan_for_verifier is not None:
-            from cryo.planner.verifier import PlanVerifier
-
-            verdict = PlanVerifier(session=session, settings=get_settings()).verify(
-                plan_for_verifier
-            )
-            verified_flag = verdict.verified
-            plan_hash_value = verdict.plan_hash
-            verifier_version_value = verdict.verifier_version
-            violations_value = [
-                {
-                    "invariant": v.invariant,
-                    "severity": v.severity,
-                    "message": v.message,
-                    "location": v.location,
-                }
-                for v in verdict.violations
-            ]
-            if not verdict.verified:
-                raise HTTPException(
-                    status_code=422,
-                    detail={
-                        "code": "plan_verifier_rejected",
-                        "plan_hash": verdict.plan_hash,
-                        "violations": violations_value,
-                    },
-                )
-        routed_destination_id = adaptive_destinations.get(str(table_id))
-        job = MaintenanceJob(
-            run_id=run.id,
-            table_id=table_id,
-            destination_id=(
-                uuid.UUID(routed_destination_id)
-                if routed_destination_id is not None
-                else payload.destination_id
-            ),
-            mode=payload.mode.value,
-            status="queued",
-            verified=verified_flag,
-            plan_hash=plan_hash_value,
-            verifier_version=verifier_version_value,
-            verifier_violations=violations_value or None,
-        )
-        session.add(job)
-        session.flush()
-        if settings.durable_intents_enabled:
-            build_and_bind_job_intent(
-                session,
-                job_id=str(job.id),
-                settings=settings,
-                actor_type="api",
-                actor_id=principal.subject,
-            )
-        jobs.append(job)
-    session.commit()
-    wiring = build_runtime_wiring()
-    if payload.scheduled_at is not None:
-        # Scheduled runs are not enqueued now -- the jobs exist (status="queued" at the row
-        # level, same as any other job) but wiring.queue.enqueue() is what actually makes a
-        # job eligible for Governor admission, and that call is deliberately skipped here.
-        # cryo/scheduler/service.py's dispatch tick enqueues these once scheduled_at passes.
-        safe_publish(
-            wiring.run_events,
-            run.id,
-            build_log_line(
-                run_id=run.id,
-                message=(
-                    f"Scheduled maintenance run with {len(jobs)} job(s) for "
-                    f"{payload.scheduled_at.isoformat()}"
-                ),
-            ),
-        )
-        return MaintenanceRunResponse(
-            run_id=run.id, job_ids=[job.id for job in jobs], status=run.status
-        )
-    safe_publish(
-        wiring.run_events,
-        run.id,
-        build_log_line(
-            run_id=run.id,
-            message=f"Submitted maintenance run with {len(jobs)} job(s)",
-        ),
-    )
-    for job in jobs:
-        session.refresh(job)
-        wiring.queue.enqueue(str(job.id), str(job.destination_id))
-        safe_publish(
-            wiring.run_events,
-            run.id,
-            build_job_status(
-                run_id=run.id,
-                job_id=job.id,
-                status=JobStatus.QUEUED.value,
-                table_id=job.table_id,
-                message="Job queued",
-            ),
-        )
-        safe_publish(
-            wiring.run_events,
-            run.id,
-            build_log_line(
-                run_id=run.id,
-                job_id=job.id,
-                table_id=job.table_id,
-                message=f"Queued maintenance job for table {job.table_id}",
-            ),
-        )
-    return MaintenanceRunResponse(
-        run_id=run.id, job_ids=[job.id for job in jobs], status=run.status
-    )
+    return start_maintenance_run(session, payload, principal)
 
 
 @router.post(

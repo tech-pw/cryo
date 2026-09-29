@@ -62,7 +62,7 @@ describe("latestNightlyRunPath", () => {
       summary: { pipeline: "batch" }
     });
 
-    expect(latestNightlyRunPath([older, newer])).toBe("/operations/runs/newer");
+    expect(latestNightlyRunPath([older, newer])).toBe("/runs/newer");
   });
 
   it("returns null when no batch run exists", () => {

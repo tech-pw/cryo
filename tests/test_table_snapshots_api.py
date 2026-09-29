@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from collections.abc import Iterator
@@ -75,7 +76,7 @@ class _Ref:
 
 
 class _Metadata:
-    def __init__(self, current: int | None, snapshots: list[_Snap], refs: dict[str, _Ref]) -> None:
+    def __init__(self, current: int | None, snapshots: list[Any], refs: dict[str, Any]) -> None:
         self.current_snapshot_id = current
         self.snapshots = snapshots
         self.refs = refs
@@ -157,8 +158,10 @@ def test_pages_refs_missing_summary_and_protected_without_listing_files(
     assert body["page"] == 1
     assert body["page_size"] == 2
     assert body["pinned_count"] == 2
-    assert body["current_snapshot_id"] == 103
-    assert [row["snapshot_id"] for row in body["snapshots"]] == [103, 102]
+    assert body["current_snapshot_id"] == "103"
+    assert [row["snapshot_id"] for row in body["snapshots"]] == ["103", "102"]
+    assert body["snapshots"][0]["parent_snapshot_id"] is None
+    assert body["snapshots"][1]["parent_snapshot_id"] is None
 
     current = body["snapshots"][0]
     assert current["is_current"] is True
@@ -171,6 +174,7 @@ def test_pages_refs_missing_summary_and_protected_without_listing_files(
         {
             "name": "main",
             "type": "branch",
+            "snapshot_id": "103",
             "min_snapshots_to_keep": 4,
             "max_snapshot_age_ms": None,
             "max_ref_age_ms": None,
@@ -194,13 +198,15 @@ def test_pages_refs_missing_summary_and_protected_without_listing_files(
     )
     assert second.status_code == 200
     older = second.json()["snapshots"]
-    assert [row["snapshot_id"] for row in older] == [101]
+    assert [row["snapshot_id"] for row in older] == ["101"]
+    assert older[0]["parent_snapshot_id"] is None
     assert older[0]["protected"] is True
     assert older[0]["protected_label"] == "year-end"
     assert older[0]["refs"] == [
         {
             "name": "year-end",
             "type": "tag",
+            "snapshot_id": "101",
             "min_snapshots_to_keep": None,
             "max_snapshot_age_ms": None,
             "max_ref_age_ms": 604_800_000,
@@ -241,6 +247,78 @@ def test_page_size_over_100_is_rejected(session: Session) -> None:
         headers=VIEWER_HEADERS,
     )
     assert response.status_code == 422
+
+
+def test_large_ids_are_decimal_strings_and_parent_is_not_inferred(
+    session: Session, monkeypatch: Any
+) -> None:
+    from pyiceberg.table.refs import SnapshotRef
+    from pyiceberg.table.snapshots import Snapshot
+
+    table = _seed(session)
+    big = 9223372036854775807
+    parent = 9223372036854775806
+    session.add(
+        ProtectedSnapshot(
+            id=uuid.uuid4(),
+            table_id=table.id,
+            snapshot_id=big,
+            label="keep",
+            protected_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
+    )
+    session.commit()
+    calls = {"manifests": 0, "scan": 0, "inspect": 0}
+    current = Snapshot(
+        snapshot_id=big,
+        parent_snapshot_id=parent,
+        timestamp_ms=1_700_000_002_000,
+        sequence_number=2,
+        manifest_list="s3://bucket/current.avro",
+        summary={"operation": "append"},
+    )
+    assert current.parent_snapshot_id == parent
+    adjacent = {
+        "snapshot-id": 100,
+        "timestamp_ms": 1_700_000_001_000,
+        "sequence_number": 1,
+        "summary": {"operation": "append"},
+    }
+    metadata = _Metadata(
+        big,
+        [current, adjacent],
+        {"main": SnapshotRef(snapshot_id=big, type="branch", min_snapshots_to_keep=1)},
+    )
+    monkeypatch.setattr(
+        "cryo.sources.factory.source_catalog_for", lambda source: _catalog(metadata, calls)
+    )
+    client = _client(session)
+
+    response = client.get(f"/api/v1/tables/{table.id}/snapshots", headers=VIEWER_HEADERS)
+    assert response.status_code == 200
+    raw = response.text
+    assert '"9223372036854775807"' in raw
+    assert '"9223372036854775806"' in raw
+    assert re.search(r'(?<!")9223372036854775807(?!")', raw) is None
+    assert re.search(r'(?<!")9223372036854775806(?!")', raw) is None
+
+    body = response.json()
+    assert isinstance(body["current_snapshot_id"], str)
+    assert body["current_snapshot_id"] == "9223372036854775807"
+    rows = body["snapshots"]
+    assert [row["snapshot_id"] for row in rows] == ["9223372036854775807", "100"]
+    assert all(isinstance(row["snapshot_id"], str) for row in rows)
+    assert rows[0]["parent_snapshot_id"] == "9223372036854775806"
+    assert isinstance(rows[0]["parent_snapshot_id"], str)
+    assert rows[0]["parent_snapshot_id"] != rows[1]["snapshot_id"]
+    assert rows[1]["parent_snapshot_id"] is None
+    assert rows[0]["protected"] is True
+    assert rows[0]["protected_label"] == "keep"
+    assert rows[0]["refs"][0]["snapshot_id"] == "9223372036854775807"
+    assert isinstance(rows[0]["refs"][0]["snapshot_id"], str)
+    assert rows[0]["summary"]["added_data_files"] is None
+    assert calls == {"manifests": 0, "scan": 0, "inspect": 0}
+    assert _history_count(session) == 0
 
 
 def test_missing_table_is_404(session: Session) -> None:

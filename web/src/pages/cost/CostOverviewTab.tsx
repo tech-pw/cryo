@@ -1,8 +1,18 @@
 import type { ColumnDef, RowSelectionState } from "@tanstack/react-table";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Line, LineChart, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
-import { Link } from "react-router-dom";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis
+} from "recharts";
+import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   assignTables,
@@ -33,16 +43,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/ca
 import { ChartDataTable } from "../../components/ui/chart-data-table";
 import { DataTable } from "../../components/ui/data-table";
 import { MetricGrid } from "../../components/ui/metric-grid";
+import { Select } from "../../components/ui/select";
 import { Skeleton } from "../../components/ui/skeleton";
 import { MetricTile } from "../../components/ui/stat";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { useAuth } from "../../lib/auth";
-import { formatBytesGb, formatCurrency, formatNumber, formatTime } from "../../lib/format";
+import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../../lib/format";
 import { qualifiedTableName } from "../../lib/tableLabels";
 import type { Predicate } from "../../lib/predicate";
+import { useWriteControl } from "../../lib/useWriteControl";
 import { chartAxisTick, chartTooltipProps, cryoColors } from "../../lib/theme";
 
 const OPPORTUNITY_FILTER: Predicate = savingsOpportunityFilter;
+const OPPORTUNITY_PAGE_SIZE = 50;
+const EMPTY_TABLES: TableRead[] = [];
 const COST_UNAVAILABLE = "Cost data unavailable";
 const NOT_MEASURED = "Not measured";
 
@@ -51,6 +65,18 @@ const displayCost = (value: number | null | undefined): string =>
 
 const displayBytes = (value: number | null | undefined): string =>
   value == null || Number.isNaN(value) ? NOT_MEASURED : formatBytesGb(value);
+
+const displayMeasuredGb = (value: number | null | undefined): string =>
+  value == null || !Number.isFinite(value) ? NOT_MEASURED : formatGb(value);
+
+const displayMeasuredBytes = (value: number | null | undefined): string =>
+  value == null || !Number.isFinite(value) ? NOT_MEASURED : formatBytesGb(value);
+
+const offsetFromSearch = (raw: string | null): number => {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.floor(parsed / OPPORTUNITY_PAGE_SIZE) * OPPORTUNITY_PAGE_SIZE;
+};
 
 const computeCostDelta30d = (trend: CostTrendPoint[] | undefined) => {
   if (!trend || trend.length < 2) return undefined;
@@ -88,16 +114,12 @@ const opportunityColumns: ColumnDef<TableRead, unknown>[] = [
   {
     id: "size",
     header: "Size",
-    cell: ({ row }) =>
-      row.original.stats?.total_size_gb != null ? formatBytesGb(row.original.stats.total_size_gb) : "Not measured"
+    cell: ({ row }) => displayMeasuredGb(row.original.stats?.total_size_gb)
   },
   {
     id: "reclaim",
     header: "Reclaimable",
-    cell: ({ row }) =>
-      row.original.stats?.reclaimable_bytes != null
-        ? formatBytesGb(row.original.stats.reclaimable_bytes)
-        : "Not measured"
+    cell: ({ row }) => displayMeasuredBytes(row.original.stats?.reclaimable_bytes)
   },
   {
     id: "scan_at",
@@ -112,6 +134,12 @@ const opportunityColumns: ColumnDef<TableRead, unknown>[] = [
  */
 export const CostOverviewTab = () => {
   const { api, token } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const oppOffset = offsetFromSearch(searchParams.get("oppOffset"));
+  const runAccess = useWriteControl("runMaintenance");
+  const assignAccess = useWriteControl("assignPreset");
+  const scanAccess = useWriteControl("triggerScan");
+  const manifestAccess = useWriteControl("manifestRewrite");
   const [previewTables, setPreviewTables] = useState<TableRead[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -123,9 +151,16 @@ export const CostOverviewTab = () => {
     retry: 1
   });
   const matchingTables = useQuery({
-    queryKey: ["cost-matching-tables", token],
-    queryFn: () => listTables(api, { predicate: OPPORTUNITY_FILTER, limit: 1, offset: 0 }),
-    enabled: !cost.isLoading
+    queryKey: ["cost-matching-tables", token, oppOffset],
+    queryFn: ({ signal }) =>
+      listTables(api, {
+        predicate: OPPORTUNITY_FILTER,
+        sort: "-reclaimable_bytes",
+        limit: OPPORTUNITY_PAGE_SIZE,
+        offset: oppOffset,
+        signal
+      }),
+    enabled: cost.isSuccess
   });
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
@@ -168,10 +203,40 @@ export const CostOverviewTab = () => {
       ? { mode: "ids", ids: selectedRowKeys, totalSelected: selectedRowKeys.length }
       : null);
 
-  const opportunityRows = useMemo(() => [] as TableRead[], []);
+  const opportunityRows = matchingTables.data?.items ?? EMPTY_TABLES;
+  const opportunityTotal =
+    matchingTables.data == null || matchingTables.data.total == null ? null : matchingTables.data.total;
+  const opportunityBadge = !matchingTables.isSuccess
+    ? matchingTables.isError
+      ? NOT_MEASURED
+      : null
+    : opportunityTotal == null
+      ? NOT_MEASURED
+      : opportunityRows.length < opportunityTotal
+        ? `${opportunityRows.length} of ${opportunityTotal} candidates`
+        : `${opportunityTotal} candidates`;
+  const deniedReason =
+    scanAccess.reason ?? runAccess.reason ?? assignAccess.reason ?? manifestAccess.reason;
+  const bulkWritesAllowed =
+    runAccess.allowed && assignAccess.allowed && manifestAccess.allowed && scanAccess.allowed;
+
+  const setOppOffset = (nextOffset: number) => {
+    setRowSelection({});
+    setBulkSelection(null);
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (nextOffset <= 0) next.delete("oppOffset");
+        else next.set("oppOffset", String(nextOffset));
+        return next;
+      },
+      { replace: true }
+    );
+  };
 
   const assign = useMutation({
     mutationFn: (presetId: UUID) => {
+      if (!assignAccess.allowed) throw new Error(assignAccess.reason ?? "Not allowed");
       if (!selection) throw new Error("No tables selected");
       return assignTables(api, {
         selection:
@@ -186,6 +251,7 @@ export const CostOverviewTab = () => {
 
   const bulkRun = useMutation({
     mutationFn: (args: { destinationId: UUID; presetId: UUID; mode: Mode }) => {
+      if (!runAccess.allowed) throw new Error(runAccess.reason ?? "Not allowed");
       if (!selection) throw new Error("No tables selected");
       if (selection.mode === "filter") {
         return runMaintenance(api, {
@@ -209,12 +275,16 @@ export const CostOverviewTab = () => {
   });
 
   const fullCostScan = useMutation({
-    mutationFn: () => triggerCostScan(api, { cost_full_scan: true, trigger: "web-cost-full" }),
+    mutationFn: () => {
+      if (!scanAccess.allowed) throw new Error(scanAccess.reason ?? "Not allowed");
+      return triggerCostScan(api, { cost_full_scan: true, trigger: "web-cost-full" });
+    },
     onSuccess: (result) => toast.success(result.message || `Scan queued: ${result.run_id}`),
     onError: (error) => toast.error((error as Error).message)
   });
   const bulkManifestRewrite = useMutation({
     mutationFn: (args: { destinationId: UUID; presetId: UUID }) => {
+      if (!manifestAccess.allowed) throw new Error(manifestAccess.reason ?? "Not allowed");
       if (!selection) throw new Error("No tables selected");
       if (selection.mode === "filter") {
         return runManifestRewrite(api, {
@@ -236,6 +306,7 @@ export const CostOverviewTab = () => {
   });
   const bulkScan = useMutation({
     mutationFn: () => {
+      if (!scanAccess.allowed) throw new Error(scanAccess.reason ?? "Not allowed");
       if (!selection) throw new Error("No tables selected");
       if (selection.mode === "filter") {
         return triggerScan(api, {
@@ -294,6 +365,9 @@ export const CostOverviewTab = () => {
               lastFullCostScanAt={data.totals.last_full_cost_scan_at}
               orphanScanStale={data.totals.orphan_scan_stale}
             />
+            <Link to="/scan-cost" className="text-xs text-primary hover:underline">
+              Scan cost
+            </Link>
             <span className="text-xs text-muted-foreground">
               {data.totals.last_full_cost_scan_at
                 ? `Last full storage-truth scan: ${formatTime(data.totals.last_full_cost_scan_at)}`
@@ -307,7 +381,7 @@ export const CostOverviewTab = () => {
           </div>
           <MetricGrid columns={4} className="mb-3">
             <MetricTile
-              label="Total monthly S3 cost"
+              metricId="modeled_s3_storage_cost"
               value={displayCost(data.totals.current_monthly_cost_usd)}
               emphasis
               delta={costDelta30d}
@@ -321,7 +395,7 @@ export const CostOverviewTab = () => {
                 </span>
               }
             />
-            <MetricTile label="Monthly savings" value={displayCost(data.totals.projected_savings_usd_month)} />
+            <MetricTile metricId="modeled_savings" value={displayCost(data.totals.projected_savings_usd_month)} />
             <MetricTile
               label="Saved to date"
               value={displayCost(data.totals.total_realized_savings_usd)}
@@ -439,9 +513,9 @@ export const CostOverviewTab = () => {
                       role="img"
                       aria-label={`Projected versus realized monthly savings across ${(data.trend ?? []).length} scans.`}
                     >
+                    <ResponsiveContainer width="100%" height={220}>
                     <LineChart
                       data={data.trend ?? []}
-                      height={220}
                       margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
                     >
                       <CartesianGrid stroke={cryoColors.chartGrid} />
@@ -471,6 +545,7 @@ export const CostOverviewTab = () => {
                         name="Realized savings"
                       />
                     </LineChart>
+                    </ResponsiveContainer>
                     </div>
                     <ChartDataTable
                       caption="Monthly trend of projected vs realized savings by scan date."
@@ -512,9 +587,9 @@ export const CostOverviewTab = () => {
                       role="img"
                       aria-label={`Estimated monthly cost for the top ${Math.min((schemaCost.data ?? []).length, 8)} schemas.`}
                     >
+                    <ResponsiveContainer width="100%" height={220}>
                     <BarChart
                       data={(schemaCost.data ?? []).slice(0, 8)}
-                      height={220}
                       margin={{ top: 8, right: 16, bottom: 24, left: 0 }}
                     >
                       <CartesianGrid stroke={cryoColors.chartGrid} />
@@ -530,6 +605,7 @@ export const CostOverviewTab = () => {
                       <RechartsTooltip {...chartTooltipProps} />
                       <Bar dataKey="cost_usd" fill={cryoColors.primary} name="$ / mo" />
                     </BarChart>
+                    </ResponsiveContainer>
                     </div>
                     <ChartDataTable
                       caption="Estimated monthly S3 cost by schema, largest first."
@@ -566,66 +642,133 @@ export const CostOverviewTab = () => {
             <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle>Savings opportunities</CardTitle>
               <div className="flex flex-wrap items-center gap-2">
+                {opportunityBadge ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge>{opportunityBadge}</Badge>
+                    </TooltipTrigger>
+                    <TooltipContent>Ranked by reclaimable bytes — biggest wins first.</TooltipContent>
+                  </Tooltip>
+                ) : null}
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Badge>
-                      {matchingTables.data?.total == null ? "Not measured" : `${matchingTables.data.total} candidates`}
-                    </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent>Ranked by reclaimable bytes — biggest wins first.</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button size="sm" loading={fullCostScan.isPending} onClick={() => fullCostScan.mutate()}>
-                      Run full cost scan
-                    </Button>
+                    <span className="inline-flex">
+                      <Button
+                        size="sm"
+                        type="button"
+                        loading={fullCostScan.isPending}
+                        disabled={!scanAccess.allowed}
+                        title={scanAccess.reason ?? undefined}
+                        onClick={() => {
+                          if (!scanAccess.allowed) return;
+                          fullCostScan.mutate();
+                        }}
+                      >
+                        Run full cost scan
+                      </Button>
+                    </span>
                   </TooltipTrigger>
                   <TooltipContent>
-                    Runs a Tier-2 storage scan (bounded S3 LIST) to refresh orphan-byte estimates.
+                    {scanAccess.reason ??
+                      "Runs a Tier-2 storage scan (bounded S3 LIST) to refresh orphan-byte estimates."}
                   </TooltipContent>
                 </Tooltip>
+                {deniedReason ? <span className="text-xs text-muted-foreground">{deniedReason}</span> : null}
               </div>
             </CardHeader>
             <CardContent className="p-0 pt-0">
               <DataTable
                 columns={opportunityColumns}
                 data={opportunityRows}
+                loading={matchingTables.isPending}
                 getRowId={(row) => row.id}
                 rowSelection={rowSelection}
                 onRowSelectionChange={setRowSelection}
                 enableRowSelection
-                emptyTitle="No savings opportunities"
-                emptyDescription="Tables with reclaimable storage will appear here after a scan."
+                emptyTitle={
+                  matchingTables.isError || opportunityTotal == null
+                    ? "Opportunities unavailable"
+                    : "No savings opportunities"
+                }
+                emptyDescription={
+                  matchingTables.isError || opportunityTotal == null
+                    ? "The savings candidate list could not be loaded."
+                    : "Tables with reclaimable storage will appear here after a scan."
+                }
+                pagination={
+                  opportunityTotal == null
+                    ? undefined
+                    : {
+                        pageIndex: Math.floor(oppOffset / OPPORTUNITY_PAGE_SIZE),
+                        pageSize: OPPORTUNITY_PAGE_SIZE,
+                        totalRows: opportunityTotal,
+                        onPageChange: (pageIndex) => setOppOffset(pageIndex * OPPORTUNITY_PAGE_SIZE)
+                      }
+                }
               />
             </CardContent>
           </Card>
 
-          <BulkAssignBar
-            selection={selection}
-            presets={presets.data ?? []}
-            destinations={destinations.data ?? []}
-            onClear={clearSelection}
-            onAssign={(presetId) => assign.mutate(presetId)}
-            onRun={({ destinationId, presetId, mode }) => bulkRun.mutate({ destinationId, presetId, mode })}
-            onManifestRewrite={({ destinationId, presetId }) =>
-              bulkManifestRewrite.mutate({ destinationId, presetId })
-            }
-            onScan={() => bulkScan.mutate()}
-            onPreview={async () => {
-              if (!selection) throw new Error("No tables selected");
-              setPreviewTables(
-                selection.mode === "filter"
-                  ? []
-                  : (
-                      await listTables(api, {
-                        predicate: { all: { ids: selection.ids } } as unknown as Predicate,
-                        limit: 25
-                      })
-                    ).items ?? []
-              );
-              setPreviewOpen(true);
-            }}
-          />
+          {bulkWritesAllowed ? (
+            <BulkAssignBar
+              selection={selection}
+              presets={presets.data ?? []}
+              destinations={destinations.data ?? []}
+              onClear={clearSelection}
+              onAssign={(presetId) => assign.mutate(presetId)}
+              onRun={({ destinationId, presetId, mode }) => bulkRun.mutate({ destinationId, presetId, mode })}
+              onManifestRewrite={({ destinationId, presetId }) =>
+                bulkManifestRewrite.mutate({ destinationId, presetId })
+              }
+              onScan={() => bulkScan.mutate()}
+              onPreview={async () => {
+                if (!selection) throw new Error("No tables selected");
+                setPreviewTables(
+                  selection.mode === "filter"
+                    ? []
+                    : (
+                        await listTables(api, {
+                          predicate: { all: { ids: selection.ids } } as unknown as Predicate,
+                          limit: 25
+                        })
+                      ).items ?? []
+                );
+                setPreviewOpen(true);
+              }}
+            />
+          ) : selection ? (
+            <div className="bulk-bar flex flex-wrap items-center gap-2" data-testid="bulk-assign-bar">
+              <span className="font-semibold">{selection.totalSelected.toLocaleString()} selected</span>
+              {assignAccess.hidden ? null : assignAccess.allowed ? (
+                <Select
+                  aria-label="Assign preset"
+                  placeholder="Select preset"
+                  options={(presets.data ?? []).map((preset) => ({ label: preset.name, value: preset.id }))}
+                  loading={assign.isPending}
+                  onChange={(presetId) => {
+                    if (presetId && assignAccess.allowed) assign.mutate(presetId);
+                  }}
+                />
+              ) : (
+                <Button type="button" disabled title={assignAccess.reason ?? undefined} aria-label="Assign preset">
+                  Assign
+                </Button>
+              )}
+              {runAccess.hidden ? null : (
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={!runAccess.allowed}
+                  title={runAccess.reason ?? undefined}
+                >
+                  Run now
+                </Button>
+              )}
+              <Button type="button" onClick={clearSelection}>
+                Clear
+              </Button>
+            </div>
+          ) : null}
 
           <PlanPreview open={previewOpen} onClose={() => setPreviewOpen(false)} tables={previewTables} />
         </>

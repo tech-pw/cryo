@@ -1,98 +1,75 @@
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis
-} from "recharts";
 import type { PartitionRead } from "../../api/types";
-import { chartTooltipProps } from "../../lib/theme";
-import { formatGb, formatNumber } from "../../lib/format";
-import { ChartDataTable } from "../ui/chart-data-table";
+import { formatGb } from "../../lib/format";
 
 interface PartitionHistogramProps {
   partitions: PartitionRead[];
 }
 
-const colorForSmallRate = (rate: number) => {
-  if (rate >= 0.3) return "var(--gradeF, #b23a2e)";
-  if (rate >= 0.15) return "var(--gradeC, #a9791e)";
-  return "var(--primary, #3d6fd4)";
+const measured = (value: number | null | undefined): number | null =>
+  value == null || Number.isNaN(value) ? null : value;
+
+const sizeLabel = (value: number | null | undefined): string => {
+  const size = measured(value);
+  return size == null ? "Not measured" : formatGb(size);
 };
 
-export const PartitionHistogram = ({ partitions }: PartitionHistogramProps) => {
-  const top = [...partitions]
-    .sort((a, b) => (b.partition_size_gb ?? 0) - (a.partition_size_gb ?? 0))
-    .slice(0, 15)
-    .map((item, idx) => {
-      const files = Math.max(item.files_per_partition ?? 1, 1);
-      const small = item.small_files_in_partition_count ?? 0;
-      const rate = small / files;
-      return {
-        key: `${item.partition_value ?? "table"}-${idx}`,
-        label: item.partition_value ?? "(table)",
-        sizeGb: item.partition_size_gb ?? 0,
-        smallFiles: small,
-        smallRate: rate,
-        fill: colorForSmallRate(rate)
-      };
-    });
+const rateLabel = (small: number | null | undefined, files: number | null | undefined): string => {
+  const smallCount = measured(small);
+  const fileCount = measured(files);
+  if (smallCount == null || fileCount == null || fileCount <= 0) return "Not measured";
+  return `${Math.round((smallCount / fileCount) * 100)}%`;
+};
 
-  if (!top.length) {
-    return <span className="text-sm text-muted-foreground">No Partition Histogram Yet.</span>;
+const nameLabel = (value: string | null | undefined): string =>
+  value == null || value === "" ? "Not measured" : value;
+
+export const PartitionHistogram = ({ partitions }: PartitionHistogramProps) => {
+  const ranked = partitions
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const leftSize = measured(left.item.partition_size_gb);
+      const rightSize = measured(right.item.partition_size_gb);
+      if (leftSize == null && rightSize == null) return left.index - right.index;
+      if (leftSize == null) return 1;
+      if (rightSize == null) return -1;
+      return rightSize - leftSize || left.index - right.index;
+    })
+    .slice(0, 15);
+
+  if (!partitions.length) {
+    return <p className="text-sm text-muted-foreground">No partitions yet.</p>;
   }
 
   return (
-    <div
-      className="td-partition-histogram"
-      role="img"
-      aria-label={`Top ${top.length} partitions by size. Largest is ${top[0]?.label ?? "unknown"} at ${formatGb(top[0]?.sizeGb ?? 0)}.`}
-    >
-      <ResponsiveContainer width="100%" height={220}>
-        <BarChart data={top}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
-          <XAxis dataKey="label" hide />
-          <YAxis tick={{ fontSize: 11 }} width={48} />
-          <RechartsTooltip
-            {...chartTooltipProps}
-            formatter={(value, name, item) => {
-              if (name === "sizeGb") return [formatGb(Number(value ?? 0)), "Size"];
-              if (name === "smallFiles") return [formatNumber(Number(value ?? 0), true), "Small Files"];
-              return [String(value ?? ""), (item as { payload?: { label?: string } })?.payload?.label ?? "Partition"];
-            }}
-            labelFormatter={(value) => String(value)}
-          />
-          <Bar dataKey="sizeGb" radius={[6, 6, 0, 0]}>
-            {top.map((entry) => (
-              <Cell key={entry.key} fill={entry.fill} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-      <ChartDataTable
-        caption="Top partitions by data size and small-file pressure"
-        rows={top}
-        getRowKey={(row) => row.key}
-        columns={[
-          { key: "partition", header: "Partition", render: (row) => row.label },
-          { key: "size", header: "Size", align: "right", render: (row) => formatGb(row.sizeGb) },
-          {
-            key: "small-files",
-            header: "Small files",
-            align: "right",
-            render: (row) => formatNumber(row.smallFiles, true)
-          },
-          {
-            key: "small-rate",
-            header: "Small-file rate",
-            align: "right",
-            render: (row) => `${Math.round(row.smallRate * 100)}%`
-          }
-        ]}
-      />
+    <div className="td-partition-histogram">
+      <p className="mb-2 text-xs text-muted-foreground">
+        Top {ranked.length} of {partitions.length} partitions
+      </p>
+      <table className="w-full text-sm">
+        <caption className="sr-only">
+          Top {ranked.length} of {partitions.length} partitions ranked by size
+        </caption>
+        <thead>
+          <tr className="text-left text-xs text-muted-foreground">
+            <th className="py-1 pr-3 font-medium">Partition</th>
+            <th className="py-1 pr-3 text-right font-medium">Size</th>
+            <th className="py-1 text-right font-medium">Small-file rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ranked.map(({ item, index }) => (
+            <tr key={`${item.partition_value ?? "partition"}-${index}`} className="border-t border-border/70">
+              <td className="py-1.5 pr-3 break-words">{nameLabel(item.partition_value)}</td>
+              <td className="py-1.5 pr-3 text-right [font-variant-numeric:tabular-nums]">
+                {sizeLabel(item.partition_size_gb)}
+              </td>
+              <td className="py-1.5 text-right [font-variant-numeric:tabular-nums]">
+                {rateLabel(item.small_files_in_partition_count, item.files_per_partition)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 };

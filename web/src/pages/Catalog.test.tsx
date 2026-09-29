@@ -210,7 +210,7 @@ describe("Consolidated Catalog page", () => {
 
     await waitFor(() => {
       const location = screen.getByTestId("location-probe").textContent ?? "";
-      expect(location).toContain("grades=D%2CF");
+      expect(location).toContain("grade=D%2CF");
       expect(location).toContain("sort=-small_files_count");
     });
   });

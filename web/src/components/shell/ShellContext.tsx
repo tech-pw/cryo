@@ -3,6 +3,7 @@ import { createContext, useContext, type ReactNode } from "react";
 interface ShellContextValue {
   openCommandPalette: () => void;
   closeMobileNav: () => void;
+  openAssistant: (question?: string, context?: object) => void;
 }
 
 const ShellContext = createContext<ShellContextValue | null>(null);
@@ -22,3 +23,5 @@ export const useShell = (): ShellContextValue => {
   }
   return ctx;
 };
+
+export const useShellOptional = (): ShellContextValue | null => useContext(ShellContext);

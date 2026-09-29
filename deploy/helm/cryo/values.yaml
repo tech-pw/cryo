@@ -35,6 +35,12 @@ observability:
 api:
   replicas: 2
   port: 8000
+  # Ask Cryo streams SSE on POST /api/v1/assistant/conversations/{id}/messages.
+  # This chart has no Ingress. The ingress in front of the API Service must set
+  # proxy-buffering off and a read timeout of at least 60s for that path.
+  ingressAnnotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
   resources:
     requests:
       cpu: 250m
@@ -181,6 +187,9 @@ maintenance:
   maxLanes: 4
   laneMaxCpuMilli: 4000
   laneMaxMemMib: 16384
+  # Optional inclusive node vCPU ceiling; requires Karpenter instance-cpu labels.
+  # Keep 0 on other clusters. Validate node packing and total cost before enabling.
+  laneMaxNodeCpu: 0
   # Karpenter capacity types for lane pods, most preferred first. Replaces the
   # karpenter.sh/capacity-type pin inherited from spark.k8s.nodeSelector; "" keeps that pin.
   # Lanes survive node loss (partial-progress commits + replacement lanes), so spot is safe.

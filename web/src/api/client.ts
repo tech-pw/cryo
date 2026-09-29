@@ -204,6 +204,21 @@ export const apiFetch = async <T>(
   return payload as T;
 };
 
+export interface TableViewQuery {
+  freshness_breach?: boolean;
+  maintenance_overdue?: boolean;
+  p95_breach?: boolean;
+  no_reads_days?: number;
+}
+
+export interface TableListPage extends PaginatedTables {
+  unknown_count?: number | null;
+  telemetry_window_days?: number | null;
+  telemetry_source?: string | null;
+  telemetry_coverage?: number | null;
+  telemetry_gap_tables?: number | null;
+}
+
 export const listTables = (
   api: ApiOptions,
   args: {
@@ -213,15 +228,19 @@ export const listTables = (
     offset?: number;
     cursor?: string;
     signal?: AbortSignal;
-  }
+  } & TableViewQuery
 ) =>
-  apiFetch<PaginatedTables>("/tables", api, {
+  apiFetch<TableListPage>("/tables", api, {
     query: {
       filter: serializePredicate(args.predicate),
       sort: args.sort,
       limit: args.limit ?? 50,
       offset: args.offset ?? 0,
-      cursor: args.cursor
+      cursor: args.cursor,
+      freshness_breach: args.freshness_breach ? true : undefined,
+      maintenance_overdue: args.maintenance_overdue ? true : undefined,
+      p95_breach: args.p95_breach ? true : undefined,
+      no_reads_days: args.no_reads_days
     },
     signal: args.signal
   });
@@ -251,7 +270,12 @@ const TABLE_IDS_PAGE_SIZE = 500;
 
 export const fetchAllMatchingTableIds = async (
   api: ApiOptions,
-  args: { predicate?: Predicate | null; sort?: string; total: number; signal?: AbortSignal }
+  args: {
+    predicate?: Predicate | null;
+    sort?: string;
+    total: number;
+    signal?: AbortSignal;
+  } & TableViewQuery
 ): Promise<UUID[]> => {
   const ids: UUID[] = [];
   for (let offset = 0; offset < args.total; offset += TABLE_IDS_PAGE_SIZE) {
@@ -260,7 +284,11 @@ export const fetchAllMatchingTableIds = async (
       sort: args.sort,
       limit: Math.min(TABLE_IDS_PAGE_SIZE, args.total - offset),
       offset,
-      signal: args.signal
+      signal: args.signal,
+      freshness_breach: args.freshness_breach,
+      maintenance_overdue: args.maintenance_overdue,
+      p95_breach: args.p95_breach,
+      no_reads_days: args.no_reads_days
     });
     ids.push(...batch.items.map((table) => table.id));
   }

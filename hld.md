@@ -174,6 +174,11 @@ Responsibilities:
     `rewrite_manifests`, `expire_snapshots`, `remove_orphan_files`.
 - Stream progress/logs to Redis; write the **audit log** + job result to Postgres.
 
+Worker autoscaling counts only worker-owned admitted/running jobs. Exclude watcher-owned
+jobs (`dispatch_id` present) and runs whose `summary.pipeline` is `batch`: those run on
+coordinator-owned Spark lanes and do not consume a Worker replica. Preserve real running
+worker demand even after the queue entry has been claimed.
+
 ### 3.7 Planner (`planner/`) — engine-agnostic
 Pure logic, no I/O to engines. Ports the dbt macro intelligence:
 - Reads partition stats; ranks partitions by small-file count; applies **min-small-files** filter.

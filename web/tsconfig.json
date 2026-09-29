@@ -18,5 +18,5 @@
     "types": ["vitest/globals"]
   },
   "include": ["src"],
-  "exclude": ["src/styles/tokens.contrast.test.ts"]
+  "exclude": ["src/styles/tokens.contrast.test.ts", "src/pages/table-detail/overviewBudget.test.ts"]
 }

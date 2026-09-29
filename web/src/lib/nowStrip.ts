@@ -78,6 +78,6 @@ export const nightlyRunView = (run: RunRead | null): NightlyRunView => {
     status: run.status || NOT_MEASURED,
     succeededSelected: `${counts.succeeded}/${counts.selected}`,
     finished: run.finished_at ? formatTime(run.finished_at) : "Not finished",
-    href: `/operations/runs/${run.id}`
+    href: `/runs/${run.id}`
   };
 };

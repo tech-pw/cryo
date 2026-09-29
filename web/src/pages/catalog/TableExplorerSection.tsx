@@ -23,7 +23,7 @@ import {
 import type { ExplorerViewRead, JsonObject, Mode, TableGroupByField, TableRead, UUID } from "../../api/types";
 import { BulkAssignBar } from "../../components/BulkAssignBar";
 import { FilterBar } from "../../components/FilterBar";
-import { HintLabel, Sparkline } from "../../components/common";
+import { HintLabel } from "../../components/common";
 import { CostPrecisionBadge } from "../../components/CostPrecisionBadge";
 import { PlanPreview } from "../../components/PlanPreview";
 import { CompactionTag, GradePill, PriorityTag } from "../../components/status";
@@ -35,9 +35,25 @@ import { Select } from "../../components/ui/select";
 import { useAuth } from "../../lib/auth";
 import { filterPresetsForSources } from "../../lib/catalogBindings";
 import { isOrphanScanStale } from "../../lib/costStaleness";
-import { FRESHNESS_LABELS, isFreshnessBucketKey } from "../../lib/freshness";
+import { FRESHNESS_LABELS } from "../../lib/freshness";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../../lib/format";
-import { tableFiltersToPredicate, type TableFilterState } from "../../lib/predicate";
+import { type TableFilterState } from "../../lib/predicate";
+import {
+  EMPTY_TABLES_TITLE,
+  EXPLICIT_QUERY_KEYS,
+  HIDEABLE_COLUMN_IDS,
+  clearFilterParams,
+  colsFromVisibility,
+  explorerPredicate,
+  filtersToSearchParamEntries,
+  readExplorerQuery,
+  searchParamsForSavedView,
+  slaBulletState,
+  stripFilterParams,
+  unusedCoverageCopy,
+  viewFilterSpec,
+  visibilityFromCols
+} from "../../lib/tableFilters";
 import { schemaTableName, tableTooltipName } from "../../lib/tableLabels";
 import { useTableExplorerSelection } from "../useTableExplorerSelection";
 
@@ -73,95 +89,6 @@ const applyTranslatedFilter = (
     : {})
 });
 
-const csvParam = (value: string | null): string[] | undefined => {
-  if (!value) return undefined;
-  const parts = value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  return parts.length ? parts : undefined;
-};
-
-const boolParam = (value: string | null): boolean | undefined => {
-  if (value === "1" || value === "true") return true;
-  if (value === "0" || value === "false") return false;
-  return undefined;
-};
-
-const numberParam = (value: string | null): number | null | undefined => {
-  if (value === null || value === "") return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-};
-
-/**
- * Single source of truth for filters: derive them from the URL on every render instead of
- * mirroring into local state, so links (e.g. Datalake health's "Fix in catalog") and
- * shareable/bookmarked URLs reproduce the exact same view.
- */
-export const filtersFromSearchParams = (params: URLSearchParams): TableFilterState => {
-  const activeOnly = boolParam(params.get("activeOnly"));
-  return {
-    activeOnly: activeOnly === undefined ? true : activeOnly,
-    grades: csvParam(params.get("grades")),
-    priorities: csvParam(params.get("priorities")),
-    needsCompaction: boolParam(params.get("needsCompaction")),
-    schemaSearch: params.get("q") ?? undefined,
-    sourceIds: csvParam(params.get("source")),
-    presetFilter: csvParam(params.get("preset")),
-    minSizeGb: numberParam(params.get("minSizeGb")) ?? null,
-    minSmallFiles: numberParam(params.get("minSmallFiles")) ?? null,
-    minMonthlySavings: numberParam(params.get("minMonthlySavings")) ?? null,
-    minReclaimableGb: numberParam(params.get("minReclaimableGb")) ?? null,
-    costPrecision: (params.get("precision") as TableFilterState["costPrecision"]) ?? null,
-    freshnessBucket: isFreshnessBucketKey(params.get("freshness"))
-      ? params.get("freshness") as TableFilterState["freshnessBucket"]
-      : null,
-    freshnessAsOf: params.get("freshnessAsOf")
-  };
-};
-
-/** Inverse of `filtersFromSearchParams` -- only writes params that diverge from defaults. */
-export const filtersToSearchParamEntries = (filters: TableFilterState): [string, string][] => {
-  const entries: [string, string][] = [];
-  if (filters.activeOnly === false) entries.push(["activeOnly", "0"]);
-  if (filters.grades?.length) entries.push(["grades", filters.grades.join(",")]);
-  if (filters.priorities?.length) entries.push(["priorities", filters.priorities.join(",")]);
-  if (typeof filters.needsCompaction === "boolean") {
-    entries.push(["needsCompaction", filters.needsCompaction ? "1" : "0"]);
-  }
-  if (filters.schemaSearch?.trim()) entries.push(["q", filters.schemaSearch.trim()]);
-  if (filters.sourceIds?.length) entries.push(["source", filters.sourceIds.join(",")]);
-  if (filters.presetFilter?.length) entries.push(["preset", filters.presetFilter.join(",")]);
-  if (typeof filters.minSizeGb === "number") entries.push(["minSizeGb", String(filters.minSizeGb)]);
-  if (typeof filters.minSmallFiles === "number") entries.push(["minSmallFiles", String(filters.minSmallFiles)]);
-  if (typeof filters.minMonthlySavings === "number")
-    entries.push(["minMonthlySavings", String(filters.minMonthlySavings)]);
-  if (typeof filters.minReclaimableGb === "number")
-    entries.push(["minReclaimableGb", String(filters.minReclaimableGb)]);
-  if (filters.costPrecision) entries.push(["precision", filters.costPrecision]);
-  if (filters.freshnessBucket) entries.push(["freshness", filters.freshnessBucket]);
-  if (filters.freshnessAsOf) entries.push(["freshnessAsOf", filters.freshnessAsOf]);
-  return entries;
-};
-
-const FILTER_PARAM_KEYS = [
-  "activeOnly",
-  "grades",
-  "priorities",
-  "needsCompaction",
-  "q",
-  "source",
-  "preset",
-  "minSizeGb",
-  "minSmallFiles",
-  "minMonthlySavings",
-  "minReclaimableGb",
-  "precision",
-  "freshness",
-  "freshnessAsOf"
-];
-
 const CATALOG_VIEWS_STORAGE_KEY = "cryo.catalog.views.v1";
 const CATALOG_DEFAULT_VIEW_STORAGE_KEY = "cryo.catalog.defaultView.v1";
 const CATALOG_COLUMNS_STORAGE_KEY = "cryo.catalog.columnVisibility.v1";
@@ -170,18 +97,29 @@ interface CatalogSavedView {
   id?: string;
   name: string;
   filters: TableFilterState;
+  schema?: string;
   sort?: string;
   groupBy?: TableGroupByField | null;
   savingsView?: boolean;
+  view?: string;
+  cols?: string;
 }
+
+const storedString = (filters: JsonObject, key: string): string | undefined => {
+  const value = filters[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+};
 
 const viewFromServer = (view: ExplorerViewRead): CatalogSavedView => ({
   id: view.id,
   name: view.name,
   filters: view.filters as TableFilterState,
+  schema: storedString(view.filters, "schema"),
   sort: view.sort ?? undefined,
   groupBy: (view.group_by as TableGroupByField | null) ?? null,
-  savingsView: view.savings_view
+  savingsView: view.savings_view,
+  view: view.savings_view ? "savings" : storedString(view.filters, "view"),
+  cols: storedString(view.filters, "cols")
 });
 
 const BUILTIN_CATALOG_VIEWS: CatalogSavedView[] = [
@@ -199,7 +137,13 @@ const BUILTIN_CATALOG_VIEWS: CatalogSavedView[] = [
     name: "Top savings opportunities",
     filters: { activeOnly: true },
     sort: "-projected_savings_usd_month",
-    savingsView: true
+    savingsView: true,
+    view: "savings"
+  },
+  {
+    name: "Scan failed",
+    filters: { activeOnly: true },
+    view: "scan-failed"
   }
 ];
 
@@ -233,20 +177,123 @@ const GROUP_BY_LABELS: Record<TableGroupByField, string> = {
 const groupByLabel = (field: TableGroupByField): string => GROUP_BY_LABELS[field];
 
 /** The "Table" identity column is intentionally excluded -- hiding it would leave rows unlabeled. */
-const COLUMN_VISIBILITY_OPTIONS: ColumnVisibilityOption[] = [
-  { id: "catalog", label: "Catalog" },
-  { id: "grade", label: "Grade" },
-  { id: "compaction_priority", label: "Priority" },
-  { id: "needs", label: "Compaction" },
-  { id: "small_files", label: "Small files" },
-  { id: "total_files", label: "Files" },
-  { id: "total_size_gb", label: "Size" },
-  { id: "projected_savings_usd_month", label: "Savings/mo" },
-  { id: "reclaimable_bytes", label: "Reclaimable" },
-  { id: "cost_precision", label: "Savings basis" },
-  { id: "partition", label: "Partition" },
-  { id: "first_seen_at", label: "Seen" }
-];
+const COLUMN_LABELS: Record<(typeof HIDEABLE_COLUMN_IDS)[number], string> = {
+  catalog: "Catalog",
+  grade: "Grade",
+  compaction_priority: "Priority",
+  needs: "Compaction",
+  small_files: "Small / total files",
+  total_files: "Files",
+  total_size_gb: "Size",
+  last_scan: "Last scan",
+  projected_savings_usd_month: "Savings/mo",
+  reclaimable_bytes: "Reclaimable",
+  cost_precision: "Savings basis",
+  partition: "Partition",
+  freshness: "Last updated",
+  scan_failures: "Scan failures",
+  first_seen_at: "Seen"
+};
+
+const COLUMN_VISIBILITY_OPTIONS: ColumnVisibilityOption[] = HIDEABLE_COLUMN_IDS.map((id) => ({
+  id,
+  label: COLUMN_LABELS[id]
+}));
+
+export const smallFilesRatioText = (
+  smallFiles: number | null | undefined,
+  totalFiles: number | null | undefined
+): string => {
+  if (smallFiles == null || totalFiles == null || Number.isNaN(smallFiles) || Number.isNaN(totalFiles)) {
+    return "Not measured";
+  }
+  const counts = `${formatNumber(smallFiles)} / ${formatNumber(totalFiles)} files`;
+  if (totalFiles <= 0) return counts;
+  return `${counts} (${Math.round((smallFiles / totalFiles) * 100)}%)`;
+};
+
+export const SmallFileRatio = ({
+  smallFiles,
+  totalFiles
+}: {
+  smallFiles?: number | null;
+  totalFiles?: number | null;
+}) => <span className="numeric-cell block text-right">{smallFilesRatioText(smallFiles, totalFiles)}</span>;
+
+export const SlaBulletBar = ({
+  label,
+  actual,
+  threshold
+}: {
+  label: string;
+  actual: number | null;
+  threshold: number | null;
+}) => {
+  const state = slaBulletState(actual, threshold);
+  const width = state.status === "measured" ? Math.round(state.ratio * 100) : null;
+  return (
+    <div className="min-w-[9rem] space-y-1" aria-label={label}>
+      {state.status === "measured" ? (
+        <span className="text-sm text-muted-foreground">
+          {actual} / {threshold}
+        </span>
+      ) : (
+        <span className="text-sm">Unknown</span>
+      )}
+      {width == null ? null : (
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-sunken)]">
+          <div data-bullet-bar className="h-full rounded-full bg-[var(--color-text-secondary)]" style={{ width: `${width}%` }} />
+        </div>
+      )}
+    </div>
+  );
+};
+
+const SLA_VIEWS = new Set(["freshness", "maintenance-age", "p95-latency"]);
+
+const hiddenColumnFacts = (table: TableRead, visibility: VisibilityState): string | null => {
+  const hidden = (id: string) => visibility[id] === false;
+  const parts: string[] = [];
+  if (hidden("catalog")) {
+    const catalog = table.catalog_name ?? table.source_name;
+    if (catalog) parts.push(catalog);
+  }
+  if (hidden("grade")) parts.push(table.stats?.grade ? `Grade ${table.stats.grade}` : "Not graded");
+  if (hidden("compaction_priority") && table.stats?.compaction_priority) {
+    parts.push(table.stats.compaction_priority);
+  }
+  if (hidden("needs")) {
+    parts.push(
+      table.stats?.needs_compaction == null
+        ? "Compaction not measured"
+        : table.stats.needs_compaction
+          ? "Needs compaction"
+          : "Does not need compaction"
+    );
+  }
+  if (hidden("small_files") || hidden("total_files")) {
+    parts.push(smallFilesRatioText(table.stats?.small_files_count, table.stats?.total_files));
+  }
+  if (hidden("total_size_gb")) {
+    const size = table.stats?.total_size_gb;
+    parts.push(size == null || Number.isNaN(size) ? "Not measured" : formatGb(size));
+  }
+  if (hidden("last_scan")) {
+    parts.push(table.stats?.scan_at ? `Scanned ${formatTime(table.stats.scan_at)}` : "Not measured");
+  }
+  if (hidden("freshness")) {
+    parts.push(
+      table.stats?.last_snapshot_committed_at
+        ? `Updated ${formatTime(table.stats.last_snapshot_committed_at)}`
+        : "Not measured"
+    );
+  }
+  if (hidden("scan_failures")) {
+    const failures = table.consecutive_scan_failures;
+    parts.push(failures == null ? "Scan failures not measured" : `${failures} scan failures`);
+  }
+  return parts.length ? parts.join(" · ") : null;
+};
 
 const SortHeader = ({
   field,
@@ -305,17 +352,21 @@ export const TableExplorerSection = () => {
     );
   };
 
-  const filters = useMemo(() => filtersFromSearchParams(searchParams), [searchParams]);
-  const page = Math.max(1, Number(searchParams.get("page")) || 1);
-  const sort = searchParams.get("sort") ?? "-small_files_count";
-  const savingsView = searchParams.get("view") === "savings";
-  const groupByParam = searchParams.get("groupBy");
+  const query = useMemo(() => readExplorerQuery(searchParams), [searchParams]);
+  const filters = query.filters;
+  const schema = query.schema;
+  const page = query.page;
+  const sort = query.sort;
+  const view = query.view;
+  const viewSpec = useMemo(() => viewFilterSpec(view, searchParams), [view, searchParams]);
+  const savingsView = view === "savings";
+  const groupByParam = query.groupBy;
   const groupByField = (groupByParam && groupByParam in GROUP_BY_LABELS ? (groupByParam as TableGroupByField) : null);
 
-  const applyFilters = (next: TableFilterState) => {
+  const applyFilters = (next: TableFilterState, nextSchema?: string) => {
     const params = new URLSearchParams(searchParams);
-    FILTER_PARAM_KEYS.forEach((key) => params.delete(key));
-    filtersToSearchParamEntries(next).forEach(([key, value]) => params.set(key, value));
+    stripFilterParams(params);
+    filtersToSearchParamEntries(next, { schema: nextSchema }).forEach(([key, value]) => params.set(key, value));
     params.delete("page");
     setSearchParams(params, { replace: true });
   };
@@ -326,12 +377,18 @@ export const TableExplorerSection = () => {
   const [nlQuery, setNlQuery] = useState("");
   const [exportingCsv, setExportingCsv] = useState(false);
 
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() =>
+  const [storedVisibility, setStoredVisibility] = useState<VisibilityState>(() =>
     readJson(CATALOG_COLUMNS_STORAGE_KEY, {})
   );
+  const columnVisibility = query.cols ? visibilityFromCols(query.cols) : storedVisibility;
   useEffect(() => {
     writeJson(CATALOG_COLUMNS_STORAGE_KEY, columnVisibility);
   }, [columnVisibility]);
+
+  const setColumnVisibility = (next: VisibilityState) => {
+    setStoredVisibility(next);
+    updateParams({ cols: colsFromVisibility(next) });
+  };
 
   const [userViews, setUserViews] = useState<CatalogSavedView[]>(() =>
     readJson(CATALOG_VIEWS_STORAGE_KEY, [])
@@ -356,12 +413,16 @@ export const TableExplorerSection = () => {
   }, [serverViews.data]);
   const allViews = useMemo(() => [...BUILTIN_CATALOG_VIEWS, ...userViews], [userViews]);
 
-  const applyView = (view: CatalogSavedView) => {
-    const params = new URLSearchParams();
-    filtersToSearchParamEntries(view.filters).forEach(([key, value]) => params.set(key, value));
-    if (view.sort) params.set("sort", view.sort);
-    if (view.groupBy) params.set("groupBy", view.groupBy);
-    if (view.savingsView) params.set("view", "savings");
+  const applyView = (saved: CatalogSavedView) => {
+    const params = searchParamsForSavedView({
+      filters: saved.filters,
+      schema: saved.schema,
+      sort: saved.sort,
+      groupBy: saved.groupBy,
+      view: saved.view,
+      savingsView: saved.savingsView,
+      cols: saved.cols ?? searchParams.get("cols")
+    });
     setSearchParams(params, { replace: true });
   };
 
@@ -369,9 +430,7 @@ export const TableExplorerSection = () => {
   // filter/sort/grouping params -- an incoming scoped link (e.g. Datalake health's "Fix in
   // catalog") must always win over a stored default.
   useEffect(() => {
-    const hasExplicitParams = [...FILTER_PARAM_KEYS, "sort", "groupBy", "view"].some((key) =>
-      searchParams.has(key)
-    );
+    const hasExplicitParams = EXPLICIT_QUERY_KEYS.some((key) => searchParams.has(key));
     if (hasExplicitParams) return;
     const defaultName = (() => {
       try {
@@ -394,13 +453,21 @@ export const TableExplorerSection = () => {
     const view: CatalogSavedView = {
       name: name.trim(),
       filters,
+      schema,
       sort,
       groupBy: groupByField,
-      savingsView
+      savingsView,
+      view: savingsView ? "savings" : query.view === "scan-failed" ? "scan-failed" : query.view ?? undefined,
+      cols: query.cols ?? undefined
     };
     void saveExplorerView(api, {
       name: view.name,
-      filters: view.filters as JsonObject,
+      filters: {
+        ...view.filters,
+        ...(view.schema ? { schema: view.schema } : {}),
+        ...(view.view && view.view !== "savings" ? { view: view.view } : {}),
+        ...(view.cols ? { cols: view.cols } : {})
+      } as JsonObject,
       sort: view.sort,
       group_by: view.groupBy,
       savings_view: Boolean(view.savingsView)
@@ -448,11 +515,23 @@ export const TableExplorerSection = () => {
     }
   };
 
-  const predicate = useMemo(() => tableFiltersToPredicate(filters), [filters]);
+  const predicate = useMemo(
+    () => explorerPredicate(filters, { schema, view }),
+    [filters, schema, view]
+  );
   const tables = useQuery({
-    queryKey: ["tables", token, predicate, sort, page],
+    queryKey: ["tables", token, predicate, sort, page, viewSpec],
     queryFn: () =>
-      listTables(api, { predicate, sort, limit: pageSize, offset: (page - 1) * pageSize }),
+      listTables(api, {
+        predicate,
+        sort,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+        freshness_breach: viewSpec?.freshness_breach,
+        maintenance_overdue: viewSpec?.maintenance_overdue,
+        p95_breach: viewSpec?.p95_breach,
+        no_reads_days: viewSpec?.no_reads_days
+      }),
     enabled: !groupByField
   });
   const grouped = useQuery({
@@ -504,6 +583,11 @@ export const TableExplorerSection = () => {
     matchingTotal,
     pageItems
   });
+
+  const clearFilters = () => {
+    setSearchParams(clearFilterParams(searchParams), { replace: true });
+    resetSelectionForFilterChange();
+  };
 
   const rowSelectionState = useMemo<RowSelectionState>(() => {
     const state: RowSelectionState = {};
@@ -623,7 +707,7 @@ export const TableExplorerSection = () => {
       if (result.errors.length) {
         toast.warning("Could not apply parts of the NL filter; review error chips.");
       }
-      applyFilters(applyTranslatedFilter(filters, result.filter as Record<string, unknown>));
+      applyFilters(applyTranslatedFilter(filters, result.filter as Record<string, unknown>), schema);
       resetSelectionForFilterChange();
     },
     onError: (error) => toast.error((error as Error).message)
@@ -722,10 +806,14 @@ export const TableExplorerSection = () => {
         size: 280,
         cell: ({ row }) => {
           const name = schemaTableName(row.original);
-          const tooltip = tableTooltipName(row.original);
+          const facts = hiddenColumnFacts(row.original, columnVisibility);
+          const tooltip = [tableTooltipName(row.original), facts].filter(Boolean).join(" · ");
           return (
             <Link to={`/tables/${row.original.id}`} className="table-name-link" title={tooltip}>
               <span className="table-name-cell block max-w-[16rem] truncate font-medium">{name}</span>
+              {facts ? (
+                <span className="block max-w-[16rem] truncate text-xs text-muted-foreground">{facts}</span>
+              ) : null}
             </Link>
           );
         }
@@ -763,20 +851,13 @@ export const TableExplorerSection = () => {
       },
       {
         id: "small_files",
-        header: () => <SortHeader field="small_files_count" label="Small files" sort={sort} onSort={applySort} />,
-        size: 168,
+        header: () => <SortHeader field="small_files_count" label="Small / total files" sort={sort} onSort={applySort} />,
+        size: 220,
         cell: ({ row }) => (
-          <span className="metric-with-sparkline numeric-cell sparkline-cell flex items-center justify-end gap-2">
-            <span>{formatNumber(row.original.stats?.small_files_count)}</span>
-            <Sparkline
-              values={[
-                row.original.stats?.total_files,
-                row.original.stats?.small_files_count,
-                row.original.stats?.max_files_per_partition,
-                row.original.stats?.avg_files_per_partition
-              ]}
-            />
-          </span>
+          <SmallFileRatio
+            smallFiles={row.original.stats?.small_files_count}
+            totalFiles={row.original.stats?.total_files}
+          />
         )
       },
       {
@@ -784,7 +865,11 @@ export const TableExplorerSection = () => {
         header: () => <SortHeader field="total_files" label="Files" sort={sort} onSort={applySort} />,
         size: 104,
         cell: ({ row }) => (
-          <span className="numeric-cell block text-right">{formatNumber(row.original.stats?.total_files, true)}</span>
+          <span className="numeric-cell block text-right">
+            {row.original.stats?.total_files == null || Number.isNaN(row.original.stats.total_files)
+              ? "Not measured"
+              : formatNumber(row.original.stats.total_files, true)}
+          </span>
         )
       },
       {
@@ -793,6 +878,16 @@ export const TableExplorerSection = () => {
         size: 96,
         cell: ({ row }) => (
           <span className="numeric-cell block text-right">{formatGb(row.original.stats?.total_size_gb)}</span>
+        )
+      },
+      {
+        id: "last_scan",
+        header: "Last scan",
+        size: 152,
+        cell: ({ row }) => (
+          <span className="block text-right">
+            {row.original.stats?.scan_at ? formatTime(row.original.stats.scan_at) : "Not measured"}
+          </span>
         )
       },
       {
@@ -869,9 +964,29 @@ export const TableExplorerSection = () => {
         header: "Seen",
         size: 152,
         cell: ({ getValue }) => formatTime(getValue() as string)
-      }
+      },
+      ...(SLA_VIEWS.has(view ?? "")
+        ? [
+            {
+              id: "sla_headroom",
+              header: "SLA",
+              size: 160,
+              cell: ({ row }: { row: { original: TableRead } }) => (
+                <SlaBulletBar
+                  label="SLA"
+                  actual={
+                    view === "freshness" && row.original.stats?.last_snapshot_committed_at
+                      ? (Date.now() - Date.parse(row.original.stats.last_snapshot_committed_at)) / 36e5
+                      : null
+                  }
+                  threshold={null}
+                />
+              )
+            }
+          ]
+        : [])
     ],
-    [sort]
+    [sort, columnVisibility, view]
   );
 
   return (
@@ -997,17 +1112,48 @@ export const TableExplorerSection = () => {
           description="Showing the complete server-filtered table set for this freshness bucket. CSV export includes every match, not only this page."
         />
       ) : null}
+      {view === "scan-failed" ? (
+        <Alert
+          className="mb-3"
+          variant="error"
+          title="Scan failed"
+          description="Tables with repeated scan failures. Filtered on the server."
+        />
+      ) : null}
+      {viewSpec ? (
+        <div className="mb-3 flex flex-wrap items-center gap-3" data-testid="view-filter-bar">
+          {view === "unused" ? (
+            <p className="text-sm text-muted-foreground">
+              {unusedCoverageCopy(
+                tables.data?.telemetry_coverage,
+                tables.data?.telemetry_gap_tables,
+                tables.data?.telemetry_window_days ?? viewSpec.no_reads_days
+              )}
+            </p>
+          ) : (
+            <>
+              <SlaBulletBar label="SLA" actual={null} threshold={null} />
+              <p className="text-sm text-muted-foreground">
+                {tables.data?.unknown_count == null
+                  ? "Unknown commit or SLA is excluded, not counted as a breach."
+                  : `${tables.data.unknown_count} tables have an unknown commit or SLA and are excluded, not counted as a breach.`}
+              </p>
+            </>
+          )}
+        </div>
+      ) : null}
       <FilterBar
-        value={filters}
+        value={{ ...filters, ...(schema ? { schema } : {}) } as TableFilterState}
         catalogOptions={catalogOptions}
         presetOptions={presetOptions}
         matchingTotal={matchingTotal}
         hasSelection={hasSelection}
         filterSelectionActive={filterSelectionActive}
-        onSelectAllMatching={selectAllMatching}
+        onSelectAllMatching={viewSpec ? undefined : selectAllMatching}
         onClearSelection={clearSelection}
         onChange={(next) => {
-          applyFilters(next);
+          const nextSchema = (next as TableFilterState & { schema?: string }).schema;
+          applyFilters(next, typeof nextSchema === "string" ? nextSchema : undefined);
           resetSelectionForFilterChange();
         }}
       />
@@ -1019,8 +1165,12 @@ export const TableExplorerSection = () => {
           density="compact"
           loading={grouped.isLoading}
           getRowId={(row) => row.group_value ?? "not-scanned"}
-          emptyTitle="No tables match this view"
-          emptyDescription="Run a scan or clear filters to browse the datalake."
+          emptyTitle={EMPTY_TABLES_TITLE}
+          emptyAction={
+            <Button type="button" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          }
         />
       ) : (
         <>
@@ -1041,10 +1191,14 @@ export const TableExplorerSection = () => {
             }}
             columnVisibility={columnVisibility}
             onColumnVisibilityChange={(updater) => {
-              setColumnVisibility((current) => (typeof updater === "function" ? updater(current) : updater));
+              setColumnVisibility(typeof updater === "function" ? updater(columnVisibility) : updater);
             }}
-            emptyTitle="No tables match this view"
-            emptyDescription="Run a scan or clear filters to browse the datalake."
+            emptyTitle={EMPTY_TABLES_TITLE}
+            emptyAction={
+              <Button type="button" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            }
             pagination={{
               pageIndex: page - 1,
               pageSize,

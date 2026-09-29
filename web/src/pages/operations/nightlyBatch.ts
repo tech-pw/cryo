@@ -20,5 +20,5 @@ export const nightlyBatchRuns = (runs: readonly RunRead[]): RunRead[] =>
 
 export const latestNightlyRunPath = (runs: readonly RunRead[]): string | null => {
   const latest = nightlyBatchRuns(runs)[0];
-  return latest ? `/operations/runs/${latest.id}` : null;
+  return latest ? `/runs/${latest.id}` : null;
 };
