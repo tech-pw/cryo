@@ -205,6 +205,7 @@ describe("Consolidated Catalog page", () => {
     renderPage();
 
     await screen.findByRole("button", { name: /export csv/i });
+    fireEvent.click(screen.getByRole("button", { name: "Views" }));
     const viewSelect = screen.getByRole("combobox", { name: /catalog view/i });
     fireEvent.change(viewSelect, { target: { value: "Health triage" } });
 
