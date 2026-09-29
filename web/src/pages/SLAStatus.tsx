@@ -65,9 +65,57 @@ const formatLatency = (ms: number | null) => {
   return `${(ms / 1000).toFixed(1)}s`;
 };
 
-const getCompliancePercent = (actual: number | null, sla: number | null): number => {
-  if (actual === null || sla === null || sla === 0) return 100;
-  return Math.min(100, Math.max(0, 100 - (actual / sla) * 100));
+const measuredHeadroom = (
+  actual: number | null,
+  threshold: number | null
+): { actual: number; threshold: number } | null => {
+  if (actual == null || threshold == null || !Number.isFinite(actual) || !Number.isFinite(threshold)) return null;
+  return { actual, threshold };
+};
+
+export const SlaHeadroom = ({
+  label,
+  actual,
+  threshold,
+  breached,
+  formatValue
+}: {
+  label: string;
+  actual: number | null;
+  threshold: number | null;
+  breached: boolean;
+  formatValue: (value: number) => string;
+}) => {
+  const measured = measuredHeadroom(actual, threshold);
+  const used =
+    measured && measured.threshold > 0
+      ? Math.min(100, Math.round((measured.actual / measured.threshold) * 100))
+      : null;
+
+  return (
+    <div className="min-w-[9rem] space-y-1" aria-label={label}>
+      {measured ? (
+        <span className={breached ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>
+          {formatValue(measured.actual)} / {formatValue(measured.threshold)}
+        </span>
+      ) : (
+        <span className="text-sm text-foreground">Unknown</span>
+      )}
+      {used == null ? null : (
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-sunken)]">
+          <div
+            data-headroom-bar
+            data-breached={breached ? "true" : "false"}
+            className="h-full rounded-full"
+            style={{
+              width: `${used}%`,
+              backgroundColor: breached ? cryoColors.gradeF : cryoColors.gradeA
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
 };
 
 const isRowBreached = (row: SLAStatusRow) =>
@@ -246,31 +294,27 @@ export const SLAStatus = () => {
       header: "Data freshness",
       cell: ({ row }) => {
         const record = row.original;
-        const breached = record.freshness_breached;
-        const percent = getCompliancePercent(record.freshness_hours, record.freshness_sla_hours);
         return (
           <div className="min-w-[10rem] space-y-1">
-            <div className="flex items-center gap-1.5 text-sm">
-              {breached ? (
-                <TriangleAlert className="size-3.5 text-[var(--grade-f)]" aria-hidden="true" />
-              ) : (
-                <CheckCircle2 className="size-3.5 text-[var(--grade-a)]" aria-hidden="true" />
-              )}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className={breached ? "text-destructive" : "text-muted-foreground"}>
-                    {formatHours(record.freshness_hours)} / {formatHours(record.freshness_sla_hours)}
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>Hours since last Iceberg snapshot commit</TooltipContent>
-              </Tooltip>
-            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div>
+                  <SlaHeadroom
+                    label="Data freshness"
+                    actual={record.freshness_hours}
+                    threshold={record.freshness_sla_hours}
+                    breached={record.freshness_breached}
+                    formatValue={formatHours}
+                  />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>Hours since last Iceberg snapshot commit</TooltipContent>
+            </Tooltip>
             {record.scan_staleness_hours != null ? (
               <p className="text-[11px] text-muted-foreground">
                 Scan lag: {formatHours(record.scan_staleness_hours)}
               </p>
             ) : null}
-            <ProgressBar percent={percent} tone={breached ? "bad" : "good"} />
           </div>
         );
       }
@@ -280,22 +324,14 @@ export const SLAStatus = () => {
       header: "Maintenance",
       cell: ({ row }) => {
         const record = row.original;
-        const breached = record.maintenance_breached;
-        const percent = getCompliancePercent(record.maintenance_days, record.maintenance_sla_days);
         return (
-          <div className="min-w-[9rem] space-y-1">
-            <div className="flex items-center gap-1.5 text-sm">
-              {breached ? (
-                <TriangleAlert className="size-3.5 text-[var(--grade-f)]" aria-hidden="true" />
-              ) : (
-                <CheckCircle2 className="size-3.5 text-[var(--grade-a)]" aria-hidden="true" />
-              )}
-              <span className={breached ? "text-destructive" : "text-muted-foreground"}>
-                {formatDays(record.maintenance_days)} / {formatDays(record.maintenance_sla_days)}
-              </span>
-            </div>
-            <ProgressBar percent={percent} tone={breached ? "bad" : "good"} />
-          </div>
+          <SlaHeadroom
+            label="Maintenance"
+            actual={record.maintenance_days}
+            threshold={record.maintenance_sla_days}
+            breached={record.maintenance_breached}
+            formatValue={formatDays}
+          />
         );
       }
     },
@@ -304,22 +340,14 @@ export const SLAStatus = () => {
       header: "P95 Latency",
       cell: ({ row }) => {
         const record = row.original;
-        const breached = record.p95_latency_breached;
-        const percent = getCompliancePercent(record.p95_latency_ms, record.p95_latency_sla_ms);
         return (
-          <div className="min-w-[9rem] space-y-1">
-            <div className="flex items-center gap-1.5 text-sm">
-              {breached ? (
-                <TriangleAlert className="size-3.5 text-[var(--grade-f)]" aria-hidden="true" />
-              ) : (
-                <CheckCircle2 className="size-3.5 text-[var(--grade-a)]" aria-hidden="true" />
-              )}
-              <span className={breached ? "text-destructive" : "text-muted-foreground"}>
-                {formatLatency(record.p95_latency_ms)} / {formatLatency(record.p95_latency_sla_ms)}
-              </span>
-            </div>
-            <ProgressBar percent={percent} tone={breached ? "bad" : "good"} />
-          </div>
+          <SlaHeadroom
+            label="P95 latency"
+            actual={record.p95_latency_ms}
+            threshold={record.p95_latency_sla_ms}
+            breached={record.p95_latency_breached}
+            formatValue={(value) => formatLatency(value)}
+          />
         );
       }
     },

@@ -84,8 +84,8 @@ function buildIssues(params: {
   benefitScores?: BenefitScoreResponse;
   stats: { total_files?: number; small_files_count?: number } | null | undefined;
   statsRaw: Record<string, unknown>;
-  reclaimableBytes: number;
-  savingsUsd: number;
+  reclaimableBytes: number | null;
+  savingsUsd: number | null;
 }): HealthIssue[] {
   const { signals, costView, benefitScores, stats, statsRaw, reclaimableBytes, savingsUsd } = params;
   const issues: HealthIssue[] = [];
@@ -93,14 +93,36 @@ function buildIssues(params: {
   const totalFiles = stats?.total_files ?? 0;
   const smallFiles = stats?.small_files_count ?? 0;
   const smallPct = totalFiles > 0 ? (smallFiles / totalFiles) * 100 : 0;
+  const savingsUnmeasured = savingsUsd == null || reclaimableBytes == null;
 
   const triggered: TableSignalRead[] = (signals?.signals ?? []).filter(
     (s) => s.triggered && s.severity !== "info"
   );
   for (const signal of triggered) {
     const details = getSignalPointerDetail(signal.signal_name, signal.severity);
-    const matrix = getSignalMatrix(signal.signal_name, stats, statsRaw, reclaimableBytes, savingsUsd, smallPct);
+    const normName = (signal.signal_name || "").toLowerCase();
+    const scoresSavings = normName.includes("cost") || normName.includes("anomaly");
     const severity: Severity = signal.severity === "critical" ? "critical" : "warning";
+    if (scoresSavings && savingsUnmeasured) {
+      issues.push({
+        id: `signal-${signal.signal_name}`,
+        severity,
+        icon: severityIcon(severity),
+        title: details.title,
+        impactText: details.impactText,
+        current: "Not measured",
+        recommendation: details.recommendation
+      });
+      continue;
+    }
+    const matrix = getSignalMatrix(
+      signal.signal_name,
+      stats,
+      statsRaw,
+      reclaimableBytes ?? 0,
+      savingsUsd ?? 0,
+      smallPct
+    );
     issues.push({
       id: `signal-${signal.signal_name}`,
       severity,
@@ -151,8 +173,8 @@ interface ActNowSectionProps {
   benefitScores?: BenefitScoreResponse;
   stats: { total_files?: number; small_files_count?: number } | null | undefined;
   statsRaw: Record<string, unknown>;
-  reclaimableBytes: number;
-  savingsUsd: number;
+  reclaimableBytes: number | null;
+  savingsUsd: number | null;
   effectivePresetId?: string;
   onRun: () => void;
   runPending: boolean;

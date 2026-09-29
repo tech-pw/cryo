@@ -23,7 +23,7 @@ interface CostTabProps {
   hasStatsCostFallback: boolean;
   currentCostUsd: number | null;
   projectedCostUsd: number | null;
-  savingsUsd: number;
+  savingsUsd: number | null;
   costByOperation: CostByOp;
   s3Tiering: S3TieringView;
 }
@@ -76,7 +76,7 @@ export const CostTab = ({
                     <span className="td-cost-value">{formatCurrency(projectedCostUsd)}</span>
                   </span>
                   <span className="td-cost-save">
-                    Save <strong>{formatCurrency(savingsUsd)}</strong>/month
+                    Save <strong>{savingsUsd == null ? "Not measured" : formatCurrency(savingsUsd)}</strong>/month
                   </span>
                 </div>
               </div>

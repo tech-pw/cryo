@@ -25,7 +25,7 @@ const FastPathTableBanner = ({
   findings: FastPathFindingRead[];
 }) => {
   if (!findings.length) return null;
-  const propertiesHref = `/tables/${tableId}?tab=health-quality#hq-properties`;
+  const propertiesHref = `/tables/${tableId}?tab=files#files-properties`;
 
   return (
     <div className="mb-3 flex flex-col gap-2">

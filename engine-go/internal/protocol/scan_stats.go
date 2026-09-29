@@ -142,6 +142,14 @@ type ScanStatsResponse struct {
 	WairFileSample         []ScanStatsFileBoundSample `json:"wair_file_sample,omitempty"`
 	WairFileSampleComplete bool                       `json:"wair_file_sample_complete"`
 	Commits                []ScanStatsCommit          `json:"commits"`
+	FileSizeBins           ScanStatsFileSizeBins      `json:"file_size_bins"`
+}
+
+// ScanStatsFileSizeBins matches cryo.scanner.analyze file_size_bins: 40 log-2 buckets.
+type ScanStatsFileSizeBins struct {
+	Data    []int64 `json:"data"`
+	Delete  []int64 `json:"delete"`
+	Unknown int64   `json:"unknown"`
 }
 
 // ScanStatsCommit is one retained snapshot's commit metadata (newest last). Summary counters

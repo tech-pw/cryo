@@ -28,7 +28,29 @@ describe("HealthScoreBreakdown", () => {
     expect(partial.find((factor) => factor.label === "Manifest bloat")?.level).toBe("ok");
 
     render(<HealthScoreBreakdown factors={unscanned} />);
+    expect(screen.getByText("diagnostic, not score")).toBeInTheDocument();
     expect(screen.getAllByText("Not scanned")).toHaveLength(4);
     expect(screen.queryByText("0% of files")).not.toBeInTheDocument();
+    expect(document.querySelector(".td-part-bar")).not.toBeInTheDocument();
+  });
+
+  it("lists persisted point deductions instead of drawing factor bars as the grade", () => {
+    render(
+      <HealthScoreBreakdown
+        factors={buildHealthScoreFactors(null, null, null)}
+        deductions={[
+          { label: "Small files", deduction: 20, severity: "critical", reason: "62% small" },
+          { label: "Snapshots", deduction: Number.NaN, severity: "warning", reason: "" }
+        ]}
+      />
+    );
+
+    expect(screen.getByText("Why this grade")).toBeInTheDocument();
+    expect(screen.getByText("Small files")).toBeInTheDocument();
+    expect(screen.getByText("-20 pts")).toBeInTheDocument();
+    expect(screen.getByText("Not measured")).toBeInTheDocument();
+    expect(screen.queryByText("diagnostic, not score")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not scanned")).not.toBeInTheDocument();
+    expect(document.querySelector(".td-part-bar")).not.toBeInTheDocument();
   });
 });

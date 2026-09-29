@@ -17,6 +17,7 @@ import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { DataTable } from "../../components/ui/data-table";
 import { useAuth } from "../../lib/auth";
+import { useWriteControl } from "../../lib/useWriteControl";
 import { formatBytesGb, formatDuration, formatNumber, formatTime } from "../../lib/format";
 
 const PAGE_SIZE = 25;
@@ -336,7 +337,7 @@ export const SnapshotsTab = () => {
         )
       }
     ],
-    [currentSnapshotId, loadedIds, protect, searchParams, setSearchParams]
+    [currentSnapshotId, loadedIds, protect, protectAccess.allowed, protectAccess.reason, searchParams, setSearchParams]
   );
 
   return (

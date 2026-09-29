@@ -94,6 +94,12 @@ The authoritative architecture / contract docs live at the repo root:
   grounded in `PRODUCT.md`/`DESIGN.md`. Designed and proven with one iteration; not
   currently running.
 
+### Brand & marketing
+
+- [`brand/CRYO_BRAND_GUIDE.md`](./brand/CRYO_BRAND_GUIDE.md) — brand and image guide for the
+  website, LinkedIn and blog diagrams: the ice-core motif, palette, type, Mermaid theme,
+  LinkedIn sizes and copy-paste prompts for image AI tools.
+
 ### Cost / FinOps
 
 - [`cost-savings.md`](./cost-savings.md) — cost model and savings math.

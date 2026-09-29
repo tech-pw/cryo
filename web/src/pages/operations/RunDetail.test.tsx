@@ -311,7 +311,7 @@ describe("RunDetail", () => {
     await waitFor(() => {
       expect(screen.getAllByRole("link", { name: "Detail" })).toHaveLength(3);
     });
-    expect(screen.getByText("db.needle-1")).toBeInTheDocument();
+    expect(screen.getAllByText("db.needle-1").length).toBeGreaterThan(0);
     expect(screen.queryByText("db.other-10")).not.toBeInTheDocument();
   });
 

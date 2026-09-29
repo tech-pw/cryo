@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import update
 from sqlalchemy.orm import sessionmaker
 
@@ -14,13 +15,19 @@ from cryo.cli import _worker_scale_metric
 from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun, Source, Table
 
 
-def _seed_job(session, *, status: str) -> None:
+def _seed_job(session, *, status: str, pipeline: str | None = None) -> None:
     source = Source(id=uuid4(), name=f"source-{uuid4()}", type="rest", config={})
     destination = Destination(
         id=uuid4(), name=f"dest-{uuid4()}", engine="trino", config={"host": "trino"}
     )
     table = Table(id=uuid4(), source_id=source.id, schema_name="analytics", table_name="events")
-    run = MaintenanceRun(id=uuid4(), kind="adhoc", trigger="api", status="queued", summary={})
+    run = MaintenanceRun(
+        id=uuid4(),
+        kind="adhoc",
+        trigger="api",
+        status="queued",
+        summary={"pipeline": pipeline} if pipeline is not None else {},
+    )
     session.add_all([source, destination, table, run])
     session.flush()
     session.add(
@@ -69,3 +76,26 @@ def test_watcher_owned_dispatches_do_not_request_worker_replicas(session, monkey
         sessionmaker(bind=session.get_bind(), expire_on_commit=False),
     )
     assert _worker_scale_metric() == 2
+
+
+@pytest.mark.parametrize("status", ["admitted", "running"])
+def test_coordinator_owned_batch_jobs_do_not_scale_workers(session, monkeypatch, status) -> None:
+    _seed_job(session, status=status, pipeline="batch")
+    _seed_job(session, status="running")
+    _seed_job(session, status="admitted", pipeline="worker")
+    monkeypatch.setattr(
+        "cryo.db.session.SessionLocal",
+        sessionmaker(bind=session.get_bind(), expire_on_commit=False),
+    )
+
+    assert _worker_scale_metric() == 2
+
+
+def test_only_batch_work_returns_zero_worker_demand(session, monkeypatch) -> None:
+    _seed_job(session, status="running", pipeline="batch")
+    monkeypatch.setattr(
+        "cryo.db.session.SessionLocal",
+        sessionmaker(bind=session.get_bind(), expire_on_commit=False),
+    )
+
+    assert _worker_scale_metric() == 0

@@ -17,7 +17,7 @@ const DAY_OPTIONS = [
   { value: "90", label: "Last 90 days" }
 ];
 
-export const ScanCost = () => {
+export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
   const { api } = useAuth();
   const [days, setDays] = useState("7");
 
@@ -33,18 +33,20 @@ export const ScanCost = () => {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Scan Cost"
-        subtitle="Real bytes scanned per client and schema, straight from Trino's own query log — who and what is actually driving read cost."
-        actions={
-          <Select
-            className="w-40"
-            value={days}
-            onChange={(value) => setDays(value ?? "7")}
-            options={DAY_OPTIONS}
-          />
-        }
-      />
+      {embedded ? (
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">Bytes scanned, from the query log. This is not a dollar cost.</p>
+          <Select className="w-40" value={days} onChange={(value) => setDays(value ?? "7")} options={DAY_OPTIONS} />
+        </div>
+      ) : (
+        <PageHeader
+          title="Reads"
+          subtitle="Bytes scanned per client and schema, from the query log. This is not a dollar cost."
+          actions={
+            <Select className="w-40" value={days} onChange={(value) => setDays(value ?? "7")} options={DAY_OPTIONS} />
+          }
+        />
+      )}
 
       {query.isError ? <QueryErrorAlert error={query.error} /> : null}
 

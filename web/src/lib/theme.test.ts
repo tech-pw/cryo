@@ -16,7 +16,7 @@ describe("theme reader", () => {
     expect(cryoColorsLight.surface).toBe("#ffffff");
     expect(cryoColorsLight.panel).toBe("#f3f5f8");
     expect(cryoColorsLight.chartPrimary).toBe("#277abe");
-    expect(cryoColorsLight.gradeB).toBe("#277abe");
+    expect(cryoColorsLight.gradeB).toBe("#4d7c0f");
     expect(cryoColorsLight.gradeA).toBe("#1e8e5a");
     expect(cryoColorsLight.gradeC).toBe("#a9791e");
     expect(cryoColorsLight.gradeD).toBe("#c1631b");
@@ -29,7 +29,7 @@ describe("theme reader", () => {
     expect(cryoColorsDark.layoutBg).toBe("#0b0f16");
     expect(cryoColorsDark.surface).toBe("#0e141f");
     expect(cryoColorsDark.chartPrimary).toBe("#68c1ea");
-    expect(cryoColorsDark.gradeB).toBe("#68c1ea");
+    expect(cryoColorsDark.gradeB).toBe("#8cc152");
     expect(cryoColorsDark.gradeA).toBe("#3fbe85");
     expect(cryoColorsDark.gradeF).toBe("#f0665a");
   });

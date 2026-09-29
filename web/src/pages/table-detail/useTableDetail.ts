@@ -212,6 +212,7 @@ export function useTableDetail() {
   const benefitScores = useQuery({
     queryKey: ["table-benefit-scores", tableId, token, "detail"],
     queryFn: () => getTableBenefitScores(api, tableId),
+    enabled: onTab("cost"),
     retry: false
   });
   const s3Tiering = useQuery({
@@ -223,6 +224,7 @@ export function useTableDetail() {
   const partitionEvolution = useQuery({
     queryKey: ["table-partition-evolution", tableId, token],
     queryFn: () => getPartitionEvolutionRecommendation(api, tableId),
+    enabled: onTab("files"),
     retry: false
   });
   const fastPathFindings = useQuery({
@@ -240,6 +242,7 @@ export function useTableDetail() {
   const compliance = useQuery({
     queryKey: ["table-compliance", tableId, token],
     queryFn: () => getComplianceStatus(api, tableId),
+    enabled: onTab("quality"),
     retry: false
   });
   const partitions = useQuery({
@@ -269,7 +272,7 @@ export function useTableDetail() {
   const sources = useQuery({
     queryKey: tableKeys.sources(token),
     queryFn: () => listSources(api),
-    enabled: Boolean(table.data) && !table.data.source_name,
+    enabled: Boolean(table.data) && !table.data?.source_name,
     retry: 1
   });
 
@@ -298,6 +301,7 @@ export function useTableDetail() {
   const tableQueries = useQuery({
     queryKey: ["table-query-performance", tableId, token],
     queryFn: () => getQueryPerformanceDashboard(api, 168, undefined, tableId),
+    enabled: onTab("usage"),
     retry: false
   });
 
@@ -499,6 +503,10 @@ export function useTableDetail() {
   const silentLoss = useQuery({
     queryKey: ["silent-data-loss", tableId, token],
     queryFn: () => getSilentDataLoss(api, tableId),
+    // Rendered as a page-level banner in TableDetailShell (outside any tab panel), so it must
+    // fetch regardless of which tab is active -- gating on onTab("quality") meant the banner
+    // could only ever appear if the operator happened to already be on the Quality tab,
+    // defeating the point of a page-wide silent-data-loss warning.
     enabled: Boolean(tableId),
     refetchOnWindowFocus: true,
     retry: false
@@ -552,7 +560,7 @@ export function useTableDetail() {
     stats?.projected_savings_usd_month
   );
   const hasProjectedSavings = projectedSavingsRaw != null;
-  const savingsUsd = projectedSavingsRaw ?? 0;
+  const savingsUsd: number | null = projectedSavingsRaw;
   const showLatencyBenefit =
     hasProjectedSavings &&
     projectedSavingsRaw === 0 &&
@@ -563,7 +571,7 @@ export function useTableDetail() {
     projectedSavingsUsd: projectedSavingsRaw,
     showLatencyBenefit
   });
-  const reclaimableBytes = firstFinite(costView?.reclaimable_bytes, stats?.reclaimable_bytes) ?? 0;
+  const reclaimableBytes: number | null = firstFinite(costView?.reclaimable_bytes, stats?.reclaimable_bytes);
   const storageParts = [
     costView?.live_bytes,
     costView?.dead_bytes,

@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Subquery
 
 from cryo.db.models import AuditLog, Table, TableStatsHistory
 from cryo.scanner.property_recommendations import compute_property_recommendations
@@ -48,7 +49,7 @@ class FastPathFinding:
     detected_at: datetime
 
 
-def _history_counts_subquery():
+def _history_counts_subquery() -> Subquery:
     return (
         select(
             TableStatsHistory.table_id.label("table_id"),

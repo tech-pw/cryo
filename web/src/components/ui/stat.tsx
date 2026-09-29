@@ -1,9 +1,9 @@
 import { type ReactNode } from "react";
 import { cn } from "../../lib/cn";
+import { metric, metricTooltip, provenanceLabel, type MetricId } from "../../lib/metrics";
 import { Skeleton } from "./skeleton";
 
-export interface StatProps {
-  label: string;
+type StatBaseProps = {
   value: ReactNode;
   suffix?: string;
   delta?: {
@@ -15,7 +15,10 @@ export interface StatProps {
   emphasis?: boolean;
   loading?: boolean;
   className?: string;
-}
+};
+
+export type StatProps = StatBaseProps &
+  ({ label: string; metricId?: MetricId } | { label?: string; metricId: MetricId });
 
 const deltaToneClass = {
   good: "text-[var(--color-status-success)]",
@@ -25,6 +28,7 @@ const deltaToneClass = {
 
 export function Stat({
   label,
+  metricId,
   value,
   suffix,
   delta,
@@ -34,9 +38,13 @@ export function Stat({
   loading = false,
   className
 }: StatProps) {
+  const entry = metricId ? metric(metricId) : undefined;
+  const shownLabel = entry?.label ?? label ?? "";
+  const tooltip = entry ? metricTooltip(entry.id) : undefined;
+
   if (loading) {
     return (
-      <div className={cn("cryo-metric-tile", className)}>
+      <div className={cn("cryo-metric-tile", className)} data-metric-id={metricId}>
         <Skeleton className="h-3 w-20" />
         <Skeleton className="mt-2 h-6 w-24" />
         <Skeleton className="mt-2 h-3 w-16" />
@@ -51,9 +59,26 @@ export function Stat({
         emphasis && "cryo-metric-tile--emphasis",
         className
       )}
+      data-metric-id={metricId}
     >
       <div className="flex items-center gap-1.5">
-        <p className="text-[11px] font-semibold leading-4 tracking-[0.015em] text-muted-foreground">{label}</p>
+        <p
+          className={cn(
+            "text-[11px] font-semibold leading-4 tracking-[0.015em] text-muted-foreground",
+            entry && "cursor-help"
+          )}
+          title={tooltip}
+        >
+          {shownLabel}
+        </p>
+        {entry ? (
+          <span
+            data-metric-provenance={entry.provenance}
+            className="rounded-full border border-border px-1.5 text-[10px] font-medium leading-4 text-muted-foreground"
+          >
+            {provenanceLabel(entry.provenance)}
+          </span>
+        ) : null}
         {hint}
       </div>
       <div className="mt-1 flex items-end justify-between gap-3">

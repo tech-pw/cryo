@@ -187,6 +187,154 @@ def _orphan_bytes(spark: SparkSession, sql: str) -> int | None:
         return None
 
 
+_COMMIT_ACTIONS = frozenset(
+    {
+        "optimize",
+        "rewrite_position_deletes",
+        "expire_snapshots",
+        "rewrite_manifests",
+        "optimize_manifests",
+    }
+)
+_COMMIT_SQL = (
+    "rewrite_data_files",
+    "rewrite_position_delete_files",
+    "expire_snapshots",
+    "rewrite_manifests",
+)
+
+
+def _commits_snapshot(action: object, sql: str) -> bool:
+    if action in _COMMIT_ACTIONS:
+        return True
+    if action:
+        return False
+    lowered = sql.lower()
+    return any(token in lowered for token in _COMMIT_SQL)
+
+
+def _table_ref_from_statement(sql: str, table: dict[str, Any] | None) -> str | None:
+    marker = "table =>"
+    lowered = sql.lower()
+    found: str | None = None
+    start = 0
+    while True:
+        index = lowered.find(marker, start)
+        if index < 0:
+            break
+        rest = sql[index + len(marker) :].lstrip()
+        if len(rest) >= 2 and rest[0] == "'":
+            end = rest.find("'", 1)
+            if end > 1:
+                found = rest[1:end].strip()
+        start = index + len(marker)
+    if found:
+        return found
+    if table is None:
+        return None
+    ref = table.get("table_ref")
+    if isinstance(ref, str) and ref.strip():
+        return ref.strip()
+    return None
+
+
+def _decimal_snapshot_id(value: Any) -> str | None:
+    if value is None or isinstance(value, bool) or isinstance(value, float):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    long_value = getattr(value, "longValue", None)
+    if callable(long_value):
+        try:
+            return _decimal_snapshot_id(long_value())
+        except Exception:
+            return None
+    text = str(value).strip()
+    if text.startswith("-"):
+        body = text[1:]
+        if not body.isdigit():
+            return None
+        return str(int(text))
+    if not text.isdigit():
+        return None
+    return str(int(text))
+
+
+def _snapshot_id_if_changed(
+    before: str | None,
+    after: str | None,
+    *,
+    before_ok: bool,
+    after_ok: bool,
+) -> str | None:
+    if not before_ok or not after_ok or after is None or before == after:
+        return None
+    return after
+
+
+def _read_current_snapshot_id(spark: SparkSession, table_ref: str) -> str | None:
+    table = spark._jvm.org.apache.iceberg.spark.Spark3Util.loadIcebergTable(
+        spark._jsparkSession, table_ref
+    )
+    table.refresh()
+    current = table.currentSnapshot()
+    if current is None:
+        return None
+    parsed = _decimal_snapshot_id(current.snapshotId())
+    if parsed is None:
+        raise ValueError("snapshot id is not a decimal integer")
+    return parsed
+
+
+def _probe_snapshot_id(spark: SparkSession, table_ref: str) -> tuple[bool, str | None]:
+    try:
+        return True, _read_current_snapshot_id(spark, table_ref)
+    except Exception as exc:
+        print(f"[cryo] snapshot id probe failed: {exc}", file=sys.stderr)
+        return False, None
+
+
+def _begin_snapshot_probe(
+    spark: SparkSession,
+    action: object,
+    sql: str,
+    table: dict[str, Any] | None,
+) -> tuple[bool, str | None, str | None]:
+    try:
+        if not _commits_snapshot(action, sql):
+            return False, None, None
+        table_ref = _table_ref_from_statement(sql, table)
+        if not table_ref:
+            print("[cryo] snapshot id probe failed: missing table ref", file=sys.stderr)
+            return False, None, None
+        ok, snapshot_id = _probe_snapshot_id(spark, table_ref)
+        return ok, snapshot_id, table_ref
+    except Exception as exc:
+        print(f"[cryo] snapshot id probe failed: {exc}", file=sys.stderr)
+        return False, None, None
+
+
+def _finish_snapshot_probe(
+    spark: SparkSession,
+    metrics: dict[str, Any],
+    *,
+    before_ok: bool,
+    before_id: str | None,
+    table_ref: str | None,
+) -> None:
+    if not table_ref or not before_ok:
+        return
+    try:
+        after_ok, after_id = _probe_snapshot_id(spark, table_ref)
+        changed = _snapshot_id_if_changed(
+            before_id, after_id, before_ok=before_ok, after_ok=after_ok
+        )
+        if changed is not None:
+            metrics["committed_snapshot_id"] = changed
+    except Exception as exc:
+        print(f"[cryo] snapshot id probe failed: {exc}", file=sys.stderr)
+
+
 def _run_statement(spark: SparkSession, sql: str) -> tuple[int, dict[str, Any]]:
     # The Spark renderer joins multi-part operations (ALTER TABLE ... ; CALL rewrite_data_files)
     # with ";\n", and spark.sql runs exactly one statement. The last part is the procedure
@@ -240,6 +388,9 @@ def _run_manifest(spark: SparkSession, manifest_path: str, *, deadline_epoch: fl
                 if measure_orphan_bytes and stmt["action"] == "remove_orphan_files"
                 else None
             )
+            before_ok, before_id, snapshot_table = _begin_snapshot_probe(
+                spark, stmt["action"], stmt["sql"], table
+            )
             started = time.monotonic()
             try:
                 row_count, metrics = _run_statement(spark, stmt["sql"])
@@ -255,6 +406,13 @@ def _run_manifest(spark: SparkSession, manifest_path: str, *, deadline_epoch: fl
             duration_ms = int((time.monotonic() - started) * 1000)
             if measured is not None:
                 metrics["bytes_removed"] = measured
+            _finish_snapshot_probe(
+                spark,
+                metrics,
+                before_ok=before_ok,
+                before_id=before_id,
+                table_ref=snapshot_table,
+            )
             _emit(
                 RESULT_PREFIX,
                 {
@@ -385,8 +543,18 @@ def main() -> int | NoReturn:
                 measured = _orphan_bytes(spark, statement)
                 if measured is not None:
                     extra["bytes_removed"] = measured
+            before_ok, before_id, snapshot_table = _begin_snapshot_probe(
+                spark, action, statement, None
+            )
             row_count, metrics = _run_statement(spark, statement)
             metrics.update(extra)
+            _finish_snapshot_probe(
+                spark,
+                metrics,
+                before_ok=before_ok,
+                before_id=before_id,
+                table_ref=snapshot_table,
+            )
             freed = bytes_freed_from_procedure(action or "", metrics)
             last_result = {
                 "ok": True,

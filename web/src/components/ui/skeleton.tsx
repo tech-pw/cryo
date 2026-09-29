@@ -1,4 +1,4 @@
-import { type HTMLAttributes } from "react";
+import { useEffect, useState, type HTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
 
 function Skeleton({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
@@ -10,4 +10,16 @@ function Skeleton({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   );
 }
 
-export { Skeleton };
+export const skeletonStalled = (elapsedMs: number, capMs = 5000): boolean => elapsedMs >= capMs;
+
+function LoadingSkeleton({ label = "Still loading…", timeoutMs = 5000 }: { label?: string; timeoutMs?: number }) {
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setStalled(true), timeoutMs);
+    return () => window.clearTimeout(timer);
+  }, [timeoutMs]);
+  if (stalled) return <p>{label}</p>;
+  return <Skeleton aria-busy="true" />;
+}
+
+export { LoadingSkeleton, Skeleton };

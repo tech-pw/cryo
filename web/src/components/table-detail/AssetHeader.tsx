@@ -19,7 +19,9 @@ import {
 import { toast } from "sonner";
 import { CompactionTag, GradePill, PriorityTag, healthScoreColor } from "../status";
 import { formatBytesGb, formatGb, formatNumber, formatTime } from "../../lib/format";
+import { useAuth } from "../../lib/auth";
 import { useWriteControl } from "../../lib/useWriteControl";
+import { AddToBatchButton } from "../batch/AddToBatchButton";
 import { qualifiedTableName } from "../../lib/tableLabels";
 import type { TableDetailState } from "../../pages/table-detail/useTableDetail";
 import { useShellOptional } from "../shell/ShellContext";
@@ -58,6 +60,7 @@ export const AssetHeader = ({
   handleScanAction
 }: AssetHeaderProps) => {
   const scanAccess = useWriteControl("triggerScan");
+  const { subject } = useAuth();
   const shell = useShellOptional();
   return (
   <>
@@ -159,6 +162,25 @@ export const AssetHeader = ({
           {!scan.isPending ? <Loader2 className="size-3.5" /> : null}
           {scan.isPending ? "Refreshing stats..." : queuedScanRunId ? "Open scan run" : "Refresh stats"}
         </Button>
+        {row ? (
+          <AddToBatchButton
+            identity={{
+              installationId: "local",
+              principalId: subject || "anonymous",
+              tenantId: "local"
+            }}
+            tables={[
+              {
+                id: row.id,
+                label: [row.catalog_name, row.schema_name, row.table_name].filter(Boolean).join(" › "),
+                catalog: row.catalog_name ?? undefined,
+                schemaName: row.schema_name ?? undefined,
+                table: row.table_name
+              }
+            ]}
+            onReview={() => navigate("/runs/batch")}
+          />
+        ) : null}
       </div>
     </div>
 
@@ -224,9 +246,11 @@ export const AssetHeader = ({
         <summary>
           <span>More table metrics</span>
           <span className="td-metrics-summary-hint">
-           {reclaimableBytes > 0
-             ? `${formatBytesGb(reclaimableBytes)} reclaimable`
-             : "Storage, partitioning and metadata"}
+            {reclaimableBytes == null
+              ? "Not measured"
+              : reclaimableBytes > 0
+                ? `${formatBytesGb(reclaimableBytes)} reclaimable`
+                : "Storage, partitioning and metadata"}
           </span>
           <ChevronDown className="size-3.5" />
         </summary>

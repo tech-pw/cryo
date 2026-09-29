@@ -53,3 +53,18 @@ export type {
 export { animateOnce, motionMs, motionVar, MOTION_MS, useAnimateOnce, useReducedMotion } from "../../lib/motion";
 export { BeforeAfter } from "./BeforeAfter";
 export { TimeSeries, type TimeSeriesMarker, type TimeSeriesPoint } from "./TimeSeries";
+export {
+  Distribution,
+  type DistributionProps,
+  type DistributionScan,
+  type KindDistribution,
+  type Log2Bin
+} from "./Distribution";
+export { HeatStrip, HEAT_STRIP_WINDOW, type HeatStripPartition, type HeatStripProps } from "./HeatStrip";
+export {
+  TableTimeline,
+  type TableTimelineProps,
+  type TimelineAction,
+  type TimelineRead,
+  type TimelineWrite
+} from "./TableTimeline";

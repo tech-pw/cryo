@@ -11,10 +11,13 @@ import { MetricGrid, MetricTile } from "../components/ui/metric-grid";
 import { PageHeader } from "../components/ui/page-header";
 import { Skeleton } from "../components/ui/skeleton";
 import { useAuth } from "../lib/auth";
+import { VIEWER_REASON } from "../lib/permissions";
+import { useWriteControl } from "../lib/useWriteControl";
 import { formatCurrency, formatGb, formatNumber } from "../lib/format";
 
 const CandidateRow = ({ candidate }: { candidate: DarkTableCandidateRead }) => {
   const { api } = useAuth();
+  const dismissAccess = useWriteControl("dismissDarkTable");
   const queryClient = useQueryClient();
   const [reason, setReason] = useState("");
   const [dismissing, setDismissing] = useState(false);
@@ -76,9 +79,16 @@ const CandidateRow = ({ candidate }: { candidate: DarkTableCandidateRead }) => {
         </div>
       ) : (
         <div className="mt-3 flex justify-end">
-          <Button size="sm" variant="outline" onClick={() => setDismissing(true)}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!dismissAccess.allowed}
+            title={dismissAccess.reason ?? undefined}
+            onClick={() => setDismissing(true)}
+          >
             Not dark — dismiss
           </Button>
+          {!dismissAccess.allowed ? <p className="mt-1 text-xs text-muted-foreground">{VIEWER_REASON}</p> : null}
         </div>
       )}
       {dismissMutation.isError ? <QueryErrorAlert error={dismissMutation.error} /> : null}

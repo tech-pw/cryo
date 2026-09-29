@@ -40,9 +40,9 @@ const tabContent = (key: GovernanceTabKey) => {
   }
 };
 
-export const Governance = () => {
+export const Governance = ({ forcedTab }: { forcedTab?: GovernanceTabKey }) => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const urlTab = searchParams.get("tab");
+  const urlTab = forcedTab ?? searchParams.get("tab");
   const tabFromUrl: GovernanceTabKey = resolveGovernanceTab(urlTab);
   const [activeTab, setActiveTab] = useState<GovernanceTabKey>(tabFromUrl);
 
@@ -54,7 +54,7 @@ export const Governance = () => {
   // rewritten to the current task-oriented key so a shared/bookmarked link normalizes on next
   // navigation instead of perpetuating the old value.
   useEffect(() => {
-    if (urlTab !== null && !isGovernanceTabKey(urlTab)) {
+    if (!forcedTab && urlTab !== null && !isGovernanceTabKey(urlTab)) {
       const next = new URLSearchParams(searchParams);
       if (tabFromUrl === DEFAULT_GOVERNANCE_TAB) {
         next.delete("tab");
@@ -80,6 +80,10 @@ export const Governance = () => {
     },
     [searchParams, setSearchParams]
   );
+
+  if (forcedTab) {
+    return <div>{tabContent(forcedTab)}</div>;
+  }
 
   return (
     <div>

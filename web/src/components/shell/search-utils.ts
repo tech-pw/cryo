@@ -10,21 +10,21 @@ export const SEARCH_GROUP_LABELS: Record<string, string> = {
 export const getSearchResultHref = (hit: SearchHit): string => {
   if (hit.type === "columns" && hit.table_id) {
     const column = hit.column_name ?? hit.name;
-    return `/tables/${hit.table_id}?tab=structure&column=${encodeURIComponent(column)}`;
+    return `/tables/${hit.table_id}?tab=files&column=${encodeURIComponent(column)}`;
   }
   if (hit.type === "tables" && hit.table_id) {
     return `/tables/${hit.table_id}`;
   }
   if (hit.type === "schemas" && hit.catalog && hit.schema_name) {
-    return `/catalogs?catalog=${encodeURIComponent(hit.catalog)}&schema=${encodeURIComponent(hit.schema_name)}`;
+    return `/tables?catalog=${encodeURIComponent(hit.catalog)}&schema=${encodeURIComponent(hit.schema_name)}`;
   }
   if (hit.type === "catalogs") {
-    return `/catalogs?catalog=${encodeURIComponent(hit.name)}`;
+    return `/tables?catalog=${encodeURIComponent(hit.name)}`;
   }
   if (hit.table_id) {
     return `/tables/${hit.table_id}`;
   }
-  return `/search?q=${encodeURIComponent(hit.name)}`;
+  return `/tables?q=${encodeURIComponent(hit.name)}`;
 };
 
 export const formatMatchReason = (hit: SearchHit): string => {

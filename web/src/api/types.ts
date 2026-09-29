@@ -878,7 +878,7 @@ export interface FleetTrendsResponse {
 export interface CostByOperation {
   operation: OperationType;
   savings_usd_month: number;
-  reclaimable_bytes: number;
+  reclaimable_bytes: number | null;
 }
 
 export interface CostTrendPoint {

@@ -1,72 +1,43 @@
-import { ArrowDown, ArrowUp } from "lucide-react";
-import { healthScoreColor } from "../status";
-import { Badge } from "../ui/badge";
-
 interface HealthGaugeProps {
-  score: number;
+  score?: number | null;
+  grade?: string | null;
   trendLabel?: string | null;
   trendDirection?: "up" | "down" | "flat";
   daysToCritical?: number | null;
 }
 
-const RADIUS = 52;
-const CIRCUMFERENCE = Math.PI * RADIUS;
+const letterFromScore = (score: number): string => {
+  if (score >= 90) return "A";
+  if (score >= 75) return "B";
+  if (score >= 60) return "C";
+  if (score >= 40) return "D";
+  return "F";
+};
 
-const clampScore = (score: number) => Math.max(0, Math.min(100, Number.isFinite(score) ? score : 0));
+export const HealthGauge = ({ score, grade }: HealthGaugeProps) => {
+  const explicitGrade = typeof grade === "string" ? grade.trim() : grade;
+  const gradeMissing = explicitGrade == null || explicitGrade === "";
+  const scoreFinite = score != null && Number.isFinite(score);
+  const letter = gradeMissing ? (grade === undefined && scoreFinite ? letterFromScore(score) : null) : explicitGrade;
 
-export const HealthGauge = ({
-  score,
-  trendLabel,
-  trendDirection = "flat",
-  daysToCritical
-}: HealthGaugeProps) => {
-  const safeScore = clampScore(score);
-  const color = healthScoreColor(safeScore);
-  const progress = (safeScore / 100) * CIRCUMFERENCE;
+  if (!letter) {
+    return (
+      <div className="td-health-gauge" role="status">
+        <span className="td-health-gauge-label">Not scanned</span>
+      </div>
+    );
+  }
+
+  const integer = scoreFinite ? Math.round(score) : null;
 
   return (
-    <div className="td-health-gauge">
-      <svg
-        viewBox="0 0 140 78"
-        className="td-health-gauge-svg"
-        role="img"
-        aria-label={`Health score ${safeScore.toFixed(0)}`}
-      >
-        <path
-          d={`M 18 70 A ${RADIUS} ${RADIUS} 0 0 1 122 70`}
-          className="td-health-gauge-track"
-          pathLength={CIRCUMFERENCE}
-        />
-        <path
-          d={`M 18 70 A ${RADIUS} ${RADIUS} 0 0 1 122 70`}
-          className="td-health-gauge-progress"
-          stroke={color}
-          strokeDasharray={`${progress} ${CIRCUMFERENCE}`}
-          pathLength={CIRCUMFERENCE}
-        />
-      </svg>
-
-      <div className="td-health-gauge-center">
-        <span className="td-health-gauge-score">{safeScore.toFixed(0)}</span>
-        <span className="td-health-gauge-label">Overall Health</span>
-      </div>
-
-      <div className="td-health-gauge-meta">
-        {trendLabel ? (
-          <span className={`td-health-trend td-health-trend-${trendDirection}`}>
-            {trendDirection === "up" ? <ArrowUp size={12} /> : null}
-            {trendDirection === "down" ? <ArrowDown size={12} /> : null}
-            {trendLabel}
-          </span>
-        ) : (
-          <span className="td-health-trend td-health-trend-flat">No Trend Signal Yet</span>
-        )}
-        {daysToCritical != null && daysToCritical < 30 ? (
-          <Badge variant="warning" className="td-health-critical-tag">
-            {daysToCritical} Days to Critical
-          </Badge>
-        ) : null}
-      </div>
+    <div
+      className="td-health-gauge"
+      role="group"
+      aria-label={integer == null ? `Grade ${letter}` : `Grade ${letter}, score ${integer}`}
+    >
+      <span className="td-health-gauge-score">{letter}</span>
+      <span className="td-health-gauge-label">{integer == null ? "Not measured" : integer}</span>
     </div>
   );
 };

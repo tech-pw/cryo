@@ -6,6 +6,7 @@ manifests or data files, and does not write snapshot lists into stats history.
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -26,6 +27,7 @@ router = APIRouter(prefix="/api/v1", tags=["tables"])
 # with no timeout, so a black-holed metastore must not hold the request open.
 _SNAPSHOTS_CATALOG_TIMEOUT_SECONDS = 30.0
 _MAX_PAGE_SIZE = 100
+_DECIMAL_ID = re.compile(r"-?\d+")
 
 _snapshots_catalog_executor: ThreadPoolExecutor | None = None
 
@@ -59,13 +61,15 @@ class SnapshotSummaryRead(BaseModel):
 class SnapshotRefRead(BaseModel):
     name: str
     type: Literal["branch", "tag"]
+    snapshot_id: str
     min_snapshots_to_keep: int | None = None
     max_snapshot_age_ms: int | None = None
     max_ref_age_ms: int | None = None
 
 
 class SnapshotRead(BaseModel):
-    snapshot_id: int
+    snapshot_id: str
+    parent_snapshot_id: str | None = None
     timestamp_ms: int | None
     committed_at: str | None
     sequence_number: int | None
@@ -79,7 +83,7 @@ class SnapshotRead(BaseModel):
 
 class SnapshotListResponse(BaseModel):
     table_id: uuid.UUID
-    current_snapshot_id: int | None
+    current_snapshot_id: str | None
     total: int
     pinned_count: int
     latest_committed_at: str | None
@@ -87,6 +91,32 @@ class SnapshotListResponse(BaseModel):
     page: int
     page_size: int
     snapshots: list[SnapshotRead]
+
+
+def _decimal_id(raw: Any) -> str | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return str(raw)
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not _DECIMAL_ID.fullmatch(text):
+            return None
+        return str(int(text))
+    return None
+
+
+def _decimal_field(obj: Any, attr: str, *aliases: str) -> str | None:
+    names = (attr, *aliases)
+    if isinstance(obj, Mapping):
+        for name in names:
+            if name in obj:
+                return _decimal_id(obj.get(name))
+        return None
+    for name in names:
+        if hasattr(obj, name):
+            return _decimal_id(getattr(obj, name))
+    return None
 
 
 def _optional_int(raw: Any) -> int | None:
@@ -160,24 +190,34 @@ def _committed_at(timestamp_ms: int | None) -> str | None:
     return datetime.fromtimestamp(timestamp_ms / 1000, tz=UTC).isoformat()
 
 
-def _refs_by_snapshot(metadata: Any) -> dict[int, list[SnapshotRefRead]]:
+def _snapshot_id(snapshot: Any) -> str:
+    snapshot_id = _decimal_field(snapshot, "snapshot_id", "snapshot-id")
+    if snapshot_id is None:
+        raise RuntimeError("catalog snapshot is missing snapshot_id")
+    return snapshot_id
+
+
+def _parent_snapshot_id(snapshot: Any) -> str | None:
+    return _decimal_field(snapshot, "parent_snapshot_id", "parent-snapshot-id")
+
+
+def _refs_by_snapshot(metadata: Any) -> dict[str, list[SnapshotRefRead]]:
     refs = getattr(metadata, "refs", None)
     if refs is None:
         return {}
     if not isinstance(refs, Mapping):
         raise RuntimeError("catalog metadata refs is not a mapping")
-    grouped: dict[int, list[SnapshotRefRead]] = {}
+    grouped: dict[str, list[SnapshotRefRead]] = {}
     for name, ref in refs.items():
         kind = _ref_type(ref)
-        snapshot_id = _attr_int(ref, "snapshot_id")
-        if snapshot_id is None and isinstance(ref, Mapping):
-            snapshot_id = _optional_int(ref.get("snapshot-id"))
+        snapshot_id = _decimal_field(ref, "snapshot_id", "snapshot-id")
         if kind is None or snapshot_id is None:
             raise RuntimeError(f"snapshot ref {name!r} is missing a type or snapshot id")
         grouped.setdefault(snapshot_id, []).append(
             SnapshotRefRead(
                 name=str(name),
                 type=kind,
+                snapshot_id=snapshot_id,
                 min_snapshots_to_keep=_attr_int(ref, "min_snapshots_to_keep"),
                 max_snapshot_age_ms=_attr_int(ref, "max_snapshot_age_ms"),
                 max_ref_age_ms=_attr_int(ref, "max_ref_age_ms"),
@@ -189,11 +229,7 @@ def _refs_by_snapshot(metadata: Any) -> dict[int, list[SnapshotRefRead]]:
 
 
 def _snapshot_row(snapshot: Any, refs: list[SnapshotRefRead]) -> SnapshotRead:
-    snapshot_id = _optional_int(getattr(snapshot, "snapshot_id", None))
-    if snapshot_id is None and isinstance(snapshot, Mapping):
-        snapshot_id = _optional_int(snapshot.get("snapshot_id"))
-    if snapshot_id is None:
-        raise RuntimeError("catalog snapshot is missing snapshot_id")
+    snapshot_id = _snapshot_id(snapshot)
     timestamp_ms = _attr_int(snapshot, "timestamp_ms")
     if isinstance(snapshot, Mapping):
         summary = snapshot.get("summary")
@@ -201,6 +237,7 @@ def _snapshot_row(snapshot: Any, refs: list[SnapshotRefRead]) -> SnapshotRead:
         summary = getattr(snapshot, "summary", None)
     return SnapshotRead(
         snapshot_id=snapshot_id,
+        parent_snapshot_id=_parent_snapshot_id(snapshot),
         timestamp_ms=timestamp_ms,
         committed_at=_committed_at(timestamp_ms),
         sequence_number=_attr_int(snapshot, "sequence_number"),
@@ -218,7 +255,7 @@ def _snapshot_row(snapshot: Any, refs: list[SnapshotRefRead]) -> SnapshotRead:
     )
 
 
-def _extract_metadata(metadata: Any) -> tuple[int | None, list[SnapshotRead]]:
+def _extract_metadata(metadata: Any) -> tuple[str | None, list[SnapshotRead]]:
     # Metadata fields only. Do not call manifests(), scan(), or inspect().
     snapshots = getattr(metadata, "snapshots", None)
     if snapshots is None:
@@ -230,22 +267,13 @@ def _extract_metadata(metadata: Any) -> tuple[int | None, list[SnapshotRead]]:
         _snapshot_row(snapshot, refs_by_id.get(_snapshot_id(snapshot), []))
         for snapshot in snapshots
     ]
-    current = _attr_int(metadata, "current_snapshot_id")
+    current = _decimal_field(metadata, "current_snapshot_id", "current-snapshot-id")
     return current, rows
-
-
-def _snapshot_id(snapshot: Any) -> int:
-    snapshot_id = _optional_int(getattr(snapshot, "snapshot_id", None))
-    if snapshot_id is None and isinstance(snapshot, Mapping):
-        snapshot_id = _optional_int(snapshot.get("snapshot_id"))
-    if snapshot_id is None:
-        raise RuntimeError("catalog snapshot is missing snapshot_id")
-    return snapshot_id
 
 
 def _load_metadata(
     source: Mapping[str, Any], schema_name: str, table_name: str
-) -> tuple[int | None, list[SnapshotRead]]:
+) -> tuple[str | None, list[SnapshotRead]]:
     from cryo.sources.factory import source_catalog_for
 
     catalog = source_catalog_for(source)
@@ -259,6 +287,16 @@ def _load_metadata(
 def _catalog_failure(exc: Exception) -> HTTPException:
     reason = f"{type(exc).__name__}: {exc}"
     return HTTPException(status_code=503, detail=f"Catalog metadata read failed: {reason}"[:500])
+
+
+def _protected_labels(rows: list[Any]) -> dict[str, str | None]:
+    labels: dict[str, str | None] = {}
+    for row in rows:
+        snapshot_id = _decimal_id(row.snapshot_id)
+        if snapshot_id is None:
+            continue
+        labels[snapshot_id] = row.label
+    return labels
 
 
 @router.get(
@@ -302,8 +340,7 @@ def list_table_snapshots(
     except Exception as exc:
         raise _catalog_failure(exc) from exc
 
-    protected_rows = ProtectedSnapshotRepository(session).list_for_table(table_id)
-    labels = {row.snapshot_id: row.label for row in protected_rows}
+    labels = _protected_labels(ProtectedSnapshotRepository(session).list_for_table(table_id))
     marked: list[SnapshotRead] = []
     for row in rows:
         label = labels.get(row.snapshot_id)
@@ -320,7 +357,11 @@ def list_table_snapshots(
         )
     ordered = sorted(
         marked,
-        key=lambda row: (row.timestamp_ms is not None, row.timestamp_ms or 0, row.snapshot_id),
+        key=lambda row: (
+            row.timestamp_ms is not None,
+            row.timestamp_ms or 0,
+            int(row.snapshot_id),
+        ),
         reverse=True,
     )
     dated = [row.committed_at for row in ordered if row.committed_at is not None]

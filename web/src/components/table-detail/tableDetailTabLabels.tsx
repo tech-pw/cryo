@@ -13,21 +13,21 @@ export const OverviewTabLabel = () => (
 export const StructureTabLabel = () => (
   <span>
     <Database className={tabIconClass} />
-    Structure
+    Schema & files
   </span>
 );
 
 export const HealthQualityTabLabel = () => (
   <span>
     <Shield className={tabIconClass} />
-    Health &amp; Quality
+    Quality
   </span>
 );
 
 export const LineageTabLabel = () => (
   <span>
     <Share2 className={tabIconClass} />
-    Lineage
+    Usage
   </span>
 );
 

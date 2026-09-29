@@ -1,13 +1,4 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
-  XAxis,
-  YAxis
-} from "recharts";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../../lib/auth";
 import {
@@ -22,13 +13,13 @@ import { EmptyState } from "../../components/common";
 import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { ChartDataTable } from "../../components/ui/chart-data-table";
+import { RankedBars } from "../../components/charts";
 import { DataTable } from "../../components/ui/data-table";
 import { MetricGrid } from "../../components/ui/metric-grid";
 import { Skeleton } from "../../components/ui/skeleton";
 import { MetricTile } from "../../components/ui/stat";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
-import { chartAxisTick, chartTooltipProps, cryoColors } from "../../lib/theme";
+
 import { formatCurrency, formatNumber, formatTime } from "../../lib/format";
 
 interface BucketRow {
@@ -273,45 +264,16 @@ export const S3RequestsTab = () => {
         </CardHeader>
         <CardContent>
           {barData.length > 0 ? (
-            <>
-              <div
-                role="img"
-                aria-label={`Top buckets by 30-day S3 request cost. Highest is ${barData[0]?.bucket ?? "unknown"} at ${formatCurrency(barData[0]?.cost)}.`}
-              >
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={barData} margin={{ top: 8, right: 16, bottom: 64, left: 0 }}>
-                  <CartesianGrid stroke={cryoColors.chartGrid} />
-                  <XAxis
-                    dataKey="bucket"
-                    stroke={cryoColors.inkFaint}
-                    tick={{ ...chartAxisTick, fontSize: 11 }}
-                    angle={-30}
-                    textAnchor="end"
-                    interval={0}
-                    height={70}
-                  />
-                  <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
-                  <RechartsTooltip {...chartTooltipProps} />
-                  <Bar dataKey="cost" fill={cryoColors.primary} name="$ / 30d" />
-                </BarChart>
-              </ResponsiveContainer>
-              </div>
-              <ChartDataTable
-                caption="Top buckets ranked by estimated 30-day S3 request cost, largest first."
-                columns={[
-                  { key: "bucket", header: "Bucket", render: (row) => row.bucket },
-                  {
-                    key: "count",
-                    header: "Requests (30d)",
-                    align: "right",
-                    render: (row) => (row.count == null ? "Not measured" : formatNumber(row.count))
-                  },
-                  { key: "cost", header: "Cost (30d)", align: "right", render: (row) => formatCurrency(row.cost) }
-                ]}
-                rows={barData}
-                getRowKey={(row, index) => row.bucket ?? `bucket-${index}`}
-              />
-            </>
+            <RankedBars
+              title="Top buckets by estimated request cost"
+              unit="estimated USD/month"
+              provenance="estimated-pricing"
+              items={barData.map((row) => ({
+                id: row.bucket,
+                label: row.bucket,
+                value: row.cost
+              }))}
+            />
           ) : rollups.isLoading ? (
             <Skeleton className="h-[260px] w-full rounded-[var(--radius-default)]" />
           ) : (

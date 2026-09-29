@@ -26,14 +26,14 @@ export const NotFound = () => {
   const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = query.trim();
-    navigate(trimmed ? `/search?q=${encodeURIComponent(trimmed)}` : "/search");
+    navigate(trimmed ? `/tables?q=${encodeURIComponent(trimmed)}` : "/tables");
   };
 
   const handleGoBack = () => {
     if (window.history.length > 1) {
       navigate(-1);
     } else {
-      navigate("/health");
+      navigate("/");
     }
   };
 

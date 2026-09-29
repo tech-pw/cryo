@@ -98,19 +98,21 @@ const renderPage = (initialRoute = "/cost") => {
 };
 
 describe("Consolidated Cost page", () => {
-  it("renders three tabs and starts on Overview by default", async () => {
+  it("renders five tabs and starts on Storage by default", async () => {
     mockDefaultOverview();
     vi.mocked(listSources).mockResolvedValue([]);
     vi.mocked(listSourceS3LogConfigs).mockResolvedValue([]);
     vi.mocked(getSourceS3RequestCostRollup).mockResolvedValue(null as never);
     renderPage();
 
-    expect(await screen.findByRole("tab", { name: /overview/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /s3 requests/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /aws integrations/i })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: /^Storage$/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Requests$/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Impact$/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Reads$/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^AWS$/ })).toBeInTheDocument();
 
     // Overview tab is selected by default — hero MetricTile for total monthly cost.
-    expect(await screen.findByText(/Total monthly S3 cost/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Estimated storage cost/i)).toBeInTheDocument();
   });
 
   it("Overview shows scan provenance and chart-equivalent data tables", async () => {
@@ -225,7 +227,7 @@ describe("Consolidated Cost page", () => {
     });
     renderPage("/cost?tab=s3-requests");
 
-    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/s3 requests/i);
+    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/^Requests$/);
     expect(await screen.findByText("lake-bucket")).toBeInTheDocument();
     // "prod_data" appears both as the per-bucket source label and inside the
     // chart-equivalent data table's "prod_data/lake-bucket" bucket identifier.
@@ -395,7 +397,7 @@ describe("Consolidated Cost page", () => {
     vi.mocked(getAwsUsage).mockResolvedValue({} as never);
     renderPage("/cost?tab=aws-integrations");
 
-    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/aws integrations/i);
+    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/^AWS$/);
     expect(await screen.findByText("prod_data")).toBeInTheDocument();
     expect(await screen.findAllByRole("button", { name: /connect aws/i })).toHaveLength(1);
   });
@@ -407,13 +409,13 @@ describe("Consolidated Cost page", () => {
     vi.mocked(getSourceS3RequestCostRollup).mockResolvedValue(null as never);
     const { unmount } = renderPage("/cost?tab=s3-requests");
 
-    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/s3 requests/i);
+    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/^Requests$/);
 
     unmount();
     renderPage("/cost");
 
-    expect(await screen.findByText(/Total monthly S3 cost/i)).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /overview/i })).toHaveAttribute("data-state", "active");
+    expect(await screen.findByText(/Estimated storage cost/i)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Storage$/ })).toHaveAttribute("data-state", "active");
   });
 
   it("uses useSearchParams to pick the active tab -- the URL ?tab= query wins over the default", async () => {
@@ -427,6 +429,6 @@ describe("Consolidated Cost page", () => {
 
     renderPage("/cost?tab=aws-integrations");
 
-    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/aws integrations/i);
+    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/^AWS$/);
   });
 });

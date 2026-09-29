@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.ai.embeddings import cosine_similarity, embed_text
+from cryo.ai.tools.verified import VERIFIED_HANDLERS
 from cryo.db.models import Table, TableStats
 
 VerifiedHandler = Callable[[Mapping[str, Any], Session], dict[str, Any]]
@@ -76,7 +77,7 @@ def answer_question(
         }
 
     qid = match["question_id"]
-    if qid in VERIFIED_QUESTIONS:
+    if qid in VERIFIED_QUESTIONS and match.get("kind") != "table_metadata":
         return {
             "source": "embedding_fallback",
             "similarity": match["similarity"],
@@ -121,7 +122,7 @@ def search_copilot(
         desc = f"{schema}.{name} grade {grade} score {score}"
         sim = cosine_similarity(query_vec, embed_text(desc))
         if sim >= min_similarity:
-            candidates.append((sim, "worst_tables", desc, "table_metadata"))
+            candidates.append((sim, "table_metadata_hit", desc, "table_metadata"))
 
     if not candidates:
         return None
@@ -144,59 +145,17 @@ def list_verified_questions() -> list[dict[str, str]]:
     return [{"id": key, "prompt": value["prompt"]} for key, value in VERIFIED_QUESTIONS.items()]
 
 
-def _worst_tables(_context: Mapping[str, Any], session: Session) -> dict[str, Any]:
-    rows = session.execute(
-        select(Table, TableStats)
-        .join(TableStats, TableStats.table_id == Table.id)
-        .order_by(TableStats.overall_score.asc())
-        .limit(10)
-    )
-    return {
-        "answer": "Top unhealthy tables by lowest overall score.",
-        "tables": [
-            {
-                "schema_name": table.schema_name,
-                "table_name": table.table_name,
-                "grade": stats.grade,
-                "overall_score": stats.overall_score,
-            }
-            for table, stats in rows
-        ],
+def _questions_from_verified() -> dict[str, dict[str, Any]]:
+    questions = {
+        handler_id: {"prompt": entry["prompt"], "handler": entry["handler"]}
+        for handler_id, entry in VERIFIED_HANDLERS.items()
     }
+    if "worst_tables" not in questions or "compaction_backlog" not in questions:
+        raise RuntimeError("verified library must keep worst_tables and compaction_backlog")
+    return questions
 
 
-def _compaction_backlog(_context: Mapping[str, Any], session: Session) -> dict[str, Any]:
-    rows = session.execute(
-        select(Table.schema_name, Table.table_name, TableStats.small_files_count, TableStats.grade)
-        .join(TableStats, TableStats.table_id == Table.id)
-        .where(TableStats.needs_compaction.is_(True))
-        .order_by(TableStats.small_files_count.desc())
-        .limit(20)
-    )
-    return {
-        "answer": "Tables flagged needs_compaction ordered by small file count.",
-        "tables": [
-            {
-                "schema_name": schema,
-                "table_name": name,
-                "small_files_count": small_files,
-                "grade": grade,
-            }
-            for schema, name, small_files, grade in rows
-        ],
-    }
-
-
-VERIFIED_QUESTIONS: dict[str, dict[str, Any]] = {
-    "worst_tables": {
-        "prompt": "Which tables are the unhealthiest right now?",
-        "handler": _worst_tables,
-    },
-    "compaction_backlog": {
-        "prompt": "Which tables have the largest compaction backlog?",
-        "handler": _compaction_backlog,
-    },
-}
+VERIFIED_QUESTIONS: dict[str, dict[str, Any]] = _questions_from_verified()
 
 
 def build_table_fleet_rows(session: Session) -> list[dict[str, Any]]:

@@ -440,8 +440,13 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
     if assignment is not None and assignment.param_overrides:
         params.update(assignment.param_overrides)
     guardrails = dict(preset.guardrails) if preset else {}
-    operations = _coerce_operations(preset.operations) if preset else None
     summary = dict(job.run.summary or {}) if job.run else {}
+    operations = _coerce_operations(preset.operations) if preset else None
+    summary_operations = summary.get("operations")
+    if isinstance(summary_operations, list) and summary_operations:
+        overridden = _coerce_operations(summary_operations)
+        if overridden is not None:
+            operations = overridden
     actor_raw = summary.get("actor")
     actor = actor_raw if isinstance(actor_raw, str) and actor_raw else None
     # AutoComp (SIGMOD 2025): governor.decide_job_admission's min_benefit_score/min_moop_score
