@@ -89,6 +89,8 @@ export interface MaintenanceBatchDraft {
   receipts: BatchFilterReceipt[];
   exclusions: BatchExclusion[];
   recipe: BatchRecipeId;
+  destinationId: string | null;
+  presetId: string | null;
   updatedAt: string;
 }
 
@@ -190,6 +192,8 @@ export function createEmptyDraft(identity: BatchIdentity, at = new Date().toISOS
     receipts: [],
     exclusions: [],
     recipe: "compact_and_clean_up",
+    destinationId: null,
+    presetId: null,
     updatedAt: at
   };
 }
@@ -288,6 +292,16 @@ export function withRecipe(draft: MaintenanceBatchDraft, recipe: BatchRecipeId):
   return touch(draft, { recipe });
 }
 
+export function withDestination(draft: MaintenanceBatchDraft, destinationId: string | null): MaintenanceBatchDraft {
+  if (draft.destinationId === destinationId) return draft;
+  return touch(draft, { destinationId });
+}
+
+export function withPreset(draft: MaintenanceBatchDraft, presetId: string | null): MaintenanceBatchDraft {
+  if (draft.presetId === presetId) return draft;
+  return touch(draft, { presetId });
+}
+
 export function clearMembership(draft: MaintenanceBatchDraft): MaintenanceBatchDraft {
   if (draft.tables.length === 0 && draft.receipts.length === 0 && draft.exclusions.length === 0) {
     return draft;
@@ -365,6 +379,28 @@ export function setBatchRecipe(
   return next;
 }
 
+export function setBatchDestination(
+  identity: BatchIdentity,
+  destinationId: string | null,
+  options?: BatchStoreOptions
+): MaintenanceBatchDraft {
+  const current = loadDraft(identity, options);
+  const next = withDestination(current, destinationId);
+  if (next !== current) saveDraft(next, options);
+  return next;
+}
+
+export function setBatchPreset(
+  identity: BatchIdentity,
+  presetId: string | null,
+  options?: BatchStoreOptions
+): MaintenanceBatchDraft {
+  const current = loadDraft(identity, options);
+  const next = withPreset(current, presetId);
+  if (next !== current) saveDraft(next, options);
+  return next;
+}
+
 export function clearDraft(identity: BatchIdentity, options?: BatchStoreOptions): MaintenanceBatchDraft {
   const storage = resolveStorage(options?.storage);
   const key = maintenanceBatchStorageKey(identity);
@@ -384,7 +420,9 @@ function rejectCap(draft: MaintenanceBatchDraft, cap: number): BatchAddRejection
 
 function touch(
   draft: MaintenanceBatchDraft,
-  patch: Partial<Pick<MaintenanceBatchDraft, "tables" | "receipts" | "exclusions" | "recipe">>
+  patch: Partial<
+    Pick<MaintenanceBatchDraft, "tables" | "receipts" | "exclusions" | "recipe" | "destinationId" | "presetId">
+  >
 ): MaintenanceBatchDraft {
   return {
     ...draft,
@@ -594,6 +632,8 @@ function toDraft(value: unknown, identity: BatchIdentity): MaintenanceBatchDraft
     receipts,
     exclusions,
     recipe: value.recipe,
+    destinationId: optionalText(typeof value.destinationId === "string" ? value.destinationId : null),
+    presetId: optionalText(typeof value.presetId === "string" ? value.presetId : null),
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : new Date().toISOString()
   };
 }
