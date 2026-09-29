@@ -414,7 +414,8 @@ function dedupeIncoming(incoming: readonly BatchTableRef[]): BatchTableRef[] {
 }
 
 function normalizeTable(table: BatchTableRef | null | undefined): BatchTableRef | null {
-  const id = typeof table?.id === "string" ? table.id.trim() : "";
+  if (!table) return null;
+  const id = typeof table.id === "string" ? table.id.trim() : "";
   if (!id) return null;
   const label = typeof table.label === "string" && table.label.trim() ? table.label.trim() : id;
   const next: BatchTableRef = { id, label };
