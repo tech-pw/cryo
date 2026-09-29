@@ -50,6 +50,25 @@ Runs are `kind=scheduled, trigger=batch-cron` for the nightly run and
 
 ## Operating it
 
+### Resource placement and worker scaling
+
+Batch jobs are persisted as `running` while their coordinator owns execution. They must not
+increase the worker autoscaling metric; the worker count excludes `runs.summary.pipeline =
+batch` as well as watcher-owned dispatches. The September 29 fix is implemented locally;
+the production worker cap is temporarily one until that metric correction is deployed.
+
+`maintenance.laneMaxNodeCpu` / `CRYO_MAINTENANCE_LANE_MAX_NODE_CPU` optionally sets an inclusive
+node vCPU ceiling for new lanes. The default is `0` (disabled), preserving installations
+without Karpenter. A value such as `16` requires the Karpenter `instance-cpu` label and adds
+an ANDed required node-affinity constraint; it preserves existing selector constraints,
+capacity-type preferences, pod requests/limits, and disruption protection. The ceiling must
+leave CPU headroom beyond the lane's own request. Unsuitable node pools can leave pods pending.
+
+Canary this setting before enabling it in production. Avoiding very large protected nodes
+may improve consolidation, but moving away from spare capacity on a necessary Trino node can
+also add cost. Compare total node-hours, backlog, and completed work. Current production
+leaves the ceiling disabled. See [the September 29 investigation](CRYO_UNUSED_COST_DEBUG_2026-09-29.md).
+
 ```bash
 # What would tonight's run do? No DB writes, no pods, no Slack.
 kubectl exec -n cryo deploy/cryo-api -- python -m cryo.maintenance.run --dry-run

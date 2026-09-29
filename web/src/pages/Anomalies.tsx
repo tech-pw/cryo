@@ -18,12 +18,15 @@ import { Button } from "../components/ui/button";
 import { DataTable } from "../components/ui/data-table";
 import { MetricGrid, MetricTile } from "../components/ui/metric-grid";
 import { useAuth } from "../lib/auth";
+import { VIEWER_REASON } from "../lib/permissions";
+import { useWriteControl } from "../lib/useWriteControl";
 import { formatTime } from "../lib/format";
 
 const PAGE_SIZE = 25;
 
 export const Anomalies = () => {
   const { api } = useAuth();
+  const refreshAccess = useWriteControl("refreshAnomalies");
   const queryClient = useQueryClient();
   const [pageIndex, setPageIndex] = useState(0);
 
@@ -110,7 +113,8 @@ export const Anomalies = () => {
           <Button
             variant="primary"
             onClick={() => refresh.mutate()}
-            disabled={refresh.isPending}
+            disabled={!refreshAccess.allowed || refresh.isPending}
+            title={refreshAccess.reason ?? undefined}
           >
             <RefreshCw className={refresh.isPending ? "animate-spin" : undefined} />
             {refresh.isPending ? "Harvesting catalogs…" : "Refresh from catalogs"}
@@ -168,7 +172,12 @@ export const Anomalies = () => {
         }
         emptyAction={
           !hasSnapshot ? (
-            <Button variant="primary" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+            <Button
+              variant="primary"
+              onClick={() => refresh.mutate()}
+              disabled={!refreshAccess.allowed || refresh.isPending}
+              title={refreshAccess.reason ?? VIEWER_REASON}
+            >
               Harvest catalogs
             </Button>
           ) : undefined

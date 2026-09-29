@@ -82,7 +82,7 @@ export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
                         : null)
                     }}
                     onClick={onNavigate}
-                    end={item.href === "/operations"}
+                    end={item.href === "/"}
                   >
                     <Icon
                       size={16}

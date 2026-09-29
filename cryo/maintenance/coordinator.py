@@ -299,6 +299,7 @@ class BatchMaintenance:
                 cfg,
                 catalog=catalog,
                 capacity_types=parse_capacity_types(settings.maintenance_lane_capacity_types),
+                max_node_cpu=settings.maintenance_lane_max_node_cpu,
             )
         )
         self._load_table = load_table or self._default_load_table
@@ -1087,8 +1088,21 @@ def _audit_row(outcome: TableOutcome, result: StatementResult, engine_ref: str |
         if optimize_like and result.ok
         else None,
         actor=ACTOR,
+        committed_snapshot_id=_committed_snapshot_id(result.metrics),
         engine_ref=engine_ref,
     )
+
+
+def _committed_snapshot_id(metrics: dict[str, Any] | None) -> str | None:
+    if not metrics:
+        return None
+    raw = metrics.get("committed_snapshot_id")
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text or not text.isdigit():
+        return None
+    return text
 
 
 def _aware(value: datetime) -> datetime:

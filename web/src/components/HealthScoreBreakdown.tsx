@@ -9,15 +9,18 @@ export interface ScoreFactor {
   level: ScoreFactorLevel;
 }
 
+export interface PointDeduction {
+  label: string;
+  deduction: number;
+  severity: "critical" | "warning" | string;
+  reason: string;
+}
+
 type StatsForScore = Pick<
   TableStatsRead,
   "small_files_count" | "total_files" | "partition_skew_ratio" | "manifest_count" | "total_snapshots"
 >;
 
-/** Pure frontend math over fields already fetched on the Table Detail page -- no new queries.
- * Thresholds are rules of thumb (not backend-computed signals) purely for this at-a-glance
- * breakdown; the real compaction/rebalance decisions still come from stats.needs_compaction
- * and friends elsewhere on the page. */
 const unknownFactor = (label: string, detail: string): ScoreFactor => ({
   label,
   detail,
@@ -91,14 +94,14 @@ export const buildHealthScoreFactors = (
             }
           : unknownFactor("Snapshot / orphan buildup", "Not measured")
         : {
-          label: "Snapshot / orphan buildup",
-          detail:
-            orphanPct > 0
-              ? `${orphanPct.toFixed(1)}% orphaned · ${snapshots.toLocaleString()} snapshots`
-              : `${snapshots.toLocaleString()} snapshots`,
-          pct: Math.min(Math.max(orphanPct * 4, snapshots / 5), 100),
-          level: orphanPct >= 5 || snapshots >= 500 ? "bad" : orphanPct >= 1 || snapshots >= 200 ? "warn" : "ok"
-        }
+            label: "Snapshot / orphan buildup",
+            detail:
+              orphanPct > 0
+                ? `${orphanPct.toFixed(1)}% orphaned · ${snapshots.toLocaleString()} snapshots`
+                : `${snapshots.toLocaleString()} snapshots`,
+            pct: Math.min(Math.max(orphanPct * 4, snapshots / 5), 100),
+            level: orphanPct >= 5 || snapshots >= 500 ? "bad" : orphanPct >= 1 || snapshots >= 200 ? "warn" : "ok"
+          }
   ];
 };
 
@@ -109,25 +112,53 @@ const LEVEL_COLOR: Record<ScoreFactorLevel, string> = {
   unknown: "var(--color-muted-foreground, #8b93a7)"
 };
 
-/** Shared color lookup so any other mini-bar visualization on this page (e.g. the Table
- * Metadata card's Partition skew tile) stays visually consistent with this breakdown. */
 export const scoreFactorColor = (level: ScoreFactorLevel): string => LEVEL_COLOR[level];
 
-/** Renders each factor reusing the page's existing .td-part-bar-wrap/.td-part-bar mini-bar
- * visual (already established by the Partitions table on this same page). */
-export const HealthScoreBreakdown = ({ factors }: { factors: ScoreFactor[] }) => (
-  <div className="td-score-breakdown">
-    {factors.map((factor) => (
-      <div className="td-score-breakdown-row" key={factor.label}>
-        <span className="td-score-breakdown-label">{factor.label}</span>
-        <span className="td-part-bar-wrap" style={{ width: 56 }}>
-          <span
-            className="td-part-bar"
-            style={{ width: `${factor.pct}%`, background: LEVEL_COLOR[factor.level] }}
-          />
-        </span>
-        <span className="td-score-breakdown-detail">{factor.detail}</span>
+const deductionPoints = (value: number): string =>
+  Number.isFinite(value) ? `-${value} pts` : "Not measured";
+
+export const HealthScoreBreakdown = ({
+  factors,
+  deductions
+}: {
+  factors: ScoreFactor[];
+  deductions?: PointDeduction[] | null;
+}) => {
+  if (deductions) {
+    return (
+      <div className="td-score-breakdown">
+        <p className="td-score-breakdown-label">Why this grade</p>
+        {deductions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No point deductions recorded</p>
+        ) : (
+          <ul className="m-0 list-none space-y-1 p-0 text-sm">
+            {deductions.map((item, index) => (
+              <li key={`${item.label}-${index}`} className="flex items-baseline justify-between gap-3">
+                <span>
+                  <span className="font-medium">{item.label}</span>
+                  {item.reason ? <span className="text-muted-foreground"> · {item.reason}</span> : null}
+                  {item.severity ? <span className="text-muted-foreground"> · {item.severity}</span> : null}
+                </span>
+                <span className="shrink-0 tabular-nums">{deductionPoints(item.deduction)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
-    ))}
-  </div>
-);
+    );
+  }
+
+  return (
+    <div className="td-score-breakdown">
+      <p className="td-score-breakdown-label">diagnostic, not score</p>
+      <ul className="m-0 list-none space-y-1 p-0 text-sm">
+        {factors.map((factor) => (
+          <li key={factor.label} className="flex items-baseline justify-between gap-3">
+            <span>{factor.label}</span>
+            <span className="text-muted-foreground">{factor.detail}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};

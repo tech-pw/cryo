@@ -25,6 +25,8 @@ time. ``autocomp_trace`` records both orderings so the two can be compared run o
 
 from __future__ import annotations
 
+import json
+import logging
 import math
 import uuid
 from collections.abc import Callable, Sequence
@@ -38,6 +40,19 @@ from sqlalchemy.orm import Session
 
 from cryo.db.models import MaintenanceJob, Source, Table, TableStats
 from cryo.domain.enums import JobStatus
+from cryo.maintenance.skip_history import (
+    REASON_BACKOFF,
+    REASON_COOLDOWN,
+    REASON_EXCLUDED,
+    REASON_STALE_STATS,
+    clear_pending,
+    engine_id_for,
+    remember_budget,
+    remember_loaded,
+    remember_ranked,
+)
+
+logger = logging.getLogger(__name__)
 
 _GIB = 1024**3
 
@@ -218,7 +233,14 @@ def rank_candidates(
         )
     # table_id breaks score ties so the same stats always produce the same run.
     ranked.sort(key=lambda r: (-r.score, str(r.candidate.table_id)))
-    return ranked[: max(limit, 0)]
+    chosen = ranked[: max(limit, 0)]
+    _remember_ranked(
+        candidates,
+        chosen,
+        min_delete_file_pct=min_delete_file_pct,
+        require_eligible=require_eligible,
+    )
+    return chosen
 
 
 def fit_budget(
@@ -226,17 +248,21 @@ def fit_budget(
 ) -> tuple[list[RankedCandidate], list[RankedCandidate]]:
     """AutoComp's greedy top-k: walk the ranking and keep every candidate that still fits.
     A candidate too big for what is left is skipped, not a stopping point."""
+    kept: list[RankedCandidate]
+    over: list[RankedCandidate]
     if budget_gbhr is None:
-        return list(ranked), []
-    kept: list[RankedCandidate] = []
-    over: list[RankedCandidate] = []
-    remaining = budget_gbhr
-    for item in ranked:
-        if item.gbhr <= remaining:
-            kept.append(item)
-            remaining -= item.gbhr
-        else:
-            over.append(item)
+        kept, over = list(ranked), []
+    else:
+        kept = []
+        over = []
+        remaining = budget_gbhr
+        for item in ranked:
+            if item.gbhr <= remaining:
+                kept.append(item)
+                remaining -= item.gbhr
+            else:
+                over.append(item)
+    _remember_budget(ranked, kept, over)
     return kept, over
 
 
@@ -361,11 +387,213 @@ def load_candidates(
                 bytes_below_target=_optional_int(row.bytes_below_target),
             )
         )
+    _remember_loaded(
+        session,
+        now=now,
+        cooldown_hours=cooldown_hours,
+        max_stats_age_days=max_stats_age_days,
+        table_ids=table_ids,
+        candidate_ids=[item.table_id for item in candidates],
+    )
     return candidates
 
 
 def _optional_int(value: Any) -> int | None:
     return None if value is None else int(value)
+
+
+def _remember_loaded(
+    session: Session,
+    *,
+    now: datetime,
+    cooldown_hours: float,
+    max_stats_age_days: float,
+    table_ids: Sequence[uuid.UUID] | None,
+    candidate_ids: Sequence[uuid.UUID],
+) -> None:
+    try:
+        with session.begin_nested():
+            exclusions = _exclusion_rows(
+                session,
+                now=now,
+                cooldown_hours=cooldown_hours,
+                max_stats_age_days=max_stats_age_days,
+                table_ids=table_ids,
+                candidate_ids=set(candidate_ids),
+            )
+        remember_loaded(
+            engine_id=engine_id_for(session.get_bind()),
+            evaluated_at=now,
+            candidate_ids=candidate_ids,
+            exclusions=exclusions,
+        )
+    except Exception:
+        logger.exception("skip history exclusion note failed")
+        clear_pending()
+
+
+def _remember_ranked(
+    candidates: Sequence[Candidate],
+    ranked: Sequence[RankedCandidate],
+    *,
+    min_delete_file_pct: float,
+    require_eligible: bool,
+) -> None:
+    try:
+        ranked_ids = [item.candidate.table_id for item in ranked]
+        ranked_set = set(ranked_ids)
+        no_work: list[uuid.UUID] = []
+        limit_cut: list[uuid.UUID] = []
+        for candidate in candidates:
+            if candidate.table_id in ranked_set:
+                continue
+            if require_eligible and not is_eligible(
+                candidate, min_delete_file_pct=min_delete_file_pct
+            ):
+                no_work.append(candidate.table_id)
+            else:
+                limit_cut.append(candidate.table_id)
+        remember_ranked(
+            candidate_ids=[candidate.table_id for candidate in candidates],
+            ranked_ids=ranked_ids,
+            no_work_ids=no_work,
+            limit_cut_ids=limit_cut,
+        )
+    except Exception:
+        logger.exception("skip history rank note failed")
+        clear_pending()
+
+
+def _remember_budget(
+    ranked: Sequence[RankedCandidate],
+    kept: Sequence[RankedCandidate],
+    over: Sequence[RankedCandidate],
+) -> None:
+    try:
+        remember_budget(
+            ranked_ids=[item.candidate.table_id for item in ranked],
+            kept_ids=[item.candidate.table_id for item in kept],
+            over_ids=[item.candidate.table_id for item in over],
+        )
+    except Exception:
+        logger.exception("skip history budget note failed")
+        clear_pending()
+
+
+def _exclusion_rows(
+    session: Session,
+    *,
+    now: datetime,
+    cooldown_hours: float,
+    max_stats_age_days: float,
+    table_ids: Sequence[uuid.UUID] | None,
+    candidate_ids: set[uuid.UUID],
+) -> list[tuple[uuid.UUID, str, bool]]:
+    stmt = (
+        select(
+            Table.id,
+            Table.is_active,
+            Table.schema_name,
+            Table.last_scan_error_kind,
+            Table.maintenance_retry_after,
+            Source.enabled,
+            Source.maintenance_schema_names,
+            TableStats.scan_at,
+            TableStats.needs_compaction,
+            TableStats.delete_file_pct,
+        )
+        .select_from(Table)
+        .join(Source, Source.id == Table.source_id)
+        .outerjoin(TableStats, TableStats.table_id == Table.id)
+    )
+    if table_ids:
+        stmt = stmt.where(Table.id.in_(list(table_ids)))
+    cooled: set[uuid.UUID] = set()
+    if not table_ids:
+        cooled = set(
+            session.scalars(
+                select(MaintenanceJob.table_id)
+                .where(
+                    MaintenanceJob.status.in_(COOLDOWN_JOB_STATUSES),
+                    MaintenanceJob.finished_at >= now - timedelta(hours=cooldown_hours),
+                )
+                .distinct()
+            ).all()
+        )
+    rows: list[tuple[uuid.UUID, str, bool]] = []
+    cutoff = _as_utc(now) - timedelta(days=max_stats_age_days)
+    for row in session.execute(stmt):
+        if row.id in candidate_ids:
+            continue
+        reason = _exclusion_reason(
+            is_active=bool(row.is_active),
+            source_enabled=bool(row.enabled),
+            schema_name=row.schema_name,
+            maintenance_schema_names=row.maintenance_schema_names,
+            last_scan_error_kind=row.last_scan_error_kind,
+            maintenance_retry_after=row.maintenance_retry_after,
+            scan_at=row.scan_at,
+            cooled=row.id in cooled,
+            now=now,
+            cutoff=cutoff,
+        )
+        rows.append(
+            (
+                row.id,
+                reason,
+                _row_has_work(row.scan_at, row.needs_compaction, row.delete_file_pct),
+            )
+        )
+    return rows
+
+
+def _exclusion_reason(
+    *,
+    is_active: bool,
+    source_enabled: bool,
+    schema_name: str,
+    maintenance_schema_names: Any,
+    last_scan_error_kind: str | None,
+    maintenance_retry_after: datetime | None,
+    scan_at: datetime | None,
+    cooled: bool,
+    now: datetime,
+    cutoff: datetime,
+) -> str:
+    if not is_active or not source_enabled or last_scan_error_kind is not None:
+        return REASON_EXCLUDED
+    if maintenance_retry_after is not None and _as_utc(maintenance_retry_after) > _as_utc(now):
+        return REASON_BACKOFF
+    if scan_at is None or _as_utc(scan_at) < cutoff:
+        return REASON_STALE_STATS
+    if cooled:
+        return REASON_COOLDOWN
+    if not schema_in_maintenance_allow_list(schema_name, _allow_list(maintenance_schema_names)):
+        return REASON_EXCLUDED
+    return REASON_EXCLUDED
+
+
+def _row_has_work(scan_at: datetime | None, needs_compaction: Any, delete_file_pct: Any) -> bool:
+    if scan_at is None:
+        return False
+    return has_compaction_or_delete_work(
+        needs_compaction=bool(needs_compaction),
+        delete_file_pct=float(delete_file_pct or 0.0),
+        min_delete_file_pct=DEFAULT_MIN_DELETE_FILE_PCT,
+    )
+
+
+def _allow_list(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return [value]
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return [str(item) for item in value]
+    return None
 
 
 class MaintenanceBlock(StrEnum):

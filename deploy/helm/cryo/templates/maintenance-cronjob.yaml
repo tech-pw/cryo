@@ -64,6 +64,8 @@ spec:
                   value: {{ .Values.maintenance.laneMaxCpuMilli | quote }}
                 - name: CRYO_MAINTENANCE_LANE_MAX_MEM_MIB
                   value: {{ .Values.maintenance.laneMaxMemMib | quote }}
+                - name: CRYO_MAINTENANCE_LANE_MAX_NODE_CPU
+                  value: {{ .Values.maintenance.laneMaxNodeCpu | default 0 | quote }}
                 - name: CRYO_MAINTENANCE_LANE_CAPACITY_TYPES
                   value: {{ .Values.maintenance.laneCapacityTypes | default "" | quote }}
                 - name: CRYO_MAINTENANCE_MAX_RUNTIME_MINUTES

@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import desc, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.ai.explain import explain_health_change
@@ -23,19 +23,13 @@ from cryo.api.serializers import table_to_read
 from cryo.config import get_settings
 from cryo.db.models import (
     AuditLog,
-    Destination,
-    MaintenanceJob,
-    MaintenanceRun,
-    Preset,
     Table,
+    TableColumn,
     TableStats,
     TableStatsHistory,
 )
-from cryo.domain.enums import Mode
-from cryo.infra.wiring import build_runtime_wiring
-from cryo.intents.binding import build_and_bind_job_intent
 from cryo.mcp.server import CryoMcpServer, build_default_mcp_server
-from cryo.observability.correlation import correlation_summary
+from cryo.reporting.impact_signals import _RECLAIM_ACTIONS
 
 
 def provider_api_key(stored: str | None) -> str | None:
@@ -94,23 +88,30 @@ def table_stats_dict(table: Table, stats: TableStats | None) -> dict[str, Any]:
 
 def gather_copilot_context(session: Session) -> dict[str, Any]:
     """Gather datalake context for LLM prompts."""
-    tables_count = session.execute(select(Table.id).where(Table.is_active.is_(True))).fetchall()
+    total_tables = session.scalar(
+        select(func.count()).select_from(Table).where(Table.is_active.is_(True))
+    )
     unhealthy = session.execute(
         select(Table.schema_name, Table.table_name, TableStats.grade, TableStats.overall_score)
         .join(TableStats, TableStats.table_id == Table.id)
-        .where(TableStats.overall_score < 70)
+        .where(Table.is_active.is_(True), TableStats.overall_score < 70)
         .order_by(TableStats.overall_score.asc())
         .limit(5)
     ).fetchall()
     compaction = session.execute(
         select(Table.schema_name, Table.table_name, TableStats.small_files_count)
         .join(TableStats, TableStats.table_id == Table.id)
-        .where(TableStats.needs_compaction.is_(True))
+        .where(Table.is_active.is_(True), TableStats.needs_compaction.is_(True))
         .order_by(TableStats.small_files_count.desc())
         .limit(5)
     ).fetchall()
     return {
-        "total_tables": len(tables_count),
+        "total_tables": int(total_tables or 0),
+        "coverage_note": (
+            "unhealthy_tables and compaction_backlog are samples, not the fleet. "
+            "total_tables is COUNT(*) of active tables."
+        ),
+        "samples_are_not_the_fleet": True,
         "unhealthy_tables": [
             {"table": f"{r[0]}.{r[1]}", "grade": r[2], "score": r[3]} for r in unhealthy
         ],
@@ -137,25 +138,57 @@ def build_mcp_server(session: Session) -> CryoMcpServer:
     def list_stale_tables(args: dict[str, Any]) -> dict[str, Any]:
         cooldown_hours = int(args.get("cooldown_hours") or 168)
         cutoff = datetime.now(UTC) - timedelta(hours=cooldown_hours)
-        tables = []
-        for table in session.scalars(select(Table).where(Table.is_active.is_(True)).limit(50)):
-            last = session.scalar(
-                select(AuditLog.ts)
-                .where(AuditLog.table_id == table.id)
-                .order_by(desc(AuditLog.ts))
-                .limit(1)
-            )
-            if last is None or last < cutoff:
-                tables.append(
-                    {
-                        "table_id": str(table.id),
-                        "schema_name": table.schema_name,
-                        "table_name": table.table_name,
-                        "last_maintained_at": last.isoformat() if last else None,
-                    }
-                )
         limit = int(args.get("limit") or 20)
-        return {"tables": tables[:limit]}
+        offset = int(args.get("cursor") or 0)
+        last_ok = (
+            select(AuditLog.table_id, func.max(AuditLog.ts).label("last_ok"))
+            .where(AuditLog.status == "OK", AuditLog.action.in_(_RECLAIM_ACTIONS))
+            .group_by(AuditLog.table_id)
+            .subquery()
+        )
+        stale = or_(last_ok.c.last_ok.is_(None), last_ok.c.last_ok < cutoff)
+        active = Table.is_active.is_(True)
+        total = int(
+            session.scalar(
+                select(func.count())
+                .select_from(Table)
+                .outerjoin(last_ok, last_ok.c.table_id == Table.id)
+                .where(active, stale)
+            )
+            or 0
+        )
+        fleet_active = int(
+            session.scalar(select(func.count()).select_from(Table).where(active)) or 0
+        )
+        rows = session.execute(
+            select(Table.id, Table.schema_name, Table.table_name, last_ok.c.last_ok)
+            .outerjoin(last_ok, last_ok.c.table_id == Table.id)
+            .where(active, stale)
+            .order_by(Table.schema_name, Table.table_name, Table.id)
+            .offset(offset)
+            .limit(limit)
+        ).all()
+        next_offset = offset + len(rows)
+        return {
+            "tables": [
+                {
+                    "table_id": str(row.id),
+                    "schema_name": row.schema_name,
+                    "table_name": row.table_name,
+                    "last_successful_reclaim_at": row.last_ok.isoformat() if row.last_ok else None,
+                }
+                for row in rows
+            ],
+            "total": total,
+            "cursor": str(next_offset) if next_offset < total else None,
+            "truncated": next_offset < total,
+            "coverage": {
+                "matched": total,
+                "returned": len(rows),
+                "fleet_active": fleet_active,
+                "note": "total is a count of stale tables, not a capped sample of the fleet",
+            },
+        }
 
     def list_compaction_backlog(args: dict[str, Any]) -> dict[str, Any]:
         limit = int(args.get("limit") or 20)
@@ -198,7 +231,17 @@ def build_mcp_server(session: Session) -> CryoMcpServer:
             raise KeyError("table not found")
         stats_dict = table_stats_dict(table, stats)
         projection = savings_projection_from_stats(stats_dict, settings)
-        return savings_projection_to_dict(projection)
+        payload = savings_projection_to_dict(projection)
+        if not args.get("preset_id"):
+            payload["cost_model_precision"] = payload.get("precision")
+            payload["precision"] = "estimate"
+            payload["kind"] = "estimate"
+            payload["executable_preview"] = False
+            payload["is_planner_preview"] = False
+            payload["warning"] = (
+                "preset_id is missing. This is a cost estimate, not an executable planner preview."
+            )
+        return payload
 
     def filter_translation(args: dict[str, Any]) -> dict[str, Any]:
         query = str(args.get("query") or "").strip()
@@ -218,14 +261,31 @@ def build_mcp_server(session: Session) -> CryoMcpServer:
     def get_table_schema(args: dict[str, Any]) -> dict[str, Any]:
         table_id = uuid.UUID(str(args["table_id"]))
         stats = session.scalar(select(TableStats).where(TableStats.table_id == table_id))
-        if stats is None:
-            raise KeyError("table stats not found")
-        raw = dict(stats.raw or {})
+        if stats is None and session.get(Table, table_id) is None:
+            raise KeyError("table not found")
+        raw = dict(stats.raw or {}) if stats is not None else {}
+        columns = session.scalars(
+            select(TableColumn)
+            .where(TableColumn.table_id == table_id)
+            .order_by(TableColumn.column_name)
+        ).all()
         return {
             "table_id": str(table_id),
+            "source": "scan_summary",
+            "complete_catalog_schema": False,
+            "warning": "Scan summary, not a complete catalog schema.",
             "partition_fields": raw.get("partition_fields") or [],
             "column_quality": raw.get("column_quality") or [],
             "format_version": raw.get("format_version"),
+            "columns": [
+                {
+                    "column_name": column.column_name,
+                    "data_type": column.data_type,
+                    "description": column.description,
+                    "source": "table_columns",
+                }
+                for column in columns
+            ],
         }
 
     def get_snapshot_history(args: dict[str, Any]) -> dict[str, Any]:
@@ -243,67 +303,30 @@ def build_mcp_server(session: Session) -> CryoMcpServer:
             history.append(
                 {
                     "scan_at": row.scan_at.isoformat(),
-                    "total_snapshots": raw.get("total_snapshots"),
+                    "total_snapshots_count": raw.get("total_snapshots"),
                     "grade": row.grade,
                     "overall_score": row.overall_score,
                 }
             )
-        return {"table_id": str(table_id), "history": history}
-
-    def run_preset(args: dict[str, Any]) -> dict[str, Any]:
-        if not args.get("confirm"):
-            raise ValueError("run_preset requires confirm=true")
-        table_id = uuid.UUID(str(args["table_id"]))
-        destination_id = uuid.UUID(str(args["destination_id"]))
-        if not args.get("preset_id"):
-            raise ValueError("run_preset requires an explicit preset_id")
-        preset_id = uuid.UUID(str(args["preset_id"]))
-
-        if session.get(Destination, destination_id) is None:
-            raise KeyError("destination not found")
-        if session.get(Preset, preset_id) is None:
-            raise KeyError("preset not found")
-        table = session.get(Table, table_id)
-        if table is None:
-            raise KeyError("table not found")
-
-        mode = Mode(str(args.get("mode") or "standard"))
-        run = MaintenanceRun(
-            kind="adhoc",
-            preset_id=preset_id,
-            trigger="mcp",
-            status="queued",
-            summary=correlation_summary({"actor": "mcp-client"}),
-        )
-        session.add(run)
-        session.flush()
-        job = MaintenanceJob(
-            run_id=run.id,
-            table_id=table_id,
-            destination_id=destination_id,
-            mode=mode.value,
-            status="queued",
-        )
-        session.add(job)
-        session.flush()
-        if settings.durable_intents_enabled:
-            build_and_bind_job_intent(
-                session,
-                job_id=str(job.id),
-                settings=settings,
-                actor_type="mcp",
-                actor_id="mcp-client",
-            )
-        session.commit()
-        wiring = build_runtime_wiring()
-        wiring.queue.enqueue(str(job.id), str(destination_id))
         return {
-            "run_id": str(run.id),
-            "job_ids": [str(job.id)],
-            "status": run.status,
+            "table_id": str(table_id),
+            "kind": "scan_count_history",
+            "scan_count_history": history,
+            "unsupported": ["snapshot_id", "parent_id", "refs"],
+            "warning": (
+                "This is scan-count history from stored table stats, not Iceberg snapshot history. "
+                "Snapshot ids were not loaded and are not invented from counts."
+            ),
         }
 
-    run_preset_handler = run_preset if settings.mcp_run_preset_enabled else None
+    def run_preset(args: dict[str, Any]) -> dict[str, Any]:
+        del args
+        return {
+            "error": "not_authorized_here",
+            "detail": "Use Ask Cryo action review. confirm=true is not authorization.",
+        }
+
+    run_preset_handler = run_preset
 
     return build_default_mcp_server(
         get_table_health=get_table_health,

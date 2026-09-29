@@ -179,7 +179,11 @@ class BenefitScoreUpdaterRunner(DaemonRunner):
         with SessionLocal() as session:
             active = get_active_task(session, task_type=task_type, scope="fleet")
             if active is not None and active.external_job_ref and active.lease_until:
-                lease_until = active.lease_until if active.lease_until.tzinfo else active.lease_until.replace(tzinfo=UTC)
+                lease_until = (
+                    active.lease_until
+                    if active.lease_until.tzinfo
+                    else active.lease_until.replace(tzinfo=UTC)
+                )
                 if lease_until > now:
                     # A Job is out and its lease hasn't expired -- claim_due_task on the runner
                     # side would refuse a second claim anyway (see its own docstring), but
@@ -1079,8 +1083,8 @@ def _worker_scale_metric() -> int:
     """Count of jobs that need a worker to make progress on them right now.
 
     This is the metric KEDA's cryo-worker ScaledObject scales on (see
-    deploy/helm/cryo/templates/keda-worker-scaledobject.yaml). ADMITTED/RUNNING jobs each
-    occupy exactly one worker for their full duration (worker.py's process_next() executes a
+    deploy/helm/cryo/templates/keda-worker-scaledobject.yaml). Worker-owned ADMITTED/RUNNING
+    jobs each occupy exactly one worker for their full duration (process_next executes a
     job's entire plan synchronously before claiming another) -- so this count maps directly
     onto "how many worker replicas would let every active job make progress concurrently",
     which is exactly what a 1:1 target value on this metric gives KEDA.
@@ -1092,15 +1096,22 @@ def _worker_scale_metric() -> int:
     scale-up 9 seconds after it was applied ("all metrics below target"), killing a worker
     mid-dispatch and orphaning the job it had just claimed.
     """
+    from sqlalchemy import func, select
+
+    from cryo.db.models import MaintenanceJob, MaintenanceRun
     from cryo.db.session import SessionLocal
 
     with SessionLocal() as session:
-        from sqlalchemy import text
-
+        # Batch lanes persist RUNNING jobs without dispatch_id, but the coordinator owns
+        # their execution. Counting them scales idle workers for work they cannot claim.
         result = session.execute(
-            text(
-                "SELECT count(*) FROM cryo.jobs "
-                "WHERE status IN ('admitted', 'running') AND dispatch_id IS NULL"
+            select(func.count())
+            .select_from(MaintenanceJob)
+            .join(MaintenanceRun, MaintenanceRun.id == MaintenanceJob.run_id)
+            .where(
+                MaintenanceJob.status.in_(("admitted", "running")),
+                MaintenanceJob.dispatch_id.is_(None),
+                func.coalesce(MaintenanceRun.summary["pipeline"].as_string(), "") != "batch",
             )
         )
         return int(result.scalar() or 0)

@@ -1,5 +1,21 @@
 # Cryo — TODO
 
+## Unused-cost investigation — 2026-09-29
+
+Evidence and rollout: [investigation](docs/CRYO_UNUSED_COST_DEBUG_2026-09-29.md).
+
+- [x] Refresh daily CUR used/unused rows; distinguish partial billing days and shared-node cost.
+- [x] Confirm batch jobs falsely drive worker scaling; implement and test ownership filtering.
+- [x] Apply the temporary production worker cap of one; verify nine excess replicas drain
+      while coordinator-owned maintenance continues. Keep Helm's production override aligned.
+- [x] Add an optional Karpenter node vCPU ceiling for future lanes; default disabled.
+- [ ] Deploy the metric correction from a clean, validated release; restore worker max to ten
+      in live KEDA and Helm, remove the temporary annotation, and verify genuine worker demand.
+- [ ] Canary the node ceiling against total cluster cost before enabling it; do not interrupt
+      existing commits or assume all large shared nodes are removable.
+- [ ] Resolve the scheduler's separate 10-GiB OOM incident using measured per-runner memory.
+- [ ] Recheck complete post-change billing days and cost per completed maintenance effect.
+
 ## Open-source portability and adoption — 2026-09-25
 
 Plan, evidence, owners and acceptance criteria:
@@ -498,6 +514,8 @@ Per `architecture.md` Part 2 — no freeform NL-to-SQL against live Iceberg.
 - [x] `cryo/ai/copilot.py` — verified questions over Postgres metadata; `/ai/copilot/*`.
 - [ ] MCP server as standalone process (currently API-embedded).
 - [ ] Gated `run_preset` MCP write tool with explicit role scope (endpoint exists; MCP wiring TBD).
+- [ ] Ask Cryo assistant (typed tools, conversations, action gateway, drawer). Off by default
+      (`CRYO_ASSISTANT_ENABLED=false`). Direct MCP `run_preset` must not execute from `confirm=true`.
 
 ## P12 — Adaptive routing, tiering & extended platform
 Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_2026.md`.

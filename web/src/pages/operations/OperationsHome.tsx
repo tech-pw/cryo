@@ -1,7 +1,7 @@
 import { RefreshCw } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getScannerStatus, listPresets, listRuns } from "../../api/client";
 import type { PresetRead, RunRead } from "../../api/types";
@@ -24,6 +24,8 @@ import {
   targetLabel
 } from "../../lib/operations";
 import { ActionsTab } from "./ActionsTab";
+import { DecisionFunnelStrip } from "./DecisionFunnelStrip";
+import { EngineLoadStrip } from "./EngineLoadStrip";
 import {
   latestNightlyRunPath,
   NIGHTLY_SCHEDULE_LABEL,
@@ -31,6 +33,8 @@ import {
   nightlyBatchRuns,
   NO_PRESETS_COPY
 } from "./nightlyBatch";
+
+const ControlRoom = lazy(() => import("../ControlRoom").then((m) => ({ default: m.ControlRoom })));
 
 const RUN_FILTER_VALUES = new Set(["all", "failed", "active"]);
 const isRunFilter = (value: string | null): value is "all" | "failed" | "active" =>
@@ -65,7 +69,12 @@ export const OperationsHome = () => {
   const { api, token, role } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const tab = tabParam === "runs" || tabParam === "actions" ? tabParam : "workflows";
+  const tab =
+    tabParam === "runs" || tabParam === "history"
+      ? "runs"
+      : tabParam === "actions" || tabParam === "holds"
+        ? tabParam
+        : "workflows";
   const runFilterParam = searchParams.get("runFilter");
   const runFilter = isRunFilter(runFilterParam) ? runFilterParam : "all";
   const runsPageParam = Number.parseInt(searchParams.get("runsPage") ?? "0", 10);
@@ -348,8 +357,8 @@ export const OperationsHome = () => {
   return (
     <div>
       <PageHeader
-        title="Operations"
-        subtitle="Workflows, scans, and maintenance runs in one place."
+        title="Runs"
+        subtitle="What ran, what failed, and what is held?"
         rootCrumb={{ label: "Operations", to: "/operations" }}
         actions={
           role !== "viewer" ? (
@@ -366,6 +375,8 @@ export const OperationsHome = () => {
       <span className="sr-only" role="status" aria-live="polite">
         {liveMessage}
       </span>
+      <EngineLoadStrip />
+      <DecisionFunnelStrip />
 
       <div className="flex flex-col gap-3">
         <Card>
@@ -451,8 +462,9 @@ export const OperationsHome = () => {
         >
           <TabsList>
             <TabsTrigger value="workflows">Workflows</TabsTrigger>
-            <TabsTrigger value="runs">All runs</TabsTrigger>
+            <TabsTrigger value="runs">History</TabsTrigger>
             <TabsTrigger value="actions">Actions</TabsTrigger>
+            <TabsTrigger value="holds">Holds</TabsTrigger>
           </TabsList>
 
           <TabsContent value="workflows">
@@ -514,6 +526,11 @@ export const OperationsHome = () => {
 
           <TabsContent value="actions">
             <ActionsTab />
+          </TabsContent>
+          <TabsContent value="holds">
+            <Suspense fallback={<p className="text-sm text-muted-foreground">Loading holds…</p>}>
+              <ControlRoom />
+            </Suspense>
           </TabsContent>
         </Tabs>
       </div>

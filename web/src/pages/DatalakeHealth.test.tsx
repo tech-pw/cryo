@@ -2,15 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
-import { getDatalakeDashboard, getFleetTrends, listTables } from "../api/client";
+import { getDatalakeDashboard, listPendingApprovals, listTables } from "../api/client";
 import { getCryoVitals } from "../api/vitals";
-import {
-  DatalakeHealth,
-  TrendPointDot,
-  notGradedCount,
-  trendPointMarker,
-  trendTooltipLabel
-} from "./DatalakeHealth";
+import { DatalakeHealth, notGradedCount, tablesAtGradeDf } from "./DatalakeHealth";
 
 vi.mock("../lib/auth", () => ({
   useAuth: () => ({
@@ -61,7 +55,20 @@ vi.mock("../api/client", () => ({
   getSmartMaintenanceOverview: vi.fn().mockResolvedValue(null),
   getFastPathFindings: vi.fn().mockResolvedValue([]),
   listTables: vi.fn(),
-  listRuns: vi.fn().mockResolvedValue([])
+  listRuns: vi.fn().mockResolvedValue([]),
+  listPendingApprovals: vi.fn().mockResolvedValue([
+    {
+      id: "approval-1",
+      table_id: "t1",
+      table_name: "db.t",
+      operation_type: "expire_snapshots",
+      status: "pending",
+      requested_by: "governor",
+      impact_preview: null,
+      created_at: "2026-09-28T00:00:00Z",
+      expires_at: null
+    }
+  ])
 }));
 
 vi.mock("../api/vitals", () => ({
@@ -83,9 +90,11 @@ describe("DatalakeHealth page", () => {
         </MemoryRouter>
       </QueryClientProvider>
     );
-    expect(await screen.findByText("Datalake health")).toBeInTheDocument();
+    expect(await screen.findByText("Home")).toBeInTheDocument();
+    expect(screen.getByText("What happened last night, and is the lake worse?")).toBeInTheDocument();
     expect(await screen.findByText("Tracked tables")).toBeInTheDocument();
     expect(screen.getByText("Tables at grade D/F")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "What got worse" })).toBeInTheDocument();
   });
 
   it("scopes the Catalog deep links to the exact offenders shown (grade D/F, needs-compaction)", async () => {
@@ -107,9 +116,7 @@ describe("DatalakeHealth page", () => {
       expect.arrayContaining(["/catalogs?grades=D,F", "/catalogs?needsCompaction=1"])
     );
 
-    // The primary header CTA is also scoped, not a bare "/catalogs".
-    const fixTopOffenders = screen.getByRole("link", { name: /fix top offenders/i });
-    expect(fixTopOffenders).toHaveAttribute("href", "/catalogs?needsCompaction=1");
+    expect(screen.queryByRole("link", { name: /fix top offenders/i })).not.toBeInTheDocument();
   });
 
   it("announces the offender counts in a hidden, accessible live region", async () => {
@@ -201,9 +208,10 @@ describe("DatalakeHealth page", () => {
     const tile = screen.getByText("Reclaimable storage").closest(".cryo-metric-tile");
     expect(tile).toHaveTextContent("Not measured");
     expect(tile).not.toHaveTextContent("0 GB");
-    const savings = screen.getByText("Monthly savings").closest(".cryo-metric-tile");
-    expect(savings).toHaveTextContent("Cost data unavailable");
-    expect(savings).not.toHaveTextContent("$0");
+    expect(screen.queryByText("Monthly savings")).not.toBeInTheDocument();
+    expect(screen.queryByText("Top offenders")).not.toBeInTheDocument();
+    expect(screen.queryByText("Smart maintenance posture")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recent scan trend")).not.toBeInTheDocument();
   });
 
   it("shows Dashboard unavailable with retry instead of a 500-table fleet total", async () => {
@@ -278,12 +286,8 @@ describe("DatalakeHealth page", () => {
     expect(await screen.findByText("Not graded 3")).toBeInTheDocument();
     expect(notGradedCount(5, [{ count: 1 }, { count: 1 }])).toBe(3);
     expect(notGradedCount(null, [{ count: 1 }])).toBeNull();
-    const modeled = screen.getByText("Modeled");
-    expect(modeled).toHaveAttribute(
-      "title",
-      "Modeled from each table's cost row when one exists, otherwise the scanner's estimated monthly S3 cost, summed over active tables."
-    );
-    expect(screen.getByText("S3 monthly now")).toBeInTheDocument();
+    expect(screen.queryByText("Estimated storage cost")).not.toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Platform" })).toBeInTheDocument();
     expect(screen.getByTitle("Every table row Cryo tracks.")).toBeInTheDocument();
 
     vi.mocked(getDatalakeDashboard).mockResolvedValue({
@@ -306,28 +310,47 @@ describe("DatalakeHealth page", () => {
     });
   });
 
-  it("labels a partial fleet trend point and does not zero-fill tables counted", async () => {
-    vi.mocked(getFleetTrends).mockResolvedValue({
-      days: 30,
-      health_trend: [
-        { day: "2026-09-27", avg_health_score: 80, tables_at_grade_df: 1, is_partial: false, tables_counted: 10 },
-        { day: "2026-09-28", avg_health_score: 70, tables_at_grade_df: 2, is_partial: true, tables_counted: 4 }
+  it("replaces fleet trend charts with a Tables at grade D/F number and does not invent 0 from an empty series", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <DatalakeHealth />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    const tile = (await screen.findByText("Tables at grade D/F")).closest(".cryo-metric-tile");
+    expect(tile).toHaveTextContent("1");
+    expect(tile).not.toHaveTextContent("Unknown");
+    expect(screen.queryByText("Fleet health trend")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fleet cost trend")).not.toBeInTheDocument();
+    expect(screen.getByText("Table freshness and staleness")).toBeInTheDocument();
+    expect(screen.queryByText("Modeled")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Scanner/ })).toHaveAttribute("href", "/runs/scanner");
+    expect(screen.getByRole("region", { name: "Now" })).toBeInTheDocument();
+    expect(listTables).not.toHaveBeenCalled();
+    expect(tablesAtGradeDf(undefined)).toBeNull();
+    expect(tablesAtGradeDf([])).toBe(0);
+    expect(tablesAtGradeDf([{ grade: "D", count: 1 }])).toBe(1);
+  });
+
+  it("shows Unknown for Tables at grade D/F when the grade distribution field is missing", async () => {
+    vi.mocked(getDatalakeDashboard).mockResolvedValue({
+      totals: {
+        tables: 2,
+        size_gb: 10,
+        small_files: 100,
+        monthly_cost_usd: 50,
+        needs_compaction: 1
+      },
+      freshness_distribution: [
+        { key: "within_24h", label: "Updated in last 24 hours", count: 1 }
       ],
-      cost_trend: [
-        {
-          day: "2026-09-27",
-          total_monthly_cost_usd: 10,
-          projected_savings_usd_month: 1,
-          is_partial: false,
-          tables_counted: 10
-        },
-        {
-          day: "2026-09-28",
-          total_monthly_cost_usd: 12,
-          projected_savings_usd_month: 1,
-          is_partial: true
-        }
-      ]
+      freshness_as_of: "2026-08-04T12:00:00Z",
+      top_offenders: [],
+      cost_by_schema: [],
+      drift: []
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -338,18 +361,32 @@ describe("DatalakeHealth page", () => {
       </QueryClientProvider>
     );
 
-    expect((await screen.findAllByText(/partial/i)).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Tables counted").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
-    expect(trendPointMarker(true)).toBe("hollow");
-    expect(trendPointMarker(false)).toBe("solid");
-    expect(trendTooltipLabel("Sep 28", true)).toBe("Sep 28 (partial)");
-    const { container } = render(<TrendPointDot cx={8} cy={8} stroke="#277abe" payload={{ is_partial: true }} />);
-    expect(container.querySelector("circle")).toHaveAttribute("fill", "none");
-    const solid = render(<TrendPointDot cx={8} cy={8} stroke="#277abe" payload={{ is_partial: false }} />);
-    expect(solid.container.querySelector("circle")).toBeNull();
+    const tile = (await screen.findByText("Tables at grade D/F")).closest(".cryo-metric-tile");
+    expect(tile).toHaveTextContent("Unknown");
+    expect(tile).not.toHaveTextContent(/\b0\b/);
+    expect(screen.getByRole("status")).toHaveTextContent(/Tables at D\/F unknown/i);
+    expect(screen.getByRole("status")).not.toHaveTextContent(/no tables currently at grade D or F/i);
+    expect(screen.queryByText("Fleet health trend")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fleet cost trend")).not.toBeInTheDocument();
 
-    vi.mocked(getFleetTrends).mockResolvedValue({ days: 30, health_trend: [], cost_trend: [] });
+    vi.mocked(getDatalakeDashboard).mockResolvedValue({
+      totals: {
+        tables: 2,
+        size_gb: 10,
+        small_files: 100,
+        monthly_cost_usd: 50,
+        needs_compaction: 1
+      },
+      grade_distribution: [
+        { grade: "B", count: 1 },
+        { grade: "D", count: 1 }
+      ],
+      freshness_distribution: [],
+      freshness_as_of: "2026-08-04T12:00:00Z",
+      top_offenders: [],
+      cost_by_schema: [],
+      drift: []
+    });
   });
 
   it("does not show 0 GB for an unmeasured reclaim day on the Now strip", async () => {
@@ -369,5 +406,68 @@ describe("DatalakeHealth page", () => {
     fireEvent.click(await screen.findByRole("button", { name: /91/ }));
     expect(await screen.findByText("dispatch_heartbeat: stalled (8)")).toBeInTheDocument();
     expect(vi.mocked(getCryoVitals)).toHaveBeenCalled();
+  });
+
+  it("counts pending approvals from the approvals client", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <DatalakeHealth />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    const tile = (await screen.findByText("Awaiting a person")).closest(".cryo-metric-tile");
+    expect(tile).toHaveAttribute("data-metric-id", "awaiting_person");
+    await waitFor(() => expect(tile).toHaveTextContent("1"));
+    expect(tile).not.toHaveTextContent("Not recorded");
+    expect(screen.getByRole("link", { name: "Review" })).toHaveAttribute("href", "/governance");
+  });
+
+  it("shows Not recorded instead of zero when pending approvals cannot be loaded", async () => {
+    vi.mocked(listPendingApprovals).mockRejectedValue(new Error("approvals down"));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <DatalakeHealth />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    const tile = (await screen.findByText("Awaiting a person")).closest(".cryo-metric-tile");
+    await waitFor(() => expect(tile).toHaveTextContent("Not recorded"), { timeout: 3000 });
+    expect(tile).not.toHaveTextContent(/\b0\b/);
+
+    vi.mocked(listPendingApprovals).mockResolvedValue([
+      {
+        id: "approval-1",
+        table_id: "t1",
+        table_name: "db.t",
+        operation_type: "expire_snapshots",
+        status: "pending",
+        requested_by: "governor",
+        impact_preview: null,
+        created_at: "2026-09-28T00:00:00Z",
+        expires_at: null
+      }
+    ]);
+  });
+
+  it("links engine holds without inventing a slot count", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <DatalakeHealth />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    const section = await screen.findByRole("region", { name: "What needs an engine" });
+    expect(screen.getByRole("link", { name: "View holds" })).toHaveAttribute("href", "/runs?tab=holds");
+    expect(section).not.toHaveTextContent(/slot/i);
+    expect(section).not.toHaveTextContent(/\d/);
   });
 });

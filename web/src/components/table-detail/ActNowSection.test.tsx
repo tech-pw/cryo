@@ -52,6 +52,35 @@ const renderSection = (overrides: Partial<Parameters<typeof ActNowSection>[0]> =
     />
   );
 
+describe("ActNowSection savings", () => {
+  it("reads null savings and reclaim as Not measured and does not score savings", () => {
+    detail.run.isPending = false;
+    detail.run.isSuccess = false;
+    detail.run.isError = false;
+    detail.run.error = null;
+    renderSection({
+      signals: {
+        signals: [
+          {
+            signal_name: "storage_cost_anomaly",
+            triggered: true,
+            severity: "warning"
+          }
+        ]
+      } as never,
+      costView: { by_operation: [] } as never,
+      reclaimableBytes: null,
+      savingsUsd: null
+    });
+    const card = screen.getByText("Storage Cost & Resource Overhead Anomaly").closest(".td-act-now-card");
+    expect(card).toHaveTextContent("Not measured");
+    expect(card).not.toHaveTextContent("$");
+    expect(card).not.toHaveTextContent("GB");
+    expect(screen.queryByText(/potential savings/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Save \$/)).not.toBeInTheDocument();
+  });
+});
+
 describe("ActNowSection mutation state", () => {
   it("does not show a queued banner before the run succeeds", () => {
     detail.run.isPending = false;

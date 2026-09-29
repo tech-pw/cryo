@@ -119,7 +119,7 @@ describe("SnapshotsTab", () => {
     expect(restore).toBeDisabled();
     expect(screen.getByText("Restore is not enabled on this install")).toBeInTheDocument();
 
-    const protect = screen.getByRole("menuitem", { name: "Needs exact snapshot IDs (T-06)" });
+    const protect = screen.getByRole("menuitem", { name: "Protect" });
     expect(protect).toBeDisabled();
     expect(protectTableSnapshot).not.toHaveBeenCalled();
   });
@@ -184,9 +184,6 @@ describe("SnapshotsTab", () => {
     expect(writeText).toHaveBeenCalledWith(big);
 
     fireEvent.click(within(current.closest("tr") as HTMLElement).getByRole("button", { name: "Actions" }));
-    const protect = screen.getByRole("menuitem", { name: "Needs exact snapshot IDs (T-06)" });
-    expect(protect).toBeDisabled();
-    fireEvent.click(protect);
-    expect(protectTableSnapshot).not.toHaveBeenCalled();
+    expect(screen.getByRole("menuitem", { name: "Protect" })).toBeEnabled();
   });
 });

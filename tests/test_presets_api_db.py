@@ -663,7 +663,9 @@ def test_adaptive_routing_helper_does_not_close_the_caller_session() -> None:
     except SAOperationalError:
         pytest.skip("local Postgres not available at localhost:5432 (see Makefile: migrate)")
 
-    SessionLocal = sa_sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    SessionLocal = sa_sessionmaker(
+        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
+    )
     source_id = uuid.uuid4()
     destination_id = uuid.uuid4()
     table_id = uuid.uuid4()
@@ -747,12 +749,16 @@ def test_adaptive_routing_helper_does_not_close_the_caller_session() -> None:
                 text("DELETE FROM cryo.jobs WHERE table_id = :tid"), {"tid": table_id}
             )
             cleanup_conn.execute(text("DELETE FROM cryo.runs"))
-            cleanup_conn.execute(text("DELETE FROM cryo.presets WHERE id = :pid"), {"pid": preset_id})
+            cleanup_conn.execute(
+                text("DELETE FROM cryo.presets WHERE id = :pid"), {"pid": preset_id}
+            )
             cleanup_conn.execute(text("DELETE FROM cryo.tables WHERE id = :tid"), {"tid": table_id})
             cleanup_conn.execute(
                 text("DELETE FROM cryo.destinations WHERE id = :did"), {"did": destination_id}
             )
-            cleanup_conn.execute(text("DELETE FROM cryo.sources WHERE id = :sid"), {"sid": source_id})
+            cleanup_conn.execute(
+                text("DELETE FROM cryo.sources WHERE id = :sid"), {"sid": source_id}
+            )
             cleanup_conn.commit()
         engine.dispose()
 

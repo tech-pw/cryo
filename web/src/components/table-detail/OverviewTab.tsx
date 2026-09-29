@@ -195,8 +195,8 @@ interface OverviewTabProps {
   benefitScores?: BenefitScoreResponse;
   stats: TableStatsRead | null | undefined;
   statsRaw: Record<string, unknown>;
-  reclaimableBytes: number;
-  savingsUsd: number;
+  reclaimableBytes: number | null;
+  savingsUsd: number | null;
   effectivePresetId?: string;
   onRun: () => void;
   runPending: boolean;

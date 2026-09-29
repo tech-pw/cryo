@@ -948,7 +948,7 @@ textarea.mono-input {
 
 .td-storage-live { background: var(--primary, #3d6fd4); }
 .td-storage-dead { background: var(--gradeC, #a9791e); }
-.td-storage-meta { background: var(--gradeB, #3d6fd4); opacity: 0.5; }
+.td-storage-meta { background: var(--gradeB, #4d7c0f); opacity: 0.5; }
 .td-storage-orphan { background: var(--gradeF, #b23a2e); opacity: 0.7; }
 
 .td-storage-legend {

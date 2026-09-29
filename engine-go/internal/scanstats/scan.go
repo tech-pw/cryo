@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/bits"
 	"sort"
 	"strconv"
 	"strings"
@@ -481,6 +482,9 @@ type accumulator struct {
 	columnTypes         map[int]iceberg.Type
 	fileSamples         map[string]protocol.ScanStatsFileBoundSample
 	sampleColumns       []string
+	dataSizeBins        []int64
+	deleteSizeBins      []int64
+	unknownFileSizes    int64
 }
 
 func newAccumulator(fields []protocol.ScanStatsPartitionField, opts Options) *accumulator {
@@ -492,8 +496,24 @@ func newAccumulator(fields []protocol.ScanStatsPartitionField, opts Options) *ac
 		columnDefs:  make(map[int]protocol.AggregateFixtureColumn),
 		columns:     make(map[int]*columnAccum),
 		columnTypes: make(map[int]iceberg.Type),
-		fileSamples: make(map[string]protocol.ScanStatsFileBoundSample),
+		fileSamples:    make(map[string]protocol.ScanStatsFileBoundSample),
+		dataSizeBins:   make([]int64, fileSizeBinCount),
+		deleteSizeBins: make([]int64, fileSizeBinCount),
 	}
+}
+
+const fileSizeBinCount = 40
+
+func recordFileSizeBin(bins []int64, size int64) {
+	if size <= 0 {
+		bins[0]++
+		return
+	}
+	index := bits.Len64(uint64(size)) - 1
+	if index >= len(bins) {
+		index = len(bins) - 1
+	}
+	bins[index]++
 }
 
 func (a *accumulator) addRecord(rec FileRecord) {
@@ -513,6 +533,7 @@ func (a *accumulator) addRecord(rec FileRecord) {
 		// (which doesn't touch delete files directly) predictably moved nothing.
 		a.deleteFiles++
 		a.deleteBytes += rec.SizeBytes
+		recordFileSizeBin(a.deleteSizeBins, rec.SizeBytes)
 		if kind == "equality" {
 			a.equalityDeleteFiles++
 		} else {
@@ -542,6 +563,7 @@ func (a *accumulator) addRecord(rec FileRecord) {
 	}
 	a.totalFiles++
 	a.totalSizeBytes += rec.SizeBytes
+	recordFileSizeBin(a.dataSizeBins, rec.SizeBytes)
 	a.totalRecords += rec.RecordCount
 	if rec.SizeBytes < a.opts.HealthSmallFileBytes {
 		a.healthSmallFiles++
@@ -622,6 +644,7 @@ func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanSta
 		// (which doesn't touch delete files directly) predictably moved nothing.
 		a.deleteFiles++
 		a.deleteBytes += size
+		recordFileSizeBin(a.deleteSizeBins, size)
 		if kind == "equality" {
 			a.equalityDeleteFiles++
 		} else {
@@ -652,6 +675,7 @@ func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanSta
 	}
 	a.totalFiles++
 	a.totalSizeBytes += size
+	recordFileSizeBin(a.dataSizeBins, size)
 	a.totalRecords += df.Count()
 	if size < a.opts.HealthSmallFileBytes {
 		a.healthSmallFiles++
@@ -1084,6 +1108,11 @@ func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) p
 		AvgNullRate:          avgNull,
 		MaxNullRate:          maxNull,
 		WorstNullColumn:      worst,
+		FileSizeBins: protocol.ScanStatsFileSizeBins{
+			Data:    a.dataSizeBins,
+			Delete:  a.deleteSizeBins,
+			Unknown: a.unknownFileSizes,
+		},
 	}
 	samplePaths := make([]string, 0, len(a.fileSamples))
 	for path := range a.fileSamples {

@@ -3,6 +3,7 @@ import {
   getFleetChecklist,
   getTableChecklist,
   type ChecklistItemRead,
+  type ChecklistSummary,
   type FleetChecklistRow
 } from "../api/client";
 import type { UUID } from "../api/types";
@@ -30,6 +31,32 @@ const TIER_LABEL: Record<number, string> = {
   1: "Tier 1 — high impact",
   2: "Tier 2 — secondary",
   3: "Tier 3 — situational"
+};
+
+export function checklistCoverage(counts: ChecklistSummary["counts"]): {
+  total: number;
+  known: number;
+  unknown: number;
+  allGreen: boolean;
+  label: string;
+} {
+  const total = counts.green + counts.yellow + counts.red + counts.unknown;
+  const unknown = counts.unknown;
+  const known = total - unknown;
+  const allGreen =
+    total > 0 && unknown === 0 && counts.red === 0 && counts.yellow === 0 && counts.green === total;
+  const label = total === 0 ? "Not measured" : `Checked ${known} of ${total} · ${unknown} unknown`;
+  return { total, known, unknown, allGreen, label };
+}
+
+export const ChecklistCoverageNote = ({ counts }: { counts: ChecklistSummary["counts"] }) => {
+  const coverage = checklistCoverage(counts);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <span>{coverage.label}</span>
+      {coverage.allGreen ? <Badge variant="success">all green</Badge> : null}
+    </span>
+  );
 };
 
 /** Single-table checklist detail: all 12 items, grouped by tier, each with its weight, verdict,
@@ -68,7 +95,9 @@ export const TableChecklistPanel = ({ tableId }: { tableId: UUID }) => {
           {checklist.data.summary.weighted_score !== null
             ? `${checklist.data.summary.weighted_score.toFixed(0)}/100 weighted`
             : "Not enough data"}
-          {" · Checked "}
+          {" · "}
+          <ChecklistCoverageNote counts={checklist.data.summary.counts} />
+          {" · "}
           {formatTime(checklist.data.checked_at)}
         </span>
       </CardHeader>
@@ -169,17 +198,14 @@ const FleetChecklistRowView = ({ row }: { row: FleetChecklistRow }) => {
         {row.summary.weighted_score !== null ? `${row.summary.weighted_score.toFixed(0)}` : "—"}
       </td>
       <td className="py-1.5">
-        {row.red_items.length === 0 ? (
-          <Badge variant="success">all green</Badge>
-        ) : (
-          <div className="flex flex-wrap gap-1">
-            {row.red_items.map((key) => (
-              <Badge key={key} variant="danger">
-                {key}
-              </Badge>
-            ))}
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-1">
+          <ChecklistCoverageNote counts={row.summary.counts} />
+          {row.red_items.map((key) => (
+            <Badge key={key} variant="danger">
+              {key}
+            </Badge>
+          ))}
+        </div>
       </td>
     </tr>
   );

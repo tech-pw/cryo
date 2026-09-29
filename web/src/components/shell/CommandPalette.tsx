@@ -2,19 +2,20 @@ import { Command } from "cmdk";
 import {
   Activity,
   BarChart3,
-  Bot,
   Clock,
   Cloud,
   DollarSign,
+  EyeOff,
   LayoutDashboard,
   Lightbulb,
   Moon,
   Plug,
   Plus,
+  RadioTower,
   Scan,
-  Shield,
+  ScanSearch,
+  Sparkles,
   Sun,
-  TriangleAlert,
   Zap
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -25,7 +26,9 @@ import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useAuth } from "../../lib/auth";
 import { useTheme } from "../../lib/themeContext";
 import { Dialog, DialogContent, DialogTitle } from "../ui/dialog";
-import { NAV_GROUPS } from "./nav-config";
+import { commandPaletteEntries } from "../../lib/routes";
+import { useAssistant } from "../assistant/AssistantProvider";
+import { useShell } from "./ShellContext";
 import { listRecentItems, pushRecentItem } from "./recent";
 import { formatSearchSubtitle, getSearchResultHref } from "./search-utils";
 
@@ -40,25 +43,30 @@ interface PaletteRoute {
   group: string;
   icon: React.ReactNode;
   adminOnly?: boolean;
+  keywords: string;
 }
 
-const ROUTE_ICONS: Record<string, React.ReactNode> = {
-  "/health": <BarChart3 size={14} />,
-  "/sla": <Clock size={14} />,
-  "/catalogs": <LayoutDashboard size={14} />,
-  "/operations": <Activity size={14} />,
-  "/smart-maintenance": <Cloud size={14} />,
-  "/ai": <Bot size={14} />,
-  "/governance": <Shield size={14} />,
-  "/anomalies": <TriangleAlert size={14} />,
-  "/queries": <Zap size={14} />,
-  "/cost": <DollarSign size={14} />,
-  "/skillsets": <Lightbulb size={14} />,
-  "/connections": <Plug size={14} />
+const paletteIcon = (href: string, label: string) => {
+  if (label === "Dark tables") return <EyeOff size={14} />;
+  if (label === "Control Room") return <RadioTower size={14} />;
+  if (label === "Scan cost") return <ScanSearch size={14} />;
+  if (label === "SLA") return <Clock size={14} />;
+  if (label === "Smart maintenance") return <Cloud size={14} />;
+  if (label === "Skillsets") return <Lightbulb size={14} />;
+  if (href === "/") return <BarChart3 size={14} />;
+  if (href === "/tables") return <LayoutDashboard size={14} />;
+  if (href === "/runs") return <Activity size={14} />;
+  if (href === "/decisions") return <Cloud size={14} />;
+  if (href === "/cost") return <DollarSign size={14} />;
+  if (href === "/insights") return <Zap size={14} />;
+  if (href.startsWith("/settings")) return <Plug size={14} />;
+  return <Activity size={14} />;
 };
 
 export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
   const navigate = useNavigate();
+  const { openAssistant } = useShell();
+  const { openBatch } = useAssistant();
   const { api, token, role } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [search, setSearch] = useState("");
@@ -70,17 +78,14 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
 
   const routes = useMemo<PaletteRoute[]>(
     () =>
-      NAV_GROUPS.flatMap((group) =>
-        group.items
-          .filter((item) => !item.adminOnly || role === "admin")
-          .map((item) => ({
-            href: item.href,
-            label: item.label,
-            group: group.label,
-            icon: ROUTE_ICONS[item.href] ?? <Activity size={14} />,
-            adminOnly: item.adminOnly
-          }))
-      ),
+      commandPaletteEntries(role).map((entry) => ({
+        href: entry.href,
+        label: entry.label,
+        group: entry.group,
+        icon: paletteIcon(entry.href, entry.label),
+        adminOnly: entry.adminOnly,
+        keywords: entry.keywords
+      })),
     [role]
   );
 
@@ -131,16 +136,39 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
             <Command.Empty>No results found.</Command.Empty>
 
             <Command.Group heading="Actions">
+              {search.trim() ? (
+                <Command.Item
+                  value={`ask cryo ${search}`}
+                  onSelect={() => {
+                    const question = search.trim();
+                    onOpenChange(false);
+                    openAssistant(question);
+                  }}
+                >
+                  <Sparkles size={14} aria-hidden />
+                  Ask Cryo: {search.trim()}
+                </Command.Item>
+              ) : null}
+              <Command.Item
+                value="review batch maintenance"
+                onSelect={() => {
+                  onOpenChange(false);
+                  openBatch();
+                }}
+              >
+                <Sparkles size={14} aria-hidden />
+                Review batch
+              </Command.Item>
               <Command.Item
                 value="run scan trigger scanner"
-                onSelect={() => go("/scans", "Scanner", "route")}
+                onSelect={() => go("/runs/scanner", "Scanner", "route")}
               >
                 <Scan size={14} aria-hidden />
                 Run scan
               </Command.Item>
               <Command.Item
                 value="create preset new maintenance"
-                onSelect={() => go("/presets", "Presets", "preset")}
+                onSelect={() => go("/runs?tab=workflows", "Workflows", "preset")}
               >
                 <Plus size={14} aria-hidden />
                 Create preset
@@ -157,7 +185,7 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
               </Command.Item>
               <Command.Item
                 value="open connections settings"
-                onSelect={() => go("/connections", "Connections")}
+                onSelect={() => go("/settings/connections", "Connections")}
               >
                 <Plug size={14} aria-hidden />
                 Open connections
@@ -168,7 +196,7 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
               {routes.map((route) => (
                 <Command.Item
                   key={route.href}
-                  value={`${route.label} ${route.group} ${route.href}`}
+                  value={`${route.label} ${route.keywords} ${route.href}`}
                   onSelect={() => go(route.href, route.label)}
                 >
                   {route.icon}
@@ -177,8 +205,8 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
                 </Command.Item>
               ))}
               <Command.Item
-                value="operations scanner workflow"
-                onSelect={() => go("/operations/scanner", "Scanner workflow")}
+                value="operations scanner workflow runs"
+                onSelect={() => go("/runs/scanner", "Scanner workflow")}
               >
                 <Scan size={14} aria-hidden />
                 Operations › Scanner

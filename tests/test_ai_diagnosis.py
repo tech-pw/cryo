@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from cryo.ai.diagnosis import diagnose_deterministic
+from cryo.ai.diagnosis import _coerce_llm_result, diagnose_deterministic
 
 
 def test_diagnose_deterministic_engine_oom() -> None:
@@ -24,3 +24,20 @@ def test_diagnose_deterministic_unknown_on_weak_evidence() -> None:
     )
     assert result.diagnosis_class == "unknown"
     assert result.confidence <= 0.5
+
+
+def test_llm_diagnosis_drops_invented_citations() -> None:
+    source = ["Query failed: FilterNode too complex"]
+    result = _coerce_llm_result(
+        {
+            "class": "engine_oom",
+            "confidence": 0.9,
+            "evidence_lines": ["invented verbatim log line"],
+            "runbook_step": "drop the table",
+            "summary": "made up",
+        },
+        source,
+    )
+    assert result is not None
+    assert result.evidence_lines == source
+    assert "drop the table" not in result.runbook_step

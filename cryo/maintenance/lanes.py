@@ -18,6 +18,8 @@ contain at least one table over the top threshold, even though those lanes avera
 tables each and most were nowhere near that size -- the K8s namespace's own "unused capacity"
 cost check flagged those lanes' pod-lifetime cost at 2-4x their measured usage as a result.
 Tier-first dealing means only the tables that actually need a large pod pay for one.
+That split yields when it would exceed the lane budget: ``max_lanes`` is a hard upper
+bound, and the lowest tiers then share a lane sized to the largest table among them.
 """
 
 from __future__ import annotations
@@ -98,40 +100,54 @@ def lane_count(tables: Sequence[LaneTable], limits: LaneLimits) -> int:
     return max(1, min(wanted, limits.max_lanes, len(tables)))
 
 
+def _groups_within_budget(tables: Sequence[LaneTable], budget: int) -> dict[int, list[LaneTable]]:
+    """Fold the lowest size tiers until at most ``budget`` groups remain.
+
+    A folded group keeps rank order and is later sized from its largest table.
+    """
+    by_tier: dict[int, list[LaneTable]] = {}
+    for table in tables:
+        by_tier.setdefault(_tier_index(table.rewrite_gb), []).append(table)
+    if budget < 1 or len(by_tier) <= budget:
+        return by_tier
+    shared = sorted(by_tier)[len(by_tier) - budget]
+    packed: dict[int, list[LaneTable]] = {}
+    for table in tables:
+        tier = _tier_index(table.rewrite_gb)
+        packed.setdefault(shared if tier <= shared else tier, []).append(table)
+    return packed
+
+
 def plan_lanes(tables: Sequence[LaneTable], limits: LaneLimits | None = None) -> list[Lane]:
     """``tables`` must already be in rank order; each lane keeps that relative order.
 
-    Tables are dealt tier-first: split into groups by which _SIZE_TIERS bucket their
-    rewrite_gb falls into, lanes allocated to each group in proportion to its share of total
-    work (at least one lane per non-empty group, capped by max_lanes overall), then dealt
-    round-robin by load within that group only. A lane's size is fixed by the group it serves,
-    not derived after packing -- so a lane built entirely from sub-5GB tables gets the smallest
-    tier's pod even if the run also has a 2TB table, which lands in its own group's lane(s)
-    instead of dragging every lane it might otherwise have shared up to its own tier.
+    Tables are dealt tier-first so a lane's pod matches the tables it carries. The budget
+    is ``lane_count``, itself capped by ``max_lanes``. Occupied tiers stay separate when
+    that budget has room; otherwise the lowest tiers share a lane sized to the largest
+    table among them. The returned plan never has more lanes than ``max_lanes``.
     """
     limits = limits or LaneLimits()
-    total_count = lane_count(tables, limits)
-    if total_count == 0:
+    if not tables or limits.max_lanes < 1:
+        return []
+    budget = min(lane_count(tables, limits), limits.max_lanes)
+    if budget < 1:
         return []
 
-    groups: dict[int, list[LaneTable]] = {}
-    for table in tables:
-        groups.setdefault(_tier_index(table.rewrite_gb), []).append(table)
-
+    groups = _groups_within_budget(tables, budget)
     group_work = {
         tier: sum(t.rewrite_gb + limits.per_table_overhead_gb for t in group)
         for tier, group in groups.items()
     }
     group_max_lanes = {tier: len(group) for tier, group in groups.items()}
     total_work = sum(group_work.values()) or 1.0
-    # Proportional share of the overall lane budget, at least 1 lane per non-empty tier
-    # (never more than that tier's own table count -- a lane needs >=1 table), total never
-    # exceeding what lane_count already decided the whole run gets.
+    # Proportional share of the overall lane budget, at least 1 lane per group (groups
+    # already fit in the budget, so that floor cannot exceed it), never more than that
+    # group's own table count -- a lane needs >=1 table.
     raw_shares = {
-        tier: min(group_max_lanes[tier], max(1, round(total_count * (work / total_work))))
+        tier: min(group_max_lanes[tier], max(1, round(budget * (work / total_work))))
         for tier, work in group_work.items()
     }
-    while sum(raw_shares.values()) > total_count:
+    while sum(raw_shares.values()) > budget:
         # Trim from the tier with the most lanes first -- the smallest, cheapest tier is the
         # one that can most afford to lose a lane and still fit its tables via more work per
         # pod, whereas the largest tier's lane count is closest to a hard per-table minimum
@@ -140,7 +156,7 @@ def plan_lanes(tables: Sequence[LaneTable], limits: LaneLimits | None = None) ->
         if raw_shares[biggest] <= 1:
             break
         raw_shares[biggest] -= 1
-    while sum(raw_shares.values()) < total_count:
+    while sum(raw_shares.values()) < budget:
         # Spare lanes (rounding gave fewer than the budget allows, or a tier's own table count
         # capped it below its proportional share) go to the tier with the most work per
         # already-assigned lane that still has table headroom to use another lane -- so the
@@ -167,4 +183,6 @@ def plan_lanes(tables: Sequence[LaneTable], limits: LaneLimits | None = None) ->
         lanes.extend(tier_lanes)
     for i, lane in enumerate(lanes):
         lane.index = i
+    assert len(lanes) <= limits.max_lanes
+    assert sum(len(lane.tables) for lane in lanes) == len(tables)
     return lanes

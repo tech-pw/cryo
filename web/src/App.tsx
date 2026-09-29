@@ -1,37 +1,42 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Suspense, lazy } from "react";
-import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { Suspense, lazy, type ReactNode } from "react";
+import { Route, Routes, useLocation } from "react-router-dom";
 
 import { AppShellLayout } from "./AppShellLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NotificationProvider } from "./components/NotificationRegion";
+import {
+  CostHome,
+  DecisionsHome,
+  InsightsHome,
+  LegacyRedirect,
+  RunsHome,
+  TablesHome
+} from "./components/Redirects";
+import {
+  SettingsAccessHome,
+  SettingsAdminHome,
+  SettingsAiHome,
+  SettingsConnectionsHome,
+  SettingsNotificationsHome
+} from "./pages/settings/homes";
 import { Skeleton } from "./components/ui/skeleton";
 import { Toaster } from "./components/ui/sonner";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider } from "./lib/themeContext";
 import { CryoTooltipProvider } from "./components/ui/tooltip";
+import { RUNS_NESTED_PATHS } from "./lib/routes";
 
-const Connections = lazy(() => import("./pages/Connections").then((m) => ({ default: m.Connections })));
-const Skillsets = lazy(() => import("./pages/Skillsets").then((m) => ({ default: m.Skillsets })));
+const BatchReviewPage = lazy(() =>
+  import("./components/batch/BatchReviewPage").then((m) => ({ default: m.BatchReviewPage }))
+);
 const JobDetail = lazy(() => import("./pages/JobDetail").then((m) => ({ default: m.JobDetail })));
 const CostAttribution = lazy(() =>
   import("./pages/CostAttribution").then((m) => ({ default: m.CostAttribution }))
 );
-const Cost = lazy(() => import("./pages/Cost").then((m) => ({ default: m.Cost })));
 const DatalakeHealth = lazy(() => import("./pages/DatalakeHealth").then((m) => ({ default: m.DatalakeHealth })));
-const Governance = lazy(() => import("./pages/Governance").then((m) => ({ default: m.Governance })));
-const Intelligence = lazy(() => import("./pages/Intelligence").then((m) => ({ default: m.Intelligence })));
-const TableSimilarity = lazy(() =>
-  import("./pages/TableSimilarity").then((m) => ({ default: m.TableSimilarity }))
-);
-const DarkTables = lazy(() => import("./pages/DarkTables").then((m) => ({ default: m.DarkTables })));
-const ScanCost = lazy(() => import("./pages/ScanCost").then((m) => ({ default: m.ScanCost })));
 const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
 const LoginCallback = lazy(() => import("./pages/LoginCallback").then((m) => ({ default: m.LoginCallback })));
-const Catalog = lazy(() => import("./pages/Catalog").then((m) => ({ default: m.Catalog })));
-const OperationsHome = lazy(() =>
-  import("./pages/operations/OperationsHome").then((m) => ({ default: m.OperationsHome }))
-);
 const RunDetail = lazy(() => import("./pages/operations/RunDetail").then((m) => ({ default: m.RunDetail })));
 const PresetDetail = lazy(() =>
   import("./pages/operations/PresetDetail").then((m) => ({ default: m.PresetDetail }))
@@ -39,23 +44,14 @@ const PresetDetail = lazy(() =>
 const ScannerDetail = lazy(() =>
   import("./pages/operations/ScannerDetail").then((m) => ({ default: m.ScannerDetail }))
 );
-const QueryPerformance = lazy(() =>
-  import("./pages/QueryPerformance").then((m) => ({ default: m.QueryPerformance }))
-);
-const SLAStatus = lazy(() => import("./pages/SLAStatus").then((m) => ({ default: m.SLAStatus })));
-const Anomalies = lazy(() => import("./pages/Anomalies").then((m) => ({ default: m.Anomalies })));
-const SearchResults = lazy(() =>
-  import("./pages/SearchResults").then((m) => ({ default: m.SearchResults }))
-);
 const Styleguide = lazy(() => import("./pages/dev/Styleguide"));
 const TableDetail = lazy(() => import("./pages/TableDetail").then((m) => ({ default: m.TableDetail })));
-const SmartMaintenance = lazy(() =>
-  import("./pages/SmartMaintenance").then((m) => ({ default: m.SmartMaintenance }))
-);
 const NotFound = lazy(() => import("./pages/NotFound").then((m) => ({ default: m.NotFound })));
-const Impact = lazy(() => import("./pages/Impact").then((m) => ({ default: m.Impact })));
-const ControlRoom = lazy(() =>
-  import("./pages/ControlRoom").then((m) => ({ default: m.ControlRoom }))
+const AssistantApprove = lazy(() =>
+  import("./pages/AssistantApprove").then((m) => ({ default: m.AssistantApprove }))
+);
+const AiModelsSettings = lazy(() =>
+  import("./pages/settings/AiModelsSettings").then((m) => ({ default: m.AiModelsSettings }))
 );
 
 const PageFallback = () => (
@@ -75,27 +71,12 @@ const queryClient = new QueryClient({
   }
 });
 
-const TablesListRedirect = () => {
-  const { search } = useLocation();
-  return <Navigate to={`/catalogs${search}`} replace />;
-};
-
-const RunsRunRedirect = () => {
-  const { runId } = useParams();
-  return <Navigate to={`/operations/runs/${runId}`} replace />;
-};
-
-const ScansRunRedirect = () => {
-  const { runId } = useParams();
-  return <Navigate to={`/operations/runs/${runId}`} replace />;
-};
-
-const SkillsetsRoute = () => {
-  const { role } = useAuth();
-  if (role !== "admin") {
-    return <Navigate to="/health" replace />;
-  }
-  return <Skillsets />;
+const runsNestedElement: Record<(typeof RUNS_NESTED_PATHS)[number], ReactNode> = {
+  "/runs/jobs/:jobId": <JobDetail />,
+  "/runs/workflows/:presetId": <PresetDetail />,
+  "/runs/scanner": <ScannerDetail />,
+  "/runs/batch": <BatchReviewPage />,
+  "/runs/:runId": <RunDetail />
 };
 
 const AuthenticatedRoutes = () => (
@@ -103,46 +84,58 @@ const AuthenticatedRoutes = () => (
     <Suspense fallback={<PageFallback />}>
       <ErrorBoundary>
         <Routes>
-            <Route path="/" element={<Navigate to="/health" replace />} />
-            <Route path="/health" element={<DatalakeHealth />} />
-            <Route path="/impact" element={<Impact />} />
-            <Route path="/catalogs" element={<Catalog />} />
-            <Route path="/cost" element={<Cost />} />
-            <Route path="/cost/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
-            <Route path="/aws" element={<Navigate to="/cost?tab=aws-integrations" replace />} />
-            <Route path="/attribution" element={<CostAttribution />} />
-            <Route path="/tables" element={<TablesListRedirect />} />
-            <Route path="/tables/:tableId" element={<TableDetail />} />
-            <Route path="/scans" element={<Navigate to="/operations/scanner" replace />} />
-            <Route path="/scans/:runId" element={<ScansRunRedirect />} />
-            <Route path="/operations" element={<OperationsHome />} />
-            <Route path="/operations/scanner" element={<ScannerDetail />} />
-            <Route path="/operations/presets/:presetId" element={<PresetDetail />} />
-            <Route path="/operations/runs/:runId" element={<RunDetail />} />
-            <Route path="/ai" element={<Intelligence />} />
-            <Route path="/similarity" element={<TableSimilarity />} />
-            <Route path="/dark-tables" element={<DarkTables />} />
-            <Route path="/scan-cost" element={<ScanCost />} />
-            <Route path="/governance" element={<Governance />} />
-            <Route path="/anomalies" element={<Anomalies />} />
-            <Route path="/queries" element={<QueryPerformance />} />
-            <Route path="/sla" element={<SLAStatus />} />
-            <Route path="/search" element={<SearchResults />} />
-            <Route path="/optimize" element={<Navigate to="/smart-maintenance" replace />} />
-            <Route path="/smart-maintenance" element={<SmartMaintenance />} />
-            <Route path="/control-room" element={<ControlRoom />} />
-            <Route path="/presets" element={<Navigate to="/operations" replace />} />
-            <Route path="/runs" element={<Navigate to="/operations?tab=runs" replace />} />
-            <Route path="/runs/:runId" element={<RunsRunRedirect />} />
-            <Route path="/jobs/:jobId" element={<JobDetail />} />
-            <Route path="/connections" element={<Connections />} />
-            <Route path="/skillsets" element={<SkillsetsRoute />} />
-            {import.meta.env.DEV ? <Route path="/dev/styleguide" element={<Styleguide />} /> : null}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </ErrorBoundary>
-      </Suspense>
-    </AppShellLayout>
+          <Route path="/" element={<DatalakeHealth />} />
+          <Route path="/health" element={<LegacyRedirect />} />
+          <Route path="/tables" element={<TablesHome />} />
+          <Route path="/tables/:tableId" element={<TableDetail />} />
+          <Route path="/catalogs" element={<LegacyRedirect />} />
+          <Route path="/search" element={<LegacyRedirect />} />
+          <Route path="/dark-tables" element={<LegacyRedirect />} />
+          <Route path="/sla" element={<LegacyRedirect />} />
+          <Route path="/runs" element={<RunsHome />} />
+          {RUNS_NESTED_PATHS.map((path) => (
+            <Route key={path} path={path} element={runsNestedElement[path]} />
+          ))}
+          <Route path="/operations" element={<LegacyRedirect />} />
+          <Route path="/operations/scanner" element={<LegacyRedirect />} />
+          <Route path="/operations/presets/:presetId" element={<LegacyRedirect />} />
+          <Route path="/operations/runs/:runId" element={<LegacyRedirect />} />
+          <Route path="/scans" element={<LegacyRedirect />} />
+          <Route path="/scans/:runId" element={<LegacyRedirect />} />
+          <Route path="/presets" element={<LegacyRedirect />} />
+          <Route path="/jobs/:jobId" element={<LegacyRedirect />} />
+          <Route path="/control-room" element={<LegacyRedirect />} />
+          <Route path="/decisions" element={<DecisionsHome />} />
+          <Route path="/smart-maintenance" element={<LegacyRedirect />} />
+          <Route path="/optimize" element={<LegacyRedirect />} />
+          <Route path="/cost" element={<CostHome />} />
+          <Route path="/impact" element={<LegacyRedirect />} />
+          <Route path="/scan-cost" element={<LegacyRedirect />} />
+          <Route path="/cost/aws" element={<LegacyRedirect />} />
+          <Route path="/aws" element={<LegacyRedirect />} />
+          <Route path="/attribution" element={<CostAttribution />} />
+          <Route path="/insights" element={<InsightsHome />} />
+          <Route path="/similarity" element={<LegacyRedirect />} />
+          <Route path="/anomalies" element={<LegacyRedirect />} />
+          <Route path="/queries" element={<LegacyRedirect />} />
+          <Route path="/governance" element={<LegacyRedirect />} />
+          <Route path="/settings" element={<LegacyRedirect />} />
+          <Route path="/settings/connections" element={<SettingsConnectionsHome />} />
+          <Route path="/settings/ai" element={<SettingsAiHome />} />
+          <Route path="/settings/ai/models" element={<AiModelsSettings />} />
+          <Route path="/assistant/approve/:proposalId" element={<AssistantApprove />} />
+          <Route path="/settings/access" element={<SettingsAccessHome />} />
+          <Route path="/settings/admin" element={<SettingsAdminHome />} />
+          <Route path="/settings/notifications" element={<SettingsNotificationsHome />} />
+          <Route path="/connections" element={<LegacyRedirect />} />
+          <Route path="/skillsets" element={<LegacyRedirect />} />
+          <Route path="/ai" element={<LegacyRedirect />} />
+          {import.meta.env.DEV ? <Route path="/dev/styleguide" element={<Styleguide />} /> : null}
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </ErrorBoundary>
+    </Suspense>
+  </AppShellLayout>
 );
 
 const Shell = () => {

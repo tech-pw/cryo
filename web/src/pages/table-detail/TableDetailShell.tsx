@@ -51,9 +51,12 @@ const TabFallback = () => (
   </AsyncBoundary>
 );
 
-const lazyPanel = (Panel: React.LazyExoticComponent<React.ComponentType>) => (
+const lazyPanel = <P extends object>(
+  Panel: React.LazyExoticComponent<React.ComponentType<P>>,
+  props?: P
+) => (
   <Suspense fallback={<TabFallback />}>
-    <Panel />
+    <Panel {...((props ?? {}) as P)} />
   </Suspense>
 );
 
@@ -207,13 +210,19 @@ export const TableDetailShell = () => {
               {lazyPanel(MaintenanceTabPanel)}
             </TabsContent>
             <TabsContent value="usage" className="td-tab-content mt-0">
-              {lazyPanel(LineageTabPanel)}
+              <Suspense fallback={<TabFallback />}>
+                <LineageTabPanel tableId={ctx.tableId} />
+              </Suspense>
             </TabsContent>
             <TabsContent value="quality" className="td-tab-content mt-0">
-              {lazyPanel(HealthQualityTabPanel)}
+              <Suspense fallback={<TabFallback />}>
+                <HealthQualityTabPanel tableId={ctx.tableId} />
+              </Suspense>
             </TabsContent>
             <TabsContent value="cost" className="td-tab-content mt-0">
-              {lazyPanel(CostTabPanel)}
+              <Suspense fallback={<TabFallback />}>
+                <CostTabPanel tableId={ctx.tableId} />
+              </Suspense>
             </TabsContent>
           </Tabs>
         </div>

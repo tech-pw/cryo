@@ -28,7 +28,9 @@ export type WriteAction =
   | "qualityConstraint"
   | "wairAnalyze"
   | "patchTable"
-  | "editCompliance";
+  | "editCompliance"
+  | "dismissDarkTable"
+  | "refreshAnomalies";
 
 type MinRole = "operator" | "admin";
 
@@ -61,7 +63,9 @@ export const WRITE_MIN_ROLE: Record<WriteAction, MinRole> = {
   qualityConstraint: "operator",
   wairAnalyze: "operator",
   patchTable: "operator",
-  editCompliance: "operator"
+  editCompliance: "operator",
+  dismissDarkTable: "operator",
+  refreshAnomalies: "operator"
 };
 
 const DESTRUCTIVE_ADMIN: ReadonlySet<WriteAction> = new Set([

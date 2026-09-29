@@ -40,8 +40,26 @@ describe("OperationPipeline", () => {
     expect(screen.queryByText("queued")).not.toBeInTheDocument();
   });
 
-  it("keeps the scan pipeline pending label supplied by its caller", () => {
-    render(<OperationPipeline steps={scanPipelineSteps("accepted")} title="Scan pipeline" />);
-    expect(screen.getAllByText("queued").length).toBeGreaterThan(0);
+  it("reads an in-progress scan with no step evidence as Waiting", () => {
+    render(<OperationPipeline steps={scanPipelineSteps("running")} title="Scan pipeline" />);
+    expect(screen.getAllByText("Waiting")).toHaveLength(4);
+    expect(screen.queryByText("queued")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not recorded")).not.toBeInTheDocument();
+  });
+
+  it("reads a finished partial scan as Not recorded and never queued", () => {
+    render(<OperationPipeline steps={scanPipelineSteps("partial")} title="Scan pipeline" />);
+    expect(screen.getAllByText("Not recorded")).toHaveLength(4);
+    expect(screen.queryByText("queued")).not.toBeInTheDocument();
+    expect(screen.queryByText("Waiting")).not.toBeInTheDocument();
+  });
+
+  it("does not invent queued steps for any finished scan status", () => {
+    for (const status of ["succeeded", "failed", "cancelled", "partial_failed"]) {
+      const { unmount } = render(<OperationPipeline steps={scanPipelineSteps(status)} title="Scan pipeline" />);
+      expect(screen.queryByText("queued")).not.toBeInTheDocument();
+      expect(screen.getAllByText("Not recorded")).toHaveLength(4);
+      unmount();
+    }
   });
 });

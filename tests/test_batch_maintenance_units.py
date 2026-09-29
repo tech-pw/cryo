@@ -470,6 +470,79 @@ def test_lane_scheduling_leaves_a_selector_without_a_capacity_pin_alone() -> Non
     assert "preferredDuringSchedulingIgnoredDuringExecution" not in affinity["nodeAffinity"]
 
 
+@pytest.mark.parametrize("capacity_types", [(), ("spot", "on-demand")])
+def test_lane_node_ceiling_is_required_and_preserves_other_constraints(capacity_types) -> None:
+    original = {"karpenter.sh/capacity-type": "on-demand", "pool": "general"}
+    selector, affinity = lane_scheduling(original, capacity_types, max_node_cpu=16)
+
+    assert original == {"karpenter.sh/capacity-type": "on-demand", "pool": "general"}
+    assert selector["pool"] == "general"
+    if not capacity_types:
+        assert selector["karpenter.sh/capacity-type"] == "on-demand"
+    terms = affinity["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][
+        "nodeSelectorTerms"
+    ]
+    assert len(terms) == 1  # The ceiling and capacity restriction must be ANDed, not ORed.
+    assert {"key": "karpenter.k8s.aws/instance-cpu", "operator": "Lt", "values": ["17"]} in terms[
+        0
+    ]["matchExpressions"]
+
+
+def test_lane_node_ceiling_can_be_enabled_without_a_capacity_override() -> None:
+    selector, affinity = lane_scheduling({"pool": "general"}, (), max_node_cpu=8)
+    assert selector == {"pool": "general"}
+    assert affinity["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][
+        "nodeSelectorTerms"
+    ] == [
+        {
+            "matchExpressions": [
+                {"key": "karpenter.k8s.aws/instance-cpu", "operator": "Lt", "values": ["9"]}
+            ]
+        }
+    ]
+
+
+def test_lane_node_ceiling_rejects_a_node_without_cpu_headroom() -> None:
+    with pytest.raises(ValueError, match="system workloads"):
+        build_lane_objects(
+            uuid.uuid4(),
+            _spec(),
+            _cfg(),
+            catalog="cdp",
+            deadline_epoch=0,
+            active_deadline_seconds=600,
+            max_node_cpu=2,
+        )
+
+
+def test_lane_runner_passes_the_node_ceiling_to_launched_jobs() -> None:
+    batch, core = MagicMock(), MagicMock()
+    runner = LaneRunner(
+        uuid.uuid4(), _cfg(), catalog="cdp", batch_api=batch, core_api=core, max_node_cpu=16
+    )
+    runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
+    pod = batch.create_namespaced_job.call_args.kwargs["body"]["spec"]["template"]["spec"]
+    assert pod["affinity"]["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][
+        "nodeSelectorTerms"
+    ][0]["matchExpressions"] == [
+        {"key": "karpenter.k8s.aws/instance-cpu", "operator": "Lt", "values": ["17"]}
+    ]
+
+
+def test_invalid_later_lane_does_not_launch_any_part_of_the_plan() -> None:
+    batch, core = MagicMock(), MagicMock()
+    runner = LaneRunner(
+        uuid.uuid4(), _cfg(), catalog="cdp", batch_api=batch, core_api=core, max_node_cpu=4
+    )
+    oversized = LaneSpec(index=1, cpu_milli=4000, mem_mib=16384, manifest=b"")
+
+    with pytest.raises(ValueError, match="system workloads"):
+        runner.launch([_spec(), oversized], deadline_epoch=0, active_deadline_seconds=600)
+
+    batch.create_namespaced_job.assert_not_called()
+    core.create_namespaced_secret.assert_not_called()
+
+
 def test_s3_keys_reach_the_pod_only_through_secret_refs() -> None:
     secret, job = build_lane_objects(
         uuid.uuid4(),

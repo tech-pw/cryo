@@ -1,8 +1,12 @@
-import { Moon, Search, Sun, User } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Moon, Search, Sparkles, Sun, User } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { getAssistantCapabilities } from "../../api/assistant";
 import { Button } from "../ui/button";
+import { useAssistant } from "../assistant/AssistantProvider";
 import { useAuth } from "../../lib/auth";
+import { loadDraft, membershipSummary } from "../../lib/maintenanceBatch";
 import { useTheme } from "../../lib/themeContext";
 import { CatalogSearch } from "./CatalogSearch";
 import { useShell } from "./ShellContext";
@@ -12,9 +16,23 @@ export interface TopbarProps {
 }
 
 export const Topbar = ({ onMenuClick }: TopbarProps) => {
-  const { subject, role, signOut } = useAuth();
+  const { subject, role, signOut, api, token } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const { openCommandPalette } = useShell();
+  const { openCommandPalette, openAssistant } = useShell();
+  const { openBatch } = useAssistant();
+  const batchCount = membershipSummary(
+    loadDraft({
+      installationId: "local",
+      principalId: subject || "anonymous",
+      tenantId: "local"
+    })
+  );
+  const capabilities = useQuery({
+    queryKey: ["assistant", "capabilities", token],
+    queryFn: () => getAssistantCapabilities(api),
+    staleTime: 60_000,
+    retry: false
+  });
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
@@ -31,6 +49,8 @@ export const Topbar = ({ onMenuClick }: TopbarProps) => {
 
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
   const cmdLabel = isMac ? "⌘K" : "Ctrl+K";
+  const askLabel = isMac ? "⌘I" : "Ctrl+I";
+  const askHidden = capabilities.isSuccess && capabilities.data.enabled === false;
 
   return (
     <header
@@ -69,6 +89,22 @@ export const Topbar = ({ onMenuClick }: TopbarProps) => {
       </div>
 
       <div className="cryo-shell__topbar-right">
+        <Button type="button" variant="secondary" size="sm" onClick={openBatch} aria-label="Review batch">
+          Batch · {batchCount}
+        </Button>
+        {askHidden ? null : (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => openAssistant()}
+            aria-label="Ask Cryo"
+            title={`Ask Cryo (${askLabel})`}
+          >
+            <Sparkles size={14} aria-hidden />
+            Ask Cryo
+          </Button>
+        )}
         <Button
           type="button"
           variant="ghost"

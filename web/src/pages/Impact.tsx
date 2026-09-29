@@ -2,12 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
 
 import { getImpactHistory } from "../api/impact";
+import { RankedBars } from "../components/charts";
 import { PageHeader } from "../components/common";
 import { Button } from "../components/ui/button";
-import { ChartFrame } from "../components/ui/chart-panel";
 import { DataTable } from "../components/ui/data-table";
 import { useAuth } from "../lib/auth";
 import { formatCurrency } from "../lib/format";
@@ -30,7 +29,7 @@ const sinceFor = (days: number): string => {
 
 const untilToday = (): string => new Date().toISOString().slice(0, 10);
 
-export const Impact = () => {
+export const Impact = ({ embedded = false }: { embedded?: boolean }) => {
   const { api, token } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const requested = Number(searchParams.get("range") ?? "30");
@@ -78,10 +77,16 @@ export const Impact = () => {
 
   return (
     <div className="flex flex-col gap-4">
+      {embedded ? (
+        <p className="mb-3 text-sm text-muted-foreground">
+          {rows.length ? fullyMeasuredSummary(rows) : "Daily ledger of what maintenance actually changed."} Unmeasured
+          days are gaps, not zero.
+        </p>
+      ) : (
       <PageHeader
         title="Impact"
         subtitle={rows.length ? fullyMeasuredSummary(rows) : "Daily ledger of what maintenance actually changed."}
-        rootCrumb={{ label: "Impact", to: "/impact" }}
+        rootCrumb={{ label: "Impact", to: "/cost?tab=impact" }}
         actions={
           <div className="flex gap-2">
             {RANGES.map((days) => (
@@ -103,29 +108,16 @@ export const Impact = () => {
           </div>
         }
       />
+      )}
       <p className="text-sm text-muted-foreground">
         Logical file changes recorded by maintenance, not a billing line. Unmeasured days are gaps, not zero.
       </p>
-      <ChartFrame
-        empty={!history.isLoading && chartRows.every((row) => row.gb == null)}
-        emptyTitle="No measured reclaim in this range"
-        emptyDescription="Days without a byte measurement are omitted from the chart rather than drawn as zero."
-        ariaLabel="Daily measured reclaim"
-      >
-        <BarChart data={chartRows}>
-          <CartesianGrid vertical={false} />
-          <XAxis dataKey="day" />
-          <YAxis />
-          <Tooltip
-            formatter={(value, _name, item) => {
-              const payload = item?.payload as { label?: string } | undefined;
-              if (value == null) return [payload?.label ?? "Not measured", "Reclaim"];
-              return [`${Number(value).toFixed(2)} GB`, "Reclaim"];
-            }}
-          />
-          <Bar dataKey="gb" fill="var(--primitive-accent-500, #277abe)" />
-        </BarChart>
-      </ChartFrame>
+      <RankedBars
+        title="Which days have a measured reclaim?"
+        unit="GB"
+        provenance="partial"
+        items={chartRows.map((row) => ({ id: row.day, label: `${row.day} · ${row.label}`, value: row.gb }))}
+      />
       <DataTable
         columns={columns}
         data={rows}

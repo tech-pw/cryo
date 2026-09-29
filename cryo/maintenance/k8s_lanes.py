@@ -106,7 +106,10 @@ def parse_capacity_types(raw: str | None) -> tuple[str, ...]:
 
 
 def lane_scheduling(
-    node_selector: dict[str, str] | None, capacity_types: Sequence[str]
+    node_selector: dict[str, str] | None,
+    capacity_types: Sequence[str],
+    *,
+    max_node_cpu: int = 0,
 ) -> tuple[dict[str, str], dict[str, Any] | None]:
     """(nodeSelector, affinity) for a lane pod.
 
@@ -115,29 +118,35 @@ def lane_scheduling(
     steps and the coordinator replaces a lane that dies, so lanes may take spot capacity. The
     inherited pin is swapped for a required In-list over ``capacity_types`` (Karpenter falls
     back to the next type when the first has no capacity) plus a preference for the first.
-    Nothing changes when the selector has no capacity-type pin, e.g. a cluster without
-    Karpenter, where the label would match no node.
+    Capacity selection stays unchanged without an inherited pin. The optional node CPU
+    ceiling is independent and explicitly opts into Karpenter's instance-cpu labels.
     """
     selector = dict(node_selector or {})
-    if not capacity_types or _CAPACITY_TYPE_LABEL not in selector:
+    if max_node_cpu < 0:
+        raise ValueError("max_node_cpu must be non-negative")
+    expressions: list[dict[str, Any]] = []
+    override_capacity = bool(capacity_types and _CAPACITY_TYPE_LABEL in selector)
+    if override_capacity:
+        del selector[_CAPACITY_TYPE_LABEL]
+        expressions.append(
+            {"key": _CAPACITY_TYPE_LABEL, "operator": "In", "values": list(capacity_types)}
+        )
+    if max_node_cpu:
+        expressions.append(
+            {
+                "key": "karpenter.k8s.aws/instance-cpu",
+                "operator": "Lt",
+                "values": [str(max_node_cpu + 1)],
+            }
+        )
+    if not expressions:
         return selector, None
-    del selector[_CAPACITY_TYPE_LABEL]
     node_affinity: dict[str, Any] = {
         "requiredDuringSchedulingIgnoredDuringExecution": {
-            "nodeSelectorTerms": [
-                {
-                    "matchExpressions": [
-                        {
-                            "key": _CAPACITY_TYPE_LABEL,
-                            "operator": "In",
-                            "values": list(capacity_types),
-                        }
-                    ]
-                }
-            ]
+            "nodeSelectorTerms": [{"matchExpressions": expressions}]
         }
     }
-    if len(capacity_types) > 1:
+    if override_capacity and len(capacity_types) > 1:
         node_affinity["preferredDuringSchedulingIgnoredDuringExecution"] = [
             {
                 "weight": 100,
@@ -201,6 +210,13 @@ def spark_submit_command(
     return command
 
 
+def _validate_node_cpu_ceiling(cpu_milli: int, max_node_cpu: int) -> None:
+    if max_node_cpu < 0:
+        raise ValueError("max_node_cpu must be non-negative")
+    if max_node_cpu and cpu_milli >= max_node_cpu * 1000:
+        raise ValueError("Lane node CPU ceiling must leave room for system workloads")
+
+
 def build_lane_objects(
     run_id: uuid.UUID,
     spec: LaneSpec,
@@ -210,8 +226,10 @@ def build_lane_objects(
     deadline_epoch: float,
     active_deadline_seconds: int,
     capacity_types: Sequence[str] = (),
+    max_node_cpu: int = 0,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """(secret, job) manifests for one lane."""
+    _validate_node_cpu_ceiling(spec.cpu_milli, max_node_cpu)
     name = lane_names(run_id, spec.index)
     labels = {
         "app.kubernetes.io/name": "cryo",
@@ -251,7 +269,9 @@ def build_lane_objects(
             },
         ]
     resources = {"cpu": f"{spec.cpu_milli}m", "memory": f"{spec.mem_mib}Mi"}
-    node_selector, affinity = lane_scheduling(cfg.node_selector, capacity_types)
+    node_selector, affinity = lane_scheduling(
+        cfg.node_selector, capacity_types, max_node_cpu=max_node_cpu
+    )
     pod_spec: dict[str, Any] = {
         "restartPolicy": "Never",
         "serviceAccountName": cfg.service_account,
@@ -316,6 +336,7 @@ class LaneRunner:
         batch_api: Any | None = None,
         core_api: Any | None = None,
         capacity_types: Sequence[str] = (),
+        max_node_cpu: int = 0,
     ) -> None:
         self._run_id = run_id
         self._cfg = cfg
@@ -323,6 +344,7 @@ class LaneRunner:
         self._batch = batch_api
         self._core = core_api
         self._capacity_types = tuple(capacity_types)
+        self._max_node_cpu = max_node_cpu
         self.lanes: list[LaneState] = []
 
     def _batch_api(self) -> Any:
@@ -338,6 +360,10 @@ class LaneRunner:
     def launch(
         self, specs: Sequence[LaneSpec], *, deadline_epoch: float, active_deadline_seconds: int
     ) -> None:
+        # Validate the whole plan before the first side effect: a later oversized lane
+        # must not strand earlier pods when the coordinator has not received the runner.
+        for spec in specs:
+            _validate_node_cpu_ceiling(spec.cpu_milli, self._max_node_cpu)
         for spec in specs:
             secret, job = build_lane_objects(
                 self._run_id,
@@ -347,6 +373,7 @@ class LaneRunner:
                 deadline_epoch=deadline_epoch,
                 active_deadline_seconds=active_deadline_seconds,
                 capacity_types=self._capacity_types,
+                max_node_cpu=self._max_node_cpu,
             )
             self._core_api().create_namespaced_secret(namespace=self._cfg.namespace, body=secret)
             self._batch_api().create_namespaced_job(namespace=self._cfg.namespace, body=job)

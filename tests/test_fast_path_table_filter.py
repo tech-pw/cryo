@@ -5,7 +5,11 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from cryo.scanner.fast_path_check import FastPathFinding, FastPathTableNotFound, load_fast_path_findings
+from cryo.scanner.fast_path_check import (
+    FastPathFinding,
+    FastPathTableNotFound,
+    load_fast_path_findings,
+)
 
 
 class _Session:

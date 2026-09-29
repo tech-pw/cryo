@@ -67,7 +67,7 @@ const JobBreadcrumbs = ({
   <nav aria-label="Breadcrumb" className="mb-3">
     <ol className="m-0 flex list-none flex-wrap gap-2 p-0">
       <li>
-        <Link to="/operations">Operations</Link>
+        <Link to="/runs">Runs</Link>
       </li>
       <li aria-hidden>›</li>
       <li>
@@ -75,7 +75,7 @@ const JobBreadcrumbs = ({
       </li>
       <li aria-hidden>›</li>
       <li>
-        <Link to={`/operations/runs/${runId}`}>Run {shortRunId(runId)}</Link>
+        <Link to={`/runs/${runId}`}>Run {shortRunId(runId)}</Link>
       </li>
       <li aria-hidden>›</li>
       <li>
@@ -252,10 +252,10 @@ export const JobDetail = () => {
   const scan = isScanRun(run.data);
   const workflowName = scan ? "Scanner" : run.data ? targetLabel(run.data) : "Workflow";
   const workflowLink = scan
-    ? "/operations/scanner"
+    ? "/runs/scanner"
     : run.data?.preset_id
-      ? `/operations/presets/${run.data.preset_id}`
-      : "/operations";
+      ? `/runs/workflows/${run.data.preset_id}`
+      : "/runs";
 
   return (
     <div>
@@ -279,7 +279,7 @@ export const JobDetail = () => {
                 <Link to={`/tables/${data.table_id}`}>Open table</Link>
               </Button>
               <Button size="sm" variant="primary" asChild>
-                <Link to={`/tables/${data.table_id}?view=savings`}>Re-run from table</Link>
+                <Link to={`/tables/${data.table_id}?tab=maintenance`}>Re-run from table</Link>
               </Button>
             </div>
           ) : undefined
@@ -486,7 +486,7 @@ export const JobDetail = () => {
                     {
                       label: "Parent run",
                       value: (
-                        <Link to={`/operations/runs/${data.run_id}`} className="text-primary hover:underline">
+                        <Link to={`/runs/${data.run_id}`} className="text-primary hover:underline">
                           Run {shortRunId(data.run_id)}
                         </Link>
                       )

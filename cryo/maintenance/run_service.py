@@ -1,0 +1,233 @@
+"""Shared maintenance-run entry. The API route and the action gateway both call this."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+
+from cryo.api.schemas import MaintenanceRunRequest, MaintenanceRunResponse
+from cryo.api.security import Principal
+from cryo.domain.enums import JobStatus
+from cryo.intents.binding import build_and_bind_job_intent
+from cryo.observability.correlation import correlation_summary
+from cryo.planner.guardrails import sort_operations_canonically
+from cryo.queue.run_events import build_job_status, build_log_line, safe_publish
+
+
+def start_maintenance_run(
+    session: Session,
+    payload: MaintenanceRunRequest,
+    principal: Principal,
+) -> MaintenanceRunResponse:
+    # Look up helpers on the routes module so existing tests that patch
+    # routes.MaintenanceRun / _resolve_selection / build_runtime_wiring still apply.
+    from cryo.api import routes as api_routes
+
+    if session.get(api_routes.Destination, payload.destination_id) is None:
+        raise HTTPException(status_code=400, detail="Destination does not exist")
+    preset = session.get(api_routes.Preset, payload.preset_id)
+    if preset is None:
+        raise HTTPException(status_code=400, detail="Preset does not exist")
+
+    requested_ops: list[str] = []
+    if preset is not None:
+        for op in preset.operations or []:
+            if isinstance(op, str):
+                requested_ops.append(op)
+            elif isinstance(op, dict) and "type" in op:
+                requested_ops.append(str(op["type"]))
+    # Presets are stored canonically (sorted on write, plus a backfill migration), but a
+    # hand-edited row must not brick the run: build_plan sorts by CORRECT_ORDER regardless,
+    # so the executed order is canonical either way. Normalizing here keeps what we hand the
+    # planner consistent with what actually runs, rather than rejecting the request.
+    requested_ops = sort_operations_canonically(requested_ops)
+    if payload.operations is not None:
+        preset_ops = set(requested_ops)
+        if not set(payload.operations) <= preset_ops:
+            raise HTTPException(
+                status_code=400,
+                detail="operations must be a subset of the preset's operations",
+            )
+        requested_ops = sort_operations_canonically(list(payload.operations))
+
+    if payload.scheduled_at is not None:
+        now = datetime.now(UTC)
+        scheduled_at = payload.scheduled_at
+        if scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=UTC)
+        if scheduled_at <= now:
+            raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
+
+    selection = (
+        api_routes._resolve_selection(session, payload.selection)
+        if payload.selection is not None
+        else api_routes._resolve_selection(
+            session,
+            api_routes.AssignmentSelection(mode="ids", ids=payload.table_ids, filter=None),
+        )
+    )
+
+    summary = correlation_summary({"actor": principal.subject})
+    if payload.operations is not None:
+        summary["operations"] = list(requested_ops)
+
+    run = api_routes.MaintenanceRun(
+        kind="adhoc",
+        preset_id=payload.preset_id,
+        trigger=payload.trigger,
+        status="scheduled" if payload.scheduled_at is not None else "queued",
+        scheduled_at=payload.scheduled_at,
+        summary=summary,
+    )
+    session.add(run)
+    session.flush()
+
+    # Plan Verifier (arXiv:2510.09567) -- when the preset exposes a parsed MaintenancePlan via
+    # params.operations (Planner-emitted), run the verifier once per table before enqueue and
+    # persist the verdict onto the job. If the verifier reports a critical violation, refuse
+    # to enqueue.
+    settings = api_routes.get_settings()
+    verifier_enabled = settings.plan_verifier_enabled
+    # Computed once for the whole run, not per-table -- avoids an N+1 query pattern and matches
+    # how the scheduler's cron path (_apply_routing) resolves routing for a run as a batch.
+    adaptive_destinations = api_routes._adaptive_routing_destinations_for_run(
+        session, preset, selection.table_ids
+    )
+    jobs: list[api_routes.MaintenanceJob] = []
+    for table_id in selection.table_ids:
+        if preset is not None and requested_ops:
+            for op_name in requested_ops:
+                from cryo.domain.enums import OperationType
+                from cryo.security.abac_enforcement import evaluate_maintenance_allowed
+
+                try:
+                    op_enum = OperationType(op_name)
+                except ValueError:
+                    op_enum = op_name  # type: ignore[assignment]
+                allowed, reason = evaluate_maintenance_allowed(
+                    session, table_id, principal, op_enum
+                )
+                if not allowed:
+                    raise HTTPException(status_code=403, detail=reason)
+        plan_for_verifier = (
+            None
+            if settings.durable_intents_enabled
+            else api_routes._build_plan_for_table(session, table_id, preset, payload.mode)
+        )
+        verified_flag = True
+        plan_hash_value: str | None = None
+        verifier_version_value: str | None = None
+        violations_value: list[dict[str, object]] = []
+        if verifier_enabled and plan_for_verifier is not None:
+            from cryo.planner.verifier import PlanVerifier
+
+            verdict = PlanVerifier(session=session, settings=api_routes.get_settings()).verify(
+                plan_for_verifier
+            )
+            verified_flag = verdict.verified
+            plan_hash_value = verdict.plan_hash
+            verifier_version_value = verdict.verifier_version
+            violations_value = [
+                {
+                    "invariant": v.invariant,
+                    "severity": v.severity,
+                    "message": v.message,
+                    "location": v.location,
+                }
+                for v in verdict.violations
+            ]
+            if not verdict.verified:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "plan_verifier_rejected",
+                        "plan_hash": verdict.plan_hash,
+                        "violations": violations_value,
+                    },
+                )
+        routed_destination_id = adaptive_destinations.get(str(table_id))
+        job = api_routes.MaintenanceJob(
+            run_id=run.id,
+            table_id=table_id,
+            destination_id=(
+                uuid.UUID(routed_destination_id)
+                if routed_destination_id is not None
+                else payload.destination_id
+            ),
+            mode=payload.mode.value,
+            status="queued",
+            verified=verified_flag,
+            plan_hash=plan_hash_value,
+            verifier_version=verifier_version_value,
+            verifier_violations=violations_value or None,
+        )
+        session.add(job)
+        session.flush()
+        if settings.durable_intents_enabled:
+            build_and_bind_job_intent(
+                session,
+                job_id=str(job.id),
+                settings=settings,
+                actor_type="api",
+                actor_id=principal.subject,
+            )
+        jobs.append(job)
+    session.commit()
+    wiring = api_routes.build_runtime_wiring()
+    if payload.scheduled_at is not None:
+        # Scheduled runs are not enqueued now -- the jobs exist (status="queued" at the row
+        # level, same as any other job) but wiring.queue.enqueue() is what actually makes a
+        # job eligible for Governor admission, and that call is deliberately skipped here.
+        # cryo/scheduler/service.py's dispatch tick enqueues these once scheduled_at passes.
+        safe_publish(
+            wiring.run_events,
+            run.id,
+            build_log_line(
+                run_id=run.id,
+                message=(
+                    f"Scheduled maintenance run with {len(jobs)} job(s) for "
+                    f"{payload.scheduled_at.isoformat()}"
+                ),
+            ),
+        )
+        return MaintenanceRunResponse(
+            run_id=run.id, job_ids=[job.id for job in jobs], status=run.status
+        )
+    safe_publish(
+        wiring.run_events,
+        run.id,
+        build_log_line(
+            run_id=run.id,
+            message=f"Submitted maintenance run with {len(jobs)} job(s)",
+        ),
+    )
+    for job in jobs:
+        session.refresh(job)
+        wiring.queue.enqueue(str(job.id), str(job.destination_id))
+        safe_publish(
+            wiring.run_events,
+            run.id,
+            build_job_status(
+                run_id=run.id,
+                job_id=job.id,
+                status=JobStatus.QUEUED.value,
+                table_id=job.table_id,
+                message="Job queued",
+            ),
+        )
+        safe_publish(
+            wiring.run_events,
+            run.id,
+            build_log_line(
+                run_id=run.id,
+                job_id=job.id,
+                table_id=job.table_id,
+                message=f"Queued maintenance job for table {job.table_id}",
+            ),
+        )
+    return MaintenanceRunResponse(
+        run_id=run.id, job_ids=[job.id for job in jobs], status=run.status
+    )

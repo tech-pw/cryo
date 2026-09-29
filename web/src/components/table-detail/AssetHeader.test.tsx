@@ -2,6 +2,10 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AssetHeader } from "./AssetHeader";
 
+vi.mock("../../lib/auth", () => ({
+  useAuth: () => ({ subject: "tester", api: { token: "t" }, token: "t" })
+}));
+
 vi.mock("../../lib/useWriteControl", () => ({
   useWriteControl: () => ({ allowed: false, reason: "viewer" })
 }));

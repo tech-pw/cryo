@@ -30,7 +30,7 @@
   --primitive-danger: #b23a2e;
 
   --primitive-grade-a: #1e8e5a;
-  --primitive-grade-b: #277abe;
+  --primitive-grade-b: #4d7c0f;
   --primitive-grade-c: #a9791e;
   --primitive-grade-d: #c1631b;
   --primitive-grade-f: #b23a2e;
@@ -67,7 +67,7 @@
   --primitive-danger: #f0665a;
 
   --primitive-grade-a: #3fbe85;
-  --primitive-grade-b: #68c1ea;
+  --primitive-grade-b: #8cc152;
   --primitive-grade-c: #e0b03d;
   --primitive-grade-d: #f0904f;
   --primitive-grade-f: #f0665a;
@@ -231,6 +231,8 @@
   --motion-base: 180ms;
   --motion-medium: 220ms;
   --motion-slow: 280ms;
+  --motion-layout: 360ms;
+  --motion-highlight: 800ms;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in: cubic-bezier(0.7, 0, 0.84, 0);

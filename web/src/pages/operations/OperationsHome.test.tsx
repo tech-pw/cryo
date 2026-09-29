@@ -114,13 +114,13 @@ describe("OperationsHome", () => {
     expect(row).toBeTruthy();
     const nightlyRow = within(row as HTMLElement);
 
-    expect(nightlyLink).toHaveAttribute("href", "/operations/runs/bbbbbbbb-0000-0000-0000-000000000002");
+    expect(nightlyLink).toHaveAttribute("href", "/runs/bbbbbbbb-0000-0000-0000-000000000002");
     expect(nightlyRow.getByText("Nightly (CronJob)")).toBeInTheDocument();
     expect(nightlyRow.getByText("partial")).toBeInTheDocument();
     expect(nightlyRow.getByRole("list", { name: /last 2 runs/i })).toBeInTheDocument();
     expect(nightlyRow.getByRole("link", { name: "Open" })).toHaveAttribute(
       "href",
-      "/operations/runs/bbbbbbbb-0000-0000-0000-000000000002"
+      "/runs/bbbbbbbb-0000-0000-0000-000000000002"
     );
     expect(screen.getByText("Maintenance is driven by the nightly batch.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /new preset/i })).not.toBeInTheDocument();
@@ -142,7 +142,7 @@ describe("OperationsHome", () => {
     fireEvent.click(failedQuickLink);
 
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "All runs", selected: true })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "History", selected: true })).toBeInTheDocument();
     });
     // The "Failed" filter button within the runs tab should now be the active one.
     const failedFilterButton = screen.getByRole("button", { name: "Failed" });
@@ -159,7 +159,7 @@ describe("OperationsHome", () => {
     renderPage(["/operations?tab=runs&runFilter=failed"]);
 
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "All runs", selected: true })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "History", selected: true })).toBeInTheDocument();
     });
     const failedFilterButton = screen.getByRole("button", { name: "Failed" });
     expect(failedFilterButton.className).toMatch(/bg-primary/);

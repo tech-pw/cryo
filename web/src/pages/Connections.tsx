@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { Alert } from "../components/ui/alert";
 import { PageHeader } from "../components/ui/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
@@ -28,16 +28,24 @@ const CONNECTIONS_TAB_KEYS = [
 type ConnectionsTabKey = (typeof CONNECTIONS_TAB_KEYS)[number];
 const DEFAULT_CONNECTIONS_TAB: ConnectionsTabKey = "sources";
 
+const aliasConnectionsTab = (value: string | null): string | null => {
+  if (value === "lakehouses") return "sources";
+  if (value === "engines") return "destinations";
+  return value;
+};
+
 const isConnectionsTabKey = (value: string | null, isAdmin: boolean): value is ConnectionsTabKey =>
   value !== null &&
   (CONNECTIONS_TAB_KEYS as readonly string[]).includes(value) &&
   (value !== "ops" || isAdmin);
 
-const ConnectionsTabs = () => {
+const ConnectionsTabs = ({ forcedTab }: { forcedTab?: ConnectionsTabKey }) => {
   const { role, testResult, setTestResult } = useConnectionsContext();
+  const { pathname } = useLocation();
   const isAdmin = role === "admin";
+  const onSettings = pathname.startsWith("/settings");
   const [searchParams, setSearchParams] = useSearchParams();
-  const urlTab = searchParams.get("tab");
+  const urlTab = forcedTab ?? aliasConnectionsTab(searchParams.get("tab"));
   const tabFromUrl: ConnectionsTabKey = isConnectionsTabKey(urlTab, isAdmin) ? urlTab : DEFAULT_CONNECTIONS_TAB;
   const [activeTab, setActiveTab] = useState<ConnectionsTabKey>(tabFromUrl);
 
@@ -51,14 +59,21 @@ const ConnectionsTabs = () => {
       if (!isConnectionsTabKey(key, isAdmin)) return;
       setActiveTab(key);
       const next = new URLSearchParams(searchParams);
-      if (key === DEFAULT_CONNECTIONS_TAB) {
+      const written = onSettings
+        ? key === "sources"
+          ? "lakehouses"
+          : key === "destinations"
+            ? "engines"
+            : key
+        : key;
+      if ((!onSettings && written === DEFAULT_CONNECTIONS_TAB) || (onSettings && written === "lakehouses")) {
         next.delete("tab");
       } else {
-        next.set("tab", key);
+        next.set("tab", written);
       }
       setSearchParams(next, { replace: true });
     },
-    [isAdmin, searchParams, setSearchParams]
+    [isAdmin, onSettings, searchParams, setSearchParams]
   );
 
   return (
@@ -96,28 +111,38 @@ const ConnectionsTabs = () => {
   );
 };
 
-const ConnectionsBody = () => (
+const ConnectionsBody = ({ forcedTab }: { forcedTab?: ConnectionsTabKey }) => (
   <>
-    <ConnectionsTabs />
+    <ConnectionsTabs forcedTab={forcedTab} />
     <CatalogLatencyModal />
     <ConnectionDrawers />
   </>
 );
 
-export const Connections = () => (
+export const Connections = ({
+  embedded = false,
+  forcedTab
+}: {
+  embedded?: boolean;
+  forcedTab?: ConnectionsTabKey;
+}) => (
   <div>
-    <PageHeader
-      title="Connections"
-      subtitle="Lakehouses are where your Iceberg data lives. Engines are what actually runs maintenance on it."
-    />
-    <Alert
-      className="page-alert"
-      variant="info"
-      title="Recommended setup flow: Connect lakehouse -> Test connection -> Run first scan -> Add engine -> Assign preset."
-    />
+    {embedded ? null : (
+      <>
+        <PageHeader
+          title="Connections"
+          subtitle="Lakehouses are where your Iceberg data lives. Engines are what actually runs maintenance on it."
+        />
+        <Alert
+          className="page-alert"
+          variant="info"
+          title="Recommended setup flow: Connect lakehouse -> Test connection -> Run first scan -> Add engine -> Assign preset."
+        />
+      </>
+    )}
     <ConnectionsProvider>
-      <ConnectionsKpiRow />
-      <ConnectionsBody />
+      {embedded ? null : <ConnectionsKpiRow />}
+      <ConnectionsBody forcedTab={forcedTab} />
     </ConnectionsProvider>
   </div>
 );

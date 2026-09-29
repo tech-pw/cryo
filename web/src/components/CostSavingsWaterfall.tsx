@@ -66,12 +66,16 @@ export const CostSavingsWaterfall = ({
       const byOp = new Map(byOperation.map((item) => [item.operation, item.savings_usd_month]));
       return buildWaterfallRows(currentCostUsd, byOp);
     }
-    const byOp = new Map(byOperation.map((item) => [item.operation, bytesToGb(item.reclaimable_bytes)]));
+    const byOp = new Map(
+      byOperation
+        .filter((item) => item.reclaimable_bytes != null)
+        .map((item) => [item.operation, bytesToGb(item.reclaimable_bytes)])
+    );
     return buildWaterfallRows(bytesToGb(currentStorageBytes), byOp);
   }, [measure, byOperation, currentCostUsd, currentStorageBytes]);
 
   const hasSavings = byOperation.some(
-    (item) => item.savings_usd_month > 0 || item.reclaimable_bytes > 0
+    (item) => item.savings_usd_month > 0 || (item.reclaimable_bytes ?? 0) > 0
   );
 
   return (

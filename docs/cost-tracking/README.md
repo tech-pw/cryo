@@ -84,6 +84,15 @@ Run `compare_mom.py <namespace>` (no dependencies beyond the standard library). 
 
 ## What "success" looks like
 
+Interpret `split_line_item_unused_cost` as **unused parent-instance capacity allocated to
+pods**, not a direct measurement of each pod's requests minus its usage. AWS uses the maximum
+of reserved and actual usage for split allocation. A lower namespace allocation does not
+establish lower EC2 spend; check parent-node consolidation and useful work as well.
+[AWS definitions](https://docs.aws.amazon.com/cur/latest/userguide/split-line-item-columns.html).
+Record billing completeness separately from the daily values: the September 29 refresh has
+24 hourly buckets through September 27, but only 22 on September 28. The comparison script
+does not filter partial days automatically, so its output needs that caveat.
+
 - Trino (`trino-db`): month-over-month average daily cost trending down, confirmed by
   `compare_mom.py` reaching >=7 days of current-month data with a significant result.
 - Cryo (`cryo`): NOT necessarily trending down in absolute terms right now — real

@@ -31,6 +31,17 @@ from cryo.scanner.signals import detect_format_version, enrich_stats_signals
 
 logger = logging.getLogger(__name__)
 
+FILE_SIZE_BIN_COUNT = 40
+
+
+def record_file_size_bin(bins: list[int], size_bytes: int) -> None:
+    if size_bytes <= 0:
+        bins[0] += 1
+        return
+    index = min(size_bytes.bit_length() - 1, len(bins) - 1)
+    bins[index] += 1
+
+
 HEALTH_SMALL_FILE_BYTES = 8 * MB
 # Rewrite target when the table sets no write.target-file-size-bytes; matches the Go scanner.
 DEFAULT_REDUCTION_TARGET_BYTES = 256 * MB
@@ -189,6 +200,9 @@ def analyze_table(
     delete_files = delete_bytes = health_small_files = 0
     equality_delete_files = 0
     position_delete_files = 0
+    data_size_bins = [0] * FILE_SIZE_BIN_COUNT
+    delete_size_bins = [0] * FILE_SIZE_BIN_COUNT
+    unknown_file_sizes = 0
     file_formats: set[str] = set()
     schema = _call_or_attr(table_obj, "schema", default=None)
     quality_accum = ColumnQualityAccumulator(schema)
@@ -203,7 +217,14 @@ def analyze_table(
         max_workers=max_workers,
         manifest_errors=manifest_read_errors,
     ):
-        file_size = int(_attr(data_file, "file_size_in_bytes", 0) or 0)
+        raw_size = _attr(data_file, "file_size_in_bytes", None)
+        if raw_size is None:
+            unknown_file_sizes += 1
+            file_size = 0
+        else:
+            file_size = int(raw_size or 0)
+            target_bins = delete_size_bins if _delete_file_kind(data_file) else data_size_bins
+            record_file_size_bin(target_bins, file_size)
         file_format = _attr(data_file, "file_format", None)
         if file_format:
             file_formats.add(str(file_format).upper())
@@ -467,6 +488,11 @@ def analyze_table(
         raw["manifest_read_errors"] = manifest_read_errors
     if puffin_blobs:
         raw["puffin_blobs"] = puffin_blobs
+    raw["file_size_bins"] = {
+        "data": data_size_bins,
+        "delete": delete_size_bins,
+        "unknown": unknown_file_sizes,
+    }
     raw["manifest_stats"] = {
         "manifest_count": len(manifests),
         "avg_files_per_manifest": round(total_files / max(len(manifests), 1), 2),

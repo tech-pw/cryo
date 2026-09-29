@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 import httpx
 
@@ -94,8 +95,43 @@ class LLMResponse:
     provider: str
 
 
+@dataclass
+class ToolDef:
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+
+
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
+class ChatMessage:
+    role: Literal["user", "assistant", "tool"]
+    text: str | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    tool_call_id: str | None = None
+
+
+@dataclass
+class ChatResult:
+    text: str
+    tool_calls: list[ToolCall]
+    stop_reason: str
+    input_tokens: int
+    output_tokens: int
+    model: str
+    provider: str
+
+
 class LLMClient(ABC):
     """Abstract base class for LLM clients."""
+
+    supports_tools: bool = False
 
     @abstractmethod
     async def complete(
@@ -115,9 +151,35 @@ class LLMClient(ABC):
         """Return the provider name."""
         pass
 
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        system: str,
+        tools: list[ToolDef],
+        max_tokens: int,
+        on_text_delta: Callable[[str], Awaitable[None]] | None = None,
+    ) -> ChatResult:
+        """Default chat has no tool calls. Providers with tools override this."""
+        transcript = "\n".join(f"{message.role}: {message.text or ''}" for message in messages)
+        response = await self.complete(transcript, system=system, max_tokens=max_tokens)
+        if on_text_delta and response.content:
+            await on_text_delta(response.content)
+        return ChatResult(
+            text=response.content,
+            tool_calls=[],
+            stop_reason="end_turn",
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            model=response.model,
+            provider=response.provider,
+        )
+
 
 class AnthropicClient(LLMClient):
     """Anthropic Claude client."""
+
+    supports_tools = True
 
     def __init__(self, api_key: str, model: str | None = None):
         self.api_key = api_key
@@ -165,9 +227,33 @@ class AnthropicClient(LLMClient):
             provider="anthropic",
         )
 
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        system: str,
+        tools: list[ToolDef],
+        max_tokens: int,
+        on_text_delta: Callable[[str], Awaitable[None]] | None = None,
+    ) -> ChatResult:
+        from cryo.ai.llm_chat import anthropic_chat
+
+        return await anthropic_chat(
+            api_key=self.api_key,
+            model=self.model,
+            url=ANTHROPIC_API_URL,
+            messages=messages,
+            system=system,
+            tools=tools,
+            max_tokens=max_tokens,
+            on_text_delta=on_text_delta,
+        )
+
 
 class OpenAIClient(LLMClient):
     """OpenAI GPT client."""
+
+    supports_tools = True
 
     def __init__(self, api_key: str, model: str | None = None, *, api_base: str | None = None):
         self.api_key = api_key
@@ -240,6 +326,32 @@ class OpenAIClient(LLMClient):
             provider="openai",
         )
 
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        system: str,
+        tools: list[ToolDef],
+        max_tokens: int,
+        on_text_delta: Callable[[str], Awaitable[None]] | None = None,
+    ) -> ChatResult:
+        from cryo.ai.llm_chat import openai_compatible_chat
+
+        return await openai_compatible_chat(
+            url=self.api_url,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            model=self.model,
+            provider="openai",
+            messages=messages,
+            system=system,
+            tools=tools,
+            max_tokens=max_tokens,
+            on_text_delta=on_text_delta,
+        )
+
 
 class AzureOpenAIClient(LLMClient):
     """Azure OpenAI client.
@@ -249,6 +361,8 @@ class AzureOpenAIClient(LLMClient):
     - API Key via api-key header (not Bearer token)
     - Deployment name in URL path instead of model in body
     """
+
+    supports_tools = True
 
     def __init__(
         self,
@@ -260,7 +374,9 @@ class AzureOpenAIClient(LLMClient):
     ):
         self.api_key = api_key
         self.model = model or _default_models()["azure_openai"]
-        self.api_base = api_base or "https://apim-aiguru-gpt4.azure-api.net"
+        if not api_base:
+            raise ValueError("Azure OpenAI requires an administrator-configured api_base")
+        self.api_base = api_base
         self.api_version = api_version
 
     @property
@@ -342,12 +458,39 @@ class AzureOpenAIClient(LLMClient):
             provider="azure_openai",
         )
 
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        system: str,
+        tools: list[ToolDef],
+        max_tokens: int,
+        on_text_delta: Callable[[str], Awaitable[None]] | None = None,
+    ) -> ChatResult:
+        from cryo.ai.llm_chat import openai_compatible_chat
+
+        return await openai_compatible_chat(
+            url=self._build_url(),
+            headers={"api-key": self.api_key, "Content-Type": "application/json"},
+            model=self.model,
+            provider="azure_openai",
+            messages=messages,
+            system=system,
+            tools=tools,
+            max_tokens=max_tokens,
+            on_text_delta=on_text_delta,
+        )
+
 
 class MockLLMClient(LLMClient):
     """Mock client for testing (no API calls)."""
 
-    def __init__(self, model: str = "mock-model"):
+    supports_tools = True
+
+    def __init__(self, model: str = "mock-model", script: list[ChatResult] | None = None):
         self.model = model
+        self.script = list(script or [])
+        self.calls = 0
 
     @property
     def provider_name(self) -> str:
@@ -368,6 +511,32 @@ class MockLLMClient(LLMClient):
             output_tokens=50,
             provider="mock",
         )
+
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        system: str,
+        tools: list[ToolDef],
+        max_tokens: int,
+        on_text_delta: Callable[[str], Awaitable[None]] | None = None,
+    ) -> ChatResult:
+        if self.script:
+            result = self.script[min(self.calls, len(self.script) - 1)]
+            self.calls += 1
+        else:
+            result = ChatResult(
+                text="[mock]",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=1,
+                output_tokens=1,
+                model=self.model,
+                provider="mock",
+            )
+        if on_text_delta and result.text:
+            await on_text_delta(result.text)
+        return result
 
 
 def _decrypt_api_key(stored: str | None) -> str | None:

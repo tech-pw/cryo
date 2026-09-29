@@ -227,7 +227,7 @@ export const CatalogDashboard = () => {
     >
       <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricTile label="Catalogs enabled" value={enabledCatalogs} suffix={`/ ${data?.total_catalogs ?? 0}`} />
-        <MetricTile label="Tables with stats" value={displayCount(data?.total_tables)} />
+        <MetricTile metricId="catalogs_tables_with_stats" value={displayCount(data?.total_tables)} />
         <MetricTile label="Needs compaction" value={needsCompaction} emphasis={needsCompaction > 0} />
         <MetricTile
           label="Preset coverage"

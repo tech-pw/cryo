@@ -72,7 +72,7 @@ export const CatalogSearch = () => {
                 if (event.key === "Enter" && debouncedQuery.length > 0) {
                   event.preventDefault();
                   setOpen(false);
-                  navigate(`/search?q=${encodeURIComponent(debouncedQuery)}`);
+                  navigate(`/tables?q=${encodeURIComponent(debouncedQuery)}`);
                 }
                 if (event.key === "Escape") {
                   setOpen(false);
@@ -128,7 +128,7 @@ export const CatalogSearch = () => {
                 {group.total > group.items.length ? (
                   <Link
                     className="cryo-shell__search-see-all"
-                    to={`/search?q=${encodeURIComponent(debouncedQuery)}&group=${group.type}`}
+                    to={`/tables?q=${encodeURIComponent(debouncedQuery)}&kind=${group.type}`}
                     onClick={() => setOpen(false)}
                   >
                     See all {group.total} results →
@@ -141,7 +141,7 @@ export const CatalogSearch = () => {
         {hasResults ? (
           <Link
             className="cryo-shell__search-see-all"
-            to={`/search?q=${encodeURIComponent(debouncedQuery)}`}
+            to={`/tables?q=${encodeURIComponent(debouncedQuery)}`}
             onClick={() => setOpen(false)}
           >
             See all {searchQuery.data?.total ?? 0} results →

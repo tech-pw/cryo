@@ -119,12 +119,15 @@ def _coerce_llm_result(
         klass = "unknown"
     confidence = float(payload.get("confidence", 0.0) or 0.0)
     evidence = payload.get("evidence_lines")
-    if not isinstance(evidence, list):
-        evidence = evidence_lines[:6]
-    evidence_norm = [str(line) for line in evidence][:6]
-    runbook_step = str(
-        payload.get("runbook_step") or RUNBOOK_STEPS.get(klass, RUNBOOK_STEPS["unknown"])
+    source = [str(line) for line in evidence_lines]
+    source_set = set(source)
+    cited = (
+        [str(line) for line in evidence if str(line) in source_set]
+        if isinstance(evidence, list)
+        else []
     )
+    evidence_norm = (cited or source)[:6]
+    runbook_step = RUNBOOK_STEPS.get(klass, RUNBOOK_STEPS["unknown"])
     summary = str(payload.get("summary") or f"Likely {klass.replace('_', ' ')}.")
     return DiagnosisResult(
         diagnosis_class=klass,

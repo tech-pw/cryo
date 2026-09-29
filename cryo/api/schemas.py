@@ -674,6 +674,13 @@ class PaginatedTables(BaseModel):
     # current page is the last. Decoded via cryo.api.pagination.PageCursor.
     cursor: str | None = None
     has_more: bool = False
+    # Null-side rows excluded from a breach filter. None when that filter is off.
+    # Computed in the same aggregate as ``total``, not a second table scan.
+    unknown_count: int | None = None
+    telemetry_window_days: int | None = None
+    telemetry_source: str | None = None
+    telemetry_coverage: float | None = None
+    telemetry_gap_tables: int | None = None
 
 
 class TableGroupByRow(BaseModel):
@@ -771,9 +778,10 @@ class AuditLogRead(OrmModel):
     input_files_count: int | None = None
     output_files_count: int | None = None
     actor: str | None = None
-    effect_status: Literal[
-        "failed", "files_reported", "bytes_reported", "unverified"
-    ] = "unverified"
+    committed_snapshot_id: str | None = None
+    effect_status: Literal["failed", "files_reported", "bytes_reported", "unverified"] = (
+        "unverified"
+    )
 
     @model_validator(mode="after")
     def classify_effect(self) -> AuditLogRead:
@@ -1095,6 +1103,7 @@ class MaintenanceRunRequest(BaseModel):
     # run is created with status="scheduled" and its jobs are not enqueued until this time
     # passes (see cryo/scheduler/service.py's dispatch tick). Must be in the future.
     scheduled_at: datetime | None = None
+    operations: list[str] | None = None
 
 
 class MaintenanceRunResponse(BaseModel):

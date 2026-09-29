@@ -8,7 +8,7 @@ The UI should feel calm and precise: operators scan health and maintenance postu
 
 ## Color Tokens
 
-Canonical tokens live in `web/src/styles/tokens.css`. `web/src/lib/theme.ts` reads those CSS variables, with the same hex as fallback, so charts follow light and dark. Keep base UI near-neutral. Iceberg blue is for primary actions, selected nav, links, charts, and grade B. Do not repaint `--primitive-neutral-150`; the page colour is `--primitive-page`, aliased by `--color-layout-bg`. Cards use `--primitive-surface`.
+Canonical tokens live in `web/src/styles/tokens.css`. `web/src/lib/theme.ts` reads those CSS variables, with the same hex as fallback, so charts follow light and dark. Keep base UI near-neutral. Iceberg blue is for primary actions, selected nav, links, and charts. Brand blue never means a grade or cost; grade B is olive. Do not repaint `--primitive-neutral-150`; the page colour is `--primitive-page`, aliased by `--color-layout-bg`. Cards use `--primitive-surface`.
 
 ```css
 :root {
@@ -30,7 +30,7 @@ Canonical tokens live in `web/src/styles/tokens.css`. `web/src/lib/theme.ts` rea
   --sidebar-text-active: #1f5f94;
 
   --grade-a: #1e8e5a;
-  --grade-b: #277abe;
+  --grade-b: #4d7c0f;
   --grade-c: #a9791e;
   --grade-d: #c1631b;
   --grade-f: #b23a2e;
@@ -175,9 +175,13 @@ backend only inspects. Routine reversible actions should not gain unnecessary co
 
 ## Motion
 
-Use 150-250ms transitions for hover, focus, selected rows, drawer/modal entry, filter chip changes, and status updates. Motion should convey state only. Use ease-out curves, avoid layout animation, and never orchestrate page-load sequences.
+On 2026-09-28 the owner asked for purposeful motion. That narrows the page-load ban to one first-paint entrance (at most four sections, 320 ms total). Motion shows that something changed. It is not decoration.
 
-Respect reduced motion with instant transitions or simple opacity changes:
+Animate only `transform` and `opacity`. Heights expand with `grid-template-rows`. Ease-out for entrances, ease-in for exits. No bounce. Numbers never tween. A chart draws once on mount and does not replay on poll. Skeleton shimmer stops after 5 seconds, then reads "Still loading…".
+
+Tokens: `--motion-fast` 120 ms, `--motion-base` 180 ms, `--motion-medium` 220 ms, `--motion-slow` 280 ms, `--motion-layout` 360 ms, `--motion-highlight` 800 ms.
+
+Respect reduced motion: spatial movement is removed; opacity fades and necessary progress stay.
 
 ```css
 @media (prefers-reduced-motion: reduce) {

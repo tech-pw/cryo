@@ -431,6 +431,27 @@ maintenance_reconciliation_backlog = Gauge(
     "Effects currently due for reconciliation.",
 )
 
+assistant_turns_total = Counter(
+    "cryo_assistant_turns_total",
+    "Ask Cryo turns by outcome.",
+    ["outcome"],
+)
+assistant_tool_calls_total = Counter(
+    "cryo_assistant_tool_calls_total",
+    "Ask Cryo tool calls by tool and status.",
+    ["tool", "status"],
+)
+assistant_grounding_total = Counter(
+    "cryo_assistant_grounding_total",
+    "Ask Cryo numeric grounding results.",
+    ["result"],
+)
+assistant_proposals_total = Counter(
+    "cryo_assistant_proposals_total",
+    "Ask Cryo action proposals by type and status.",
+    ["action_type", "status"],
+)
+
 maintenance_reconciliation_oldest_age_seconds = Gauge(
     "cryo_maintenance_reconciliation_oldest_age_seconds",
     "Age of the oldest effect currently due for reconciliation.",

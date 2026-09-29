@@ -87,7 +87,7 @@ describe("nightlyRunView", () => {
     expect(nightlyRunView(null).succeededSelected).not.toBe("0/0");
     const view = nightlyRunView(run({ summary: { pipeline: "batch" } }));
     expect(view.succeededSelected).toBe("Unknown/Unknown");
-    expect(view.href).toBe("/operations/runs/run-1");
+    expect(view.href).toBe("/runs/run-1");
     expect(view.status).toBe("partial");
   });
 });

@@ -15,6 +15,14 @@ from sqlalchemy.sql.elements import WithinGroup
 
 from cryo.db.base import Base
 from cryo.db.models import (
+    AssistantActionProposal,
+    AssistantApiKey,
+    AssistantAuthorization,
+    AssistantConversation,
+    AssistantEvidence,
+    AssistantFeedback,
+    AssistantMessage,
+    AssistantToolCall,
     AuditLog,
     AWSCostInsightConfig,
     AWSCurLineItem,
@@ -73,6 +81,14 @@ UUID_ID_MODELS = (
     DarkTableCandidate,
     SharedS3AnomalyReport,
     PartitionAccessDaily,
+    AssistantConversation,
+    AssistantMessage,
+    AssistantToolCall,
+    AssistantEvidence,
+    AssistantActionProposal,
+    AssistantAuthorization,
+    AssistantFeedback,
+    AssistantApiKey,
 )
 _AUTOINCREMENT_ID_MODELS = (
     TablePartition,
@@ -116,9 +132,7 @@ def _register_sqlite_jsonb_array_length(
 
 
 @event.listens_for(Engine, "connect")
-def _register_sqlite_percentile_cont(
-    dbapi_connection: object, connection_record: object
-) -> None:
+def _register_sqlite_percentile_cont(dbapi_connection: object, connection_record: object) -> None:
     """Postgres's ``percentile_cont(p) WITHIN GROUP (ORDER BY col)`` (used by
     compaction_candidates._table_p95_latency) has no sqlite equivalent -- sqlite doesn't support
     WITHIN GROUP syntax at all, so this can't be a same-shape function alias like

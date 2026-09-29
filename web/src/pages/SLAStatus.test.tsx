@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { CryoTooltipProvider } from "../components/ui/tooltip";
-import { bucketForFreshness, SLAStatus } from "./SLAStatus";
+import { bucketForFreshness, SLAStatus, SlaHeadroom } from "./SLAStatus";
 import type { SLAResponse } from "../api/client";
 
 vi.mock("../lib/auth", () => ({
@@ -55,6 +55,55 @@ const row = (overrides: Partial<SLAResponse["slas"][number]>): SLAResponse["slas
   p95_latency_breached: false,
   has_preset: true,
   ...overrides
+});
+
+describe("SlaHeadroom", () => {
+  it("shows actual versus threshold and does not paint a full green bar", () => {
+    const { rerender } = render(
+      <SlaHeadroom
+        label="Data freshness"
+        actual={1}
+        threshold={24}
+        breached={false}
+        formatValue={(value) => `${value}h`}
+      />
+    );
+    const row = screen.getByLabelText("Data freshness");
+    expect(row).toHaveTextContent("1h / 24h");
+    expect(row).not.toHaveTextContent("Unknown");
+    const bar = row.querySelector("[data-headroom-bar]");
+    expect(bar).toHaveStyle({ width: "4%" });
+    expect(bar).toHaveAttribute("data-breached", "false");
+
+    rerender(
+      <SlaHeadroom
+        label="Data freshness"
+        actual={null}
+        threshold={24}
+        breached={false}
+        formatValue={(value) => `${value}h`}
+      />
+    );
+    expect(screen.getByLabelText("Data freshness")).toHaveTextContent("Unknown");
+    expect(screen.getByLabelText("Data freshness").querySelector("[data-headroom-bar]")).toBeNull();
+    expect(screen.getByLabelText("Data freshness").innerHTML).not.toContain("width: 100%");
+  });
+
+  it("marks a breach instead of painting the bar green", () => {
+    render(
+      <SlaHeadroom
+        label="Maintenance"
+        actual={40}
+        threshold={7}
+        breached
+        formatValue={(value) => `${value}d`}
+      />
+    );
+    const row = screen.getByLabelText("Maintenance");
+    expect(row).toHaveTextContent("40d / 7d");
+    expect(row.querySelector("[data-headroom-bar]")).toHaveAttribute("data-breached", "true");
+    expect(row.querySelector("[data-headroom-bar]")).toHaveStyle({ width: "100%" });
+  });
 });
 
 describe("bucketForFreshness", () => {
@@ -312,6 +361,34 @@ describe("SLAStatus page", () => {
     await waitFor(() => {
       expect(screen.getByText(/3 table\(s\) now breach SLA thresholds, up from 1/i)).toBeInTheDocument();
     });
+  });
+
+  it("shows Unknown instead of a full green bar when an SLA side is missing", async () => {
+    vi.mocked(getSlaStatusDashboard).mockResolvedValue({
+      slas: [
+        row({
+          table_id: "t-1",
+          table_name: "lms.unmeasured",
+          freshness_hours: null,
+          freshness_sla_hours: 24,
+          maintenance_days: null,
+          maintenance_sla_days: null
+        })
+      ],
+      total_breached: 0,
+      total_monitored: 1
+    } satisfies SLAResponse);
+    renderPage();
+
+    expect(await screen.findByText("lms.unmeasured")).toBeInTheDocument();
+    const freshness = screen.getByLabelText("Data freshness");
+    const maintenance = screen.getByLabelText("Maintenance");
+    expect(freshness).toHaveTextContent("Unknown");
+    expect(maintenance).toHaveTextContent("Unknown");
+    expect(freshness.querySelector("[data-headroom-bar]")).toBeNull();
+    expect(maintenance.querySelector("[data-headroom-bar]")).toBeNull();
+    expect(freshness.innerHTML).not.toContain("width: 100%");
+    expect(screen.getByLabelText("P95 latency")).toHaveTextContent("100ms / 5.0s");
   });
 
   it("announces the filtered result count after a brief pause rather than on every refresh", async () => {

@@ -44,7 +44,7 @@ describe("NotFound page", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
-    expect(navigateMock).toHaveBeenCalledWith("/search?q=orders");
+    expect(navigateMock).toHaveBeenCalledWith("/tables?q=orders");
   });
 
   it("navigates to the bare search page when submitted with an empty query", () => {
@@ -52,6 +52,6 @@ describe("NotFound page", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
-    expect(navigateMock).toHaveBeenCalledWith("/search");
+    expect(navigateMock).toHaveBeenCalledWith("/tables");
   });
 });

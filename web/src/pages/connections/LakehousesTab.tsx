@@ -139,7 +139,7 @@ export const LakehousesTab = () => {
         loading={sources.isLoading}
         getRowId={(row) => row.id ?? `source-${row.type}-${row.name}`}
         emptyTitle="No lakehouses connected"
-        emptyDescription="Connect a catalog to start scanning Iceberg tables."
+        emptyDescription="Connect a catalog. Cryo will scan it and show table health here."
       />
     </div>
   );

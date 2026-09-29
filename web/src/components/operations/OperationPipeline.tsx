@@ -74,37 +74,24 @@ export const maintenanceOpsToSteps = (
   });
 };
 
-const scanStep = (key: string, label: string, status: PipelineStepStatus): PipelineStep => ({
-  key,
-  label,
-  status,
-  ...(status === "pending" ? { statusText: "queued" } : {})
-});
+const SCAN_STEPS = [
+  { key: "queue", label: "Queue" },
+  { key: "discover", label: "Discover tables" },
+  { key: "scan", label: "Scan shards" },
+  { key: "finalize", label: "Finalize" }
+] as const;
+
+const FINISHED_SCAN_STATUSES = new Set(["succeeded", "failed", "cancelled", "partial", "partial_failed"]);
 
 export const scanPipelineSteps = (status?: string | null): PipelineStep[] => {
   const runStatus = (status ?? "").toLowerCase();
-  const phase = (phaseStatus: PipelineStepStatus): PipelineStepStatus => {
-    if (runStatus === "failed") return phaseStatus === "running" ? "failed" : phaseStatus;
-    return phaseStatus;
-  };
-  const done = ["succeeded", "failed", "cancelled"].includes(runStatus);
-  const queueStatus: PipelineStepStatus =
-    done || runStatus === "running" ? "succeeded" : runStatus === "queued" || runStatus === "accepted" ? "running" : "pending";
-  const discoverStatus: PipelineStepStatus = done ? "succeeded" : runStatus === "running" ? "running" : "pending";
-  const scanStatus = phase(done ? "succeeded" : runStatus === "running" ? "running" : "pending");
-  const finalizeStatus: PipelineStepStatus = done
-    ? runStatus === "succeeded"
-      ? "succeeded"
-      : runStatus === "failed"
-        ? "failed"
-        : "skipped"
-    : "pending";
-  return [
-    scanStep("queue", "Queue", queueStatus),
-    scanStep("discover", "Discover tables", discoverStatus),
-    scanStep("scan", "Scan shards", scanStatus),
-    scanStep("finalize", "Finalize", finalizeStatus)
-  ];
+  const statusText = !runStatus || FINISHED_SCAN_STATUSES.has(runStatus) ? "Not recorded" : "Waiting";
+  return SCAN_STEPS.map((step) => ({
+    key: step.key,
+    label: step.label,
+    status: "pending",
+    statusText
+  }));
 };
 
 const StepStatus = ({ step }: { step: PipelineStep }) => {

@@ -28,8 +28,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/ca
 import { DataTable } from "../../components/ui/data-table";
 import { Input } from "../../components/ui/input";
 import { MetricGrid, MetricTile } from "../../components/ui/metric-grid";
+import { RunLanes } from "../../components/charts";
 import { StatusTag, RunKindTag } from "../../components/status";
 import { useRunLiveEvents, isTerminalRunStatus } from "../../hooks/useRunLiveEvents";
+import { useShellOptional } from "../../components/shell/ShellContext";
 import { useAuth } from "../../lib/auth";
 import { SCAN_ONLY_REASON, VIEWER_REASON } from "../../lib/permissions";
 import { useWriteControl } from "../../lib/useWriteControl";
@@ -285,6 +287,7 @@ export const RunDetail = () => {
   const queryClient = useQueryClient();
   const { api, token, role } = useAuth();
   const cancelAccess = useWriteControl("cancelRun");
+  const shell = useShellOptional();
   const [logJob, setLogJob] = useState<JobRead | null>(null);
   const [tableQuery, setTableQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
@@ -378,7 +381,7 @@ export const RunDetail = () => {
   }, [runFinished]);
   const duration = formatDuration(runDurationMs(runData));
   const workflowName = scan ? "Scanner" : targetLabel(runData ?? { id: "", kind: "", status: "", created_at: "" });
-  const workflowLink = scan ? "/operations/scanner" : runData?.preset_id ? `/operations/presets/${runData.preset_id}` : "/operations";
+  const workflowLink = scan ? "/runs/scanner" : runData?.preset_id ? `/runs/workflows/${runData.preset_id}` : "/runs";
 
   const pipelineSteps = useMemo(() => {
     if (scan) return scanPipelineSteps(runData?.status);
@@ -549,12 +552,12 @@ export const RunDetail = () => {
             ) : null}
           </div>
         }
-        rootCrumb={{ label: "Operations", to: "/operations" }}
+        rootCrumb={{ label: "Runs", to: "/runs" }}
         breadcrumbs={
           <nav aria-label="Breadcrumb" style={{ marginBottom: 12 }}>
             <ol className="flex list-none flex-wrap gap-2 p-0 m-0">
               <li>
-                <Link to="/operations">Operations</Link>
+                <Link to="/runs">Runs</Link>
               </li>
               <li aria-hidden>›</li>
               <li>
@@ -567,6 +570,17 @@ export const RunDetail = () => {
         }
         actions={
           <div className="flex items-center gap-2">
+            {runData?.status === "failed" || runData?.status === "partial_failed" ? (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (!runId) return;
+                  shell?.openAssistant("What failed in this run?", { run_id: runId });
+                }}
+              >
+                Ask a follow-up
+              </Button>
+            ) : null}
             {runData?.status === "failed" ? (
               <Button variant="secondary" loading={diagnose.isPending} onClick={() => diagnose.mutate()}>
                 Diagnose
@@ -609,7 +623,7 @@ export const RunDetail = () => {
             {cancelAccess.reason === SCAN_ONLY_REASON ? (
               <span className="text-xs text-muted-foreground">{SCAN_ONLY_REASON}</span>
             ) : null}
-            <Button variant="secondary" onClick={() => navigate("/operations?tab=runs")}>
+            <Button variant="secondary" onClick={() => navigate("/runs?tab=history")}>
               All runs
             </Button>
           </div>
@@ -711,6 +725,16 @@ export const RunDetail = () => {
                   className="h-8 max-w-xs"
                 />
               </div>
+              <RunLanes
+                jobs={pageJobs.map((job) => ({
+                  id: job.id,
+                  table: tableRef(job),
+                  engine: job.destination_engine || job.destination_name || "Unknown",
+                  status: job.status,
+                  startedAt: job.started_at ?? null,
+                  finishedAt: job.finished_at ?? null
+                }))}
+              />
               <DataTable
                 columns={jobColumns}
                 data={pageJobs}
