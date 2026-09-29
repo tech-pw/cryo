@@ -430,13 +430,8 @@ web:
   image:
     repository: registry.example.com/cryo
     tag: web-latest
-    # Built + pushed 2026-08-19 from gitlab-main commit 294657a -- adds the Partition Access
-    # scatter chart (Table Detail -> Structure, docs/PARTITION_ACCESS_VISUALIZATION_PLAN_2026-08.md)
-    # and the Iceberg Maintenance Intelligence RFC's UI (Health page "Recently discovered"
-    # card, Table Detail Overview fast-path banner, partition-evolution scan-ratio/trigger
-    # copy -- docs/ICEBERG_MAINTENANCE_INTELLIGENCE_RFC.md). Still a manual build+push --
-    # deploy/deploy.sh does not build this image, only the backend's.
-    digest: "sha256:97d30d985afd977e799a5d04c7c963b52dcb262e03c2402c4ad25c219f0a3304"
+    # Built + pushed 2026-09-29 from gitlab-main. deploy/deploy.sh does not build this image.
+    digest: "sha256:c5242efe762df4f901e6666daf23e2d783fa8fc9b51ab819270ed78e77b79374"
   # Lowered 128Mi (the base chart's values.yaml default, unset here before now) -> 64Mi
   # 2026-08-16: confirmed live, both cryo-web pods (a static nginx serve, not a Python
   # process) steady at 7-24Mi actual usage, 0 restarts ever. Overridden here rather than
