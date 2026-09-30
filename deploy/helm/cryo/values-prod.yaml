@@ -94,7 +94,7 @@ image:
   #    boundary, checked independently. Shipped OFF in this digest; turned ON 2026-08-10 via
   #    global.env.CRYO_PROPERTY_AUTOPILOT_ENABLED below, by request -- see that env var's own
   #    comment for the rollback note.
-  digest: "sha256:f0c2f2cf4ddcb91652018348d226f5b5e5a5629d530e9eb2c317d30034dcf83e"
+  digest: "sha256:e251f0e05fcced4c7da9c8c58baac38ac04de9b41c15e46a553678b70e9c3ab3"
 
 imagePullSecrets:
   - cryo-registry
@@ -103,7 +103,7 @@ migration:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:f0c2f2cf4ddcb91652018348d226f5b5e5a5629d530e9eb2c317d30034dcf83e"
+    digest: "sha256:e251f0e05fcced4c7da9c8c58baac38ac04de9b41c15e46a553678b70e9c3ab3"
 
 global:
   envFromSecret: cryo-secrets
@@ -198,7 +198,7 @@ native:
   image:
     repository: registry.example.com/cryo
     tag: latest
-    digest: "sha256:f0c2f2cf4ddcb91652018348d226f5b5e5a5629d530e9eb2c317d30034dcf83e"
+    digest: "sha256:e251f0e05fcced4c7da9c8c58baac38ac04de9b41c15e46a553678b70e9c3ab3"
   keda:
     enabled: true
     # Temporary 2026-09-29 mitigation: all 433 active jobs were batch-coordinator owned,
@@ -432,7 +432,7 @@ web:
     repository: registry.example.com/cryo
     tag: web-latest
     # Built + pushed 2026-09-30 from gitlab-main 1cadcf0. deploy/deploy.sh does not build this image.
-    digest: "sha256:67959a385225727e4483923c576a011db7da7a6bbcaf68b023e873b2c9987a44"
+    digest: "sha256:40ec780e55fbd5fedf6f7d08c1ccf30ed27fdbbe02e8e082221281110a1b5674"
   # Lowered 128Mi (the base chart's values.yaml default, unset here before now) -> 64Mi
   # 2026-08-16: confirmed live, both cryo-web pods (a static nginx serve, not a Python
   # process) steady at 7-24Mi actual usage, 0 restarts ever. Overridden here rather than
