@@ -16,6 +16,39 @@ _QUALIFIED = re.compile(r"\b([A-Za-z_][\w]*)\.([A-Za-z_][\w]*)\b")
 _TABLE_PHRASE = re.compile(r"\btable\s+([A-Za-z_][\w]*)\b", re.IGNORECASE)
 
 
+def _heading_name(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    name = value.strip()
+    if not re.fullmatch(r"[A-Za-z_][\w]*", name):
+        return None
+    if "_" not in name and not any(char.isdigit() for char in name):
+        return None
+    return name
+
+
+def screen_block(resolved: dict[str, Any], page: dict[str, Any] | None = None) -> str:
+    """Tell the model which table or run is on screen. Do not ask the operator again."""
+    page = page or {}
+    lines = ["The operator is looking at this screen. Use it. Do not ask which table if one is named here."]
+    entities = resolved.get("entities") or []
+    if entities:
+        entity = entities[0]
+        lines.append(
+            "Current table: "
+            f"{entity.get('qualified_name')} (table_id {entity.get('table_id')}). "
+            "When they say this table, that is the table."
+        )
+    for key, label in (("run_id", "Current run"), ("job_id", "Current job"), ("route", "Route")):
+        value = page.get(key)
+        if isinstance(value, str) and value:
+            lines.append(f"{label}: {value}")
+    heading = page.get("page_heading")
+    if isinstance(heading, str) and heading:
+        lines.append(f"Page heading: {heading}")
+    return "\n".join(lines)
+
+
 def _as_uuid(value: Any) -> uuid.UUID | None:
     if isinstance(value, uuid.UUID):
         return value
@@ -107,6 +140,12 @@ def resolve(
                 principal.tenant_id is None or table.tenant_id == principal.tenant_id
             ):
                 entities.append(candidate(table))
+        if not entities:
+            heading = _heading_name(page.get("page_heading"))
+            if heading:
+                matches = _lookup(session, principal, None, heading)
+                if len(matches) == 1:
+                    entities.append(candidate(matches[0]))
     return {
         "entities": entities,
         "window": window,

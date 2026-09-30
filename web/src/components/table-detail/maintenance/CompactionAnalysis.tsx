@@ -1,4 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import type { ColumnDef } from "@tanstack/react-table";
+import { DataTable } from "../../ui/data-table";
+import "./maintenance-details.css";
 import { toast } from "sonner";
 import {
   getAutoCompCandidates,
@@ -13,7 +17,7 @@ import { QueryErrorAlert } from "../../common";
 import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
 import { useAuth } from "../../../lib/auth";
-import { formatGb, formatTime } from "../../../lib/format";
+import { formatCurrency, formatGb, formatTime } from "../../../lib/format";
 import { useWriteControl } from "../../../lib/useWriteControl";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
 
@@ -51,71 +55,37 @@ const numberText = (value: number | null | undefined): string => {
   return String(value);
 };
 
-const StoredRows = ({ items }: { items: AutoCompCandidateItem[] }) => {
-  if (items.length === 0) return <p className="text-sm text-muted-foreground">No scored partitions recorded.</p>;
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr className="text-xs text-muted-foreground">
-            <th className="py-1 pr-3 font-medium">Partition</th>
-            <th className="py-1 pr-3 font-medium">Benefit score</th>
-            <th className="py-1 pr-3 font-medium">MOOP score</th>
-            <th className="py-1 pr-3 font-medium">Small files</th>
-            <th className="py-1 pr-3 font-medium">Size</th>
-            <th className="py-1 font-medium">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((row) => (
-            <tr key={`${row.partition_value}-${row.benefit_score}`} className="border-t border-border">
-              <td className="py-1 pr-3">{row.partition_value || "not reported"}</td>
-              <td className="py-1 pr-3">{numberText(row.benefit_score)}</td>
-              <td className="py-1 pr-3">{numberText(row.moop_score)}</td>
-              <td className="py-1 pr-3">{numberText(row.small_files)}</td>
-              <td className="py-1 pr-3">{sizeText(row.size_gb)}</td>
-              <td className="py-1">{row.eligible ? "Eligible" : row.skip_reason || "skipped"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
+export const STORED_ROWS_PREVIEW = 10;
 
-const HorizonRows = ({ items }: { items: CompactionCandidateRead[] }) => {
-  if (items.length === 0) return <p className="text-sm text-muted-foreground">No horizon candidates recorded.</p>;
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr className="text-xs text-muted-foreground">
-            <th className="py-1 pr-3 font-medium">Partition</th>
-            <th className="py-1 pr-3 font-medium">Score</th>
-            <th className="py-1 pr-3 font-medium">Priority</th>
-            <th className="py-1 pr-3 font-medium">Small files</th>
-            <th className="py-1 pr-3 font-medium">Size</th>
-            <th className="py-1 font-medium">Savings</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((row) => (
-            <tr key={row.partition_path} className="border-t border-border">
-              <td className="py-1 pr-3">{row.partition_path || "not reported"}</td>
-              <td className="py-1 pr-3">{numberText(row.score)}</td>
-              <td className="py-1 pr-3">{row.priority || "not reported"}</td>
-              <td className="py-1 pr-3">{numberText(row.small_files)}</td>
-              <td className="py-1 pr-3">{sizeText(row.partition_size_gb)}</td>
-              <td className="py-1">
-                {row.savings_estimate_usd == null ? "not reported" : `$${row.savings_estimate_usd.toFixed(0)}`}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+const storedColumns: ColumnDef<AutoCompCandidateItem, unknown>[] = [
+  { accessorKey: "partition_value", header: "Partition", cell: ({ row }) => <span className="td-compaction-partition" title={row.original.partition_value}>{row.original.partition_value || "not reported"}</span> },
+  { accessorKey: "benefit_score", header: "Benefit score", cell: ({ row }) => numberText(row.original.benefit_score) },
+  { accessorKey: "moop_score", header: "MOOP score", cell: ({ row }) => numberText(row.original.moop_score) },
+  { accessorKey: "small_files", header: "Small files", cell: ({ row }) => numberText(row.original.small_files) },
+  { accessorKey: "size_gb", header: "Size", cell: ({ row }) => sizeText(row.original.size_gb) },
+  { accessorKey: "eligible", header: "Selection status", cell: ({ row }) => <Badge variant={row.original.eligible ? "success" : "secondary"}>{row.original.eligible ? "Eligible" : row.original.skip_reason || "Skipped"}</Badge> }
+];
+const horizonColumns: ColumnDef<CompactionCandidateRead, unknown>[] = [
+  { accessorKey: "partition_path", header: "Partition", cell: ({ row }) => <span className="td-compaction-partition" title={row.original.partition_path}>{row.original.partition_path || "not reported"}</span> },
+  { accessorKey: "score", header: "Score", cell: ({ row }) => numberText(row.original.score) },
+  { accessorKey: "priority", header: "Priority", cell: ({ row }) => row.original.priority || "not reported" },
+  { accessorKey: "small_files", header: "Small files", cell: ({ row }) => numberText(row.original.small_files) },
+  { accessorKey: "partition_size_gb", header: "Size", cell: ({ row }) => sizeText(row.original.partition_size_gb) },
+  { accessorKey: "savings_estimate_usd", header: "Modelled savings", cell: ({ row }) => row.original.savings_estimate_usd == null ? "not reported" : formatCurrency(row.original.savings_estimate_usd) }
+];
+const StoredRows = ({ items }: { items: AutoCompCandidateItem[] }) => {
+  const [page, setPage] = useState(0);
+  const ranked = [...items].sort((a, b) => (b.benefit_score ?? 0) - (a.benefit_score ?? 0));
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(ranked.length / STORED_ROWS_PREVIEW) - 1));
+  return <DataTable columns={storedColumns} data={ranked.slice(currentPage * STORED_ROWS_PREVIEW, (currentPage + 1) * STORED_ROWS_PREVIEW)}
+    emptyTitle="No scored partitions recorded." emptyDescription="The latest scan has not recorded compaction benefit scores."
+    pagination={ranked.length > STORED_ROWS_PREVIEW ? { pageIndex: currentPage, pageSize: STORED_ROWS_PREVIEW, totalRows: ranked.length, onPageChange: setPage } : undefined}
+    showDensityToggle={false} />;
 };
+const HorizonRows = ({ items }: { items: CompactionCandidateRead[] }) => (
+  <DataTable columns={horizonColumns} data={items} emptyTitle="No horizon candidates recorded."
+    emptyDescription="No small-file candidates were returned for the 30-day query-frequency model." showDensityToggle={false} />
+);
 
 export const CompactionAnalysis = ({ tableId }: { tableId: string }) => {
   const { api, token } = useAuth();
@@ -162,7 +132,7 @@ export const CompactionAnalysis = ({ tableId }: { tableId: string }) => {
   const skipped = stored.data?.skipped ?? [];
 
   return (
-    <section id="maintenance-compaction" className="mb-6" aria-labelledby="maintenance-compaction-heading">
+    <section id="maintenance-compaction" className="td-compaction-analysis" aria-labelledby="maintenance-compaction-heading">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 id="maintenance-compaction-heading" className="text-sm font-semibold text-foreground">
           Compaction analysis
@@ -187,30 +157,34 @@ export const CompactionAnalysis = ({ tableId }: { tableId: string }) => {
       <QueryErrorAlert error={signals.error} title="Couldn't load table signals" />
       <QueryErrorAlert error={table.error} title="Couldn't load table stats" />
 
-      <div className="mb-4 space-y-2">
+      <div className="td-compaction-rankings">
+      <div className="space-y-2">
         <h4 className="text-sm font-medium text-foreground">Stored benefit-score candidates</h4>
         <p className="text-xs text-muted-foreground">{STORED_SCORE_BASIS}</p>
         {stored.isLoading ? <p className="text-sm text-muted-foreground">Loading stored scores</p> : null}
-        {!stored.isLoading ? <StoredRows items={stored.data?.items ?? []} /> : null}
+        {stored.isSuccess ? <StoredRows items={stored.data?.items ?? []} /> : null}
         {skipped.length > 0 ? (
           <ul className="text-xs text-muted-foreground">
-            {skipped.map((row) => (
+            {skipped.slice(0, 5).map((row) => (
               <li key={`${row.partition_value}-${row.skip_reason}`}>
                 Skipped {row.partition_value || "not reported"}: {row.skip_reason}
               </li>
             ))}
+            {skipped.length > 5 ? <li>…and {(skipped.length - 5).toLocaleString()} more skipped</li> : null}
           </ul>
         ) : null}
       </div>
 
-      <div className="mb-4 space-y-2">
+      <div className="space-y-2">
         <h4 className="text-sm font-medium text-foreground">Horizon query-frequency candidates</h4>
         <p className="text-xs text-muted-foreground">{HORIZON_SCORE_BASIS}</p>
         {horizon.isLoading ? <p className="text-sm text-muted-foreground">Loading horizon ranking</p> : null}
-        {!horizon.isLoading ? <HorizonRows items={horizon.data?.candidates ?? []} /> : null}
+        {horizon.isSuccess ? <HorizonRows items={horizon.data?.candidates ?? []} /> : null}
       </div>
 
-      <div className="mb-4">
+      </div>
+      <div className="td-compaction-context">
+      <div>
         <h4 className="mb-1 text-sm font-medium text-foreground">Effectiveness</h4>
         {effectiveness ? (
           <p className="text-sm text-muted-foreground">
@@ -232,14 +206,15 @@ export const CompactionAnalysis = ({ tableId }: { tableId: string }) => {
 
       <div>
         <h4 className="mb-1 text-sm font-medium text-foreground">Maintenance trigger signals</h4>
-        {(signals.data?.signals.length ?? 0) === 0 && !signals.isLoading ? (
+        {(signals.data?.signals.length ?? 0) === 0 && signals.isSuccess ? (
           <p className="text-sm text-muted-foreground">No signals recorded.</p>
         ) : null}
         {(signals.data?.signals.length ?? 0) > 0 ? (
-          <ul className="space-y-1 text-sm">
+          <ul className="td-compaction-signals">
             {signals.data?.signals.map((signal) => (
               <li key={signal.signal_name}>
-                {signal.signal_name}: {signal.triggered ? "Triggered" : "OK"} · {signal.severity} · {signal.reason}
+                <strong>{signal.signal_name.replace(/_/g, " ")} · {signal.triggered ? "Triggered" : "Not triggered"} · {signal.severity}</strong>
+                <p>{signal.reason}</p>
               </li>
             ))}
           </ul>
@@ -247,6 +222,7 @@ export const CompactionAnalysis = ({ tableId }: { tableId: string }) => {
         {signals.data?.checked_at ? (
           <p className="mt-1 text-xs text-muted-foreground">Checked {formatTime(signals.data.checked_at)}</p>
         ) : null}
+      </div>
       </div>
     </section>
   );

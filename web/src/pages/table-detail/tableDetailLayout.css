@@ -13,3 +13,34 @@
 .td-tab-content {
   min-width: 0;
 }
+
+.table-detail-workspace .td-main-tabs {
+  background: transparent;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+.td-section-navigation {
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+  flex-shrink: 0;
+}
+
+.td-section-navigation [role="tab"] {
+  flex-shrink: 0;
+  min-height: 44px;
+}
+
+.table-detail-workspace .td-tab-content {
+  overflow-wrap: anywhere;
+}
+
+.table-detail-workspace :is(section[id], [id$="settings"]) {
+  scroll-margin-top: 24px;
+}
+
+@media (max-width: 767px) {
+  .table-detail-workspace .td-main-column { margin-top: 4px; }
+}

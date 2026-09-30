@@ -1,0 +1,45 @@
+.td-cost-workspace { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.td-cost-card { min-width: 0; padding: 22px; }
+.td-cost-card > header { margin-bottom: 22px; }
+.td-cost-card h3 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+.td-cost-card > header p, .td-cost-muted, .td-cost-footnote { color: var(--color-muted); font-size: 13px; line-height: 1.55; margin: 0; }
+.td-cost-summary-card { grid-column: 1 / -1; }
+.td-cost-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; gap: 24px; }
+.td-cost-kpis > div { min-width: 0; padding-right: 20px; border-right: 1px solid var(--color-border); }
+.td-cost-kpis > div:last-child { border: 0; padding-right: 0; }
+.td-cost-kpis dt { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--color-muted); }
+.td-cost-kpis dd { margin: 10px 0 4px; font-size: clamp(22px, 2.5vw, 32px); font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.td-cost-kpis p { margin: 0; font-size: 12px; color: var(--color-muted); }
+.td-cost-opportunity dd { color: var(--color-status-success); }
+.td-cost-evidence { margin-top: 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; color: var(--color-muted); font-size: 12px; }
+.td-cost-request-counts { display: flex; flex-wrap: wrap; gap: 12px 30px; padding-top: 14px; margin: 14px 0 0; border-top: 1px solid var(--color-border); font-size: 12px; }
+.td-cost-request-counts > div { display: flex; gap: 8px; }
+.td-cost-request-counts dt { color: var(--color-muted); }
+.td-cost-request-counts dd { margin: 0; font-variant-numeric: tabular-nums; }
+.td-cost-bars { margin: 0; display: grid; gap: 19px; }
+.td-cost-bars > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; }
+.td-cost-bars dt { font-size: 13px; font-weight: 500; min-width: 0; }
+.td-cost-bars dt span { display: block; color: var(--color-muted); font-size: 12px; font-weight: 400; margin-top: 2px; }
+.td-cost-bars dd { margin: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.td-cost-track { grid-column: 1 / -1; height: 7px; border-radius: 4px; overflow: hidden; background: var(--color-surface-sunken); }
+.td-cost-track > span { display: block; height: 100%; border-radius: inherit; background: var(--color-primary); }
+.td-cost-bars [data-tone="dead"] .td-cost-track > span, .td-cost-bars [data-tone="orphan"] .td-cost-track > span { background: var(--color-status-warning); }
+.td-cost-savings-bars .td-cost-track > span { background: var(--color-status-success); }
+.td-cost-projection { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 0 0 24px; padding-bottom: 18px; border-bottom: 1px solid var(--color-border); }
+.td-cost-projection dt { font-size: 12px; color: var(--color-muted); }
+.td-cost-projection dd { margin: 6px 0 0; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.td-cost-link { display: inline-flex; align-items: center; gap: 8px; margin-top: 22px; font-size: 13px; font-weight: 500; color: var(--color-primary); }
+.td-cost-link:hover { text-decoration: underline; }
+.td-cost-recommendation { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+.td-cost-secondary-value { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 25px; font-weight: 600; margin: 20px 0 10px; font-variant-numeric: tabular-nums; }
+.td-cost-secondary-value > span { font-size: 12px; font-weight: 400; color: var(--color-muted); }
+.td-cost-empty { font-size: 13px; color: var(--color-muted); padding: 16px; margin: 0; background: var(--color-surface-sunken); border-radius: 8px; }
+@media (max-width: 1050px) { .td-cost-workspace { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) {
+  .td-cost-card { padding: 17px; }
+  .td-cost-kpis { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .td-cost-kpis > div { border-right: 0; border-bottom: 1px solid var(--color-border); padding: 0 0 16px; }
+  .td-cost-projection { grid-template-columns: minmax(0, 1fr); }
+  .td-cost-bars > div { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .td-cost-track { grid-column: 1; }
+}

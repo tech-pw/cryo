@@ -98,7 +98,7 @@ const QueryActivity = ({ tableId }: { tableId: string }) => {
 
   return (
     <section id="usage-queries" aria-label="Query activity">
-      <ChartCard title={<><Activity aria-hidden="true" /> Query activity</>} actions={<Badge variant="outline">Last 7 days</Badge>}>
+      <ChartCard title={<h2><Activity aria-hidden="true" /> Query activity</h2>} actions={<Badge variant="outline">Last 7 days</Badge>}>
         {query.isLoading ? <p className="td-usage-loading" role="status">Loading query activity…</p> : null}
         {query.isError ? <QueryErrorAlert error={query.error} title="Failed to load query activity" /> : null}
         {data && data.total === 0 ? (
@@ -161,7 +161,7 @@ const PartitionAccess = ({ tableId }: { tableId: string }) => {
 
   return (
     <section id="usage-partition-access" aria-label="Partition access">
-      <ChartCard title={<><Layers3 aria-hidden="true" /> Partition access</>} actions={<Badge variant="outline">Last 90 days</Badge>}>
+      <ChartCard title={<h2><Layers3 aria-hidden="true" /> Partition access</h2>} actions={<Badge variant="outline">Last 90 days</Badge>}>
         <p className="td-usage-section-description">Where storage requests are concentrated. These counts are separate from query logs.</p>
         {query.isLoading ? <p className="td-usage-loading" role="status">Loading partition access…</p> : null}
         {query.isError ? <QueryErrorAlert error={query.error} title="Failed to load partition access" /> : null}
@@ -184,7 +184,7 @@ const Lineage = ({ tableId }: { tableId: string }) => {
 
   return (
     <section id="usage-lineage" aria-label="Lineage">
-      <ChartCard title={<><GitBranch aria-hidden="true" /> Table relationships</>}>
+      <ChartCard title={<h2><GitBranch aria-hidden="true" /> Table relationships</h2>}>
         {query.isLoading ? <p className="td-usage-loading" role="status">Loading lineage…</p> : null}
         {query.isError ? <QueryErrorAlert error={query.error} title="Failed to load lineage" /> : null}
         {query.data ? (
@@ -221,7 +221,7 @@ const SameShape = ({ tableId }: { tableId: string }) => {
 
   return (
     <section id="usage-same-shape" aria-label="Same-shape tables">
-      <ChartCard title={<><Layers3 aria-hidden="true" /> Similar schemas</>} actions={<Link to="/insights?tab=duplicates" className="td-usage-text-link">Find duplicates <ArrowRight aria-hidden="true" /></Link>}>
+      <ChartCard title={<h2><Layers3 aria-hidden="true" /> Similar schemas</h2>} actions={<Link to="/insights?tab=duplicates" className="td-usage-text-link">Find duplicates <ArrowRight aria-hidden="true" /></Link>}>
         <p className="td-usage-section-description">Candidates for reuse or consolidation. Schema similarity does not prove duplicate data.</p>
         {query.isLoading ? <p className="td-usage-loading" role="status">Loading same-shape tables…</p> : null}
         {query.isError ? <QueryErrorAlert error={query.error} title="Failed to load same-shape tables" /> : null}

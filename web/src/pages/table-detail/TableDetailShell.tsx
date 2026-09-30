@@ -5,6 +5,7 @@ import { PlanPreview } from "../../components/PlanPreview";
 import { ConfirmAction } from "../../components/confirm";
 import { TableDetailHeaderBar } from "../../components/table-detail/header/TableDetailHeaderBar";
 import { TableSettingsSheet } from "../../components/table-detail/TableSettingsSheet";
+import { OperationLauncherProvider } from "../../components/table-detail/operations/OperationLauncher";
 import { AsyncBoundary } from "../../components/AsyncBoundary";
 import {
   CostTabLabel,
@@ -117,6 +118,7 @@ export const TableDetailShell = () => {
 
   return (
     <TableDetailProvider value={ctx}>
+      <OperationLauncherProvider tableId={ctx.tableId} tableName={row?.table_name ?? "this table"}>
       <div className="table-detail table-detail-workspace">
         <TableDetailHeaderBar />
 
@@ -172,10 +174,10 @@ export const TableDetailShell = () => {
                 <option value="maintenance">Maintenance</option>
                 <option value="usage">Usage</option>
                 <option value="quality">Quality</option>
-                <option value="cost">Cost</option>
+                <option value="cost">Cost & savings</option>
               </select>
             </label>
-            <TabsList className="mb-5 hidden h-auto w-full justify-start rounded-none border-b border-[var(--line,#e1e6ed)] bg-transparent p-0 md:flex">
+            <TabsList aria-label="Table sections" className="td-section-navigation mb-5 hidden h-auto w-full justify-start rounded-none border-b border-[var(--line,#e1e6ed)] bg-transparent p-0 md:flex">
               <TabsTrigger value="overview" className={tabTriggerClass}>
                 <OverviewTabLabel />
               </TabsTrigger>
@@ -244,6 +246,7 @@ export const TableDetailShell = () => {
         />
         <TableSettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
       </div>
+      </OperationLauncherProvider>
     </TableDetailProvider>
   );
 };

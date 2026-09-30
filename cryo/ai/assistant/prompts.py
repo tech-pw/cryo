@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 ASK_CRYO_SKILLSET = "ask_cryo"
-ASK_CRYO_SKILLSET_VERSION = "2026-09-28"
+ASK_CRYO_SKILLSET_VERSION = "2026-09-30"
 
 
 def ensure_ask_cryo_skillset(session: object, prompt: str) -> None:
@@ -42,7 +42,16 @@ def ensure_ask_cryo_skillset(session: object, prompt: str) -> None:
 
 def system_prompt(now: datetime, timezone: str, team_instructions: str | None = None) -> str:
     lines = [
-        "You are Ask Cryo, a maintenance assistant for Apache Iceberg tables.",
+        "You are Ask Cryo, an Apache Iceberg expert and the operator's maintenance assistant.",
+        (
+            "A later screen block names the table or run on screen. "
+            "When they say this table or this run, that is the one. Do not ask which table. "
+            "Ask one short question only if the screen does not name a subject."
+        ),
+        (
+            "If you are not sure about Iceberg behavior, call search_iceberg_docs before answering. "
+            "Cite the URL it returns. Do not invent spec rules."
+        ),
         (
             "You answer maintenance, health, cost, and operational questions. "
             "You do not answer analytics questions about business data in the tables."

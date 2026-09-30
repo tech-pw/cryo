@@ -214,6 +214,10 @@ async def openai_compatible_chat(
         ]
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(url, headers=headers, json=payload)
+        if response.status_code == 400 and "max_completion_tokens" in response.text:
+            payload.pop("max_tokens", None)
+            payload["max_completion_tokens"] = max_tokens
+            response = await client.post(url, headers=headers, json=payload)
         response.raise_for_status()
         data = response.json()
     result = _parse_openai(data, provider=provider, model=model)

@@ -1,0 +1,100 @@
+import { describe, expect, it } from "vitest";
+import type { TableRunRead } from "../../../api/types";
+import { buildRunColumns, gradeChange, gridRows, isManualTrigger, statChanges, toneFor } from "./runModel";
+
+const run = (overrides: Partial<TableRunRead>): TableRunRead => ({
+  job_id: "job-1",
+  run_id: "run-1",
+  status: "succeeded",
+  mode: "deep",
+  trigger: "cron",
+  started_at: "2026-09-23T23:27:28Z",
+  finished_at: "2026-09-23T23:38:24Z",
+  duration_seconds: 656,
+  steps: [],
+  ...overrides
+});
+
+describe("runModel", () => {
+  it("maps statuses to tones without calling waiting work running", () => {
+    expect(toneFor("succeeded")).toBe("success");
+    expect(toneFor("OK")).toBe("success");
+    expect(toneFor("failed")).toBe("failed");
+    expect(toneFor("running")).toBe("running");
+    expect(toneFor("admitted")).toBe("queued");
+    expect(toneFor("waiting")).toBe("queued");
+    expect(toneFor("cancelled")).toBe("skipped");
+    expect(toneFor(null)).toBe("none");
+  });
+
+  it("tells scheduled from manual triggers", () => {
+    expect(isManualTrigger("cron")).toBe(false);
+    expect(isManualTrigger("scheduler")).toBe(false);
+    expect(isManualTrigger("web-table-operation")).toBe(true);
+    expect(isManualTrigger(null)).toBe(true);
+  });
+
+  it("orders columns oldest first and fills cells from steps, then audit receipts", () => {
+    const columns = buildRunColumns(
+      [
+        run({
+          job_id: "new",
+          run_id: "r-new",
+          started_at: "2026-09-24T00:00:00Z",
+          steps: [{ step_index: 0, operation_type: "optimize", status: "succeeded", started_at: "2026-09-24T00:00:00Z", finished_at: "2026-09-24T00:05:00Z" }]
+        }),
+        run({ job_id: "old", run_id: "r-old", status: "failed", started_at: "2026-09-09T00:00:00Z" })
+      ],
+      [
+        { action: "remove_orphan_files", status: "FAILED", ts: "2026-09-09T00:10:00Z", detail: "CALL x", job_id: "old" } as never,
+        { action: "optimize", status: "OK", ts: "2026-09-24T00:05:00Z", detail: "CALL rewrite_data_files", engine: "spark_emr", job_id: "new" } as never
+      ]
+    );
+    expect(columns.map((column) => column.key)).toEqual(["old", "new"]);
+    expect(columns[0].cells.get("remove_orphan_files")).toMatchObject({ tone: "failed", detail: "CALL x" });
+    expect(columns[1].cells.get("optimize")).toMatchObject({ tone: "success", durationMs: 300000, detail: "CALL rewrite_data_files", engine: "spark_emr" });
+    expect(columns[1].cells.has("expire_snapshots")).toBe(false);
+  });
+
+  it("shows only core rows unless a run used an extra operation", () => {
+    const columns = buildRunColumns(
+      [run({ steps: [{ step_index: 0, operation_type: "convert_deletes", status: "succeeded" }] })],
+      []
+    );
+    expect(gridRows(columns)).toEqual(["convert_deletes", "optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"]);
+    expect(gridRows([])).toEqual(["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"]);
+  });
+
+  it("reports before/after when both scans exist", () => {
+    expect(statChanges(run({}))).toEqual([]);
+    const changes = statChanges(
+      run({
+        before_stats: { scan_at: "a", total_files: 661, small_files_count: 186, overall_score: 48, total_size_gb: 32.9 },
+        after_stats: { scan_at: "b", total_files: 484, small_files_count: 2, overall_score: 64, total_size_gb: 33.0 }
+      })
+    );
+    expect(changes.find((change) => change.label === "Small files")).toMatchObject({ before: 186, after: 2, lowerIsBetter: true });
+  });
+
+  it("keeps before-stats when the run has no after-scan yet", () => {
+    const changes = statChanges(
+      run({
+        status: "running",
+        before_stats: { scan_at: "a", total_files: 1303, small_files_count: 1303, overall_score: 32, total_size_gb: 1.6 },
+        after_stats: null
+      })
+    );
+    expect(changes.find((change) => change.label === "Data files")).toMatchObject({ before: 1303, after: null });
+    expect(changes.find((change) => change.label === "Health score")).toMatchObject({ before: 32, after: null });
+    // Delete files weren't recorded in this snapshot, so the row is dropped rather than shown empty.
+    expect(changes.find((change) => change.label === "Delete files")).toBeUndefined();
+  });
+
+  it("reports the grade before and after", () => {
+    expect(gradeChange(run({}))).toBeNull();
+    expect(gradeChange(run({ before_stats: { scan_at: "a", grade: "F" } }))).toEqual({ before: "F", after: null });
+    expect(
+      gradeChange(run({ before_stats: { scan_at: "a", grade: "F" }, after_stats: { scan_at: "b", grade: "B" } }))
+    ).toEqual({ before: "F", after: "B" });
+  });
+});

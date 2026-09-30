@@ -51,6 +51,8 @@ export const ExcludedFromExpiry = ({ tableId }: { tableId: string }) => {
       </p>
       {excluded.isError ? (
         <p className="text-xs text-destructive">Couldn't load the exclusion list.</p>
+      ) : excluded.isLoading ? (
+        <p className="text-xs text-muted-foreground">Loading expiry exclusions…</p>
       ) : rows.length === 0 ? (
         <p className="text-xs text-muted-foreground">No snapshots are excluded from Cryo expiry.</p>
       ) : (
