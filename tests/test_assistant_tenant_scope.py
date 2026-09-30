@@ -33,7 +33,9 @@ from cryo.db.models import (
 )
 from cryo.db.tenant_scope import assert_resource_tenant, bind_tenant
 
-_NO_TENANT_QUERY = frozenset({"get_capabilities", "search_runbooks", "get_feature_help"})
+_NO_TENANT_QUERY = frozenset(
+    {"get_capabilities", "search_runbooks", "get_feature_help", "search_iceberg_docs"}
+)
 _KIND_FIELDS = {
     "table_id": "table",
     "table_ids": "table",

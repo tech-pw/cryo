@@ -251,6 +251,17 @@ export const AskCryoDrawer = () => {
   };
 
   return (
+    <>
+    {!open ? (
+      <button
+        type="button"
+        className="fixed bottom-5 right-5 z-40 flex h-12 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground shadow-lg"
+        aria-label="Ask Cryo"
+        onClick={() => setOpen(true)}
+      >
+        Ask Cryo
+      </button>
+    ) : null}
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="right"
@@ -343,5 +354,6 @@ export const AskCryoDrawer = () => {
         )}
       </SheetContent>
     </Sheet>
+    </>
   );
 };
