@@ -170,13 +170,17 @@ describe("SnapshotsTab", () => {
 
     renderTab();
 
-    const current = await screen.findByText(big, { selector: "[data-snapshot-id]" });
-    expect(current).toHaveTextContent(big);
-    expect(within(current.closest("tr") as HTMLElement).getByText("Current")).toBeInTheDocument();
-    expect(within(current.closest("tr") as HTMLElement).getByText(parent)).toBeInTheDocument();
+    // Ids are shown shortened; the exact decimal string lives in the data attribute and title.
+    await screen.findByRole("button", { name: `Copy snapshot ${big}` });
+    const current = document.querySelector(`[data-snapshot-id="${big}"]`) as HTMLElement;
+    expect(current).toHaveAttribute("title", big);
+    expect(current).toHaveTextContent(big.slice(-8));
+    const currentRow = current.closest("tr") as HTMLElement;
+    expect(within(currentRow).getByText("Current")).toBeInTheDocument();
+    expect(currentRow.querySelector(`[data-parent-snapshot-id="${parent}"]`)).toHaveAttribute("title", parent);
 
-    const adjacent = screen.getByText(parent, { selector: "[data-snapshot-id]" });
-    expect(adjacent).toHaveTextContent(parent);
+    const adjacent = document.querySelector(`[data-snapshot-id="${parent}"]`) as HTMLElement;
+    expect(adjacent).toHaveAttribute("title", parent);
     expect(within(adjacent.closest("tr") as HTMLElement).queryByText("Current")).not.toBeInTheDocument();
     expect(adjacent.closest("tr")).toHaveTextContent("—");
 

@@ -604,6 +604,15 @@ export const runManifestRewrite = (
       }
 ) => apiFetch<MaintenanceRunResponse>("/maintenance/manifest-rewrite", api, { method: "POST", body });
 
+/** Runs the chosen operations on one table now, using its workflow's engine and settings.
+ * Operations need not be in the workflow's list; see routes_table_maintenance.py. */
+export const runTableOperations = (
+  api: ApiOptions,
+  tableId: UUID,
+  body: { operations: OperationType[]; trigger?: string }
+) =>
+  apiFetch<MaintenanceRunResponse>(`/tables/${tableId}/maintenance/operations`, api, { method: "POST", body });
+
 export const listRuns = (
   api: ApiOptions,
   args: { kind?: string; source_id?: UUID; limit?: number; offset?: number } = {}

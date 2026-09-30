@@ -1,15 +1,4 @@
-import {
-  CartesianGrid,
-  ResponsiveContainer,
-  Scatter,
-  ScatterChart,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-  ZAxis
-} from "recharts";
 import type { PartitionAccessPoint, PartitionAccessSummary } from "../../api/client";
-import { chartTooltipProps, cryoColors } from "../../lib/theme";
 
 interface PartitionAccessChartProps {
   points: Array<Omit<PartitionAccessPoint, "request_count"> & { request_count: number | null }>;
@@ -21,11 +10,16 @@ interface PartitionAccessChartProps {
   >;
 }
 
-const measuredCount = (value: number | null | undefined): number | null =>
-  value != null && Number.isFinite(value) ? value : null;
+const TOP_PARTITIONS = 12;
+const COLD_AFTER_DAYS = 30;
 
-const countText = (value: number | null | undefined): string =>
-  measuredCount(value) == null ? "Not measured" : measuredCount(value)!.toLocaleString();
+const measuredCount = (value: number | null | undefined): number | null =>
+  value != null && Number.isFinite(value) && value >= 0 ? value : null;
+
+const countText = (value: number | null | undefined): string => {
+  const measured = measuredCount(value);
+  return measured == null ? "Not measured" : measured.toLocaleString();
+};
 
 const lastAccessText = (days: number | null | undefined): string => {
   const measured = measuredCount(days);
@@ -33,146 +27,137 @@ const lastAccessText = (days: number | null | undefined): string => {
   return measured === 0 ? "Today" : `${measured}d ago`;
 };
 
-const POINT_CAP = 180;
+/** S3 access logs double-encode keys ("ingest_date%253D2026-09-16"); show what the user wrote. */
+export const decodePartitionPath = (path: string | null | undefined): string => {
+  if (!path) return "(unpartitioned)";
+  let current = path;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const next = decodeURIComponent(current);
+      if (next === current) break;
+      current = next;
+    } catch {
+      break;
+    }
+  }
+  return current.replace(/\/$/, "") || "(unpartitioned)";
+};
 
-const byPath = (left: string, right: string) => left.localeCompare(right);
+const dayLabel = (day: string) => {
+  const parsed = Date.parse(day);
+  return Number.isNaN(parsed) ? day : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(parsed);
+};
 
 export const PartitionAccessChart = ({ points, partitions }: PartitionAccessChartProps) => {
   if (!points.length && !partitions.length) {
     return <span className="text-sm text-muted-foreground">No partition access data yet.</span>;
   }
 
-  const orderedPartitions = [...partitions].sort((a, b) => byPath(a.partition_path || "", b.partition_path || ""));
-  const orderedPaths = orderedPartitions.map((p) => p.partition_path);
-  const pathIndex = new Map(orderedPaths.map((path, index) => [path, index]));
-  const shownPoints = points.slice(0, POINT_CAP);
-
-  const plotted = shownPoints.flatMap((point) => {
-    const index = pathIndex.get(point.partition_path);
+  const byDay = new Map<string, number>();
+  for (const point of points) {
     const requests = measuredCount(point.request_count);
-    if (index == null || requests == null) return [];
-    return [
-      {
-        x: new Date(point.day).getTime(),
-        y: index,
-        z: requests,
-        day: point.day,
-        partitionPath: point.partition_path || "(unpartitioned)"
-      }
-    ];
-  });
+    if (requests == null || !point.day) continue;
+    byDay.set(point.day, (byDay.get(point.day) ?? 0) + requests);
+  }
+  const days = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const dayPeak = Math.max(1, ...days.map(([, value]) => value));
+
+  const measured = partitions.filter((row) => measuredCount(row.total_requests) != null);
+  const ranked = [...measured].sort((a, b) => (b.total_requests ?? 0) - (a.total_requests ?? 0));
+  const top = ranked.slice(0, TOP_PARTITIONS);
+  const total = ranked.reduce((sum, row) => sum + (row.total_requests ?? 0), 0);
+  const topTen = ranked.slice(0, 10).reduce((sum, row) => sum + (row.total_requests ?? 0), 0);
+  const peak = Math.max(1, top[0]?.total_requests ?? 0);
+  const cold = partitions.filter((row) => (measuredCount(row.days_since_last_access) ?? -1) >= COLD_AFTER_DAYS).length;
 
   return (
-    <div className="td-partition-access-chart">
-      <p className="mb-2 text-xs text-muted-foreground">
-        Y is not time. Partitions stay in a stable order. Day is on the horizontal axis. Marker size is request count.
-      </p>
-      {points.length ? (
-        <p className="mb-2 text-xs text-muted-foreground">
-          Showing {Math.min(points.length, POINT_CAP)} of {points.length} request points.
+    <div className="td-pa">
+      {ranked.length ? (
+        <p className="td-pa-headline">
+          <strong>{ranked.length.toLocaleString()}</strong> partition{ranked.length === 1 ? "" : "s"} read
+          {total > 0 && ranked.length > 10 ? (
+            <>
+              {" "}· top 10 take <strong>{Math.round((topTen / total) * 100)}%</strong> of requests
+            </>
+          ) : null}
+          {cold > 0 ? (
+            <>
+              {" "}· <strong>{cold.toLocaleString()}</strong> not read in {COLD_AFTER_DAYS}+ days
+            </>
+          ) : null}
         </p>
       ) : null}
-      {plotted.length ? (
-        <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground" aria-label="Request intensity">
-          <span className="inline-block size-2 rounded-full" style={{ background: cryoColors.chartPrimary, opacity: 0.35 }} />
-          <span>Fewer requests</span>
-          <span className="inline-block size-3 rounded-full" style={{ background: cryoColors.chartPrimary }} />
-          <span>More requests</span>
-        </div>
-      ) : null}
-      {plotted.length ? (
-        <div
-          role="img"
-          aria-label={`Partition access for ${orderedPaths.length} partitions across ${plotted.length} request points. Y is not time.`}
-        >
-          <ResponsiveContainer width="100%" height={Math.max(220, orderedPaths.length * 18)}>
-            <ScatterChart margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
-              <XAxis
-                dataKey="x"
-                type="number"
-                domain={["dataMin", "dataMax"]}
-                tickFormatter={(ts) =>
-                  new Date(Number(ts)).toLocaleDateString(undefined, { month: "short", day: "numeric" })
-                }
-                tick={{ fontSize: 11 }}
-                stroke="var(--muted, #5c667a)"
-              />
-              <YAxis
-                dataKey="y"
-                type="number"
-                domain={[0, Math.max(orderedPaths.length - 1, 0)]}
-                tickFormatter={(index) => orderedPaths[Number(index)] || ""}
-                tick={{ fontSize: 10 }}
-                width={110}
-                stroke="var(--muted, #5c667a)"
-              />
-              <ZAxis dataKey="z" range={[20, 220]} name="Requests" />
-              <RechartsTooltip
-                {...chartTooltipProps}
-                cursor={{ strokeDasharray: "3 3" }}
-                formatter={(value, name, item) => {
-                  if (name === "z") {
-                    const payload = (item as { payload?: { partitionPath?: string } })?.payload;
-                    const requests = measuredCount(typeof value === "number" ? value : null);
-                    return [
-                      requests == null ? "Not measured" : String(requests),
-                      `Requests · ${payload?.partitionPath ?? ""}`
-                    ];
-                  }
-                  return [value == null ? "Not measured" : String(value), String(name)];
-                }}
-                labelFormatter={() => ""}
-              />
-              <Scatter data={plotted} fill={cryoColors.chartPrimary} fillOpacity={0.75} />
-            </ScatterChart>
-          </ResponsiveContainer>
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">Not measured</p>
-      )}
-      <table className="mt-3 w-full text-sm">
-        <caption className="sr-only">Plotted partition access points. Y is not time.</caption>
-        <thead>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="py-1.5 pr-3 font-medium">Day</th>
-            <th className="py-1.5 pr-3 font-medium">Partition</th>
-            <th className="py-1.5 text-right font-medium">Requests</th>
-          </tr>
-        </thead>
-        <tbody>
-          {shownPoints.map((point, index) => (
-            <tr key={`${point.day}-${point.partition_path}-${index}`} className="border-b border-border/60">
-              <td className="py-1.5 pr-3">{point.day || "Not measured"}</td>
-              <td className="py-1.5 pr-3">{point.partition_path || "(unpartitioned)"}</td>
-              <td className="py-1.5 text-right tabular-nums">{countText(point.request_count)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {partitions.length ? (
-        <table className="mt-3 w-full text-sm">
-          <caption className="mb-1 text-left text-xs text-muted-foreground">
-            Partitions in stable order
-          </caption>
-          <thead>
-            <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              <th className="py-1.5 pr-3 font-medium">Partition</th>
-              <th className="py-1.5 pr-3 text-right font-medium">Requests</th>
-              <th className="py-1.5 text-right font-medium">Last accessed</th>
-            </tr>
-          </thead>
-          <tbody>
-            {orderedPartitions.map((row) => (
-              <tr key={row.partition_path || "(unpartitioned)"} className="border-b border-border/60">
-                <td className="py-1.5 pr-3">{row.partition_path || "(unpartitioned)"}</td>
-                <td className="py-1.5 pr-3 text-right tabular-nums">{countText(row.total_requests)}</td>
-                <td className="py-1.5 text-right">{lastAccessText(row.days_since_last_access)}</td>
-              </tr>
+
+      {days.length > 1 ? (
+        <figure className="td-pa-days">
+          <figcaption>Requests per day</figcaption>
+          <div
+            className="td-pa-day-bars"
+            role="img"
+            aria-label={`Requests per day from ${dayLabel(days[0][0])} to ${dayLabel(days[days.length - 1][0])}, peaking at ${dayPeak.toLocaleString()}.`}
+          >
+            {days.map(([day, value]) => (
+              <span key={day} title={`${dayLabel(day)}: ${value.toLocaleString()} requests`} style={{ height: `${Math.max(2, (value / dayPeak) * 100)}%` }} />
             ))}
-          </tbody>
-        </table>
+          </div>
+          <div className="td-pa-day-axis" aria-hidden="true">
+            <span>{dayLabel(days[0][0])}</span>
+            <span>{dayLabel(days[days.length - 1][0])}</span>
+          </div>
+        </figure>
       ) : null}
+
+      {top.length ? (
+        <figure className="td-pa-top">
+          <figcaption>Most-read partitions</figcaption>
+          <ol>
+            {top.map((row) => {
+              const label = decodePartitionPath(row.partition_path);
+              return (
+                <li key={row.partition_path || "(unpartitioned)"}>
+                  <span className="td-pa-name" title={label}>
+                    {label}
+                  </span>
+                  <span className="td-pa-bar" aria-hidden="true">
+                    <span style={{ width: `${((row.total_requests ?? 0) / peak) * 100}%` }} />
+                  </span>
+                  <span className="td-pa-value">{countText(row.total_requests)}</span>
+                  <span className="td-pa-last">{lastAccessText(row.days_since_last_access)}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </figure>
+      ) : (
+        <p className="text-sm text-muted-foreground">Request counts not measured.</p>
+      )}
+
+      <details className="td-pa-details">
+        <summary>All {partitions.length.toLocaleString()} partitions as a table</summary>
+        <div className="td-pa-table">
+          <table className="w-full text-sm">
+            <caption className="sr-only">Storage requests per partition</caption>
+            <thead>
+              <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                <th className="py-1.5 pr-3 font-medium">Partition</th>
+                <th className="py-1.5 pr-3 text-right font-medium">Requests</th>
+                <th className="py-1.5 text-right font-medium">Last accessed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...partitions]
+                .sort((a, b) => (b.total_requests ?? -1) - (a.total_requests ?? -1))
+                .map((row) => (
+                  <tr key={row.partition_path || "(unpartitioned)"} className="border-b border-border/60">
+                    <td className="py-1.5 pr-3">{decodePartitionPath(row.partition_path)}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums">{countText(row.total_requests)}</td>
+                    <td className="py-1.5 text-right">{lastAccessText(row.days_since_last_access)}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </div>
   );
 };
