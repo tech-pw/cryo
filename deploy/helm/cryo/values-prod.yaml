@@ -153,8 +153,9 @@ global:
     # were still being dispatched at all because this flag was never wired in. Do not remove
     # until the native engine's own success verification is independently trustworthy again.
     CRYO_NATIVE_ENGINE_ENABLED: "false"
-    # Ask Cryo stays off in prod until the action gate in the assistant plan passes.
-    CRYO_ASSISTANT_ENABLED: "false"
+    # Ask Cryo is on read-only (2026-09-30, by request): it can read health/runs/cost and answer,
+    # but writes and MCP stay off until the action gate in the assistant plan passes.
+    CRYO_ASSISTANT_ENABLED: "true"
     CRYO_ASSISTANT_WRITES_ENABLED: "false"
     CRYO_ASSISTANT_MCP_ENABLED: "false"
 
