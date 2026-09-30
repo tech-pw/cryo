@@ -255,6 +255,29 @@ def _metric_int(metrics: Mapping[str, Any], key: str) -> int:
         return 0
 
 
+# Mirrors cryo.engines.native.watcher's _WORK_COUNTER_FIELDS_BY_OPERATION: an OPTIMIZE/
+# CONVERT_DELETES statement can return ok=True (the Iceberg CALL procedure didn't throw) while
+# rewriting zero files -- confirmed live 2026-09-30 on pw_bq.silver_dbt_test_explore_click,
+# whose rewrite_data_files CALL committed a manifest-only replace snapshot with
+# entries-processed=0 and total-data-files unchanged, and was still recorded as SUCCEEDED for
+# 8 consecutive runs because this function only checked whether the statement threw. The
+# native engine already guards this exact pattern (native_job_reported_success_with_zero_work);
+# this is that same guard for the Spark coordinator path, which never had it. Scoped to
+# OPTIMIZE/CONVERT_DELETES only (not OPTIMIZE_MANIFESTS/EXPIRE_SNAPSHOTS/REMOVE_ORPHAN_FILES),
+# which can legitimately rewrite zero data files while still doing real, useful work.
+_ZERO_WORK_METRIC_KEYS_BY_ACTION: dict[str, tuple[str, ...]] = {
+    OperationType.OPTIMIZE.value: ("rewritten_data_files_count", "added_data_files_count"),
+    OperationType.CONVERT_DELETES.value: ("rewritten_data_files_count", "added_data_files_count"),
+}
+
+
+def _reported_zero_work(result: StatementResult) -> bool:
+    fields = _ZERO_WORK_METRIC_KEYS_BY_ACTION.get(result.action)
+    if not fields:
+        return False
+    return not any(_metric_int(result.metrics, key) for key in fields)
+
+
 def table_status(outcome: TableOutcome) -> tuple[JobStatus, str | None]:
     """Job status from whatever statement results arrived for the table."""
     results = [outcome.results[k] for k in sorted(outcome.results)]
@@ -263,7 +286,13 @@ def table_status(outcome: TableOutcome) -> tuple[JobStatus, str | None]:
     if not ran:
         skipped_reason = next((r.error for r in results if r.error), None)
         return JobStatus.SKIPPED, skipped_reason or "not started"
-    ok = sum(1 for r in ran if r.ok)
+    noop_actions = [r.action for r in ran if r.ok and _reported_zero_work(r)]
+    ok = sum(1 for r in ran if r.ok) - len(noop_actions)
+    if noop_actions:
+        error = "spark_job_reported_success_with_zero_work: " + ", ".join(noop_actions)
+        if ok > 0:
+            return JobStatus.PARTIAL, error
+        return JobStatus.FAILED, error
     if ok == outcome.statement_count:
         return JobStatus.SUCCEEDED, None
     if ok > 0:
