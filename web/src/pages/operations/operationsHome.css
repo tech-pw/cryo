@@ -1,0 +1,128 @@
+.operations-home-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.operations-home-page .ops-control-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-border));
+  border-radius: 0.75rem;
+  padding: 1rem 1.1rem;
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--color-primary) 16%, transparent), transparent 38%),
+    var(--color-card);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--color-primary) 7%, transparent);
+}
+
+.ops-control-hero__copy {
+  max-width: 42rem;
+}
+
+.ops-control-hero__eyebrow {
+  margin: 0 0 0.25rem;
+  color: var(--color-primary);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.ops-control-hero h2 {
+  margin: 0;
+  color: var(--color-foreground);
+  font-size: clamp(1.15rem, 1.7vw, 1.45rem);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.ops-control-hero__copy > p:last-child {
+  margin: 0.35rem 0 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.ops-control-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.operations-home-page .ops-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.operations-home-page .ops-context-grid > section {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.operations-home-page .ops-fleet-card,
+.operations-home-page .ops-workspace-card {
+  overflow: hidden;
+}
+
+.operations-home-page .ops-fleet-card .stat-strip {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.operations-home-page .ops-workspace-card {
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  background: var(--color-card);
+}
+
+.operations-home-page .ops-workspace-card > [data-slot="tabs"] {
+  padding: 0.75rem;
+}
+
+.operations-home-page .ops-workspace-card [data-slot="tabs-list"] {
+  margin: 0;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  padding: 0 0.25rem;
+}
+
+.operations-home-page .ops-workspace-card [data-slot="tabs-content"] {
+  padding-top: 0.85rem;
+}
+
+@media (max-width: 900px) {
+  .operations-home-page .ops-control-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ops-control-hero__actions {
+    justify-content: flex-start;
+  }
+
+  .operations-home-page .ops-context-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .operations-home-page .ops-fleet-card .stat-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .operations-home-page .ops-control-hero__actions > * {
+    flex: 1 1 calc(50% - 0.45rem);
+  }
+
+  .operations-home-page .ops-fleet-card .stat-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .operations-home-page .ops-workspace-card > [data-slot="tabs"] {
+    padding: 0.5rem;
+  }
+}

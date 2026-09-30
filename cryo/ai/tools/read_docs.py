@@ -169,6 +169,101 @@ def get_feature_help(ctx: ToolContext, parsed: BaseModel) -> EvidenceEnvelope:
     )
 
 
+_ICEBERG_PAGES = {
+    "maintenance": "https://iceberg.apache.org/docs/latest/maintenance/",
+    "procedures": "https://iceberg.apache.org/docs/latest/spark-procedures/",
+    "spec": "https://iceberg.apache.org/spec/",
+    "default": "https://iceberg.apache.org/docs/latest/",
+}
+
+
+def _iceberg_url(query: str) -> str:
+    lowered = query.lower()
+    if any(token in lowered for token in ("expire", "orphan", "rewrite", "compact", "optimize")):
+        return _ICEBERG_PAGES["maintenance"]
+    if "procedure" in lowered or "spark" in lowered:
+        return _ICEBERG_PAGES["procedures"]
+    if any(token in lowered for token in ("spec", "snapshot", "manifest", "schema")):
+        return _ICEBERG_PAGES["spec"]
+    return _ICEBERG_PAGES["default"]
+
+
+def _excerpt(text: str, query: str) -> str:
+    tokens = [token.lower() for token in query.split() if len(token) > 2]
+    lowered = text.lower()
+    index = 0
+    for token in tokens:
+        found = lowered.find(token)
+        if found >= 0:
+            index = found
+            break
+    start = max(0, index - 80)
+    return " ".join(text[start : start + 500].split())
+
+
+def search_iceberg_docs(ctx: ToolContext, parsed: BaseModel) -> EvidenceEnvelope:
+    spec = DocsInput.model_validate(parsed.model_dump())
+    query = spec.query.strip()
+    if not query:
+        return make_envelope(
+            "search_iceberg_docs",
+            {"matches": [], "abstained": True, "ask": "Which Iceberg behavior should I look up?"},
+            ctx=ctx,
+            classification="unknown",
+            error_category="abstain",
+            warnings=["No query. Ask the operator what to look up."],
+            measurement_method="official_docs",
+        )
+    url = _iceberg_url(query)
+    fetcher = getattr(ctx, "fetch_url", None)
+    try:
+        page = fetcher(url) if callable(fetcher) else _fetch_url(url)
+    except (OSError, TimeoutError, ValueError):
+        return make_envelope(
+            "search_iceberg_docs",
+            {"matches": [], "abstained": True, "url": url, "query": query},
+            ctx=ctx,
+            classification="unknown",
+            error_category="abstain",
+            warnings=[f"Could not read {url}. Ask a narrower question instead of guessing."],
+            measurement_method="official_docs",
+        )
+    return make_envelope(
+        "search_iceberg_docs",
+        {
+            "summary": "Excerpt from the official Apache Iceberg docs. Cite the URL.",
+            "url": url,
+            "excerpt": _excerpt(page, query),
+            "query": query,
+            "abstained": False,
+        },
+        ctx=ctx,
+        source_links=[{"rel": "doc", "href": url}],
+        row_count=1,
+        measurement_method="official_docs",
+    )
+
+
+def _fetch_url(url: str) -> str:
+    from urllib.request import urlopen
+
+    with urlopen(url, timeout=8) as response:
+        raw = response.read(80_000).decode("utf-8", errors="replace")
+    text = []
+    skip = False
+    for char in raw:
+        if char == "<":
+            skip = True
+            continue
+        if char == ">":
+            skip = False
+            text.append(" ")
+            continue
+        if not skip:
+            text.append(char)
+    return "".join(text)
+
+
 SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="search_runbooks",
@@ -189,5 +284,18 @@ SPECS: tuple[ToolSpec, ...] = (
         tier=0,
         min_role=Role.VIEWER,
         handler=get_feature_help,
+    ),
+    ToolSpec(
+        name="search_iceberg_docs",
+        family="docs",
+        description=(
+            "Read an official Apache Iceberg page when the answer is not in Cryo. "
+            "Use this before guessing spec or procedure behavior."
+        ),
+        input_model=DocsInput,
+        output_model=EvidenceEnvelope,
+        tier=0,
+        min_role=Role.VIEWER,
+        handler=search_iceberg_docs,
     ),
 )

@@ -1,7 +1,10 @@
-"""Read-only nightly eligibility for one table.
+"""Per-table maintenance: nightly eligibility and one-off operation runs.
 
 ``GET /api/v1/tables/{table_id}/maintenance-status`` (viewer). Reasons come from the
 per-table predicates in ``load_candidates``, ``is_eligible``, and ``scan_retry_due_at``.
+
+``POST /api/v1/tables/{table_id}/maintenance/operations`` (operator) runs chosen
+operations on this one table through the regular maintenance-run path.
 The router is not mounted here; ``app.py`` is owned by other work.
 """
 
@@ -16,9 +19,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from cryo.api.deps import SessionDep, require_viewer
+from cryo.api.deps import CurrentPrincipal, SessionDep, require_operator, require_viewer
+from cryo.api.schemas import MaintenanceRunRequest, MaintenanceRunResponse
 from cryo.config import get_settings
 from cryo.db.models import MaintenanceJob, Source, Table, TableStats
+from cryo.domain.enums import Mode, OperationType
 from cryo.maintenance.selection import (
     COOLDOWN_JOB_STATUSES,
     DEFAULT_MIN_DELETE_FILE_PCT,
@@ -196,3 +201,86 @@ def get_table_maintenance_status(
         next_nightly_note=NEXT_NIGHTLY_NOTE,
         omitted=_omitted_gates(),
     )
+
+
+_OPERATION_RUN_OPS = {
+    OperationType.OPTIMIZE,
+    OperationType.OPTIMIZE_MANIFESTS,
+    OperationType.EXPIRE_SNAPSHOTS,
+    OperationType.REMOVE_ORPHAN_FILES,
+}
+
+
+class TableOperationRunRequest(BaseModel):
+    operations: list[OperationType] = Field(min_length=1)
+    trigger: str | None = "web-table-operation"
+
+
+def mode_for_operations(operations: set[OperationType]) -> Mode:
+    """The lightest planner mode that plans every requested operation.
+
+    build_plan gates by mode: light plans only expire_snapshots, standard adds compaction,
+    and remove_orphan_files/optimize_manifests are deep-only. skip_operations then drops
+    whatever the mode planned that wasn't asked for, so a lighter mode never runs less
+    than requested and never plans work (an S3 LIST for orphans) that it will throw away.
+    """
+    if operations == {OperationType.OPTIMIZE_MANIFESTS}:
+        return Mode.MANIFEST_ONLY
+    if operations & {OperationType.REMOVE_ORPHAN_FILES, OperationType.OPTIMIZE_MANIFESTS}:
+        return Mode.DEEP
+    if OperationType.OPTIMIZE in operations:
+        return Mode.STANDARD
+    return Mode.LIGHT
+
+
+@router.post(
+    "/tables/{table_id}/maintenance/operations",
+    response_model=MaintenanceRunResponse,
+    status_code=201,
+    dependencies=[Depends(require_operator)],
+)
+def run_table_operations(
+    table_id: uuid.UUID,
+    payload: TableOperationRunRequest,
+    session: SessionDep,
+    principal: CurrentPrincipal,
+) -> MaintenanceRunResponse:
+    """Run chosen maintenance operations on one table, now.
+
+    The table's effective workflow supplies the destination and parameters (retention,
+    orphan age, chunking). Unlike /maintenance/run, the operations need not be in the
+    workflow's list: this path targets exactly one table the operator is looking at, so
+    "expire snapshots on this table" works even when its workflow only compacts. ABAC,
+    the plan verifier, protected snapshots and the shared-location orphan gate all still
+    apply through start_maintenance_run and the planner.
+    """
+    from cryo.db.models import Preset
+    from cryo.db.repositories import presets as preset_repo
+    from cryo.maintenance.run_service import start_maintenance_run
+
+    requested = set(payload.operations)
+    unsupported = requested - _OPERATION_RUN_OPS
+    if unsupported:
+        names = ", ".join(sorted(op.value for op in unsupported))
+        raise HTTPException(status_code=400, detail=f"Not runnable from a table: {names}")
+    table = preset_repo.get_table_with_stats(session, table_id)
+    if table is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+    effective = preset_repo.resolve_effective_preset(session, table)
+    if effective is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Assign a workflow first; it supplies the engine and retention settings.",
+        )
+    preset = session.get(Preset, uuid.UUID(effective.preset.id))
+    if preset is None:
+        raise HTTPException(status_code=409, detail="The table's workflow no longer exists")
+    request = MaintenanceRunRequest(
+        table_ids=[table_id],
+        destination_id=preset.destination_id,
+        preset_id=preset.id,
+        mode=mode_for_operations(requested),
+        trigger=payload.trigger,
+        operations=[op.value for op in payload.operations],
+    )
+    return start_maintenance_run(session, request, principal, allow_operations_outside_preset=True)
