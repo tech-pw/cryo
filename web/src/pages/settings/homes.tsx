@@ -7,6 +7,7 @@ import { SettingsLayout } from "./SettingsLayout";
 const Connections = lazy(() => import("../Connections").then((m) => ({ default: m.Connections })));
 const Skillsets = lazy(() => import("../Skillsets").then((m) => ({ default: m.Skillsets })));
 const PoliciesTab = lazy(() => import("../governance/PoliciesTab").then((m) => ({ default: m.PoliciesTab })));
+const AccessControl = lazy(() => import("./AccessControl").then((m) => ({ default: m.AccessControl })));
 const AiAccessTable = lazy(() => import("./AiAccessTable").then((m) => ({ default: m.AiAccessTable })));
 
 const useSettingsTab = () => useSearchParams()[0].get("tab");
@@ -40,7 +41,10 @@ export const SettingsAiHome = () => {
 
 export const SettingsAccessHome = () => (
   <SettingsLayout>
-    <PoliciesTab />
+    <AccessControl />
+    <div className="mt-8">
+      <PoliciesTab />
+    </div>
   </SettingsLayout>
 );
 
