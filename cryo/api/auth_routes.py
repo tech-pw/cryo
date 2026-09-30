@@ -7,11 +7,14 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 
 from cryo.api.deps import require_admin
 from cryo.config import Settings, get_settings
+from cryo.db.models import AuthSettings, LocalUser
 from cryo.db.session import SessionLocal
 from cryo.governor.bandit_store import save_bandit
+from cryo.security.google_id_token import verify_google_id_token
 from cryo.security.jwt_tokens import issue_access_token
 from cryo.security.oidc import (
     discover_oidc_endpoints,
@@ -19,6 +22,7 @@ from cryo.security.oidc import (
     oidc_enabled,
     refresh_oidc_token,
 )
+from cryo.security.passwords import hash_password, verify_password
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -47,11 +51,18 @@ class OidcPublicConfig(BaseModel):
     redirect_uri: str
 
 
+class GooglePublicConfig(BaseModel):
+    client_id: str
+    hosted_domain: str | None = None
+
+
 class AuthConfigResponse(BaseModel):
     mode: Literal["dev", "oidc"]
     dev_token_enabled: bool
     dev_token_enabled_in_prod: bool
+    password_login_enabled: bool = False
     oidc: OidcPublicConfig | None = None
+    google: GooglePublicConfig | None = None
 
 
 class OidcExchangeRequest(BaseModel):
@@ -82,10 +93,19 @@ def auth_config() -> AuthConfigResponse:
                 detail="OIDC issuer discovery failed",
             )
         redirect_uri = settings.oidc_redirect_uri or "http://localhost:5173/login/callback"
+        settings_row = _auth_settings()
+        google = None
+        if settings_row.google_enabled and settings_row.google_client_id:
+            google = GooglePublicConfig(
+                client_id=settings_row.google_client_id,
+                hosted_domain=settings_row.google_hosted_domain,
+            )
         return AuthConfigResponse(
             mode="oidc",
             dev_token_enabled=dev_token_enabled,
             dev_token_enabled_in_prod=dev_token_enabled_in_prod,
+            password_login_enabled=settings_row.password_login_enabled,
+            google=google,
             oidc=OidcPublicConfig(
                 client_id=settings.oidc_client_id or "",
                 authorization_endpoint=endpoints["authorization_endpoint"],
@@ -93,11 +113,20 @@ def auth_config() -> AuthConfigResponse:
                 redirect_uri=redirect_uri,
             ),
         )
+    settings_row = _auth_settings()
+    google = None
+    if settings_row.google_enabled and settings_row.google_client_id:
+        google = GooglePublicConfig(
+            client_id=settings_row.google_client_id,
+            hosted_domain=settings_row.google_hosted_domain,
+        )
     return AuthConfigResponse(
         mode="dev",
         dev_token_enabled=dev_token_enabled,
         dev_token_enabled_in_prod=dev_token_enabled_in_prod,
+        password_login_enabled=settings_row.password_login_enabled,
         oidc=None,
+        google=google,
     )
 
 
@@ -177,6 +206,236 @@ def issue_dev_token(payload: TokenRequest) -> TokenResponse:
         tenant_id=payload.tenant_id,
     )
     return TokenResponse(access_token=token)
+
+
+_ASSIGNABLE = {"viewer", "operator", "admin"}
+_PERMISSIONS = [
+    {"role": "viewer", "can": "Read catalogs, runs, and health. Cannot start maintenance."},
+    {"role": "operator", "can": "Run maintenance. Cannot change users or sign-in."},
+    {"role": "admin", "can": "Operator rights, plus users, Google sign-in, and connections."},
+]
+
+
+def _auth_settings() -> AuthSettings:
+    try:
+        with SessionLocal() as session:
+            row = session.get(AuthSettings, 1)
+            if row is None:
+                row = AuthSettings(id=1)
+                session.add(row)
+                session.commit()
+                session.refresh(row)
+            session.expunge(row)
+            return row
+    except SQLAlchemyError:
+        return AuthSettings(id=1, password_login_enabled=False, google_enabled=False)
+
+
+def _issue_for_user(user: LocalUser) -> TokenResponse:
+    return TokenResponse(
+        access_token=issue_access_token(subject=user.username, roles=[user.role])
+    )
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class GoogleLoginRequest(BaseModel):
+    id_token: str
+
+
+class UserWrite(BaseModel):
+    username: str
+    password: str = Field(min_length=8)
+    role: str = "viewer"
+
+
+class UserPatch(BaseModel):
+    role: str | None = None
+    disabled: bool | None = None
+    password: str | None = Field(default=None, min_length=8)
+
+
+class UserRead(BaseModel):
+    id: uuid.UUID
+    username: str
+    role: str
+    disabled: bool
+    has_password: bool
+
+
+class AuthSettingsRead(BaseModel):
+    password_login_enabled: bool
+    google_enabled: bool
+    google_client_id: str | None
+    google_hosted_domain: str | None
+    google_auto_provision: bool
+
+
+class AuthSettingsPatch(BaseModel):
+    password_login_enabled: bool | None = None
+    google_enabled: bool | None = None
+    google_client_id: str | None = None
+    google_hosted_domain: str | None = None
+    google_auto_provision: bool | None = None
+
+
+def _check_role(role: str) -> str:
+    normalized = role.strip().lower()
+    if normalized not in _ASSIGNABLE:
+        raise HTTPException(status_code=400, detail="role must be viewer, operator, or admin")
+    return normalized
+
+
+def _last_admin(session, excluding: uuid.UUID | None = None) -> bool:
+    rows = (
+        session.query(LocalUser)
+        .filter(LocalUser.role == "admin", LocalUser.disabled.is_(False))
+        .all()
+    )
+    remaining = [row for row in rows if row.id != excluding]
+    return len(remaining) == 0
+
+
+@router.post("/login", response_model=TokenResponse)
+def login_with_password(payload: LoginRequest) -> TokenResponse:
+    settings_row = _auth_settings()
+    if not settings_row.password_login_enabled:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password sign-in is disabled")
+    username = payload.username.strip().lower()
+    with SessionLocal() as session:
+        user = session.query(LocalUser).filter(LocalUser.username == username).one_or_none()
+        if user is None or user.disabled or not verify_password(payload.password, user.password_hash):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
+        return _issue_for_user(user)
+
+
+@router.post("/google", response_model=TokenResponse)
+def login_with_google(payload: GoogleLoginRequest) -> TokenResponse:
+    settings_row = _auth_settings()
+    if not settings_row.google_enabled or not settings_row.google_client_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Google sign-in is not configured")
+    claims = verify_google_id_token(
+        payload.id_token,
+        client_id=settings_row.google_client_id,
+        hosted_domain=settings_row.google_hosted_domain,
+    )
+    if claims is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Google sign-in was rejected")
+    email = claims["email"]
+    with SessionLocal() as session:
+        user = session.query(LocalUser).filter(LocalUser.username == email).one_or_none()
+        if user is None and settings_row.google_auto_provision:
+            user = LocalUser(username=email, role="viewer")
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+        if user is None or user.disabled:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This Google account is not allowed to sign in",
+            )
+        return _issue_for_user(user)
+
+
+@router.get("/roles")
+def list_roles() -> dict[str, list[dict[str, str]]]:
+    return {"roles": _PERMISSIONS}
+
+
+@router.get("/users", response_model=list[UserRead], dependencies=[Depends(require_admin)])
+def list_users() -> list[UserRead]:
+    with SessionLocal() as session:
+        rows = session.query(LocalUser).order_by(LocalUser.username).all()
+        return [
+            UserRead(
+                id=row.id,
+                username=row.username,
+                role=row.role,
+                disabled=row.disabled,
+                has_password=bool(row.password_hash),
+            )
+            for row in rows
+        ]
+
+
+@router.post("/users", response_model=UserRead, dependencies=[Depends(require_admin)])
+def create_user(payload: UserWrite) -> UserRead:
+    role = _check_role(payload.role)
+    username = payload.username.strip().lower()
+    with SessionLocal() as session:
+        if session.query(LocalUser).filter(LocalUser.username == username).one_or_none():
+            raise HTTPException(status_code=409, detail="Username already exists")
+        user = LocalUser(username=username, password_hash=hash_password(payload.password), role=role)
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return UserRead(
+            id=user.id, username=user.username, role=user.role, disabled=user.disabled, has_password=True
+        )
+
+
+@router.patch("/users/{user_id}", response_model=UserRead, dependencies=[Depends(require_admin)])
+def update_user(user_id: uuid.UUID, payload: UserPatch) -> UserRead:
+    with SessionLocal() as session:
+        user = session.get(LocalUser, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if payload.role is not None:
+            role = _check_role(payload.role)
+            if user.role == "admin" and role != "admin" and _last_admin(session, excluding=user.id):
+                raise HTTPException(status_code=409, detail="Cannot remove the last admin")
+            user.role = role
+        if payload.disabled is not None:
+            if payload.disabled and user.role == "admin" and _last_admin(session, excluding=user.id):
+                raise HTTPException(status_code=409, detail="Cannot disable the last admin")
+            user.disabled = payload.disabled
+        if payload.password is not None:
+            user.password_hash = hash_password(payload.password)
+        session.commit()
+        session.refresh(user)
+        return UserRead(
+            id=user.id,
+            username=user.username,
+            role=user.role,
+            disabled=user.disabled,
+            has_password=bool(user.password_hash),
+        )
+
+
+@router.get("/settings", response_model=AuthSettingsRead, dependencies=[Depends(require_admin)])
+def read_auth_settings() -> AuthSettingsRead:
+    row = _auth_settings()
+    return AuthSettingsRead(
+        password_login_enabled=row.password_login_enabled,
+        google_enabled=row.google_enabled,
+        google_client_id=row.google_client_id,
+        google_hosted_domain=row.google_hosted_domain,
+        google_auto_provision=row.google_auto_provision,
+    )
+
+
+@router.patch("/settings", response_model=AuthSettingsRead, dependencies=[Depends(require_admin)])
+def patch_auth_settings(payload: AuthSettingsPatch) -> AuthSettingsRead:
+    with SessionLocal() as session:
+        row = session.get(AuthSettings, 1) or AuthSettings(id=1)
+        session.add(row)
+        data = payload.model_dump(exclude_unset=True)
+        if data.get("google_enabled") and not (data.get("google_client_id") or row.google_client_id):
+            raise HTTPException(status_code=400, detail="Google Client ID is required to enable sign-in")
+        for key, value in data.items():
+            setattr(row, key, value)
+        session.commit()
+        session.refresh(row)
+        return AuthSettingsRead(
+            password_login_enabled=row.password_login_enabled,
+            google_enabled=row.google_enabled,
+            google_client_id=row.google_client_id,
+            google_hosted_domain=row.google_hosted_domain,
+            google_auto_provision=row.google_auto_provision,
+        )
 
 
 @router.post(

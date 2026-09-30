@@ -2811,6 +2811,42 @@ class AssistantSettingsRow(Base):
     )
 
 
+class LocalUser(Base):
+    """A password or Google account that can sign in to the Cryo UI."""
+
+    __tablename__ = "local_users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    username: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    password_hash: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'viewer'"))
+    disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AuthSettings(Base):
+    """Singleton sign-in options edited from Settings. Secrets are not stored here."""
+
+    __tablename__ = "auth_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, server_default=text("1"))
+    password_login_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    google_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    google_client_id: Mapped[str | None] = mapped_column(Text)
+    google_hosted_domain: Mapped[str | None] = mapped_column(Text)
+    google_auto_provision: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+
+
 class AssistantApiKey(Base):
     __tablename__ = "assistant_api_keys"
 
@@ -2888,4 +2924,6 @@ __all__ = [
     "AssistantFeedback",
     "AssistantSettingsRow",
     "AssistantApiKey",
+    "AuthSettings",
+    "LocalUser",
 ]

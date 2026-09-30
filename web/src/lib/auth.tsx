@@ -11,7 +11,7 @@ export const OIDC_STATE_STORAGE_KEY = "cryo.oidc.state";
 const OIDC_VERIFIER_STORAGE_KEY = "cryo.oidc.verifier";
 const TOKENS: RoleToken[] = ["viewer", "operator", "admin"];
 
-export type AuthMode = "dev" | "oidc";
+export type AuthMode = "dev" | "oidc" | "local";
 
 /**
  * Distinguishes why an OIDC authorization-code exchange failed so LoginCallback can render
@@ -40,11 +40,18 @@ interface OidcPublicConfig {
   redirect_uri: string;
 }
 
+interface GooglePublicConfig {
+  client_id: string;
+  hosted_domain?: string | null;
+}
+
 interface AuthConfigResponse {
   mode: AuthMode;
   dev_token_enabled: boolean;
   dev_token_enabled_in_prod: boolean;
+  password_login_enabled?: boolean;
   oidc?: OidcPublicConfig | null;
+  google?: GooglePublicConfig | null;
 }
 
 interface AuthContextValue {
@@ -58,7 +65,11 @@ interface AuthContextValue {
   authMode: AuthMode;
   devTokenEnabled: boolean;
   devTokenEnabledInProd: boolean;
+  passwordLoginEnabled: boolean;
+  googleClientId: string | null;
   signIn: (role: RoleToken, subject: string) => Promise<void>;
+  signInWithPassword: (username: string, password: string) => Promise<void>;
+  signInWithGoogle: (idToken: string) => Promise<void>;
   startOidcSignIn: () => void;
   completeOidcSignIn: (code: string) => Promise<void>;
   signOut: () => void;
@@ -233,6 +244,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [devTokenEnabled, setDevTokenEnabled] = useState(true);
   const [devTokenEnabledInProd, setDevTokenEnabledInProd] = useState(false);
   const [oidcConfig, setOidcConfig] = useState<OidcPublicConfig | null>(null);
+  const [passwordLoginEnabled, setPasswordLoginEnabled] = useState(false);
+  const [googleClientId, setGoogleClientId] = useState<string | null>(null);
 
   const persistSession = (
     nextRole: RoleToken,
@@ -264,6 +277,47 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to obtain access token");
       setAccessToken("");
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const signInWithPassword = async (username: string, password: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/v1/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      if (!response.ok) throw new Error("Invalid username or password");
+      const payload = (await response.json()) as TokenPayload;
+      persistSession(decodeJwtRole(payload.access_token), username.trim().toLowerCase(), payload.access_token, "local");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Sign-in failed");
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const signInWithGoogle = async (idToken: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/v1/auth/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id_token: idToken })
+      });
+      if (!response.ok) throw new Error("Google sign-in was rejected");
+      const payload = (await response.json()) as TokenPayload;
+      const nextSubject = decodeJwtSubject(payload.access_token);
+      persistSession(decodeJwtRole(payload.access_token), nextSubject, payload.access_token, "local");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Google sign-in failed");
       throw err;
     } finally {
       setLoading(false);
@@ -352,19 +406,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setDevTokenEnabled(config.dev_token_enabled);
         setDevTokenEnabledInProd(config.dev_token_enabled_in_prod === true);
         setOidcConfig(config.oidc ?? null);
+        setPasswordLoginEnabled(config.password_login_enabled === true);
+        setGoogleClientId(config.google?.client_id ?? null);
 
         const storedToken = window.localStorage.getItem(TOKEN_STORAGE_KEY);
         const storedSubject = window.localStorage.getItem(SUBJECT_STORAGE_KEY);
         const storedMode = window.localStorage.getItem(AUTH_MODE_STORAGE_KEY) as AuthMode | null;
 
         if (storedToken && storedSubject) {
-          if (storedMode === "oidc") {
+          if (storedMode === "local" || storedMode === "oidc") {
             const storedRefresh = window.localStorage.getItem(REFRESH_STORAGE_KEY);
             persistSession(
               decodeJwtRole(storedToken),
               storedSubject,
               storedToken,
-              "oidc",
+              storedMode,
               storedRefresh
             );
             return;
@@ -436,12 +492,27 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       authMode,
       devTokenEnabled,
       devTokenEnabledInProd,
+      passwordLoginEnabled,
+      googleClientId,
       signIn,
+      signInWithPassword,
+      signInWithGoogle,
       startOidcSignIn,
       completeOidcSignIn,
       signOut
     }),
-    [role, subject, accessToken, loading, error, authMode, devTokenEnabled, devTokenEnabledInProd]
+    [
+      role,
+      subject,
+      accessToken,
+      loading,
+      error,
+      authMode,
+      devTokenEnabled,
+      devTokenEnabledInProd,
+      passwordLoginEnabled,
+      googleClientId
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

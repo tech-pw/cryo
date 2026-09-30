@@ -14,9 +14,21 @@ const SIGN_IN_RECOVERY_HINT =
   "Check your username and role, then try again. Contact your administrator if this continues.";
 
 export const Login = () => {
-  const { signIn, startOidcSignIn, loading, error, authMode, devTokenEnabled, devTokenEnabledInProd } =
-    useAuth();
+  const {
+    signIn,
+    signInWithPassword,
+    signInWithGoogle,
+    startOidcSignIn,
+    loading,
+    error,
+    authMode,
+    devTokenEnabled,
+    devTokenEnabledInProd,
+    passwordLoginEnabled,
+    googleClientId
+  } = useAuth();
   const [subject, setSubject] = useState("operator");
+  const [password, setPassword] = useState("");
   const [role, setRole] = useState<RoleToken>("operator");
   const errorRef = useRef<HTMLDivElement | null>(null);
 
@@ -54,6 +66,24 @@ export const Login = () => {
                   }
                 />
               </div>
+            ) : null}
+            {googleClientId ? (
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={() => {
+                  const google = (window as Window & { google?: { accounts: { id: { initialize: (options: object) => void; prompt: () => void } } } }).google;
+                  google?.accounts.id.initialize({
+                    client_id: googleClientId,
+                    callback: (response: { credential: string }) => {
+                      void signInWithGoogle(response.credential);
+                    }
+                  });
+                  google?.accounts.id.prompt();
+                }}
+              >
+                Sign in with Google
+              </Button>
             ) : null}
             <Button variant="primary" loading={loading} className="w-full" onClick={startOidcSignIn}>
               <Lock aria-hidden="true" />
@@ -136,6 +166,29 @@ export const Login = () => {
                 />
               </div>
             </div>
+            {passwordLoginEnabled ? (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="login-password">Password</Label>
+                  <Input
+                    id="login-password"
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    autoComplete="current-password"
+                    required
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="primary"
+                  className="w-full"
+                  onClick={() => void signInWithPassword(subject, password)}
+                >
+                  Sign in with password
+                </Button>
+              </>
+            ) : null}
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="login-role">Role</Label>
               <select
