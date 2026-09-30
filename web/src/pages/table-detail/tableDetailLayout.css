@@ -1,0 +1,15 @@
+.td-main-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.td-main-tabs {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.td-tab-content {
+  min-width: 0;
+}

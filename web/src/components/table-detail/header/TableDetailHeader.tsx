@@ -1,4 +1,4 @@
-import { ChevronDown, Copy, Settings } from "lucide-react";
+import { AlertTriangle, ChevronDown, Clock3, Copy, Database, Files, GitBranch, HardDrive, Layers3, RefreshCw, Settings, Workflow } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
 import type * as React from "react";
 import { Link } from "react-router-dom";
@@ -9,10 +9,13 @@ import { GradePill } from "../../status";
 import { Badge } from "../../ui/badge";
 import { Breadcrumb } from "../../ui/breadcrumb";
 import { Button } from "../../ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "../../ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import { cn } from "../../../lib/cn";
 import { formatGb, formatNumber } from "../../../lib/format";
+import { operationLabels } from "../../../lib/theme";
 import { formatPartitionColumnLabel } from "../helpers";
+import "./table-detail-header.css";
 
 const UNKNOWN = "—";
 const ASSIGN_WORKFLOW_REASON = "Assign a workflow before running maintenance";
@@ -51,6 +54,8 @@ export interface TableDetailHeaderProps {
   scanBackoff: { until: string | null; failures: number } | null;
   writeAllowed: boolean;
   writeReason: string | null;
+  chooseWorkflowAllowed?: boolean;
+  chooseWorkflowReason?: string | null;
   scanAllowed: boolean;
   scanReason: string | null;
   onScan: () => void;
@@ -93,17 +98,17 @@ const countText = (value: number | null): string => (known(value) ? formatNumber
 
 const sizeText = (value: number | null): string => (known(value) ? formatGb(value) : UNKNOWN);
 
-const smallFilesText = (small: number | null, total: number | null): string => {
+const smallFilesShareText = (small: number | null, total: number | null): string => {
   if (!known(small) || !known(total)) return UNKNOWN;
   const pct = total > 0 ? Math.round((small / total) * 100) : 0;
-  return `${formatNumber(small)} of ${formatNumber(total)} (${pct}%)`;
+  return `${pct}% of ${formatNumber(total)} files`;
 };
 
 const maintainedText = (at: string | null, operation: string | null): string => {
   const when = formatIst(at);
   if (!when) return "Not recorded";
   const name = operation?.trim();
-  return name ? `${when} (${name})` : when;
+  return name ? `${operationLabels[name] ?? name.replaceAll("_", " ")} · ${when}` : when;
 };
 
 const workflowLabel = (name: string | null, source: string | null): string => {
@@ -121,9 +126,9 @@ const backoffLine = (backoff: TableDetailHeaderProps["scanBackoff"]): string | n
 };
 
 const engineLine = (label: string | null, supported: boolean, reason: string | null): string => {
-  if (supported) return `Engine: ${label?.trim() || UNKNOWN} · supported`;
+  if (supported) return `Runs on ${label?.trim() || UNKNOWN}`;
   const detail = reason?.trim();
-  return detail ? `not supported for this table: ${detail}` : "not supported for this table";
+  return detail ? `Maintenance unavailable: ${detail}` : "No compatible engine assigned";
 };
 
 const maintenanceReasonFor = (
@@ -149,10 +154,11 @@ const copyText = (value: string, success: string) => {
   );
 };
 
-const Fact = ({ label, children }: { label: string; children: ReactNode }) => (
-  <div className="min-w-0">
-    <dt className="text-[11px] font-medium text-muted-foreground">{label}</dt>
-    <dd className="mt-0.5 text-sm font-medium text-foreground [font-variant-numeric:tabular-nums]">{children}</dd>
+const Fact = ({ label, icon, children, detail }: { label: string; icon: ReactNode; children: ReactNode; detail?: ReactNode }) => (
+  <div className="ctd-header__fact">
+    <dt>{icon}{label}</dt>
+    <dd>{children}</dd>
+    {detail ? <div className="ctd-header__fact-detail">{detail}</div> : null}
   </div>
 );
 
@@ -166,8 +172,7 @@ const GradeScore = ({ grade, score }: { grade: string | null; score: number | nu
       aria-label={letter ? `Grade ${letter}, score ${integer}` : `Score ${integer}`}
     >
       {letter ? <GradePill grade={letter} /> : null}
-      {letter ? <span aria-hidden="true">·</span> : null}
-      <span className="text-sm font-medium tabular-nums">{integer}</span>
+      <span className="text-xs font-medium tabular-nums">Health {integer}/100</span>
     </span>
   );
 };
@@ -202,6 +207,8 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
   scanBackoff,
   writeAllowed,
   writeReason,
+  chooseWorkflowAllowed = writeAllowed,
+  chooseWorkflowReason = writeReason,
   scanAllowed,
   scanReason,
   onScan,
@@ -215,7 +222,6 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
   scanPending = false
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuId = useId();
   const maintenanceReasonId = useId();
   const refreshReasonId = useId();
   const primaryReasonId = useId();
@@ -233,8 +239,9 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
   const owner = ownerEmail?.trim() || "No owner";
   const qualified = qualifiedName?.trim() || null;
   const paused = backoffLine(scanBackoff);
-  const maintenanceDisabled = !writeAllowed || !hasWorkflow;
-  const maintenanceReason = maintenanceReasonFor(writeAllowed, writeReason, hasWorkflow);
+  const maintenanceDisabled = !writeAllowed || !hasWorkflow || !engineSupported;
+  const maintenanceReason = maintenanceReasonFor(writeAllowed, writeReason, hasWorkflow)
+    ?? (engineSupported ? null : engineReason || "No compatible engine assigned");
   const refreshDisabled = !scanAllowed;
   const refreshReason = refreshDisabled ? scanReason : null;
 
@@ -250,8 +257,8 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
       ? {
           label: "Choose a workflow",
           onClick: onChooseWorkflow,
-          disabled: !writeAllowed,
-          reason: writeAllowed ? null : writeReason,
+          disabled: !chooseWorkflowAllowed,
+          reason: chooseWorkflowAllowed ? null : chooseWorkflowReason,
           pending: false
         }
       : {
@@ -263,10 +270,10 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
         };
 
   return (
-    <header className="space-y-3 border-b border-border pb-4">
-      <div className="flex items-start justify-between gap-3">
+    <header className="ctd-header">
+      <div className="ctd-header__breadcrumb-row">
         <Breadcrumb
-          className="mb-0 min-w-0"
+          className="ctd-header__breadcrumb mb-0 min-w-0"
           items={[
             { title: <Link className={crumbClass} to="/tables">Tables</Link> },
             { title: <Link className={crumbClass} to={sourceHref}>{sourceLabel}</Link> },
@@ -308,67 +315,19 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-        <h1 className="mr-1 text-lg font-semibold tracking-tight text-foreground">{tableName}</h1>
-        <Badge variant="outline">Iceberg</Badge>
-        <Badge variant="outline">{formatPartitionColumnLabel(partitionLabel)}</Badge>
-        <GradeScore grade={grade} score={score} />
-        <span className="text-sm text-muted-foreground">
-          Owner <span className="text-foreground">{owner}</span>
-        </span>
-      </div>
-
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <span>Scan {formatIst(scanAt) ?? UNKNOWN}</span>
-        <span aria-hidden="true">·</span>
-        <span>last commit {formatIst(lastCommitAt) ?? UNKNOWN}</span>
-        {locationText ? (
-          <>
-            <span aria-hidden="true">·</span>
-            <code className="max-w-[28rem] truncate font-mono text-[11px] text-foreground" title={locationText}>
-              {locationText}
-            </code>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  aria-label="Copy location"
-                  onClick={() => copyText(locationText, "Path copied")}
-                >
-                  <Copy className="size-3.5" aria-hidden="true" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Copy location</TooltipContent>
-            </Tooltip>
-          </>
-        ) : null}
-      </p>
-
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-3 lg:grid-cols-4">
-        <Fact label="Size">{sizeText(sizeGb)}</Fact>
-        <Fact label="Files">{countText(totalFiles)}</Fact>
-        <Fact label="Small files">{smallFilesText(smallFiles, totalFiles)}</Fact>
-        <Fact label="Snapshots">{countText(snapshotCount)}</Fact>
-        <Fact label="Last maintained">{maintainedText(lastMaintainedAt, lastMaintainedOperation)}</Fact>
-        <Fact label="Workflow">
-          <Link className="underline-offset-2 hover:underline" to={workflowHref}>
-            {workflowLabel(workflowName, workflowSource)}
-          </Link>
-        </Fact>
-      </dl>
-
-      {paused ? (
-        <p className="text-xs text-[var(--color-status-warning)]" role="status">
-          {paused}
-        </p>
-      ) : null}
-
-      <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
-        <div className="relative inline-flex flex-col items-end gap-1">
-          <div className="inline-flex">
+      <div className="ctd-header__identity-row">
+        <div className="ctd-header__identity">
+          <h1>{tableName}</h1>
+          <div className="ctd-header__identity-meta">
+            <Badge variant="outline">Iceberg</Badge>
+            <span className="ctd-header__partition"><GitBranch size={13} aria-hidden="true" />{formatPartitionColumnLabel(partitionLabel)}</span>
+            <GradeScore grade={grade} score={score} />
+            <span>Owner <span className="text-foreground">{owner}</span></span>
+          </div>
+        </div>
+        <div className="ctd-header__actions">
+          <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+          <div className="ctd-header__action-buttons">
             <Button
               type="button"
               variant="primary"
@@ -382,39 +341,31 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
             >
               {primary.label}
             </Button>
-            <Button
+            <PopoverTrigger asChild><Button
               type="button"
               variant="primary"
               size="sm"
               className="rounded-l-none border-l border-primary-foreground/30 px-2"
               aria-label="More actions"
-              aria-expanded={menuOpen}
-              aria-haspopup="menu"
-              aria-controls={menuId}
-              onClick={() => setMenuOpen((open) => !open)}
             >
               <ChevronDown className="size-3.5" aria-hidden="true" />
-            </Button>
+            </Button></PopoverTrigger>
           </div>
           {primary.disabled && primary.reason ? (
-            <p id={primaryReasonId} className="max-w-xs text-right text-xs text-muted-foreground">
+            <p id={primaryReasonId} className="ctd-header__primary-reason">
               {primary.reason}
             </p>
           ) : null}
-          <div
-            id={menuId}
-            role="group"
+          <PopoverContent
+            align="end"
             aria-label="Maintenance actions"
-            className={cn(
-              "absolute right-0 top-full z-30 mt-1 w-72 rounded-[var(--radius-default)] border border-border bg-popover p-1 text-popover-foreground shadow-md",
-              !menuOpen && "hidden"
-            )}
+            className="ctd-header__action-popover p-1"
           >
             <ConfirmAction
               title="Run now?"
               description="Queues a real maintenance job using the assigned workflow."
               onConfirm={onRun}
-              disabled={maintenanceDisabled}
+              disabled={maintenanceDisabled || runPending}
             >
               <Button
                 type="button"
@@ -433,7 +384,7 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
               title="Rewrite manifests?"
               description="Queues manifest-only maintenance without data file compaction."
               onConfirm={onRewriteManifests}
-              disabled={maintenanceDisabled}
+              disabled={maintenanceDisabled || runPending}
             >
               <Button
                 type="button"
@@ -471,10 +422,62 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
                 {refreshReason}
               </p>
             ) : null}
-          </div>
+          </PopoverContent>
+          </Popover>
         </div>
-        <p className="text-xs text-muted-foreground">{engineLine(engineLabel, engineSupported, engineReason)}</p>
       </div>
+
+      <div className="ctd-header__context-band">
+        <dl className="ctd-header__facts">
+          <Fact label="Table size" icon={<HardDrive aria-hidden="true" />}>{sizeText(sizeGb)}</Fact>
+          <Fact label="Files" icon={<Files aria-hidden="true" />}>{countText(totalFiles)}</Fact>
+          <Fact
+            label="Compaction candidates"
+            icon={<Layers3 aria-hidden="true" />}
+            detail={smallFilesShareText(smallFiles, totalFiles)}
+          >
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="ctd-header__candidate-count" tabIndex={0}>{countText(smallFiles)}</span>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">Small files in partitions flagged for compaction by the scanner. This is not a count of every undersized file.</TooltipContent>
+            </Tooltip>
+          </Fact>
+          <Fact label="Snapshots" icon={<Database aria-hidden="true" />}>{countText(snapshotCount)}</Fact>
+        </dl>
+        <div className="ctd-header__workflow">
+          <div className="ctd-header__workflow-label"><Workflow size={14} aria-hidden="true" />Maintenance workflow</div>
+          <Link className="ctd-header__workflow-link" to={workflowHref}>
+            {workflowLabel(workflowName, workflowSource)}
+          </Link>
+          <p className="ctd-header__workflow-detail">
+            {hasWorkflow
+              ? engineLine(engineLabel, engineSupported, engineReason)
+              : "Choose a workflow to enable maintenance."}
+          </p>
+        </div>
+      </div>
+
+      <div className="ctd-header__evidence">
+        <span><RefreshCw aria-hidden="true" />Scan {formatIst(scanAt) ?? "not recorded"}</span>
+        <span><GitBranch aria-hidden="true" />Last commit {formatIst(lastCommitAt) ?? "not recorded"}</span>
+        <span><Clock3 aria-hidden="true" />Latest action: {maintainedText(lastMaintainedAt, lastMaintainedOperation)}</span>
+        {locationText ? (
+          <details className="ctd-header__location">
+            <summary>Storage location</summary>
+            <div className="ctd-header__location-content">
+              <code>{locationText}</code>
+              <Button type="button" variant="ghost" size="icon" aria-label="Copy location" onClick={() => copyText(locationText, "Path copied")}>
+                <Copy size={14} aria-hidden="true" />
+              </Button>
+            </div>
+          </details>
+        ) : null}
+      </div>
+
+      {paused ? (
+        <p className="ctd-header__scan-warning" role="status"><AlertTriangle size={15} aria-hidden="true" />{paused}</p>
+      ) : null}
     </header>
   );
 };

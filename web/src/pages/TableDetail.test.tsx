@@ -364,7 +364,7 @@ describe("TableDetail page", () => {
     renderTableDetail();
     expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
     expect(screen.queryByText("More table metrics")).not.toBeInTheDocument();
-    expect(screen.getByText("Size")).toBeInTheDocument();
+    expect(screen.getByText("Table size")).toBeInTheDocument();
   }, 15000);
 
   it("requires confirmation before running the silent-data-loss dry-run check, and never claims a repair/commit", async () => {
@@ -460,6 +460,7 @@ describe("TableDetail page", () => {
     renderTableDetail();
     expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
     fireEvent.click(screen.getByRole("button", { name: "Refresh stats" }));
 
     await waitFor(() => {
@@ -472,6 +473,7 @@ describe("TableDetail page", () => {
     renderTableDetail();
     expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
     const runButton = screen.getByRole("button", { name: "Run now" });
     expect(runButton).toBeDisabled();
   }, 15000);
@@ -503,6 +505,7 @@ describe("TableDetail page", () => {
     renderTableDetail();
     expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
 
+    fireEvent.click(await screen.findByRole("button", { name: "More actions" }));
     const runButton = await screen.findByRole("button", { name: "Run now" });
     expect(runButton).not.toBeDisabled();
     fireEvent.click(runButton);

@@ -154,9 +154,9 @@ describe("TableDetailHeader", () => {
   it("labels scan and commit in IST and does not show the raw timestamp", () => {
     renderHeader();
     expect(screen.getByText("Scan 28 Sep 09:10 IST")).toBeInTheDocument();
-    expect(screen.getByText("last commit 28 Sep 08:55 IST")).toBeInTheDocument();
+    expect(screen.getByText("Last commit 28 Sep 08:55 IST")).toBeInTheDocument();
     expect(screen.queryByText(/2026-09-28T03:40/)).not.toBeInTheDocument();
-    expect(screen.getByText("27 Sep 02:14 IST (optimize)")).toBeInTheDocument();
+    expect(screen.getByText("Latest action: Compaction · 27 Sep 02:14 IST")).toBeInTheDocument();
   });
 
   it("does not invent a scan backoff date", () => {
@@ -187,17 +187,17 @@ describe("TableDetailHeader", () => {
     expect(screen.getByText("Iceberg")).toBeInTheDocument();
   });
 
-  it("links the workflow to maintenance settings and wraps facts in a two-column grid", () => {
+  it("links the workflow to maintenance settings and lays out facts in a grid", () => {
     renderHeader();
     expect(screen.getByRole("link", { name: "nightly-standard (preset)" })).toHaveAttribute(
       "href",
       "/tables/tbl-1?tab=maintenance#maintenance-settings"
     );
-    expect(screen.getByText(`${formatNumber(21400)} of ${formatNumber(38120)} (56%)`)).toBeInTheDocument();
-    const facts = screen.getByText("Size").closest("dl");
-    expect(facts?.className).toContain("grid");
-    expect(facts?.className).toContain("grid-cols-2");
-    expect(screen.getByText("Engine: Trino · supported")).toBeInTheDocument();
+    expect(screen.getByText(formatNumber(21400))).toBeInTheDocument();
+    expect(screen.getByText(`56% of ${formatNumber(38120)} files`)).toBeInTheDocument();
+    const facts = screen.getByText("Table size").closest("dl");
+    expect(facts?.className).toContain("ctd-header__facts");
+    expect(screen.getByText("Runs on Trino")).toBeInTheDocument();
   });
 
   it("copies the current location href", () => {
@@ -210,7 +210,7 @@ describe("TableDetailHeader", () => {
 
   it("states when the engine is not supported without inventing a reason", () => {
     renderHeader({ engineSupported: false, engineLabel: "Spark", engineReason: "no compatible destination" });
-    expect(screen.getByText("not supported for this table: no compatible destination")).toBeInTheDocument();
-    expect(screen.queryByText(/Engine: Spark · supported/)).not.toBeInTheDocument();
+    expect(screen.getByText("Maintenance unavailable: no compatible destination")).toBeInTheDocument();
+    expect(screen.queryByText(/Runs on Spark/)).not.toBeInTheDocument();
   });
 });
