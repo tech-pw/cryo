@@ -345,6 +345,22 @@ partitions. It does not execute statements.
 `/maintenance/run` creates durable `runs` and `jobs` rows and enqueues immediately unless
 `scheduled_at` defers dispatch to the Scheduler.
 
+One table, chosen operations, now (operator):
+
+```http
+POST /api/v1/tables/{table_id}/maintenance/operations
+{"operations": ["expire_snapshots"]}
+```
+
+Backs the table page's "Run maintenance" cards. The table's effective workflow supplies the
+destination and parameters (retention, orphan age, chunking), but the operations need not be in
+that workflow's list: `/maintenance/run` rejects that with 400, this single-table path allows it.
+The mode is the lightest one that plans every requested operation (`expire_snapshots` → `light`,
+`optimize` → `standard`, `optimize_manifests` alone → `manifest_only`, anything with
+`remove_orphan_files`/`optimize_manifests` → `deep`), and the run records the exact list in
+`summary.operations`, so only those operations execute. ABAC, the plan verifier, protected
+snapshots and the shared-location orphan gate still apply. `409` when no workflow resolves.
+
 Run by ids:
 
 ```json

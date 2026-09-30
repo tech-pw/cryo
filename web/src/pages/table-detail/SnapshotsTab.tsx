@@ -1,6 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { GitBranch, Tag } from "lucide-react";
+import { Archive, Copy, Crosshair, GitBranch, Tag } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import {
@@ -11,6 +11,7 @@ import {
 } from "../../api/snapshots";
 import { QueryErrorAlert } from "../../components/common";
 import { ExcludedFromExpiry } from "../../components/table-detail/ExcludedFromExpiry";
+import { useOperationLauncher } from "../../components/table-detail/operations/OperationLauncher";
 import { SnapshotSelection } from "../../components/table-detail/SnapshotSelection";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -82,9 +83,11 @@ const SummaryCard = ({
   pinned: number;
   latest: string | null;
   oldest: string | null;
-}) => (
+}) => {
+  const launcher = useOperationLauncher();
+  return (
   <Card className="mb-4">
-    <div className="flex items-end gap-6 p-4">
+    <div className="flex flex-wrap items-end gap-6 p-4">
       <div>
         <p className="text-xs text-muted-foreground">Live snapshots</p>
         <p className="text-2xl font-semibold text-foreground [font-variant-numeric:tabular-nums]">{total}</p>
@@ -94,6 +97,20 @@ const SummaryCard = ({
         <p className="text-xs text-muted-foreground">Pinned by tags or branches</p>
         <p className="text-2xl font-semibold text-foreground [font-variant-numeric:tabular-nums]">{pinned}</p>
       </div>
+      {launcher ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className="ml-auto"
+          disabled={Boolean(launcher.blockedReason)}
+          title={launcher.blockedReason ?? undefined}
+          onClick={() => launcher.launch("expire_snapshots")}
+        >
+          <Archive aria-hidden="true" />
+          Expire snapshots
+        </Button>
+      ) : null}
     </div>
     <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border bg-[var(--color-surface-sunken)] px-4 py-2 text-xs text-muted-foreground">
       <span>
@@ -104,7 +121,10 @@ const SummaryCard = ({
       </span>
     </div>
   </Card>
-);
+  );
+};
+
+const shortId = (id: string): string => (id.length > 10 ? `…${id.slice(-8)}` : id);
 
 const SnapshotActions = ({
   snapshotId,
@@ -208,31 +228,37 @@ export const SnapshotsTab = () => {
         id: "snapshot_id",
         header: "Snapshot",
         cell: ({ row }) => (
-          <span className="inline-flex items-center gap-1">
-            <span data-snapshot-id={row.original.snapshot_id}>{row.original.snapshot_id}</span>
+          <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
+            <span data-snapshot-id={row.original.snapshot_id} title={row.original.snapshot_id} className="font-mono text-xs">
+              {shortId(row.original.snapshot_id)}
+            </span>
             <Button
               type="button"
-              size="sm"
+              size="icon"
               variant="ghost"
+              className="size-7"
               aria-label={`Copy snapshot ${row.original.snapshot_id}`}
+              title="Copy full snapshot id"
               onClick={() => {
                 if (navigator.clipboard) void navigator.clipboard.writeText(row.original.snapshot_id);
               }}
             >
-              Copy
+              <Copy className="!size-3.5" aria-hidden="true" />
             </Button>
             <Button
               type="button"
-              size="sm"
+              size="icon"
               variant="ghost"
+              className="size-7"
               aria-label={`Select snapshot ${row.original.snapshot_id}`}
+              title="Select for comparison"
               onClick={() => {
                 const next = new URLSearchParams(searchParams);
                 next.set("snapshot", row.original.snapshot_id);
                 setSearchParams(next, { replace: true });
               }}
             >
-              Select
+              <Crosshair className="!size-3.5" aria-hidden="true" />
             </Button>
           </span>
         )
@@ -241,11 +267,15 @@ export const SnapshotsTab = () => {
         id: "parent_snapshot_id",
         header: "Parent",
         cell: ({ row }) => (
-          <span data-parent-snapshot-id={row.original.parent_snapshot_id ?? ""}>
+          <span
+            data-parent-snapshot-id={row.original.parent_snapshot_id ?? ""}
+            title={row.original.parent_snapshot_id ?? undefined}
+            className="whitespace-nowrap font-mono text-xs"
+          >
             {row.original.parent_snapshot_id
               ? loadedIds.has(row.original.parent_snapshot_id)
-                ? row.original.parent_snapshot_id
-                : "Parent outside loaded history"
+                ? shortId(row.original.parent_snapshot_id)
+                : "Outside loaded page"
               : "—"}
           </span>
         )
@@ -254,7 +284,7 @@ export const SnapshotsTab = () => {
         id: "timestamp",
         header: "Timestamp",
         cell: ({ row }) => (
-          <span className="inline-flex items-center gap-2">
+          <span className="inline-flex items-center gap-2 whitespace-nowrap">
             <span
               className="inline-block size-1.5 rounded-full bg-[var(--color-primary)]"
               aria-hidden="true"
@@ -284,7 +314,7 @@ export const SnapshotsTab = () => {
       {
         id: "size",
         header: "Total size",
-        cell: ({ row }) => sizeLabel(row.original.summary.total_files_size)
+        cell: ({ row }) => <span className="whitespace-nowrap">{sizeLabel(row.original.summary.total_files_size)}</span>
       },
       {
         id: "refs",

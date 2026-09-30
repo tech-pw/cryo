@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { OperationLauncherProvider } from "../operations/OperationLauncher";
 import { OverviewPanel } from "./OverviewPanel";
 
 const mocks = vi.hoisted(() => ({
@@ -12,7 +13,11 @@ const mocks = vi.hoisted(() => ({
   getFastPathFindings: vi.fn(),
   getComplianceStatus: vi.fn(),
   getEffectivePreset: vi.fn(),
-  getTableMaintenanceStatus: vi.fn()
+  getTableMaintenanceStatus: vi.fn(),
+  getTableCost: vi.fn(),
+  listPresets: vi.fn(),
+  getEffectiveParams: vi.fn(),
+  runTableOperations: vi.fn()
 }));
 
 vi.mock("../../../api/client", () => ({
@@ -22,7 +27,11 @@ vi.mock("../../../api/client", () => ({
   getTableHealthTrends: mocks.getTableHealthTrends,
   getFastPathFindings: mocks.getFastPathFindings,
   getComplianceStatus: mocks.getComplianceStatus,
-  getEffectivePreset: mocks.getEffectivePreset
+  getEffectivePreset: mocks.getEffectivePreset,
+  getTableCost: mocks.getTableCost,
+  listPresets: mocks.listPresets,
+  getEffectiveParams: mocks.getEffectiveParams,
+  runTableOperations: mocks.runTableOperations
 }));
 
 vi.mock("../../../api/maintenanceStatus", () => ({
@@ -72,7 +81,14 @@ const renderPanel = (props?: { onScan?: () => void; onPreview?: () => void; onEd
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/tables/table-1"]}>
         <Routes>
-          <Route path="/tables/:tableId" element={<OverviewPanel {...props} />} />
+          <Route
+            path="/tables/:tableId"
+            element={
+              <OperationLauncherProvider tableId="table-1" tableName="events_daily">
+                <OverviewPanel {...props} />
+              </OperationLauncherProvider>
+            }
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -121,6 +137,15 @@ describe("OverviewPanel", () => {
       next_nightly_note: "not recorded",
       omitted: []
     });
+    mocks.getTableCost.mockReset().mockResolvedValue({ table_id: "table-1", orphan_bytes: null });
+    mocks.listPresets.mockReset().mockResolvedValue([]);
+    mocks.getEffectiveParams.mockReset().mockResolvedValue({
+      table_id: "table-1",
+      preset_params: {},
+      param_overrides: {},
+      effective_params: { retention_days: 5 }
+    });
+    mocks.runTableOperations.mockReset().mockResolvedValue({ run_id: "run-7", job_ids: ["job-1"], status: "queued" });
   });
 
   it("hides sections 2-6 until the table has been scanned", async () => {
@@ -130,11 +155,9 @@ describe("OverviewPanel", () => {
     expect(await screen.findByText("Needs a first scan")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Scan now" }));
     expect(onScan).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("heading", { name: "What Cryo will do next" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Last receipt" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Most relevant finding" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Score over time" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Ownership & compliance" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Run maintenance" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Health over time" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "History & activity" })).not.toBeInTheDocument();
     expect(screen.queryByText("0")).not.toBeInTheDocument();
 
     await waitFor(() => {
@@ -145,33 +168,21 @@ describe("OverviewPanel", () => {
       expect(mocks.getTableSignals).not.toHaveBeenCalled();
       expect(mocks.getTableHealthTrends).not.toHaveBeenCalled();
       expect(mocks.getComplianceStatus).not.toHaveBeenCalled();
-      expect(mocks.getEffectivePreset).not.toHaveBeenCalled();
     });
   });
 
-  it("renders deduction points from the persisted list", async () => {
-    const onPreview = vi.fn();
+  it("ranks deductions and pairs each with the action that fixes it", async () => {
     mocks.getTable.mockResolvedValue(
       scanned({
         raw: {
           health_deductions: [
-            { label: "Snapshots", deduction: 8, severity: "warning", reason: "too many snapshots" },
-            {
-              label: "Small files",
-              deduction: 20,
-              severity: "critical",
-              reason: "56% of files under target (critical)"
-            }
+            { label: "Snapshot retention buildup", deduction: 8, severity: "warning", reason: "123 snapshots" },
+            { label: "Small-file fragmentation", deduction: 20, severity: "critical", reason: "56% small files" },
+            { label: "High velocity streaming", deduction: 8, severity: "warning", reason: "24 commits/day" }
           ]
         }
       })
     );
-    mocks.getTableSignals.mockResolvedValue({
-      table_id: "table-1",
-      checked_at: "2026-09-28T09:10:00Z",
-      any_triggered: true,
-      signals: [{ triggered: true, signal_name: "query_latency", severity: "warning", reason: "p95 rose", metric_value: 1, threshold: 1 }]
-    });
     mocks.getFastPathFindings.mockResolvedValue([
       {
         table_id: "table-1",
@@ -182,41 +193,52 @@ describe("OverviewPanel", () => {
         detected_at: "2026-09-28T09:00:00Z"
       }
     ]);
-    mocks.getTableHealthTrends.mockResolvedValue({
-      trend_points: [
-        { timestamp: "2026-09-01T00:00:00Z", score: null, grade: null },
-        { timestamp: "2026-09-28T09:10:00Z", score: 72, grade: "C" }
-      ]
-    });
-    renderPanel({ onPreview });
+    renderPanel();
 
-    expect(await screen.findByText("−20 Small files: 56% of files under target (critical)")).toBeInTheDocument();
-    expect(screen.getByText("−8 Snapshots: too many snapshots")).toBeInTheDocument();
-    expect(screen.getByText("100 − 28 = 72")).toBeInTheDocument();
-    expect(await screen.findByText("Diagnostic, not part of the score")).toBeInTheDocument();
-    expect(screen.getByText("query_latency: p95 rose")).toBeInTheDocument();
-    const list = screen.getByText("−20 Small files: 56% of files under target (critical)").closest("ul");
-    expect(list?.textContent?.indexOf("−20")).toBeLessThan(list?.textContent?.indexOf("−8") ?? -1);
-    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
-    expect(onPreview).toHaveBeenCalledOnce();
-    expect(screen.getByRole("link", { name: "See the rest" })).toHaveAttribute(
-      "href",
-      "/tables/table-1?tab=files#files-properties"
-    );
+    expect(await screen.findByText("Small-file fragmentation")).toBeInTheDocument();
+    expect(screen.getByText("−36 points", { exact: false })).toBeInTheDocument();
+    const order = [...document.querySelectorAll(".td-deductions li b")].map((node) => node.textContent);
+    expect(order[0]).toBe("Small-file fragmentation");
+    expect(screen.getByText("Critical")).toBeInTheDocument();
+    expect(screen.getByText(/Write pattern/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Review" })).toHaveAttribute("href", "/tables/table-1?tab=files#files-properties");
 
-    await waitFor(() => {
-      expect(mocks.getFastPathFindings).toHaveBeenCalledWith(api, "table-1");
-    });
-    expect(screen.getByText("Gaps indicate missing measurements.")).toBeInTheDocument();
-    expect(screen.queryByText("0 / 100")).not.toBeInTheDocument();
+    const fix = document.querySelectorAll(".td-deductions li")[1].querySelector("button");
+    expect(fix?.textContent).toBe("Expire snapshots");
   });
 
-  it("says bytes were not reported when actual_bytes_freed is missing", async () => {
+  it("asks for an explicit acknowledgement before a destructive operation runs", async () => {
+    mocks.getTable.mockResolvedValue(
+      scanned({
+        total_snapshots: 123,
+        raw: { health_deductions: [{ label: "Snapshot retention buildup", deduction: 8, severity: "warning", reason: "123 snapshots" }] }
+      })
+    );
+    renderPanel();
+
+    await screen.findByText("Snapshot retention buildup");
+    fireEvent.click(document.querySelector(".td-deductions li button") as HTMLButtonElement);
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(await screen.findByText(/Keeps snapshots from the last 5 days/)).toBeInTheDocument();
+    const run = screen.getByRole("button", { name: "Expire now" });
+    expect(run).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(run).toBeEnabled();
+    fireEvent.click(run);
+
+    await waitFor(() => {
+      expect(mocks.runTableOperations).toHaveBeenCalledWith(api, "table-1", { operations: ["expire_snapshots"] });
+    });
+  });
+
+  it("shows reported before/after file counts and never infers freed bytes", async () => {
     mocks.getTable.mockResolvedValue(scanned());
     mocks.getTableAudit.mockResolvedValue([
       {
         id: 9,
         action: "optimize",
+        status: "OK",
         ts: "2026-09-27T02:00:00Z",
         engine: "trino",
         duration_ms: 1200,
@@ -226,22 +248,13 @@ describe("OverviewPanel", () => {
         output_files_count: 3
       }
     ]);
-    mocks.getTableHealthTrends.mockResolvedValue({
-      trend_points: [{ timestamp: "2026-09-01T00:00:00Z", score: null, grade: null }]
-    });
     renderPanel();
 
-    expect(await screen.findByText("not reported")).toBeInTheDocument();
-    expect(screen.queryByText("0 GB")).not.toBeInTheDocument();
+    expect(await screen.findByText("12 → 3 files")).toBeInTheDocument();
+    expect(screen.queryByText(/freed/)).not.toBeInTheDocument();
     expect(screen.queryByText("999")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Open run" })).not.toBeInTheDocument();
-
     await waitFor(() => {
-      expect(mocks.getTableAudit).toHaveBeenCalledWith(api, "table-1", { limit: 1 });
+      expect(mocks.getTableAudit).toHaveBeenCalledWith(api, "table-1", { limit: 40 });
     });
-    expect(screen.getByText("Input files")).toBeInTheDocument();
-    expect(screen.getByText("12")).toBeInTheDocument();
-    expect(screen.getByText("Output files")).toBeInTheDocument();
-    expect(screen.getByText("3")).toBeInTheDocument();
   });
 });

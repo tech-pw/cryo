@@ -5,6 +5,7 @@ import { PlanPreview } from "../../components/PlanPreview";
 import { ConfirmAction } from "../../components/confirm";
 import { TableDetailHeaderBar } from "../../components/table-detail/header/TableDetailHeaderBar";
 import { TableSettingsSheet } from "../../components/table-detail/TableSettingsSheet";
+import { OperationLauncherProvider } from "../../components/table-detail/operations/OperationLauncher";
 import { AsyncBoundary } from "../../components/AsyncBoundary";
 import {
   CostTabLabel,
@@ -117,6 +118,7 @@ export const TableDetailShell = () => {
 
   return (
     <TableDetailProvider value={ctx}>
+      <OperationLauncherProvider tableId={ctx.tableId} tableName={row?.table_name ?? "this table"}>
       <div className="table-detail table-detail-workspace">
         <TableDetailHeaderBar />
 
@@ -244,6 +246,7 @@ export const TableDetailShell = () => {
         />
         <TableSettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
       </div>
+      </OperationLauncherProvider>
     </TableDetailProvider>
   );
 };

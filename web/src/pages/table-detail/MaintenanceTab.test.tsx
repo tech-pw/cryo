@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MaintenanceStatusRead } from "../../api/maintenanceStatus";
-import { MaintenanceTab, nowWorkLabel } from "./MaintenanceTab";
+import { MaintenanceTab } from "./MaintenanceTab";
 
 const { getTableMaintenanceStatus, getTableRuns, listPresets, listDestinations } = vi.hoisted(() => ({
   getTableMaintenanceStatus: vi.fn(),
@@ -39,6 +39,7 @@ vi.mock("../../api/maintenanceStatus", () => ({
 
 vi.mock("../../api/client", () => ({
   getTableRuns,
+  getTableCost: vi.fn().mockResolvedValue({ table_id: "table-1", orphan_bytes: null }),
   getTableAudit: vi.fn().mockResolvedValue([]),
   getEffectiveParams: vi.fn().mockResolvedValue({
     table_id: "table-1",
@@ -129,14 +130,14 @@ describe("MaintenanceTab", () => {
 
     expect(await screen.findByRole("heading", { name: "Eligible for nightly selection" })).toBeInTheDocument();
     expect(screen.getByText("No blocking reasons.")).toBeInTheDocument();
-    expect(screen.getByText("Last actions are not recorded")).toBeInTheDocument();
     expect(screen.getByText("Next nightly not recorded")).toBeInTheDocument();
+    expect(screen.queryByText("Last actions are not recorded")).not.toBeInTheDocument();
     expect(screen.queryByText("optimize")).not.toBeInTheDocument();
     expect(screen.queryByText("expire_snapshots")).not.toBeInTheDocument();
     expect(screen.queryByText("0 GB")).not.toBeInTheDocument();
     expect(screen.queryByText(/^0$/)).not.toBeInTheDocument();
 
-    expect(screen.getAllByText("History not recorded yet").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("History not recorded yet")).not.toBeInTheDocument();
     expect(screen.queryByText("engine default")).not.toBeInTheDocument();
 
     await waitFor(() => {
@@ -146,25 +147,27 @@ describe("MaintenanceTab", () => {
     expect(listDestinations).not.toHaveBeenCalled();
   });
 
-  it("does not label waiting work as Running", async () => {
+  it("shows waiting work as waiting in the run grid, never as running", async () => {
     getTableMaintenanceStatus.mockResolvedValue(base());
     getTableRuns.mockResolvedValue([
       {
         job_id: "job-9",
         run_id: "run-9",
-        status: "waiting",
-        mode: "execute",
+        status: "admitted",
+        trigger: "web-table-operation",
+        mode: "light",
+        started_at: "2026-09-30T10:00:00Z",
         steps: []
       }
     ]);
     renderTab();
 
-    expect(await screen.findByText("Waiting for engine capacity")).toBeInTheDocument();
-    expect(screen.queryByText("Running")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open run" })).toHaveAttribute("href", "/runs/run-9");
-    expect(nowWorkLabel("waiting")).toBe("Waiting for engine capacity");
-    expect(nowWorkLabel("admitted")).not.toBe("Running");
-    expect(nowWorkLabel("running")).toBe("Running");
+    expect(await screen.findByRole("heading", { name: "Runs" })).toBeInTheDocument();
+    expect(await screen.findByText("1 in progress")).toBeInTheDocument();
+    expect(document.querySelector(".td-grid-bar")?.getAttribute("data-tone")).toBe("queued");
+    expect(document.querySelector(".td-run-status")?.textContent).toContain("Waiting");
+    expect(screen.queryByText("Running", { selector: ".td-run-status" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open full run/ })).toHaveAttribute("href", "/runs/run-9");
   });
 
   it("shows each blocking reason with its values and keeps unknown bytes unknown", async () => {
@@ -213,11 +216,9 @@ describe("MaintenanceTab", () => {
     expect(scanAt?.textContent).toContain("Unknown");
     expect(scanAt?.textContent).not.toMatch(/0 GB|\b0\b/);
     expect(screen.getByText("max_stats_age_days").closest("div")?.textContent).toContain("3");
-    expect(screen.getByText("optimize")).toBeInTheDocument();
-    expect(screen.getByText("12 → 3")).toBeInTheDocument();
     expect(screen.getAllByText("Unknown").length).toBeGreaterThan(0);
     expect(screen.queryByText("0 GB")).not.toBeInTheDocument();
-    expect(screen.queryByText("Last actions are not recorded")).not.toBeInTheDocument();
+    expect(screen.getByText("2 gates must clear first.", { exact: false })).toBeInTheDocument();
     expect(screen.queryByText("expire_snapshots")).not.toBeInTheDocument();
   });
 });

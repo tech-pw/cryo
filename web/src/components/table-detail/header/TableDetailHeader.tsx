@@ -63,8 +63,13 @@ export interface TableDetailHeaderProps {
   onChooseWorkflow: () => void;
   onPreview: () => void;
   onRun: () => void;
-  onRewriteManifests: () => void;
   onOpenSettings: () => void;
+  /** Opens the Run on demand section; the header's primary action once a workflow exists. */
+  onOpenRunOnDemand?: () => void;
+  /** Single operations the operator can launch; each opens a confirmation. */
+  operations?: Array<{ op: string; label: string; destructive: boolean }>;
+  onRunOperation?: (op: string) => void;
+  operationsDisabledReason?: string | null;
   runPending?: boolean;
   scanPending?: boolean;
 }
@@ -216,8 +221,11 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
   onChooseWorkflow,
   onPreview,
   onRun,
-  onRewriteManifests,
   onOpenSettings,
+  onOpenRunOnDemand,
+  operations = [],
+  onRunOperation,
+  operationsDisabledReason = null,
   runPending = false,
   scanPending = false
 }) => {
@@ -262,8 +270,8 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
           pending: false
         }
       : {
-          label: "Preview maintenance",
-          onClick: onPreview,
+          label: onOpenRunOnDemand ? "Run maintenance" : "Preview maintenance",
+          onClick: onOpenRunOnDemand ?? onPreview,
           disabled: false,
           reason: null,
           pending: false
@@ -361,9 +369,23 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
             aria-label="Maintenance actions"
             className="ctd-header__action-popover p-1"
           >
+            {onOpenRunOnDemand && scanned && hasWorkflow ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-auto w-full justify-start whitespace-normal px-2"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onPreview();
+                }}
+              >
+                Preview workflow plan
+              </Button>
+            ) : null}
             <ConfirmAction
-              title="Run now?"
-              description="Queues a real maintenance job using the assigned workflow."
+              title="Run the full workflow now?"
+              description="Queues every operation in the assigned workflow for this table."
               onConfirm={onRun}
               disabled={maintenanceDisabled || runPending}
             >
@@ -377,28 +399,35 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
                 title={maintenanceReason ?? undefined}
                 aria-describedby={maintenanceReason ? maintenanceReasonId : undefined}
               >
-                Run now
+                Run full workflow now
               </Button>
             </ConfirmAction>
-            <ConfirmAction
-              title="Rewrite manifests?"
-              description="Queues manifest-only maintenance without data file compaction."
-              onConfirm={onRewriteManifests}
-              disabled={maintenanceDisabled || runPending}
-            >
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-auto w-full justify-start whitespace-normal px-2"
-                disabled={maintenanceDisabled || runPending}
-                loading={runPending}
-                title={maintenanceReason ?? undefined}
-                aria-describedby={maintenanceReason ? maintenanceReasonId : undefined}
-              >
-                Rewrite manifests
-              </Button>
-            </ConfirmAction>
+            {operations.length ? (
+              <div className="ctd-header__menu-group" role="group" aria-label="Add to run">
+                <p className="ctd-header__menu-label">Add to run</p>
+                {operations.map((item) => (
+                  <Button
+                    key={item.op}
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto w-full justify-between whitespace-normal px-2"
+                    disabled={Boolean(operationsDisabledReason)}
+                    title={operationsDisabledReason ?? undefined}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onRunOperation?.(item.op);
+                    }}
+                  >
+                    <span>{item.label}</span>
+                    {item.destructive ? <span className="ctd-header__menu-flag">deletes files</span> : null}
+                  </Button>
+                ))}
+                {operationsDisabledReason ? (
+                  <p className="px-2 py-1 text-xs text-muted-foreground">{operationsDisabledReason}</p>
+                ) : null}
+              </div>
+            ) : null}
             <Button
               type="button"
               variant="ghost"
