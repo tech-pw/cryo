@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FilesTabPanel } from "./FilesTabPanel";
@@ -185,7 +185,7 @@ describe("FilesTabPanel", () => {
 
     renderPanel();
 
-    const series = await screen.findByLabelText("Small-file count");
+    const series = await screen.findByLabelText("Small-file candidates over scans");
     expect(series).toHaveAttribute("data-series", "small-file count");
     const plot = await within(series).findByTestId("timeseries-plot");
     expect(plot).toHaveAttribute("data-connect-nulls", "false");

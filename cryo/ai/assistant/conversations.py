@@ -29,6 +29,7 @@ def create_conversation(
     context: dict[str, Any],
 ) -> AssistantConversation:
     row = AssistantConversation(
+        id=uuid.uuid4(),
         tenant_id=principal.tenant_id,
         owner_subject=principal.subject,
         title=title,
@@ -104,6 +105,7 @@ def append_user_message(
         or 0
     )
     row = AssistantMessage(
+        id=uuid.uuid4(),
         conversation_id=conversation.id,
         seq=seq + 1,
         role="user",
@@ -129,6 +131,7 @@ def start_assistant_message(
         or 0
     )
     row = AssistantMessage(
+        id=uuid.uuid4(),
         conversation_id=conversation.id,
         seq=seq + 1,
         role="assistant",
@@ -174,6 +177,7 @@ def record_tool_call(
     evidence_id: uuid.UUID | None,
 ) -> AssistantToolCall:
     row = AssistantToolCall(
+        id=uuid.uuid4(),
         message_id=message_id,
         step=step,
         tool_name=tool_name,

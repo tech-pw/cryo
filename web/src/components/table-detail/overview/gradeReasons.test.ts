@@ -30,6 +30,17 @@ const snapshots: HealthDeduction = {
 };
 
 describe("gradeReasons", () => {
+  it("orders scores by time and preserves invalid scores as gaps", () => {
+    const points = healthTrendPoints([
+      { timestamp: "2026-09-03", score: 80 },
+      { timestamp: "2026-09-02", score: 120 },
+      { timestamp: "2026-09-01", score: 60 }
+    ]);
+    expect(points.map((point) => point.value)).toEqual([60, null, 80]);
+    expect(scoreTrendAnswer(points)).toEqual({ kind: "up", points: 20, since: "2026-09-01" });
+    expect(integerScore(-1)).toBeNull();
+    expect(integerScore(101)).toBeNull();
+  });
   it("sorts deductions by points and formats the minus line", () => {
     expect(sortDeductions([snapshots, smallFiles])).toEqual([smallFiles, snapshots]);
     expect(formatDeductionLine(smallFiles)).toBe("−20 Small files: 56% of files under target (critical)");

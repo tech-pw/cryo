@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, ArrowUpRight, CheckCircle2, Clock3, TriangleAlert } from "lucide-react";
+import { ArrowUpRight, CheckCircle2, Clock3, TriangleAlert, Wrench } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import {
   getComplianceStatus,
@@ -7,132 +7,82 @@ import {
   getFastPathFindings,
   getTable,
   getTableAudit,
+  getTableCost,
   getTableHealthTrends,
   getTableSignals,
-  type ComplianceStatusRead,
+  listPresets,
   type FastPathFindingRead,
   type TableSignalRead
 } from "../../../api/client";
-import type { AuditEntry, EffectivePresetResponse } from "../../../api/types";
-import { getTableMaintenanceStatus, type BlockingReasonRead, type MaintenanceStatusRead } from "../../../api/maintenanceStatus";
+import type { AuditEntry, TableStatsRead } from "../../../api/types";
+import { getTableMaintenanceStatus, type MaintenanceStatusRead } from "../../../api/maintenanceStatus";
 import { QueryErrorAlert } from "../../common";
 import { Button } from "../../ui/button";
+import { ChartDataTable } from "../../ui/chart-data-table";
 import { Skeleton } from "../../ui/skeleton";
 import { useAuth } from "../../../lib/auth";
-import { formatDuration, formatBytesGb, formatNumber, formatTime } from "../../../lib/format";
+import { formatBytesGb, formatCurrency, formatDuration, formatNumber, formatTime } from "../../../lib/format";
 import { useWriteControl } from "../../../lib/useWriteControl";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
+import { MaintenanceActions } from "../operations/MaintenanceActions";
 import {
-  diagnosticSignals,
-  formatDeductionLine,
-  formatScoreSum,
-  gradeLetter,
-  healthTrendPoints,
-  integerScore,
-  isTableScanned,
-  readDeductions,
-  receiptRunHref,
-  scoreTrendAnswer,
-  sortDeductions,
-  topBySeverity,
-  type TrendAnswer
-} from "./gradeReasons";
-import { FileProfileCard } from "./FileProfileCard";
+  OPERATION_CATALOG,
+  isFailureStatus,
+  readDeductionList,
+  relativeTime,
+  remedyForDeduction,
+  type Deduction
+} from "../operations/operationCatalog";
+import { useOperationLauncher } from "../operations/OperationLauncher";
+import { FileLayoutCard } from "./FileLayoutCard";
+import { gradeLetter, healthTrendPoints, integerScore, isTableScanned, readDeductions, scoreTrendAnswer, topBySeverity } from "./gradeReasons";
 import { OverviewCard } from "./OverviewCard";
-import { ScoreHistoryCard } from "./ScoreHistoryCard";
+import { ScoreTrend } from "./ScoreTrend";
 import { TableHealthGauge } from "./TableHealthGauge";
 import "./overview.css";
 
-const NO_WORKFLOW = "No workflow assigned. Cryo won't maintain this table.";
+const AUDIT_WINDOW = 40;
+const ACTIVITY_ROWS = 6;
 
-type ReceiptRow = AuditEntry & {
-  job_id?: string | null;
-  run_id?: string | null;
-};
-
-export const OverviewPanel = ({
-  onScan,
-  onPreview,
-  onEdit
-}: {
-  onScan?: () => void;
-  onPreview?: () => void;
-  onEdit?: () => void;
-}) => {
+export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => void; onPreview?: () => void; onEdit?: () => void }) => {
   const { tableId = "" } = useParams();
   const { api, token } = useAuth();
   const scanAccess = useWriteControl("triggerScan");
   const enabled = tableId.length > 0;
 
-  const table = useQuery({
-    queryKey: tableKeys.detail(tableId, token),
-    queryFn: () => getTable(api, tableId),
-    enabled
-  });
+  const table = useQuery({ queryKey: tableKeys.detail(tableId, token), queryFn: () => getTable(api, tableId), enabled });
   const scanned = isTableScanned(table.data?.stats);
+  const on = enabled && scanned;
 
-  const signals = useQuery({
-    queryKey: tableKeys.signals(tableId, token),
-    queryFn: () => getTableSignals(api, tableId),
-    enabled: enabled && scanned
-  });
   const audit = useQuery({
-    queryKey: tableKeys.audit(tableId, token, 1),
-    queryFn: () => getTableAudit(api, tableId, { limit: 1 }),
-    enabled: enabled && scanned
+    queryKey: tableKeys.audit(tableId, token, AUDIT_WINDOW),
+    queryFn: () => getTableAudit(api, tableId, { limit: AUDIT_WINDOW }),
+    enabled: on
   });
-  const trends = useQuery({
-    queryKey: tableKeys.healthTrends(tableId, token, 30),
-    queryFn: () => getTableHealthTrends(api, tableId, 30),
-    enabled: enabled && scanned
-  });
-  const fastPath = useQuery({
-    queryKey: tableKeys.fastPath(tableId, token),
-    queryFn: () => getFastPathFindings(api, tableId),
-    enabled: enabled && scanned
-  });
-  const compliance = useQuery({
-    queryKey: tableKeys.compliance(tableId, token),
-    queryFn: () => getComplianceStatus(api, tableId),
-    enabled: enabled && scanned
-  });
-  const preset = useQuery({
-    queryKey: tableKeys.effectivePreset(tableId, token),
-    queryFn: () => getEffectivePreset(api, tableId),
-    enabled: enabled && scanned
-  });
-  const maintenance = useQuery({
-    queryKey: tableKeys.maintenanceStatus(tableId, token),
-    queryFn: () => getTableMaintenanceStatus(api, tableId),
-    enabled: enabled && scanned
-  });
+  const trends = useQuery({ queryKey: tableKeys.healthTrends(tableId, token, 30), queryFn: () => getTableHealthTrends(api, tableId, 30), enabled: on });
+  const preset = useQuery({ queryKey: tableKeys.effectivePreset(tableId, token), queryFn: () => getEffectivePreset(api, tableId), enabled: on });
+  const presets = useQuery({ queryKey: tableKeys.presets(token), queryFn: () => listPresets(api), enabled: on });
+  const maintenance = useQuery({ queryKey: tableKeys.maintenanceStatus(tableId, token), queryFn: () => getTableMaintenanceStatus(api, tableId), enabled: on });
+  const cost = useQuery({ queryKey: tableKeys.cost(tableId, token), queryFn: () => getTableCost(api, tableId), enabled: on, retry: false });
+  const signals = useQuery({ queryKey: tableKeys.signals(tableId, token), queryFn: () => getTableSignals(api, tableId), enabled: on });
+  const fastPath = useQuery({ queryKey: tableKeys.fastPath(tableId, token), queryFn: () => getFastPathFindings(api, tableId), enabled: on });
+  const compliance = useQuery({ queryKey: tableKeys.compliance(tableId, token), queryFn: () => getComplianceStatus(api, tableId), enabled: on, retry: false });
 
   if (!enabled) return <p className="text-sm text-muted-foreground">Missing table</p>;
-  if (table.isError && !table.data) {
-    return <QueryErrorAlert error={table.error} title="Couldn't load this table" />;
-  }
-  if (!table.data) return <p className="text-sm text-muted-foreground">Loading</p>;
+  if (table.isError && !table.data) return <QueryErrorAlert error={table.error} title="Couldn't load this table" />;
+  if (!table.data) return <Skeleton className="h-96 w-full" />;
 
   if (!scanned) {
     return (
-      <section aria-labelledby="overview-grade" className="space-y-2">
-        <h2 id="overview-grade" className="text-sm font-semibold text-foreground">
-          Why this grade
-        </h2>
-        <p className="text-sm text-foreground">Needs a first scan</p>
+      <section aria-labelledby="overview-grade" className="td-ov-unscanned">
+        <h2 id="overview-grade">Needs a first scan</h2>
+        <p>Cryo grades a table, sizes its files and recommends maintenance after it reads the table's metadata once.</p>
         {scanAccess.hidden ? null : (
-          <Button
-            type="button"
-            size="sm"
-            variant="primary"
-            disabled={!scanAccess.allowed}
-            title={scanAccess.reason ?? undefined}
-            onClick={() => onScan?.()}
-          >
+          <Button type="button" size="sm" variant="primary" disabled={!scanAccess.allowed} title={scanAccess.reason ?? undefined} onClick={() => onScan?.()}>
             Scan now
           </Button>
         )}
-        {scanAccess.reason ? <p className="text-xs text-muted-foreground">{scanAccess.reason}</p> : null}
+        {scanAccess.reason ? <p className="td-overview-caption">{scanAccess.reason}</p> : null}
       </section>
     );
   }
@@ -140,108 +90,357 @@ export const OverviewPanel = ({
   const stats = table.data.stats;
   const score = integerScore(stats?.overall_score);
   const letter = gradeLetter(stats?.grade, score);
-  const deductions = readDeductions(stats?.raw ?? null);
-  const sorted = deductions ? sortDeductions(deductions) : null;
-  const diagnostics = diagnosticSignals(signals.data?.signals ?? [], sorted ?? []);
-  const receipt = (audit.data?.[0] ?? null) as ReceiptRow | null;
+  const deductions = readDeductionList(stats?.raw);
   const points = healthTrendPoints(trends.data?.trend_points ?? []);
-  const answer = trendAnswerText(scoreTrendAnswer(points));
+  const trendText = trendAnswerText(scoreTrendAnswer(points));
+  const auditRows = audit.data ?? [];
+  const workflowPreset = presets.data?.find((item) => item.id === preset.data?.preset_id);
   const finding = relevantFinding(tableId, fastPath.data ?? [], signals.data?.signals ?? []);
 
   return (
-    <div className="td-overview-grid">
-      <OverviewCard id="overview-grade" title="Why this grade" description="Persisted health score and the checks that changed it." className="td-overview-health">
-        <div className="td-health-diagnosis">
-          <TableHealthGauge score={score} grade={letter} />
-          <div className="td-health-reasons">
-            {sorted ? <>
-              {sorted.length ? <ul>{sorted.map((item, index) => (
-                <li key={`${item.label}-${index}`}>
-                  <p>{formatDeductionLine(item)}</p>
-                  <div className="td-deduction-track" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.max(0, item.deduction))}%` }} /></div>
-                </li>
-              ))}</ul> : <p>No score deductions recorded.</p>}
-              <p className="td-overview-caption td-score-calculation">{formatScoreSum(sorted, score)}</p>
-            </> : <p className="td-overview-caption">Deductions were not recorded.</p>}
-          </div>
+    <div className="td-ov">
+      <HealthHero
+        tableId={tableId}
+        score={score}
+        grade={letter}
+        deductions={deductions}
+        deductionsRecorded={readDeductions(stats?.raw) != null}
+        trendText={trendText}
+        status={maintenance.data}
+        workflowName={preset.data?.preset_name ?? null}
+        hasWorkflow={Boolean(preset.data?.preset_id)}
+        statusLoading={maintenance.isPending || preset.isPending}
+        statusError={maintenance.isError || preset.isError}
+      />
+
+      <MaintenanceActions
+        tableId={tableId}
+        stats={stats}
+        audit={auditRows}
+        orphanBytes={cost.data?.orphan_bytes}
+        deductions={deductions}
+        footer={
+          <>
+            <span>
+              {preset.data?.preset_name ? (
+                <>
+                  Runs on the <b>{preset.data.preset_name}</b> workflow's engine
+                  {workflowPreset?.params && typeof workflowPreset.params.retention_days === "number"
+                    ? ` · ${workflowPreset.params.retention_days}-day snapshot retention`
+                    : ""}
+                </>
+              ) : (
+                "Assign a workflow to choose the engine and retention settings"
+              )}
+            </span>
+            <span className="td-ops-footer-actions">
+              {onPreview && preset.data?.preset_id ? (
+                <Button type="button" size="sm" variant="ghost" onClick={onPreview}>
+                  Preview full workflow plan
+                </Button>
+              ) : null}
+              <Link className="td-overview-link" to={`/tables/${tableId}?tab=maintenance`}>
+                Schedule, history & settings <ArrowUpRight size={14} aria-hidden="true" />
+              </Link>
+            </span>
+          </>
+        }
+      />
+
+      <div className="td-ov-evidence">
+        <div className="td-ov-stack">
+          <FileLayoutCard stats={stats} tableId={tableId} />
+        <OverviewCard id="overview-score" title="Health over time" description="Last 30 days of recorded scans. Shaded bands are grades." className="td-ov-trend">
+          <QueryErrorAlert error={trends.error} title="Couldn't load the score trend" />
+          {trends.isPending ? (
+            <Skeleton className="h-44 w-full" />
+          ) : (
+            <>
+              <p className="td-trend-answer">{trendText}</p>
+              {points.filter((point) => point.value != null).length > 1 ? (
+                <ScoreTrend points={points} />
+              ) : (
+                <p className="td-overview-caption">Another scan is needed before a trend can be drawn.</p>
+              )}
+              <ChartDataTable
+                caption="Recorded table health scores"
+                toggleLabel="View score history"
+                rows={points}
+                getRowKey={(row, index) => `${row.at}-${index}`}
+                columns={[
+                  { key: "at", header: "Recorded", render: (row) => formatTime(row.at) },
+                  { key: "score", header: "Score / 100", align: "right", render: (row) => row.value ?? "Not measured" },
+                  { key: "grade", header: "Grade", render: (row) => row.grade ?? "Not graded" }
+                ]}
+              />
+            </>
+          )}
+        </OverviewCard>
         </div>
-        {diagnostics.length > 0 ? <details className="td-overview-disclosure">
-          <summary>Diagnostic, not part of the score <span>· {diagnostics.length}</span></summary>
-          <ul>{diagnostics.map((signal) => <li key={signal.signal_name}>{signal.signal_name}: {signal.reason}</li>)}</ul>
-        </details> : null}
-      </OverviewCard>
-
-      <OverviewCard id="overview-next" title="What Cryo will do next" description="Workflow assignment and current selection eligibility." className="td-overview-next">
-        <QueryErrorAlert error={preset.error} title="Couldn't load the workflow" />
-        <QueryErrorAlert error={maintenance.error} title="Couldn't load maintenance status" />
-        {preset.isError || maintenance.isError ? <p className="td-overview-caption">Refresh this page to check readiness again.</p> : preset.isPending || maintenance.isPending ? <Skeleton className="h-32 w-full" /> : workflowMissing(preset.data) ? (
-          <div className="td-next-unassigned"><span className="td-overview-state">Setup needed</span><p>{NO_WORKFLOW}</p><p className="td-overview-caption">Choose a workflow to define the engine, operations and guardrails.</p></div>
-        ) : maintenance.data ? <NextMaintenance status={maintenance.data} /> : <p className="td-overview-caption">Maintenance status not recorded.</p>}
-        <Link to={`/tables/${tableId}?tab=maintenance`} className="td-overview-link td-overview-bottom-link">Review maintenance <ArrowUpRight size={14} aria-hidden="true" /></Link>
-      </OverviewCard>
-
-      <ScoreHistoryCard points={points} answer={answer} loading={trends.isPending} error={trends.error} />
-
-      <OverviewCard id="overview-receipt" title="Last recorded action" description="What ran and the outcome it actually reported." className="td-overview-receipt">
-        <QueryErrorAlert error={audit.error} title="Couldn't load the last receipt" />
-        {audit.isPending ? <Skeleton className="h-44 w-full" /> : audit.isError ? null : receipt ? <Receipt row={receipt} /> : <div className="td-overview-empty"><p>No receipt recorded.</p><p>Maintenance results will appear here after an action is recorded.</p></div>}
-      </OverviewCard>
-
-      <FileProfileCard stats={stats} tableId={tableId} />
-
-      <OverviewCard id="overview-finding" title="Most relevant finding" description="The highest-priority recorded finding for this table." className="td-overview-finding">
-        <QueryErrorAlert error={fastPath.error} title="Couldn't load findings" />
-        <QueryErrorAlert error={signals.error} title="Couldn't load signals" />
-        {fastPath.isPending || signals.isPending ? <Skeleton className="h-24 w-full" /> : finding ? <div className="td-finding-content">
-          <span className="td-overview-state"><TriangleAlert size={14} aria-hidden="true" /> Review finding</span>
-          <h3>{finding.title.replaceAll("_", " ")}</h3><p>{finding.detail}</p>
-          <div className="td-finding-actions">
-            {onPreview && preset.data?.preset_id ? <Button type="button" variant="secondary" size="sm" onClick={onPreview}>Preview</Button> : null}
-            <Link to={finding.href} className="td-overview-link">See the rest <ArrowUpRight size={14} aria-hidden="true" /></Link>
+        <div className="td-ov-stack">
+          <HistoryCard tableId={tableId} stats={stats} audit={auditRows} loading={audit.isPending} error={audit.error} />
+        <OverviewCard id="overview-glance" title="Context" description="Who owns it, how much it's read, what it costs." className="td-ov-glance">
+          <dl className="td-glance">
+            <Glance label="Queries · 30 days" value={knownCount(stats?.query_count_30d)} hint="From query logs; reads outside them aren't counted" />
+            <Glance label="Storage · per month" value={money(cost.data?.current_monthly_cost_usd ?? stats?.estimated_monthly_s3_cost_usd)} hint={cost.data?.precision === "storage_truth" ? "Measured from storage" : "Estimated"} />
+            <Glance label="S3 requests · per month" value={money(cost.data?.request_cost_usd_month)} hint={cost.data?.get_requests_30d != null ? `${formatNumber(cost.data.get_requests_30d)} GETs in 30 days` : undefined} />
+            <Glance label="Rows" value={knownCount(stats?.total_records)} />
+            <Glance label="Owner" value={table.data.owner_email?.trim() || "No owner"} hint={compliance.data ? `${compliance.data.abac_policy_count} ABAC ${compliance.data.abac_policy_count === 1 ? "policy" : "policies"}` : undefined} />
+          </dl>
+          <div className="td-glance-actions">
+            {onEdit ? (
+              <Button type="button" variant="secondary" size="sm" onClick={onEdit}>
+                Edit owner & alerts
+              </Button>
+            ) : null}
+            <Link className="td-overview-link" to={`/tables/${tableId}?tab=cost`}>
+              Cost & savings <ArrowUpRight size={14} aria-hidden="true" />
+            </Link>
           </div>
-        </div> : fastPath.isError || signals.isError ? <p className="td-overview-caption">Some finding sources are unavailable.</p> : <div className="td-overview-empty"><CheckCircle2 size={24} aria-hidden="true" /><p>No finding recorded.</p><p>New scanner findings and health signals appear here.</p></div>}
-      </OverviewCard>
-
-      <OverviewCard id="overview-ownership" title="Ownership & compliance" className="td-overview-ownership">
-        <QueryErrorAlert error={compliance.error} title="Couldn't load compliance" />
-        <div className="td-overview-ownership-body"><p>{compliance.isPending ? "Loading" : ownershipLine(table.data.owner_email, compliance.data, Boolean(compliance.error))}</p>
-          {onEdit ? <Button type="button" variant="secondary" size="sm" onClick={onEdit}>Edit</Button> : null}
+          {finding ? (
+            <div className="td-glance-finding">
+              <TriangleAlert size={14} aria-hidden="true" />
+              <div>
+                <b>{finding.title.replaceAll("_", " ")}</b>
+                <p>{finding.detail}</p>
+                <Link className="td-overview-link" to={finding.href}>
+                  Review <ArrowUpRight size={14} aria-hidden="true" />
+                </Link>
+              </div>
+            </div>
+          ) : null}
+        </OverviewCard>
         </div>
-      </OverviewCard>
+      </div>
     </div>
   );
 };
 
-function NextMaintenance({ status }: { status: MaintenanceStatusRead }) {
-  const next = nextOperation(status);
-  const gate = (status.blocking_reasons ?? []).find((reason) => reason.blocks_nightly_selection) ?? null;
+const severityOf = (item: Deduction): "critical" | "warning" => (item.severity === "critical" ? "critical" : "warning");
+
+function HealthHero({
+  tableId,
+  score,
+  grade,
+  deductions,
+  deductionsRecorded,
+  trendText,
+  status,
+  workflowName,
+  hasWorkflow,
+  statusLoading,
+  statusError
+}: {
+  tableId: string;
+  score: number | null;
+  grade: string | null;
+  deductions: Deduction[];
+  deductionsRecorded: boolean;
+  trendText: string;
+  status: MaintenanceStatusRead | undefined;
+  workflowName: string | null;
+  hasWorkflow: boolean;
+  statusLoading: boolean;
+  statusError: boolean;
+}) {
+  const launcher = useOperationLauncher();
+  const lost = deductions.reduce((sum, item) => sum + item.deduction, 0);
+  const worst = Math.max(20, ...deductions.map((item) => item.deduction));
+  const gate = (status?.blocking_reasons ?? []).find((reason) => reason.blocks_nightly_selection) ?? null;
   return (
-    <div className="td-next-maintenance">
-      <span className="td-overview-state">{status.eligible ? <CheckCircle2 size={15} aria-hidden="true" /> : <Clock3 size={15} aria-hidden="true" />}{status.eligible ? "Eligible for selection" : "Waiting on a gate"}</span>
-      <p>{gate ? formatBlockingGate(gate) : status.eligible ? "Eligible for nightly selection" : "Not eligible for nightly selection"}</p>
-      {next ? <p className="td-overview-caption">Next operation: {next.replaceAll("_", " ")}</p> : null}
-      <dl><div><dt>Next nightly</dt><dd>{status.next_nightly_at ? formatTime(status.next_nightly_at) : "Schedule not recorded"}</dd></div><div><dt>Evaluated</dt><dd>{formatTime(status.evaluated_at)}</dd></div></dl>
-      <p className="td-overview-caption">Eligibility allows selection; admission still depends on capacity and guardrails.</p>
-    </div>
+    <section className="td-hero" aria-labelledby="overview-grade" data-grade={grade?.toLowerCase()}>
+      <div className="td-hero-score">
+        <TableHealthGauge score={score} grade={grade} />
+        <p className="td-hero-trend">{trendText}</p>
+        <p className="td-hero-nightly">
+          {statusError ? (
+            "Selection status unavailable"
+          ) : statusLoading ? (
+            "Checking maintenance eligibility…"
+          ) : !hasWorkflow ? (
+            <>
+              <Clock3 size={13} aria-hidden="true" /> No nightly workflow
+            </>
+          ) : status?.eligible ? (
+            <>
+              <CheckCircle2 size={13} aria-hidden="true" /> Eligible for selection{workflowName ? ` · ${workflowName}` : ""}
+            </>
+          ) : (
+            <>
+              <Clock3 size={13} aria-hidden="true" /> {gate ? gate.summary : "Not currently eligible"}
+            </>
+          )}
+        </p>
+      </div>
+      <div className="td-hero-body">
+        <header>
+          <h2 id="overview-grade">{deductions.length ? "What's pulling the score down" : deductionsRecorded ? "No deductions recorded" : "Score explanation unavailable"}</h2>
+          {deductions.length ? (
+            <p>
+              <b>−{lost} points</b> across {deductions.length} check{deductions.length === 1 ? "" : "s"}. Review the suggested actions before running maintenance.
+            </p>
+          ) : (
+            <p>{deductionsRecorded ? "The last scan recorded no health penalties." : "The last scan did not include a health-check breakdown."}</p>
+          )}
+        </header>
+        {deductions.length ? (
+          <ol className="td-deductions">
+            {deductions.map((item, index) => {
+              const remedy = remedyForDeduction(item.label, tableId);
+              const severity = severityOf(item);
+              return (
+                <li key={`${item.label}-${index}`} data-severity={severity}>
+                  <span className="td-ded-points">−{item.deduction}</span>
+                  <div className="td-ded-text">
+                    <p>
+                      <b>{item.label}</b>
+                      <span className="td-ded-sev">{severity === "critical" ? "Critical" : "Warning"}</span>
+                    </p>
+                    <p className="td-ded-reason">{item.reason}</p>
+                    <div className="td-ded-bar" aria-hidden="true">
+                      <span style={{ width: `${(item.deduction / worst) * 100}%` }} />
+                    </div>
+                  </div>
+                  <div className="td-ded-fix">
+                    {remedy.kind === "operation" ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={!launcher || Boolean(launcher.blockedReason)}
+                        title={launcher?.blockedReason ?? `Run ${OPERATION_CATALOG[remedy.op].title.toLowerCase()} on this table`}
+                        onClick={() => launcher?.launch(remedy.op)}
+                      >
+                        <Wrench aria-hidden="true" />
+                        {OPERATION_CATALOG[remedy.op].title}
+                      </Button>
+                    ) : remedy.kind === "settings" ? (
+                      <Link className="td-overview-link" to={remedy.href}>
+                        {remedy.label} <ArrowUpRight size={14} aria-hidden="true" />
+                      </Link>
+                    ) : (
+                      <span className="td-ded-note">{remedy.note}</span>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        ) : (
+          <div className="td-hero-clean">
+            {deductionsRecorded ? <CheckCircle2 size={20} aria-hidden="true" /> : <Clock3 size={20} aria-hidden="true" />}
+            <p>{deductionsRecorded ? "Review file layout and maintenance history below for the supporting evidence." : "Refresh the table stats to collect the evidence behind this score."}</p>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
-function Receipt({ row }: { row: ReceiptRow }) {
-  const href = receiptRunHref(row);
-  const bytesReported = typeof row.actual_bytes_freed === "number" && Number.isFinite(row.actual_bytes_freed);
+function HistoryCard({
+  tableId,
+  stats,
+  audit,
+  loading,
+  error
+}: {
+  tableId: string;
+  stats: TableStatsRead | null | undefined;
+  audit: AuditEntry[];
+  loading: boolean;
+  error: unknown;
+}) {
+  const raw = (stats?.raw ?? {}) as Record<string, unknown>;
+  const perDay = typeof raw.commits_per_day === "number" && Number.isFinite(raw.commits_per_day) ? raw.commits_per_day : null;
+  const lastCommit = typeof raw.last_snapshot_committed_at === "string" ? raw.last_snapshot_committed_at : stats?.last_snapshot_committed_at ?? null;
+  const rows = [...audit]
+    .filter((row) => row.ts ?? row.created_at)
+    .sort((a, b) => Date.parse(b.ts ?? b.created_at ?? "") - Date.parse(a.ts ?? a.created_at ?? ""))
+    .slice(0, ACTIVITY_ROWS);
   return (
-    <div className="td-receipt-body">
-      <div className="td-receipt-heading"><strong>{row.action?.trim().replaceAll("_", " ") || "Last operation"}</strong><span className="td-overview-state">{row.status || "Status not recorded"}</span></div>
-      <p className="td-overview-caption">{formatTime(row.ts ?? row.created_at)} · {row.engine?.trim() || "Engine not recorded"}</p>
-      <div className="td-receipt-change"><div><span>Input files</span><strong>{finiteNumber(row.input_files_count) == null ? "Not reported" : formatNumber(row.input_files_count)}</strong></div><ArrowRight size={20} aria-hidden="true" /><div><span>Output files</span><strong>{finiteNumber(row.output_files_count) == null ? "Not reported" : formatNumber(row.output_files_count)}</strong></div></div>
-      <dl className="td-receipt-metrics"><div><dt>Bytes reclaimed</dt><dd>{bytesReported ? formatBytesGb(row.actual_bytes_freed) : <span>not reported</span>}</dd></div><div><dt>Duration</dt><dd>{row.duration_ms == null || !Number.isFinite(row.duration_ms) ? "Not reported" : formatDuration(row.duration_ms)}</dd></div></dl>
-      {href ? (
-        <Link to={href} className="td-overview-link">
-          Open run <ArrowUpRight size={14} aria-hidden="true" />
-        </Link>
+    <OverviewCard id="overview-history" title="History & activity" description="How fast snapshots accumulate and what maintenance last did." className="td-ov-history">
+      <dl className="td-history-stats">
+        <div>
+          <dt>Snapshots</dt>
+          <dd>{knownCount(stats?.total_snapshots)}</dd>
+        </div>
+        <div>
+          <dt>Commits / day</dt>
+          <dd>{perDay == null ? "—" : perDay >= 10 ? Math.round(perDay) : perDay.toFixed(1)}</dd>
+        </div>
+        <div>
+          <dt>Last commit</dt>
+          <dd>{lastCommit ? relativeTime(lastCommit) : "—"}</dd>
+        </div>
+      </dl>
+      <h3 className="td-history-subhead">Recent maintenance</h3>
+      <QueryErrorAlert error={error} title="Couldn't load recent maintenance" />
+      {loading ? (
+        <Skeleton className="h-40 w-full" />
+      ) : rows.length ? (
+        <ol className="td-timeline">
+          {rows.map((row, index) => {
+            const at = row.ts ?? row.created_at ?? "";
+            const failed = isFailureStatus(row.status ?? "");
+            const title = OPERATION_CATALOG[row.action as keyof typeof OPERATION_CATALOG]?.title ?? (row.action ?? "Action").replaceAll("_", " ");
+            return (
+              <li key={`${row.id ?? index}`} data-state={failed ? "failed" : "ok"}>
+                <span className="td-timeline-dot" aria-hidden="true" />
+                <div>
+                  <p>
+                    <b>{title}</b> <span>{failed ? "failed" : (row.status ?? "").toLowerCase() || "recorded"}</span>
+                  </p>
+                  {outcomeText(row) ? <p className="td-timeline-outcome">{outcomeText(row)}</p> : null}
+                  <p className="td-timeline-meta" title={formatTime(at)}>
+                    {relativeTime(at)}
+                    {row.duration_ms != null && Number.isFinite(row.duration_ms) ? ` · ${formatDuration(row.duration_ms)}` : ""}
+                    {row.engine ? ` · ${row.engine}` : ""}
+                    {(row.actor ?? "").startsWith("system:") ? " · nightly" : row.actor ? " · manual" : ""}
+                  </p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      ) : !error ? (
+        <p className="td-overview-caption">No maintenance has been recorded for this table yet.</p>
       ) : null}
-    </div>
+      <Link className="td-overview-link" to={`/tables/${tableId}?tab=snapshots`}>
+        Snapshots <ArrowUpRight size={14} aria-hidden="true" />
+      </Link>
+    </OverviewCard>
   );
+}
+
+/** Before → after as the engine reported it; nothing is inferred when a count is missing. */
+function outcomeText(row: AuditEntry): string | null {
+  const input = finiteCount(row.input_files_count);
+  const output = finiteCount(row.output_files_count);
+  const freed = finiteCount(row.actual_bytes_freed);
+  const parts: string[] = [];
+  if (input != null && output != null) parts.push(`${formatNumber(input)} → ${formatNumber(output)} files`);
+  if (freed != null && freed > 0) parts.push(`${formatBytesGb(freed)} freed`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function finiteCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+const Glance = ({ label, value, hint }: { label: string; value: string; hint?: string }) => (
+  <div>
+    <dt>{label}</dt>
+    <dd><span title={value}>{value}</span>{hint ? <p>{hint}</p> : null}</dd>
+  </div>
+);
+
+function knownCount(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? formatNumber(value) : "—";
+}
+
+function money(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return value > 0 && value < 0.01 ? "< $0.01" : formatCurrency(value);
 }
 
 function relevantFinding(
@@ -249,72 +448,19 @@ function relevantFinding(
   findings: FastPathFindingRead[],
   signals: TableSignalRead[]
 ): { title: string; detail: string; href: string } | null {
-  const mine = findings.filter((item) => !item.table_id || item.table_id === tableId);
-  const fast = topBySeverity(mine);
+  const fast = topBySeverity(findings.filter((item) => !item.table_id || item.table_id === tableId));
   if (fast) {
-    const href =
-      fast.finding_type === "missing_target_file_size"
-        ? `/tables/${tableId}?tab=files#files-properties`
-        : `/tables/${tableId}?tab=quality`;
+    const href = fast.finding_type === "missing_target_file_size" ? `/tables/${tableId}?tab=files#files-properties` : `/tables/${tableId}?tab=quality`;
     return { title: fast.finding_type, detail: fast.reason, href };
   }
   const signal = topBySeverity(signals.filter((item) => item.triggered));
-  if (!signal) return null;
-  return {
-    title: signal.signal_name,
-    detail: signal.reason,
-    href: `/tables/${tableId}?tab=quality`
-  };
+  return signal ? { title: signal.signal_name, detail: signal.reason, href: `/tables/${tableId}?tab=quality` } : null;
 }
 
-function ownershipLine(owner: string | null | undefined, compliance: ComplianceStatusRead | undefined, failed: boolean): string {
-  const ownerText = owner?.trim() ? owner.trim() : "No owner";
-  const abac = !compliance || failed ? "ABAC policies not recorded" : abacText(compliance.abac_policy_count);
-  return `Owner ${ownerText} · ${abac} · Deletion delay ${deletionDelay(compliance, failed)}`;
-}
-
-function abacText(count: number): string {
-  return count === 1 ? "1 ABAC policy" : `${count} ABAC policies`;
-}
-
-function deletionDelay(compliance: ComplianceStatusRead | undefined, failed: boolean): string {
-  if (failed || !compliance) return "not recorded";
-  const pending = compliance.pending_deletion;
-  if (!pending) return "none";
-  if (pending.blocked_until) {
-    const until = formatTime(pending.blocked_until);
-    return until === "-" ? "pending" : until;
-  }
-  return pending.reason?.trim() || "pending";
-}
-
-function workflowMissing(preset: EffectivePresetResponse | undefined): boolean {
-  if (!preset) return false;
-  return preset.provenance === "none" || !preset.preset_id;
-}
-
-function nextOperation(status: MaintenanceStatusRead): string | null {
-  const extra = status as MaintenanceStatusRead & { next_operation?: unknown; next_action?: unknown };
-  const value = extra.next_operation ?? extra.next_action;
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function formatBlockingGate(reason: BlockingReasonRead): string {
-  const until = reason.until ? formatTime(reason.until) : null;
-  const cooldown = reason.code === "cooldown" || reason.summary.toLowerCase().startsWith("cooldown");
-  if (cooldown && until && until !== "-") return `Cooldown until ${until}`;
-  if (until && until !== "-") return `${reason.summary} until ${until}`;
-  return reason.summary;
-}
-
-function finiteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function trendAnswerText(answer: TrendAnswer): string {
-  if (answer.kind === "none") return "No measured scores in the last 30 days.";
-  if (answer.kind === "single") return "One measured score in the last 30 days.";
-  const since = formatTime(answer.since);
-  if (answer.kind === "unchanged") return `Score unchanged since ${since}.`;
-  return `Score ${answer.kind} ${answer.points} points since ${since}.`;
+function trendAnswerText(answer: ReturnType<typeof scoreTrendAnswer>): string {
+  if (answer.kind === "none") return "No scores recorded in the last 30 days.";
+  if (answer.kind === "single") return "One score recorded in the last 30 days.";
+  const since = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(Date.parse(answer.since));
+  if (answer.kind === "unchanged") return `Unchanged since ${since}.`;
+  return `${answer.kind === "down" ? "Down" : "Up"} ${answer.points} points since ${since}.`;
 }

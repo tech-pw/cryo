@@ -24,6 +24,16 @@ _PRESET_GATED_OPERATION_TYPES = (
     OperationType.OPTIMIZE_MANIFESTS,
 )
 
+# Delete-file rewrites and Puffin statistics are part of compaction: nobody who asked for
+# "expire snapshots" or "remove orphan files" expects a data rewrite to ride along. Before
+# this, a deep-mode run scoped to remove_orphan_files on a table with delete files also
+# planned convert_deletes, because only the four gated types above were ever skipped.
+_COMPACTION_FAMILY_OPERATION_TYPES = (
+    OperationType.CONVERT_DELETES,
+    OperationType.REWRITE_POSITION_DELETES,
+    OperationType.COMPUTE_STATISTICS,
+)
+
 
 def build_execution_plan(
     *,
@@ -139,9 +149,16 @@ def skip_operations_from_preset(
     if not operations:
         return []
     requested = set(operations)
-    return [
+    skipped = [
         operation.value for operation in _PRESET_GATED_OPERATION_TYPES if operation not in requested
     ]
+    if OperationType.OPTIMIZE not in requested:
+        skipped.extend(
+            operation.value
+            for operation in _COMPACTION_FAMILY_OPERATION_TYPES
+            if operation not in requested
+        )
+    return skipped
 
 
 def gate_orphan_removal_on_shared_location(
