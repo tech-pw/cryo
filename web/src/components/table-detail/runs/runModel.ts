@@ -157,16 +157,29 @@ export interface StatChange {
 
 const num = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
 
+/**
+ * Before-stats show whenever the run captured them. After-stats come from the next scan, so a
+ * running, queued, or not-yet-rescanned run has none; those rows keep `after: null` rather than
+ * hiding the before snapshot. Rows the before snapshot didn't record at all are dropped.
+ */
 export const statChanges = (run: TableRunRead): StatChange[] => {
   const before = run.before_stats;
-  const after = run.after_stats;
-  if (!before || !after) return [];
-  return [
-    { label: "Data files", before: num(before.total_files), after: num(after.total_files), lowerIsBetter: true },
-    { label: "Small files", before: num(before.small_files_count), after: num(after.small_files_count), lowerIsBetter: true },
-    { label: "Health score", before: num(before.overall_score), after: num(after.overall_score), lowerIsBetter: false },
-    { label: "Size", before: num(before.total_size_gb), after: num(after.total_size_gb), lowerIsBetter: true, unit: "GB" }
+  const after = run.after_stats ?? null;
+  if (!before) return [];
+  const rows: StatChange[] = [
+    { label: "Health score", before: num(before.overall_score), after: num(after?.overall_score), lowerIsBetter: false },
+    { label: "Data files", before: num(before.total_files), after: num(after?.total_files), lowerIsBetter: true },
+    { label: "Small files", before: num(before.small_files_count), after: num(after?.small_files_count), lowerIsBetter: true },
+    { label: "Delete files", before: num(before.total_delete_files), after: num(after?.total_delete_files), lowerIsBetter: true },
+    { label: "Size", before: num(before.total_size_gb), after: num(after?.total_size_gb), lowerIsBetter: true, unit: "GB" }
   ];
+  return rows.filter((row) => row.before != null || row.after != null);
+};
+
+export const gradeChange = (run: TableRunRead): { before: string | null; after: string | null } | null => {
+  const before = run.before_stats?.grade ?? null;
+  const after = run.after_stats?.grade ?? null;
+  return before || after ? { before, after } : null;
 };
 
 export const formatMs = (value: number | null): string => {
