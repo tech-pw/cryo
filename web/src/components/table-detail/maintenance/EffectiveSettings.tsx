@@ -20,6 +20,7 @@ import { useAuth } from "../../../lib/auth";
 import { ADMIN_REASON, VIEWER_REASON } from "../../../lib/permissions";
 import { useWriteControl } from "../../../lib/useWriteControl";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
+import "./maintenance-details.css";
 
 const formatParamValue = (value: unknown): string => {
   if (value === null || value === undefined || value === "") return "not reported";
@@ -150,14 +151,15 @@ export const EffectiveSettings = ({ tableId }: { tableId: string }) => {
   };
 
   return (
-    <section id="maintenance-settings" className="mb-6" aria-labelledby="maintenance-settings-heading">
+    <section id="maintenance-settings" className="td-maintenance-settings td-mt-card" aria-labelledby="maintenance-settings-heading">
       <h3 id="maintenance-settings-heading" className="mb-2 text-sm font-semibold text-foreground">
         Effective settings
       </h3>
+      <p className="td-maintenance-intro">The workflow and parameters that govern this table's maintenance.</p>
       <QueryErrorAlert error={preset.error} title="Couldn't load workflow" />
       <QueryErrorAlert error={params.error} title="Couldn't load effective parameters" />
       <p className="text-sm text-foreground">
-        {preset.data?.preset_name ? preset.data.preset_name : "No workflow assigned"}
+        {preset.isLoading ? "Loading workflow…" : preset.isError ? "Workflow unavailable" : preset.data?.preset_name || "No workflow assigned"}
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
         Preset provenance {preset.data ? provenanceText(preset.data.provenance) : "not recorded"}
@@ -193,14 +195,15 @@ export const EffectiveSettings = ({ tableId }: { tableId: string }) => {
           </Button>
         )}
       </div>
-      <h4 className="mb-2 mt-4 text-sm font-medium text-foreground">Parameters</h4>
+      <details className="td-maintenance-parameters">
+      <summary>Parameters <span>{entries.length ? `· ${entries.length} recorded` : ""}</span></summary>
       {params.isLoading ? <p className="text-sm text-muted-foreground">Loading parameters</p> : null}
-      {entries.length === 0 && !params.isLoading ? (
+      {entries.length === 0 && params.isSuccess ? (
         <p className="text-sm text-muted-foreground">No parameters recorded.</p>
       ) : (
         <ul className="space-y-2">
           {entries.map(([key, value]) => (
-            <li key={key} className="grid gap-1 rounded-[var(--radius-default)] border border-border p-3 sm:grid-cols-3">
+            <li key={key} className="td-maintenance-parameter">
               <span className="text-sm font-medium text-foreground">{key}</span>
               <span className="text-sm text-foreground">{formatParamValue(value)}</span>
               <span className="text-sm text-muted-foreground">Source not recorded</span>
@@ -208,8 +211,11 @@ export const EffectiveSettings = ({ tableId }: { tableId: string }) => {
           ))}
         </ul>
       )}
-      <h4 className="mb-2 mt-4 text-sm font-medium text-foreground">Parameter overrides</h4>
-      <div className="flex flex-wrap items-center gap-2">
+      </details>
+      <details className="td-maintenance-parameters">
+      <summary>Parameter overrides <span>Admin only</span></summary>
+      <p className="td-maintenance-intro">Overrides replace workflow parameters for this table. Review the resulting plan before execution.</p>
+      <div className="td-maintenance-override">
         <Input
           aria-label="Override name"
           placeholder="Param name"
@@ -237,6 +243,7 @@ export const EffectiveSettings = ({ tableId }: { tableId: string }) => {
         </Button>
       </div>
       {!canOverride ? <p className="mt-2 text-xs text-muted-foreground">{overrideReason}</p> : null}
+      </details>
     </section>
   );
 };

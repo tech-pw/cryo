@@ -35,7 +35,7 @@ import {
 } from "../operations/operationCatalog";
 import { useOperationLauncher } from "../operations/OperationLauncher";
 import { FileLayoutCard } from "./FileLayoutCard";
-import { gradeLetter, healthTrendPoints, integerScore, isTableScanned, scoreTrendAnswer, topBySeverity } from "./gradeReasons";
+import { gradeLetter, healthTrendPoints, integerScore, isTableScanned, readDeductions, scoreTrendAnswer, topBySeverity } from "./gradeReasons";
 import { OverviewCard } from "./OverviewCard";
 import { ScoreTrend } from "./ScoreTrend";
 import { TableHealthGauge } from "./TableHealthGauge";
@@ -104,11 +104,13 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
         score={score}
         grade={letter}
         deductions={deductions}
+        deductionsRecorded={readDeductions(stats?.raw) != null}
         trendText={trendText}
         status={maintenance.data}
         workflowName={preset.data?.preset_name ?? null}
         hasWorkflow={Boolean(preset.data?.preset_id)}
         statusLoading={maintenance.isPending || preset.isPending}
+        statusError={maintenance.isError || preset.isError}
       />
 
       <MaintenanceActions
@@ -145,12 +147,9 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
         }
       />
 
-      <div className="td-ov-row td-ov-row--7-5">
-        <FileLayoutCard stats={stats} tableId={tableId} />
-        <HistoryCard tableId={tableId} stats={stats} audit={auditRows} loading={audit.isPending} error={audit.error} />
-      </div>
-
-      <div className="td-ov-row td-ov-row--7-5">
+      <div className="td-ov-evidence">
+        <div className="td-ov-stack">
+          <FileLayoutCard stats={stats} tableId={tableId} />
         <OverviewCard id="overview-score" title="Health over time" description="Last 30 days of recorded scans. Shaded bands are grades." className="td-ov-trend">
           <QueryErrorAlert error={trends.error} title="Couldn't load the score trend" />
           {trends.isPending ? (
@@ -177,7 +176,9 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
             </>
           )}
         </OverviewCard>
-
+        </div>
+        <div className="td-ov-stack">
+          <HistoryCard tableId={tableId} stats={stats} audit={auditRows} loading={audit.isPending} error={audit.error} />
         <OverviewCard id="overview-glance" title="Context" description="Who owns it, how much it's read, what it costs." className="td-ov-glance">
           <dl className="td-glance">
             <Glance label="Queries · 30 days" value={knownCount(stats?.query_count_30d)} hint="From query logs; reads outside them aren't counted" />
@@ -209,6 +210,7 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
             </div>
           ) : null}
         </OverviewCard>
+        </div>
       </div>
     </div>
   );
@@ -221,21 +223,25 @@ function HealthHero({
   score,
   grade,
   deductions,
+  deductionsRecorded,
   trendText,
   status,
   workflowName,
   hasWorkflow,
-  statusLoading
+  statusLoading,
+  statusError
 }: {
   tableId: string;
   score: number | null;
   grade: string | null;
   deductions: Deduction[];
+  deductionsRecorded: boolean;
   trendText: string;
   status: MaintenanceStatusRead | undefined;
   workflowName: string | null;
   hasWorkflow: boolean;
   statusLoading: boolean;
+  statusError: boolean;
 }) {
   const launcher = useOperationLauncher();
   const lost = deductions.reduce((sum, item) => sum + item.deduction, 0);
@@ -247,32 +253,34 @@ function HealthHero({
         <TableHealthGauge score={score} grade={grade} />
         <p className="td-hero-trend">{trendText}</p>
         <p className="td-hero-nightly">
-          {statusLoading ? (
-            "Checking tonight's selection…"
+          {statusError ? (
+            "Selection status unavailable"
+          ) : statusLoading ? (
+            "Checking maintenance eligibility…"
           ) : !hasWorkflow ? (
             <>
               <Clock3 size={13} aria-hidden="true" /> No nightly workflow
             </>
           ) : status?.eligible ? (
             <>
-              <CheckCircle2 size={13} aria-hidden="true" /> Eligible tonight{workflowName ? ` · ${workflowName}` : ""}
+              <CheckCircle2 size={13} aria-hidden="true" /> Eligible for selection{workflowName ? ` · ${workflowName}` : ""}
             </>
           ) : (
             <>
-              <Clock3 size={13} aria-hidden="true" /> {gate ? gate.summary : "Not eligible tonight"}
+              <Clock3 size={13} aria-hidden="true" /> {gate ? gate.summary : "Not currently eligible"}
             </>
           )}
         </p>
       </div>
       <div className="td-hero-body">
         <header>
-          <h2 id="overview-grade">{deductions.length ? "What's pulling the score down" : "Nothing is pulling the score down"}</h2>
+          <h2 id="overview-grade">{deductions.length ? "What's pulling the score down" : deductionsRecorded ? "No deductions recorded" : "Score explanation unavailable"}</h2>
           {deductions.length ? (
             <p>
-              <b>−{lost} points</b> across {deductions.length} check{deductions.length === 1 ? "" : "s"}. Each row names the action that fixes it.
+              <b>−{lost} points</b> across {deductions.length} check{deductions.length === 1 ? "" : "s"}. Review the suggested actions before running maintenance.
             </p>
           ) : (
-            <p>Every health check passed on the last scan.</p>
+            <p>{deductionsRecorded ? "The last scan recorded no health penalties." : "The last scan did not include a health-check breakdown."}</p>
           )}
         </header>
         {deductions.length ? (
@@ -320,8 +328,8 @@ function HealthHero({
           </ol>
         ) : (
           <div className="td-hero-clean">
-            <CheckCircle2 size={20} aria-hidden="true" />
-            <p>Nightly maintenance keeps it this way. You can still run an operation below.</p>
+            {deductionsRecorded ? <CheckCircle2 size={20} aria-hidden="true" /> : <Clock3 size={20} aria-hidden="true" />}
+            <p>{deductionsRecorded ? "Review file layout and maintenance history below for the supporting evidence." : "Refresh the table stats to collect the evidence behind this score."}</p>
           </div>
         )}
       </div>
@@ -394,9 +402,9 @@ function HistoryCard({
             );
           })}
         </ol>
-      ) : (
+      ) : !error ? (
         <p className="td-overview-caption">No maintenance has been recorded for this table yet.</p>
-      )}
+      ) : null}
       <Link className="td-overview-link" to={`/tables/${tableId}?tab=snapshots`}>
         Snapshots <ArrowUpRight size={14} aria-hidden="true" />
       </Link>
@@ -422,8 +430,7 @@ function finiteCount(value: unknown): number | null {
 const Glance = ({ label, value, hint }: { label: string; value: string; hint?: string }) => (
   <div>
     <dt>{label}</dt>
-    <dd title={value}>{value}</dd>
-    {hint ? <p>{hint}</p> : null}
+    <dd><span title={value}>{value}</span>{hint ? <p>{hint}</p> : null}</dd>
   </div>
 );
 

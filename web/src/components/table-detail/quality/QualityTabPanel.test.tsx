@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { QualityTabPanel } from "./QualityTabPanel";
+import { getSlaStatusDashboard, getTableChecklist } from "../../../api/client";
 
 vi.mock("../../../lib/auth", () => ({
   useAuth: () => ({ api: { token: "t" }, token: "t", role: "operator" })
@@ -85,7 +86,35 @@ describe("QualityTabPanel", () => {
     expect(screen.queryByText("should-not-render-null-rate")).not.toBeInTheDocument();
     expect(screen.getByText(/added_col/)).toBeInTheDocument();
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
-    const experimental = screen.getByText("Experimental").closest("details");
+    const experimental = screen.getByText("Experimental insights", { selector: "summary" }).closest("details");
     expect(experimental).not.toHaveAttribute("open");
+    expect(screen.getByText("Age uses the latest snapshot commit, or the latest scan when the commit time is unavailable.")).toBeInTheDocument();
+    expect(getTableChecklist).toHaveBeenCalledTimes(1);
+  });
+
+  it("never displays another table's freshness when the scoped response has no matching row", async () => {
+    vi.mocked(getSlaStatusDashboard).mockResolvedValueOnce({
+      slas: [{
+        table_id: "another-table", table_name: "other", schema_name: "raw", freshness_hours: 4,
+        freshness_sla_hours: 24, freshness_breached: false, scan_staleness_hours: 1,
+        maintenance_days: null, maintenance_sla_days: null, maintenance_breached: false,
+        p95_latency_ms: null, p95_latency_sla_ms: null, p95_latency_breached: false, has_preset: true
+      }], total_breached: 0, total_monitored: 1
+    });
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <QualityTabPanel tableId="table-1" />
+    </QueryClientProvider>);
+    expect(await screen.findByText("No freshness measurement returned for this table.")).toBeInTheDocument();
+    expect(screen.queryByText("Within the freshness target")).not.toBeInTheDocument();
+  });
+
+  it("reports freshness failures without rendering a healthy or empty measurement", async () => {
+    vi.mocked(getSlaStatusDashboard).mockRejectedValueOnce(new Error("Telemetry unavailable"));
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <QualityTabPanel tableId="table-1" />
+    </QueryClientProvider>);
+    expect(await screen.findByText("Failed to load freshness")).toBeInTheDocument();
+    expect(screen.queryByText("Within the freshness target")).not.toBeInTheDocument();
+    expect(screen.queryByText("No freshness measurement returned for this table.")).not.toBeInTheDocument();
   });
 });

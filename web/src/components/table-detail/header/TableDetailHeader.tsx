@@ -75,7 +75,7 @@ export interface TableDetailHeaderProps {
 }
 
 const known = (value: number | null | undefined): value is number =>
-  typeof value === "number" && Number.isFinite(value);
+  typeof value === "number" && Number.isFinite(value) && value >= 0;
 
 const formatIst = (value: string | null | undefined): string | null => {
   if (!value) return null;
@@ -104,7 +104,7 @@ const countText = (value: number | null): string => (known(value) ? formatNumber
 const sizeText = (value: number | null): string => (known(value) ? formatGb(value) : UNKNOWN);
 
 const smallFilesShareText = (small: number | null, total: number | null): string => {
-  if (!known(small) || !known(total)) return UNKNOWN;
+  if (!known(small) || !known(total) || small > total) return UNKNOWN;
   const pct = total > 0 ? Math.round((small / total) * 100) : 0;
   return `${pct}% of ${formatNumber(total)} files`;
 };
@@ -162,8 +162,7 @@ const copyText = (value: string, success: string) => {
 const Fact = ({ label, icon, children, detail }: { label: string; icon: ReactNode; children: ReactNode; detail?: ReactNode }) => (
   <div className="ctd-header__fact">
     <dt>{icon}{label}</dt>
-    <dd>{children}</dd>
-    {detail ? <div className="ctd-header__fact-detail">{detail}</div> : null}
+    <dd>{children}{detail ? <div className="ctd-header__fact-detail">{detail}</div> : null}</dd>
   </div>
 );
 

@@ -49,6 +49,7 @@ export const ScoreTrend = ({ points, compact = false }: { points: TrendPoint[]; 
   return (
     <div className={compact ? "td-trend td-trend--compact" : "td-trend"} aria-hidden="true">
       <div className="td-trend-plot">
+        {compact ? null : <div className="td-trend-scale">{[100, 75, 50, 25, 0].map((value) => <span key={value} style={{ top: `${100 - value}%` }}>{value}</span>)}</div>}
         <svg viewBox={`0 0 ${W} ${height}`} preserveAspectRatio="none">
           {compact
             ? null

@@ -1,4 +1,5 @@
 import type { PartitionAccessPoint, PartitionAccessSummary } from "../../api/client";
+import { ChartDataTable } from "../ui/chart-data-table";
 
 interface PartitionAccessChartProps {
   points: Array<Omit<PartitionAccessPoint, "request_count"> & { request_count: number | null }>;
@@ -45,7 +46,27 @@ export const decodePartitionPath = (path: string | null | undefined): string => 
 
 const dayLabel = (day: string) => {
   const parsed = Date.parse(day);
-  return Number.isNaN(parsed) ? day : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(parsed);
+  return Number.isNaN(parsed) ? day : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" }).format(parsed);
+};
+
+export const partitionDays = (points: PartitionAccessChartProps["points"]) => {
+  const byDay = new Map<string, number>();
+  for (const point of points) {
+    const requests = measuredCount(point.request_count);
+    if (requests == null || !/^\d{4}-\d{2}-\d{2}$/.test(point.day) || !Number.isFinite(Date.parse(point.day))) continue;
+    byDay.set(point.day, (byDay.get(point.day) ?? 0) + requests);
+  }
+  const recorded = [...byDay.keys()].sort();
+  if (!recorded.length) return [];
+  const first = Date.parse(recorded[0]);
+  const last = Date.parse(recorded[recorded.length - 1]);
+  const result: Array<{ day: string; requests: number | null }> = [];
+  // This endpoint covers 90 days; bound rendering if a malformed timestamp slips through.
+  for (let date = Math.max(first, last - 365 * 86_400_000); date <= last; date += 86_400_000) {
+    const day = new Date(date).toISOString().slice(0, 10);
+    result.push({ day, requests: byDay.get(day) ?? null });
+  }
+  return result;
 };
 
 export const PartitionAccessChart = ({ points, partitions }: PartitionAccessChartProps) => {
@@ -53,14 +74,8 @@ export const PartitionAccessChart = ({ points, partitions }: PartitionAccessChar
     return <span className="text-sm text-muted-foreground">No partition access data yet.</span>;
   }
 
-  const byDay = new Map<string, number>();
-  for (const point of points) {
-    const requests = measuredCount(point.request_count);
-    if (requests == null || !point.day) continue;
-    byDay.set(point.day, (byDay.get(point.day) ?? 0) + requests);
-  }
-  const days = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
-  const dayPeak = Math.max(1, ...days.map(([, value]) => value));
+  const days = partitionDays(points);
+  const dayPeak = Math.max(0, ...days.map(({ requests }) => requests ?? 0));
 
   const measured = partitions.filter((row) => measuredCount(row.total_requests) != null);
   const ranked = [...measured].sort((a, b) => (b.total_requests ?? 0) - (a.total_requests ?? 0));
@@ -74,7 +89,7 @@ export const PartitionAccessChart = ({ points, partitions }: PartitionAccessChar
     <div className="td-pa">
       {ranked.length ? (
         <p className="td-pa-headline">
-          <strong>{ranked.length.toLocaleString()}</strong> partition{ranked.length === 1 ? "" : "s"} read
+          <strong>{ranked.length.toLocaleString()}</strong> partition{ranked.length === 1 ? "" : "s"} with recorded request counts
           {total > 0 && ranked.length > 10 ? (
             <>
               {" "}· top 10 take <strong>{Math.round((topTen / total) * 100)}%</strong> of requests
@@ -82,7 +97,7 @@ export const PartitionAccessChart = ({ points, partitions }: PartitionAccessChar
           ) : null}
           {cold > 0 ? (
             <>
-              {" "}· <strong>{cold.toLocaleString()}</strong> not read in {COLD_AFTER_DAYS}+ days
+              {" "}· <strong>{cold.toLocaleString()}</strong> with no recorded access in {COLD_AFTER_DAYS}+ days
             </>
           ) : null}
         </p>
@@ -94,16 +109,21 @@ export const PartitionAccessChart = ({ points, partitions }: PartitionAccessChar
           <div
             className="td-pa-day-bars"
             role="img"
-            aria-label={`Requests per day from ${dayLabel(days[0][0])} to ${dayLabel(days[days.length - 1][0])}, peaking at ${dayPeak.toLocaleString()}.`}
+            aria-label={`Requests per day from ${dayLabel(days[0].day)} to ${dayLabel(days[days.length - 1].day)}, peaking at ${dayPeak.toLocaleString()}. Missing days are not measured.`}
           >
-            {days.map(([day, value]) => (
-              <span key={day} title={`${dayLabel(day)}: ${value.toLocaleString()} requests`} style={{ height: `${Math.max(2, (value / dayPeak) * 100)}%` }} />
+            {days.map(({ day, requests }) => (
+              <span key={day} className={requests == null ? "is-unmeasured" : undefined} title={`${dayLabel(day)}: ${requests == null ? "Not measured" : `${requests.toLocaleString()} requests`}`} style={{ height: requests == null ? "100%" : `${dayPeak > 0 ? (requests / dayPeak) * 100 : 0}%` }} />
             ))}
           </div>
           <div className="td-pa-day-axis" aria-hidden="true">
-            <span>{dayLabel(days[0][0])}</span>
-            <span>{dayLabel(days[days.length - 1][0])}</span>
+            <span>{dayLabel(days[0].day)}</span>
+            <span>{dayLabel(days[days.length - 1].day)}</span>
           </div>
+          {days.some((day) => day.requests == null) ? <p className="td-usage-caption">Outlined slots have no recorded count. Missing telemetry is not zero activity.</p> : null}
+          <ChartDataTable caption="Storage requests by calendar day" toggleLabel="Daily request counts" rows={days} getRowKey={(row) => row.day} columns={[
+            { key: "day", header: "Day (UTC)", render: (row) => row.day },
+            { key: "requests", header: "Requests", align: "right", render: (row) => countText(row.requests) }
+          ]} />
         </figure>
       ) : null}
 
@@ -132,32 +152,18 @@ export const PartitionAccessChart = ({ points, partitions }: PartitionAccessChar
         <p className="text-sm text-muted-foreground">Request counts not measured.</p>
       )}
 
-      <details className="td-pa-details">
-        <summary>All {partitions.length.toLocaleString()} partitions as a table</summary>
-        <div className="td-pa-table">
-          <table className="w-full text-sm">
-            <caption className="sr-only">Storage requests per partition</caption>
-            <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="py-1.5 pr-3 font-medium">Partition</th>
-                <th className="py-1.5 pr-3 text-right font-medium">Requests</th>
-                <th className="py-1.5 text-right font-medium">Last accessed</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...partitions]
-                .sort((a, b) => (b.total_requests ?? -1) - (a.total_requests ?? -1))
-                .map((row) => (
-                  <tr key={row.partition_path || "(unpartitioned)"} className="border-b border-border/60">
-                    <td className="py-1.5 pr-3">{decodePartitionPath(row.partition_path)}</td>
-                    <td className="py-1.5 pr-3 text-right tabular-nums">{countText(row.total_requests)}</td>
-                    <td className="py-1.5 text-right">{lastAccessText(row.days_since_last_access)}</td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
+      <ChartDataTable
+        className="td-pa-details"
+        caption="Storage requests per partition"
+        toggleLabel={`All ${partitions.length.toLocaleString()} partitions as a table`}
+        rows={[...partitions].sort((a, b) => (measuredCount(b.total_requests) ?? -1) - (measuredCount(a.total_requests) ?? -1))}
+        getRowKey={(row) => row.partition_path || "(unpartitioned)"}
+        columns={[
+          { key: "partition", header: "Partition", render: (row) => decodePartitionPath(row.partition_path) },
+          { key: "requests", header: "Requests", align: "right", render: (row) => countText(row.total_requests) },
+          { key: "last", header: "Last accessed", align: "right", render: (row) => lastAccessText(row.days_since_last_access) }
+        ]}
+      />
     </div>
   );
 };

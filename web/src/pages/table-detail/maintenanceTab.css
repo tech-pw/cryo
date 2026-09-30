@@ -1,8 +1,12 @@
+.td-maintenance-workspace { display: flex; flex-direction: column; gap: 24px; }
+.td-mt-stage { min-width: 0; }
+.td-mt-stage-description { color: var(--color-muted); font-size: 13px; margin: 0 0 16px; line-height: 1.6; }
+.td-mt-stage > .mb-6 { margin-bottom: 0; }
 .td-mt-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
   gap: 16px;
-  margin: 16px 0 24px;
+  margin: 0;
   align-items: start;
 }
 
@@ -59,7 +63,7 @@
 
 .td-mt-facts {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin: 16px 0 0;
 }
@@ -87,6 +91,7 @@
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .td-mt-subhead {

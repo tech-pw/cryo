@@ -27,6 +27,17 @@
   min-width: 0;
 }
 
+.td-ov-evidence {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  align-items: start;
+  gap: 16px;
+}
+.td-ov-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+@media (max-width: 1080px) {
+  .td-ov-evidence { grid-template-columns: minmax(0, 1fr); }
+}
+
 .td-overview-card {
   display: flex;
   flex-direction: column;
@@ -168,7 +179,7 @@
 }
 
 .td-hero-body header b {
-  color: var(--hero-accent);
+  color: var(--color-ink);
   font-variant-numeric: tabular-nums;
 }
 
@@ -236,7 +247,7 @@
   height: 30px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--sev) 12%, transparent);
-  color: var(--sev);
+  color: var(--color-ink);
   font-size: 13px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -262,7 +273,7 @@
 }
 
 .td-ded-sev {
-  color: var(--sev);
+  color: var(--color-ink);
   font-size: 10.5px;
   font-weight: 650;
   letter-spacing: 0.03em;
@@ -274,9 +285,7 @@
   margin-top: 1px;
   color: var(--color-muted);
   font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .td-ded-bar {
@@ -563,7 +572,7 @@
 }
 
 .td-layout-fact[data-tone="attention"] dd {
-  color: var(--color-status-warning);
+  color: var(--color-ink);
 }
 
 /* ---- History & activity ---- */
@@ -676,7 +685,27 @@
 }
 
 .td-trend {
-  padding-right: 20px;
+  padding: 8px 20px 0 28px;
+}
+
+.td-trend-scale {
+  position: absolute;
+  inset: 0 auto 0 -28px;
+  width: 22px;
+  color: var(--color-muted);
+  font-size: 10px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.td-trend-scale span { position: absolute; right: 0; transform: translateY(-50%); }
+
+@media (max-width: 560px) {
+  .td-overview-card { padding: 16px; }
+  .td-hero-body { padding: 16px; }
+  .td-history-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .td-history-stats > div:last-child { grid-column: 1 / -1; }
+  .td-glance { gap: 16px 12px; }
+  .td-glance dd { white-space: normal; overflow-wrap: anywhere; }
 }
 
 .td-trend-plot {
@@ -775,6 +804,8 @@
   color: var(--color-muted);
   font-size: 11px;
   line-height: 15px;
+  font-weight: 400;
+  white-space: normal;
 }
 
 .td-glance-actions {
@@ -821,7 +852,7 @@
 }
 
 .td-hist-range {
-  color: var(--color-ink-faint);
+  color: var(--color-muted);
 }
 
 .td-timeline .td-timeline-outcome {

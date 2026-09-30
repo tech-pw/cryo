@@ -29,7 +29,7 @@ const LastRunLine = ({ run }: { run: LastRun | undefined }) => {
   if (!run) {
     return (
       <p className="td-op-last" data-state="never">
-        <Clock3 size={13} aria-hidden="true" /> Not run on this table yet
+        <Clock3 size={13} aria-hidden="true" /> No run in recent history
       </p>
     );
   }
@@ -74,7 +74,7 @@ export const MaintenanceActions = ({
       <header className="td-ops-head">
         <div>
           <h2 id="td-ops-title">{title}</h2>
-          <p>Add operations to a run, review them in order, run them together. Highlighted ones fix this table's diagnosis.</p>
+          <p>Choose operations, then review the run. Highlighted actions address recorded health findings; results depend on the execution plan.</p>
         </div>
         <div className="td-ops-presets">
           {launcher?.blockedReason ? <p className="td-ops-blocked">{launcher.blockedReason}</p> : null}
@@ -102,7 +102,7 @@ export const MaintenanceActions = ({
                   <Icon size={16} aria-hidden="true" />
                 </span>
                 <h3>{info.title}</h3>
-                {points > 0 ? <span className="td-op-badge">+{points} pts</span> : null}
+                {points > 0 ? <span className="td-op-badge" title={`${points} health points affected by related findings. Recovery is not guaranteed.`}>{points} pts affected</span> : null}
               </div>
               <p className="td-op-summary">{info.summary}</p>
               <div className="td-op-evidence">

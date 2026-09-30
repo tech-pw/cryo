@@ -67,6 +67,18 @@ All counts and ratios below refer to the same persisted scan unless an explicit 
 
 These additions should be scanner/background computations persisted for read-only UI queries. Do not introduce full-table scans, live manifests or engine SQL on the table-detail request path.
 
+## Implemented in the current UI pass
+
+The redesign now applies the evidence rules above across the table-detail route:
+
+- The header is a compact identity and action area with a facts strip, explicit workflow readiness, scan/commit/action timestamps, and an expandable storage location. “Compaction candidates” is labelled separately from all undersized files.
+- Overview follows condition → explanation → action → evidence. It includes a bounded 0–100 gauge, persisted deductions with direct remedies, eligibility language that does not promise a run, measured audit outcomes, file-size ranges with target context, snapshot/activity context, and a score history with fixed axes and an accessible data table.
+- Schema & files uses a structured, paginated table and pairs layout, partition and property evidence with links to the relevant detail. Snapshots leads with history, then comparison/protection controls and retention context.
+- Maintenance leads with selection readiness, then on-demand planning, run history and compaction analysis. Cost & Savings separates measured/request spend, independently scaled byte drivers, and modelled opportunities; overlapping buckets are not stacked as a false total.
+- Usage distinguishes query-log observations from storage-request observations, labels the slowest-query subset, preserves missing days as “Not measured,” and keeps lineage and similar schemas progressive. Quality separates freshness evidence, drift signals, optimization checks and experimental insights; unknown checks never become “all green.”
+
+These changes are presentation-only: they reuse existing API contracts and keep source reads, write destinations, maintenance guardrails and background-scan boundaries unchanged.
+
 ## Local source anchors reviewed
 
 - `web/src/api/types.ts`: table stats, table cost and audit-facing types.
