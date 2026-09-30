@@ -430,8 +430,8 @@ web:
   image:
     repository: registry.example.com/cryo
     tag: web-latest
-    # Built + pushed 2026-09-30 from gitlab-main d90fa8f. deploy/deploy.sh does not build this image.
-    digest: "sha256:7aaf85ede0ebc5eec4635d603d8989dbdff6809b33a15f3e3cb4f0f14e97e3e8"
+    # Built + pushed 2026-09-30 from gitlab-main 5bd03dc. deploy/deploy.sh does not build this image.
+    digest: "sha256:311a89f5e242fa3b054655969251935c06608b0c4040c7b9f1bb9e552d91d603"
   # Lowered 128Mi (the base chart's values.yaml default, unset here before now) -> 64Mi
   # 2026-08-16: confirmed live, both cryo-web pods (a static nginx serve, not a Python
   # process) steady at 7-24Mi actual usage, 0 restarts ever. Overridden here rather than
