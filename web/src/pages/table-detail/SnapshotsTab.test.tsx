@@ -115,11 +115,10 @@ describe("SnapshotsTab", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
 
-    const restore = screen.getByRole("menuitem", { name: "Restore…" });
-    expect(restore).toBeDisabled();
-    expect(screen.getByText("Restore is not enabled on this install")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Restore…" })).not.toBeInTheDocument();
+    expect(screen.getByText("Restore is not enabled on this install.")).toBeInTheDocument();
 
-    const protect = screen.getByRole("menuitem", { name: "Protect" });
+    const protect = screen.getByRole("button", { name: "Protect" });
     expect(protect).toBeDisabled();
     expect(protectTableSnapshot).not.toHaveBeenCalled();
   });
@@ -188,6 +187,6 @@ describe("SnapshotsTab", () => {
     expect(writeText).toHaveBeenCalledWith(big);
 
     fireEvent.click(within(current.closest("tr") as HTMLElement).getByRole("button", { name: "Actions" }));
-    expect(screen.getByRole("menuitem", { name: "Protect" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Protect" })).toBeEnabled();
   });
 });
