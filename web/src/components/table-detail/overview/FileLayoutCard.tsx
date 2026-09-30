@@ -50,9 +50,8 @@ export const FileLayoutCard = ({ stats, tableId }: { stats: TableStatsRead | nul
       {histogram ? (
         <>
           <p className="td-layout-headline">
-            <strong>{formatNumber(offTarget ?? 0)}</strong> of {formatNumber(histogram.totalFiles)} files are below{" "}
-            {formatTarget(histogram.targetBytes)}
-            {histogram.targetAssumed ? " (Iceberg default target)" : " target"}
+            <strong>{formatNumber(offTarget ?? 0)}</strong> of {formatNumber(histogram.totalFiles)} files are in undersized ranges.
+            {" "}Reference target: {formatTarget(histogram.targetBytes)}{histogram.targetAssumed ? " (Iceberg default)" : ""}.
           </p>
           <div
             className="td-hist"
@@ -67,7 +66,7 @@ export const FileLayoutCard = ({ stats, tableId }: { stats: TableStatsRead | nul
                 <div className="td-hist-track">
                   <span style={{ height: `${bucket.files === 0 ? 0 : Math.max(3, (bucket.files / peak) * 100)}%` }} />
                 </div>
-                <span className="td-hist-label">{bucket.label}</span>
+                <span className="td-hist-label" title={`${bucket.label}: ${formatNumber(bucket.files)} files`}>{bucket.label}</span>
               </div>
             ))}
           </div>
@@ -83,6 +82,7 @@ export const FileLayoutCard = ({ stats, tableId }: { stats: TableStatsRead | nul
             )}
             <li className="td-hist-target-key"><i aria-hidden="true" />Target bucket</li>
           </ul>
+          <p className="td-overview-caption">File counts by size range, in binary units (M = MiB). Bands describe file layout; they are not the compaction candidate count.</p>
           <ChartDataTable
             caption="Data files by size range"
             toggleLabel="View distribution as table"
@@ -105,11 +105,12 @@ export const FileLayoutCard = ({ stats, tableId }: { stats: TableStatsRead | nul
         <Fact label="Partitions" value={partitions == null ? "—" : formatNumber(partitions)} />
         <Fact
           label="Partition skew"
-          value={skew == null ? (partitions === 1 ? "Unpartitioned" : "—") : `${skew.toFixed(skew >= 10 ? 0 : 1)}×`}
+          value={skew == null ? (partitions === 1 ? "One partition" : "—") : `${skew.toFixed(skew >= 10 ? 0 : 1)}×`}
           tone={skew != null && skew > 10 ? "attention" : undefined}
         />
         <Fact label="Delete files" value={deletes == null ? "—" : formatNumber(deletes)} tone={deletes ? "attention" : undefined} />
       </dl>
+      {skew != null ? <p className="td-overview-caption">Skew compares the largest partition's file count with the median partition.</p> : null}
       <Link className="td-overview-link" to={`/tables/${tableId}?tab=files`}>
         Partitions and files <ArrowUpRight size={14} aria-hidden="true" />
       </Link>

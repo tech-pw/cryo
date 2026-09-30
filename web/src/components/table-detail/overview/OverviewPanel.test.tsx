@@ -171,6 +171,16 @@ describe("OverviewPanel", () => {
     });
   });
 
+  it("does not claim health checks passed when the breakdown is missing", async () => {
+    mocks.getTable.mockResolvedValue(scanned({ raw: {} }));
+    mocks.getTableMaintenanceStatus.mockRejectedValue(new Error("Unavailable"));
+    renderPanel();
+    expect(await screen.findByText("Score explanation unavailable")).toBeInTheDocument();
+    expect(await screen.findByText("Selection status unavailable")).toBeInTheDocument();
+    expect(screen.queryByText(/Every health check passed/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Not currently eligible")).not.toBeInTheDocument();
+  });
+
   it("ranks deductions and pairs each with the action that fixes it", async () => {
     mocks.getTable.mockResolvedValue(
       scanned({

@@ -99,7 +99,9 @@ const TableMaintenanceActions = ({ tableId }: { tableId: string }) => {
     enabled
   });
   const cost = useQuery({ queryKey: tableKeys.cost(tableId, token), queryFn: () => getTableCost(api, tableId), enabled, retry: false });
-  if (!table.data?.stats) return null;
+  if (table.isError) return <QueryErrorAlert error={table.error} title="Couldn't load maintenance actions" />;
+  if (table.isLoading) return <p className="td-mt-lede">Loading maintenance actions…</p>;
+  if (!table.data?.stats) return <p className="td-mt-lede">Scan this table to evaluate maintenance actions.</p>;
   return (
     <div className="mb-6">
       <MaintenanceActions
@@ -127,14 +129,14 @@ export const MaintenanceTab = () => {
   const blocking = (data?.blocking_reasons ?? []).filter((reason) => reason.blocks_nightly_selection);
 
   return (
-    <div>
-      <QueryErrorAlert error={status.error} title="Couldn't load maintenance status" />
-      <TableMaintenanceActions tableId={tableId} />
-      <TableRunGrid tableId={tableId} />
+    <div className="td-maintenance-workspace">
       <div className="td-mt-grid">
         <section className="td-mt-card" aria-labelledby="maintenance-tonight">
-          <p className="td-mt-kicker">Tonight's selection</p>
+          <p className="td-mt-kicker">1 · Readiness</p>
+          {!data ? <h3 id="maintenance-tonight" className="td-mt-status">Nightly selection</h3> : null}
+          <QueryErrorAlert error={status.error} title="Couldn't load maintenance status" />
           {!data && status.isLoading ? <p className="text-sm text-muted-foreground">Loading maintenance status</p> : null}
+          {!data && status.isSuccess ? <p className="td-mt-lede">No maintenance evaluation recorded yet.</p> : null}
           {data ? (
             <>
               <h3 id="maintenance-tonight" className="td-mt-status" data-eligible={data.eligible === true || undefined}>
@@ -192,8 +194,17 @@ export const MaintenanceTab = () => {
             </>
           ) : null}
         </section>
+        <EffectiveSettings tableId={tableId} />
       </div>
-      <EffectiveSettings tableId={tableId} />
+      <div className="td-mt-stage">
+        <p className="td-mt-kicker">2 · Choose an action</p>
+        <p className="td-mt-stage-description">Review a plan before running maintenance. Nightly eligibility and on-demand execution have separate checks.</p>
+        <TableMaintenanceActions tableId={tableId} />
+      </div>
+      <div className="td-mt-stage">
+        <p className="td-mt-kicker">3 · Follow the outcome</p>
+        <TableRunGrid tableId={tableId} />
+      </div>
       <CompactionAnalysis tableId={tableId} />
     </div>
   );
