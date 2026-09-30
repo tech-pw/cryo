@@ -15,7 +15,7 @@ and information for contributor.
 
 ## Code of Conduct
 
-This project follows standard open-source conduct expectations described in
+This project follows standard open-source conduct expectations described in the
 [docs/GOVERNANCE.md](docs/GOVERNANCE.md). Please report unacceptable behavior to the maintainers.
 
 ## Getting Started
