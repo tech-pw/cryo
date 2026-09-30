@@ -70,7 +70,7 @@ const SchemaBadges = ({ row }: { row: SchemaColumnRow }) => (
 const NullRateCell = ({ rate }: { rate: number | null }) =>
   rate == null ? <MissingPattern /> : <span>{formatNullRate(rate)}</span>;
 
-const SchemaRow = ({ row, highlighted }: { row: SchemaColumnRow; highlighted: boolean }) => (
+const SchemaRow = ({ row, highlighted, sketches }: { row: SchemaColumnRow; highlighted: boolean; sketches: boolean }) => (
   <>
     <td className={highlighted ? "td-schema-row-highlight" : undefined}>
       <span data-testid="schema-column-name" className="font-mono text-xs">
@@ -86,13 +86,17 @@ const SchemaRow = ({ row, highlighted }: { row: SchemaColumnRow; highlighted: bo
     </td>
     <td>{textOrMissing(row.lowerBound)}</td>
     <td>{textOrMissing(row.upperBound)}</td>
-    <td>{formatCount(row.ndv)}</td>
-    <td>{formatCount(row.p50)}</td>
-    <td>{formatCount(row.p95)}</td>
+    {sketches ? (
+      <>
+        <td>{formatCount(row.ndv)}</td>
+        <td>{formatCount(row.p50)}</td>
+        <td>{formatCount(row.p95)}</td>
+      </>
+    ) : null}
   </>
 );
 
-const SchemaHeader = () => (
+const SchemaHeader = ({ sketches }: { sketches: boolean }) => (
   <tr>
     <th>Name</th>
     <th>Type</th>
@@ -100,11 +104,18 @@ const SchemaHeader = () => (
     <th>Null rate</th>
     <th>Lower bound</th>
     <th>Upper bound</th>
-    <th>NDV</th>
-    <th>p50</th>
-    <th>p95</th>
+    {sketches ? (
+      <>
+        <th>NDV</th>
+        <th>p50</th>
+        <th>p95</th>
+      </>
+    ) : null}
   </tr>
 );
+
+const hasSketches = (rows: SchemaColumnRow[]): boolean =>
+  rows.some((row) => row.ndv != null || row.p50 != null || row.p95 != null);
 
 const VirtualSchemaRows = ({
   rows,
@@ -113,6 +124,7 @@ const VirtualSchemaRows = ({
   rows: SchemaColumnRow[];
   highlight: string | null;
 }) => {
+  const sketches = hasSketches(rows);
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -146,7 +158,7 @@ const VirtualSchemaRows = ({
               <table className="td-schema-table w-full">
                 <tbody>
                   <tr className={highlighted ? "td-schema-row-highlight" : undefined}>
-                    <SchemaRow row={row} highlighted={highlighted} />
+                    <SchemaRow row={row} highlighted={highlighted} sketches={sketches} />
                   </tr>
                 </tbody>
               </table>
@@ -204,13 +216,13 @@ const SchemaTable = ({ rows, highlight }: { rows: SchemaColumnRow[]; highlight: 
         <p className="text-sm text-muted-foreground">No column metadata yet.</p>
       ) : (
         <>
-          {filtered.length > PAGE_SIZE ? (
-            <p className="text-xs text-muted-foreground">This table is paginated.</p>
-          ) : null}
+          {hasSketches(rows) ? null : (
+            <p className="text-xs text-muted-foreground">Distinct counts and percentiles appear after a statistics pass computes column sketches.</p>
+          )}
           <div className="overflow-x-auto">
             <table className="td-schema-table w-full">
               <thead>
-                <SchemaHeader />
+                <SchemaHeader sketches={hasSketches(rows)} />
               </thead>
               <tbody>
                 {paged.map((row) => {
@@ -221,7 +233,7 @@ const SchemaTable = ({ rows, highlight }: { rows: SchemaColumnRow[]; highlight: 
                       id={highlighted ? "files-schema-highlight" : undefined}
                       className={highlighted ? "td-schema-row-highlight" : undefined}
                     >
-                      <SchemaRow row={row} highlighted={highlighted} />
+                      <SchemaRow row={row} highlighted={highlighted} sketches={hasSketches(rows)} />
                     </tr>
                   );
                 })}

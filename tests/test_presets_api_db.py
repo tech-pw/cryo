@@ -1359,3 +1359,77 @@ def _patch_sqlite_incompatible_defaults() -> list[tuple[object, object]]:
                 originals.append((column, column.server_default))
                 column.server_default = None
     return originals
+
+
+def test_table_operation_run_allows_operations_outside_the_workflow(api_db: ApiDb) -> None:
+    """The table page's "Expire snapshots" must work even when the workflow only compacts."""
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    hot_table_id, _ = _seed_tables(api_db.session_factory, source_id)
+    client = api_db.client
+
+    unassigned = client.post(
+        f"/api/v1/tables/{hot_table_id}/maintenance/operations",
+        headers=OPERATOR_HEADERS,
+        json={"operations": ["remove_orphan_files"]},
+    )
+    assert unassigned.status_code == 409
+
+    preset_id = _create_preset(client, "standard", destination_id, priority=100)
+    assert (
+        client.post(
+            "/api/v1/assignments",
+            headers=OPERATOR_HEADERS,
+            json={
+                "preset_id": preset_id,
+                "selection": {"mode": "ids", "ids": [str(hot_table_id)]},
+                "assigned_by": "pytest",
+            },
+        ).status_code
+        == 200
+    )
+
+    viewer = client.post(
+        f"/api/v1/tables/{hot_table_id}/maintenance/operations",
+        headers=VIEWER_HEADERS,
+        json={"operations": ["remove_orphan_files"]},
+    )
+    assert viewer.status_code == 403
+
+    response = client.post(
+        f"/api/v1/tables/{hot_table_id}/maintenance/operations",
+        headers=OPERATOR_HEADERS,
+        json={"operations": ["remove_orphan_files"]},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert len(body["job_ids"]) == 1
+    job = client.get(f"/api/v1/jobs/{body['job_ids'][0]}", headers=VIEWER_HEADERS).json()
+    assert job["table_id"] == str(hot_table_id)
+    assert job["mode"] == "deep"
+    run = client.get(f"/api/v1/runs/{body['run_id']}", headers=VIEWER_HEADERS).json()
+    assert run["summary"]["operations"] == ["remove_orphan_files"]
+
+    bulk = client.post(
+        "/api/v1/maintenance/run",
+        headers=OPERATOR_HEADERS,
+        json={
+            "destination_id": str(destination_id),
+            "preset_id": preset_id,
+            "table_ids": [str(hot_table_id)],
+            "operations": ["remove_orphan_files"],
+        },
+    )
+    assert bulk.status_code == 400
+
+
+def test_mode_for_operations_picks_the_lightest_mode_that_plans_them() -> None:
+    from cryo.api.routes_table_maintenance import mode_for_operations
+    from cryo.domain.enums import Mode, OperationType
+
+    assert mode_for_operations({OperationType.EXPIRE_SNAPSHOTS}) is Mode.LIGHT
+    assert mode_for_operations({OperationType.OPTIMIZE}) is Mode.STANDARD
+    assert mode_for_operations({OperationType.OPTIMIZE_MANIFESTS}) is Mode.MANIFEST_ONLY
+    assert mode_for_operations({OperationType.REMOVE_ORPHAN_FILES}) is Mode.DEEP
+    assert (
+        mode_for_operations({OperationType.OPTIMIZE, OperationType.OPTIMIZE_MANIFESTS}) is Mode.DEEP
+    )

@@ -43,7 +43,12 @@ const props = (overrides: Partial<TableDetailHeaderProps> = {}): TableDetailHead
   onChooseWorkflow: vi.fn(),
   onPreview: vi.fn(),
   onRun: vi.fn(),
-  onRewriteManifests: vi.fn(),
+  operations: [
+    { op: "optimize", label: "Compact files", destructive: false },
+    { op: "remove_orphan_files", label: "Remove orphan files", destructive: true }
+  ],
+  onRunOperation: vi.fn(),
+  operationsDisabledReason: null,
   onOpenSettings: vi.fn(),
   ...overrides
 });
@@ -132,21 +137,37 @@ describe("TableDetailHeader", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    const run = screen.getByRole("button", { name: "Run now" });
+    const run = screen.getByRole("button", { name: "Run full workflow now" });
     expect(run).toBeDisabled();
     expect(run).toHaveAttribute("title", reason);
     expect(screen.getByText(reason)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Rewrite manifests" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Preview maintenance" })).toBeEnabled();
     fireEvent.click(run);
     expect(onRun).not.toHaveBeenCalled();
   });
 
-  it("disables run and manifest rewrite until a workflow is assigned", () => {
-    renderHeader({ scanned: true, hasWorkflow: false, workflowName: null, workflowSource: null, writeAllowed: true });
+  it("lists single operations, flags destructive ones, and disables them with a reason", () => {
+    const onRunOperation = vi.fn();
+    renderHeader({ scanned: true, hasWorkflow: true, onRunOperation });
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    expect(screen.getByRole("button", { name: "Run now" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Rewrite manifests" })).toBeDisabled();
+    expect(screen.getByRole("group", { name: "Add to run" })).toBeInTheDocument();
+    expect(screen.getByText("deletes files")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Compact files" }));
+    expect(onRunOperation).toHaveBeenCalledWith("optimize");
+  });
+
+  it("disables the full workflow run and single operations until a workflow is assigned", () => {
+    renderHeader({
+      scanned: true,
+      hasWorkflow: false,
+      workflowName: null,
+      workflowSource: null,
+      writeAllowed: true,
+      operationsDisabledReason: "Assign a workflow first."
+    });
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.getByRole("button", { name: "Run full workflow now" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Compact files" })).toBeDisabled();
     expect(screen.getByText("Assign a workflow before running maintenance")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose a workflow" })).toBeEnabled();
   });

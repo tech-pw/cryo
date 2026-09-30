@@ -8,7 +8,7 @@ describe("PartitionAccessChart", () => {
     expect(screen.getByText("No partition access data yet.")).toBeInTheDocument();
   });
 
-  it("renders plotted points and says Y is not time", () => {
+  it("ranks partitions by requests and summarises concentration", () => {
     render(
       <PartitionAccessChart
         points={[
@@ -34,11 +34,11 @@ describe("PartitionAccessChart", () => {
       />
     );
 
-    expect(screen.getAllByText(/Y is not time/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("dt=2026-08-19/").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("dt=2026-08-18/").length).toBeGreaterThan(0);
-    expect(screen.getByText("Today")).toBeInTheDocument();
-    expect(screen.getByText("1d ago")).toBeInTheDocument();
+    expect(screen.getByText("partitions read", { exact: false })).toBeInTheDocument();
+    const ranked = [...document.querySelectorAll(".td-pa-top .td-pa-name")].map((node) => node.textContent);
+    expect(ranked).toEqual(["dt=2026-08-19", "dt=2026-08-18"]);
+    expect(screen.getAllByText("Today").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("1d ago").length).toBeGreaterThan(0);
     expect(screen.getAllByText("42").length).toBeGreaterThan(0);
   });
 
@@ -58,10 +58,28 @@ describe("PartitionAccessChart", () => {
       />
     );
 
-    expect(screen.getAllByText(/Y is not time/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
     expect(screen.queryByText(/^0$/)).not.toBeInTheDocument();
     expect(screen.queryByText("Today")).not.toBeInTheDocument();
+  });
+
+  it("decodes double-encoded S3 partition keys", () => {
+    render(
+      <PartitionAccessChart
+        points={[]}
+        partitions={[
+          {
+            partition_path: "ingest_date%253D2026-09-16/",
+            total_requests: 3,
+            first_seen: "2026-09-16",
+            last_seen: "2026-09-16",
+            days_since_last_access: 0
+          }
+        ]}
+      />
+    );
+    expect(screen.getAllByText("ingest_date=2026-09-16").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/%25/)).not.toBeInTheDocument();
   });
 
   it("labels an empty partition_path as unpartitioned in the data table", () => {

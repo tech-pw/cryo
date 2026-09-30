@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { toast } from "sonner";
 import {
   getAutoCompCandidates,
@@ -51,8 +52,13 @@ const numberText = (value: number | null | undefined): string => {
   return String(value);
 };
 
+export const STORED_ROWS_PREVIEW = 10;
+
 const StoredRows = ({ items }: { items: AutoCompCandidateItem[] }) => {
+  const [expanded, setExpanded] = useState(false);
   if (items.length === 0) return <p className="text-sm text-muted-foreground">No scored partitions recorded.</p>;
+  const ranked = [...items].sort((a, b) => (b.benefit_score ?? 0) - (a.benefit_score ?? 0));
+  const shown = expanded ? ranked : ranked.slice(0, STORED_ROWS_PREVIEW);
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
@@ -67,7 +73,7 @@ const StoredRows = ({ items }: { items: AutoCompCandidateItem[] }) => {
           </tr>
         </thead>
         <tbody>
-          {items.map((row) => (
+          {shown.map((row) => (
             <tr key={`${row.partition_value}-${row.benefit_score}`} className="border-t border-border">
               <td className="py-1 pr-3">{row.partition_value || "not reported"}</td>
               <td className="py-1 pr-3">{numberText(row.benefit_score)}</td>
@@ -79,6 +85,11 @@ const StoredRows = ({ items }: { items: AutoCompCandidateItem[] }) => {
           ))}
         </tbody>
       </table>
+      {ranked.length > STORED_ROWS_PREVIEW ? (
+        <Button type="button" variant="ghost" size="sm" className="mt-1" onClick={() => setExpanded((value) => !value)}>
+          {expanded ? `Show top ${STORED_ROWS_PREVIEW}` : `Show all ${ranked.length.toLocaleString()} partitions`}
+        </Button>
+      ) : null}
     </div>
   );
 };
@@ -194,11 +205,12 @@ export const CompactionAnalysis = ({ tableId }: { tableId: string }) => {
         {!stored.isLoading ? <StoredRows items={stored.data?.items ?? []} /> : null}
         {skipped.length > 0 ? (
           <ul className="text-xs text-muted-foreground">
-            {skipped.map((row) => (
+            {skipped.slice(0, 5).map((row) => (
               <li key={`${row.partition_value}-${row.skip_reason}`}>
                 Skipped {row.partition_value || "not reported"}: {row.skip_reason}
               </li>
             ))}
+            {skipped.length > 5 ? <li>…and {(skipped.length - 5).toLocaleString()} more skipped</li> : null}
           </ul>
         ) : null}
       </div>
