@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { ArrowRight, ArrowUpRight, CheckCircle2, Clock3, TriangleAlert } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import {
   getComplianceStatus,
@@ -14,13 +15,11 @@ import {
 } from "../../../api/client";
 import type { AuditEntry, EffectivePresetResponse } from "../../../api/types";
 import { getTableMaintenanceStatus, type BlockingReasonRead, type MaintenanceStatusRead } from "../../../api/maintenanceStatus";
-import { BeforeAfter } from "../../charts/BeforeAfter";
-import { UNKNOWN_MARK } from "../../charts/format";
-import { TimeSeries } from "../../charts/TimeSeries";
 import { QueryErrorAlert } from "../../common";
 import { Button } from "../../ui/button";
+import { Skeleton } from "../../ui/skeleton";
 import { useAuth } from "../../../lib/auth";
-import { formatDuration, formatBytesGb, formatTime } from "../../../lib/format";
+import { formatDuration, formatBytesGb, formatNumber, formatTime } from "../../../lib/format";
 import { useWriteControl } from "../../../lib/useWriteControl";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
 import {
@@ -31,7 +30,6 @@ import {
   healthTrendPoints,
   integerScore,
   isTableScanned,
-  markersFromAudit,
   readDeductions,
   receiptRunHref,
   scoreTrendAnswer,
@@ -39,6 +37,11 @@ import {
   topBySeverity,
   type TrendAnswer
 } from "./gradeReasons";
+import { FileProfileCard } from "./FileProfileCard";
+import { OverviewCard } from "./OverviewCard";
+import { ScoreHistoryCard } from "./ScoreHistoryCard";
+import { TableHealthGauge } from "./TableHealthGauge";
+import "./overview.css";
 
 const NO_WORKFLOW = "No workflow assigned. Cryo won't maintain this table.";
 
@@ -146,137 +149,65 @@ export const OverviewPanel = ({
   const finding = relevantFinding(tableId, fastPath.data ?? [], signals.data?.signals ?? []);
 
   return (
-    <div className="flex flex-col gap-4">
-      <section aria-labelledby="overview-grade" className="space-y-2">
-        <h2 id="overview-grade" className="text-sm font-semibold text-foreground">
-          Why this grade
-        </h2>
-        <p className="flex items-baseline gap-2">
-          <span className="text-2xl font-semibold text-foreground" aria-label={letter == null ? "Grade not recorded" : `Grade ${letter}`}>
-            {letter ?? UNKNOWN_MARK}
-          </span>
-          <span
-            className="text-base font-medium text-foreground [font-variant-numeric:tabular-nums]"
-            aria-label={score == null ? "Score not recorded" : `Score ${score}`}
-          >
-            {score == null ? UNKNOWN_MARK : score}
-          </span>
-        </p>
-        {sorted ? (
-          <>
-            <ul className="space-y-1 text-sm text-foreground">
-              {sorted.map((item, index) => (
-                <li key={`${item.label}-${index}`}>{formatDeductionLine(item)}</li>
-              ))}
-            </ul>
-            <p className="text-sm text-muted-foreground [font-variant-numeric:tabular-nums]">{formatScoreSum(sorted, score)}</p>
-          </>
-        ) : (
-          <p className="text-sm text-muted-foreground">Deductions were not recorded.</p>
-        )}
-        {diagnostics.length > 0 ? (
-          <div className="space-y-1 border-t border-border pt-3">
-            <h3 className="text-sm font-semibold text-foreground">Diagnostic, not part of the score</h3>
-            <ul className="space-y-1 text-sm text-muted-foreground">
-              {diagnostics.map((signal) => (
-                <li key={signal.signal_name}>
-                  {signal.signal_name}: {signal.reason}
+    <div className="td-overview-grid">
+      <OverviewCard id="overview-grade" title="Why this grade" description="Persisted health score and the checks that changed it." className="td-overview-health">
+        <div className="td-health-diagnosis">
+          <TableHealthGauge score={score} grade={letter} />
+          <div className="td-health-reasons">
+            {sorted ? <>
+              {sorted.length ? <ul>{sorted.map((item, index) => (
+                <li key={`${item.label}-${index}`}>
+                  <p>{formatDeductionLine(item)}</p>
+                  <div className="td-deduction-track" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.max(0, item.deduction))}%` }} /></div>
                 </li>
-              ))}
-            </ul>
+              ))}</ul> : <p>No score deductions recorded.</p>}
+              <p className="td-overview-caption td-score-calculation">{formatScoreSum(sorted, score)}</p>
+            </> : <p className="td-overview-caption">Deductions were not recorded.</p>}
           </div>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="overview-next" className="space-y-2">
-        <h2 id="overview-next" className="text-sm font-semibold text-foreground">
-          What Cryo will do next
-        </h2>
-        <QueryErrorAlert error={preset.error} title="Couldn't load the workflow" className="mb-2" />
-        <QueryErrorAlert error={maintenance.error} title="Couldn't load maintenance status" className="mb-2" />
-        {preset.isPending ? (
-          <p className="text-sm text-muted-foreground">Loading</p>
-        ) : workflowMissing(preset.data) ? (
-          <p className="text-sm text-foreground">{NO_WORKFLOW}</p>
-        ) : maintenance.isPending ? (
-          <p className="text-sm text-muted-foreground">Loading</p>
-        ) : maintenance.data ? (
-          <NextMaintenance status={maintenance.data} />
-        ) : (
-          <p className="text-sm text-muted-foreground">Maintenance status not recorded.</p>
-        )}
-        <Link to={`/tables/${tableId}?tab=maintenance`} className="text-sm font-medium text-primary hover:underline">
-          Maintenance
-        </Link>
-      </section>
-
-      <section aria-labelledby="overview-receipt" className="space-y-2">
-        <h2 id="overview-receipt" className="text-sm font-semibold text-foreground">
-          Last receipt
-        </h2>
-        <QueryErrorAlert error={audit.error} title="Couldn't load the last receipt" className="mb-2" />
-        {audit.isPending ? <p className="text-sm text-muted-foreground">Loading</p> : receipt ? <Receipt row={receipt} /> : <p className="text-sm text-muted-foreground">No receipt recorded.</p>}
-      </section>
-
-      <section aria-labelledby="overview-finding" className="space-y-2">
-        <h2 id="overview-finding" className="text-sm font-semibold text-foreground">
-          Most relevant finding
-        </h2>
-        <QueryErrorAlert error={fastPath.error} title="Couldn't load findings" className="mb-2" />
-        <QueryErrorAlert error={signals.error} title="Couldn't load signals" className="mb-2" />
-        {fastPath.isPending || signals.isPending ? (
-          <p className="text-sm text-muted-foreground">Loading</p>
-        ) : finding ? (
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-foreground">{finding.title}</p>
-            <p className="text-sm text-muted-foreground">{finding.detail}</p>
-            <div className="flex flex-wrap items-center gap-3">
-              {onPreview ? (
-                <Button type="button" size="sm" onClick={onPreview}>
-                  Preview
-                </Button>
-              ) : null}
-              <Link to={finding.href} className="text-sm font-medium text-primary hover:underline">
-                See the rest
-              </Link>
-            </div>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">No finding recorded.</p>
-        )}
-      </section>
-
-      <section aria-labelledby="overview-score" className="space-y-2">
-        <h2 id="overview-score" className="text-sm font-semibold text-foreground">
-          Score over time
-        </h2>
-        <QueryErrorAlert error={trends.error} title="Couldn't load the score trend" className="mb-2" />
-        <p className="text-sm text-foreground">{answer}</p>
-        <TimeSeries
-          title="Is the score getting worse?"
-          answer={answer}
-          unit="score"
-          points={points}
-          events={markersFromAudit(audit.data ?? [])}
-        />
-      </section>
-
-      <section aria-labelledby="overview-ownership" className="space-y-2">
-        <h2 id="overview-ownership" className="text-sm font-semibold text-foreground">
-          Ownership & compliance
-        </h2>
-        <QueryErrorAlert error={compliance.error} title="Couldn't load compliance" className="mb-2" />
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm text-foreground">
-            {compliance.isPending
-              ? "Loading"
-              : ownershipLine(table.data.owner_email, compliance.data, Boolean(compliance.error))}
-          </p>
-          <Button type="button" variant="ghost" size="sm" onClick={() => onEdit?.()}>
-            Edit
-          </Button>
         </div>
-      </section>
+        {diagnostics.length > 0 ? <details className="td-overview-disclosure">
+          <summary>Diagnostic, not part of the score <span>· {diagnostics.length}</span></summary>
+          <ul>{diagnostics.map((signal) => <li key={signal.signal_name}>{signal.signal_name}: {signal.reason}</li>)}</ul>
+        </details> : null}
+      </OverviewCard>
+
+      <OverviewCard id="overview-next" title="What Cryo will do next" description="Workflow assignment and current selection eligibility." className="td-overview-next">
+        <QueryErrorAlert error={preset.error} title="Couldn't load the workflow" />
+        <QueryErrorAlert error={maintenance.error} title="Couldn't load maintenance status" />
+        {preset.isError || maintenance.isError ? <p className="td-overview-caption">Refresh this page to check readiness again.</p> : preset.isPending || maintenance.isPending ? <Skeleton className="h-32 w-full" /> : workflowMissing(preset.data) ? (
+          <div className="td-next-unassigned"><span className="td-overview-state">Setup needed</span><p>{NO_WORKFLOW}</p><p className="td-overview-caption">Choose a workflow to define the engine, operations and guardrails.</p></div>
+        ) : maintenance.data ? <NextMaintenance status={maintenance.data} /> : <p className="td-overview-caption">Maintenance status not recorded.</p>}
+        <Link to={`/tables/${tableId}?tab=maintenance`} className="td-overview-link td-overview-bottom-link">Review maintenance <ArrowUpRight size={14} aria-hidden="true" /></Link>
+      </OverviewCard>
+
+      <ScoreHistoryCard points={points} answer={answer} loading={trends.isPending} error={trends.error} />
+
+      <OverviewCard id="overview-receipt" title="Last recorded action" description="What ran and the outcome it actually reported." className="td-overview-receipt">
+        <QueryErrorAlert error={audit.error} title="Couldn't load the last receipt" />
+        {audit.isPending ? <Skeleton className="h-44 w-full" /> : audit.isError ? null : receipt ? <Receipt row={receipt} /> : <div className="td-overview-empty"><p>No receipt recorded.</p><p>Maintenance results will appear here after an action is recorded.</p></div>}
+      </OverviewCard>
+
+      <FileProfileCard stats={stats} tableId={tableId} />
+
+      <OverviewCard id="overview-finding" title="Most relevant finding" description="The highest-priority recorded finding for this table." className="td-overview-finding">
+        <QueryErrorAlert error={fastPath.error} title="Couldn't load findings" />
+        <QueryErrorAlert error={signals.error} title="Couldn't load signals" />
+        {fastPath.isPending || signals.isPending ? <Skeleton className="h-24 w-full" /> : finding ? <div className="td-finding-content">
+          <span className="td-overview-state"><TriangleAlert size={14} aria-hidden="true" /> Review finding</span>
+          <h3>{finding.title.replaceAll("_", " ")}</h3><p>{finding.detail}</p>
+          <div className="td-finding-actions">
+            {onPreview && preset.data?.preset_id ? <Button type="button" variant="secondary" size="sm" onClick={onPreview}>Preview</Button> : null}
+            <Link to={finding.href} className="td-overview-link">See the rest <ArrowUpRight size={14} aria-hidden="true" /></Link>
+          </div>
+        </div> : fastPath.isError || signals.isError ? <p className="td-overview-caption">Some finding sources are unavailable.</p> : <div className="td-overview-empty"><CheckCircle2 size={24} aria-hidden="true" /><p>No finding recorded.</p><p>New scanner findings and health signals appear here.</p></div>}
+      </OverviewCard>
+
+      <OverviewCard id="overview-ownership" title="Ownership & compliance" className="td-overview-ownership">
+        <QueryErrorAlert error={compliance.error} title="Couldn't load compliance" />
+        <div className="td-overview-ownership-body"><p>{compliance.isPending ? "Loading" : ownershipLine(table.data.owner_email, compliance.data, Boolean(compliance.error))}</p>
+          {onEdit ? <Button type="button" variant="secondary" size="sm" onClick={onEdit}>Edit</Button> : null}
+        </div>
+      </OverviewCard>
     </div>
   );
 };
@@ -285,11 +216,12 @@ function NextMaintenance({ status }: { status: MaintenanceStatusRead }) {
   const next = nextOperation(status);
   const gate = (status.blocking_reasons ?? []).find((reason) => reason.blocks_nightly_selection) ?? null;
   return (
-    <div className="space-y-1 text-sm text-foreground">
-      {next ? <p>Next operation {next}</p> : null}
-      <p>{status.eligible ? "Eligible for nightly selection" : "Not eligible for nightly selection"}</p>
-      <p>{gate ? formatBlockingGate(gate) : "No blocking gate."}</p>
-      <p>{status.next_nightly_at ? `Next nightly ${formatTime(status.next_nightly_at)}` : "Next nightly not recorded"}</p>
+    <div className="td-next-maintenance">
+      <span className="td-overview-state">{status.eligible ? <CheckCircle2 size={15} aria-hidden="true" /> : <Clock3 size={15} aria-hidden="true" />}{status.eligible ? "Eligible for selection" : "Waiting on a gate"}</span>
+      <p>{gate ? formatBlockingGate(gate) : status.eligible ? "Eligible for nightly selection" : "Not eligible for nightly selection"}</p>
+      {next ? <p className="td-overview-caption">Next operation: {next.replaceAll("_", " ")}</p> : null}
+      <dl><div><dt>Next nightly</dt><dd>{status.next_nightly_at ? formatTime(status.next_nightly_at) : "Schedule not recorded"}</dd></div><div><dt>Evaluated</dt><dd>{formatTime(status.evaluated_at)}</dd></div></dl>
+      <p className="td-overview-caption">Eligibility allows selection; admission still depends on capacity and guardrails.</p>
     </div>
   );
 }
@@ -298,24 +230,14 @@ function Receipt({ row }: { row: ReceiptRow }) {
   const href = receiptRunHref(row);
   const bytesReported = typeof row.actual_bytes_freed === "number" && Number.isFinite(row.actual_bytes_freed);
   return (
-    <div className="space-y-2">
-      <BeforeAfter
-        label={row.action?.trim() || "Last operation"}
-        before={finiteNumber(row.input_files_count)}
-        after={finiteNumber(row.output_files_count)}
-        unit="files"
-        bytesUnreported={!bytesReported}
-      />
-      <p className="text-sm text-foreground">
-        Bytes {bytesReported ? formatBytesGb(row.actual_bytes_freed) : <span>not reported</span>}
-      </p>
-      <p className="text-sm text-muted-foreground">
-        Engine {row.engine?.trim() || "not recorded"} · Duration{" "}
-        {row.duration_ms == null || !Number.isFinite(row.duration_ms) ? "not recorded" : formatDuration(row.duration_ms)}
-      </p>
+    <div className="td-receipt-body">
+      <div className="td-receipt-heading"><strong>{row.action?.trim().replaceAll("_", " ") || "Last operation"}</strong><span className="td-overview-state">{row.status || "Status not recorded"}</span></div>
+      <p className="td-overview-caption">{formatTime(row.ts ?? row.created_at)} · {row.engine?.trim() || "Engine not recorded"}</p>
+      <div className="td-receipt-change"><div><span>Input files</span><strong>{finiteNumber(row.input_files_count) == null ? "Not reported" : formatNumber(row.input_files_count)}</strong></div><ArrowRight size={20} aria-hidden="true" /><div><span>Output files</span><strong>{finiteNumber(row.output_files_count) == null ? "Not reported" : formatNumber(row.output_files_count)}</strong></div></div>
+      <dl className="td-receipt-metrics"><div><dt>Bytes reclaimed</dt><dd>{bytesReported ? formatBytesGb(row.actual_bytes_freed) : <span>not reported</span>}</dd></div><div><dt>Duration</dt><dd>{row.duration_ms == null || !Number.isFinite(row.duration_ms) ? "Not reported" : formatDuration(row.duration_ms)}</dd></div></dl>
       {href ? (
-        <Link to={href} className="text-sm font-medium text-primary hover:underline">
-          Open run
+        <Link to={href} className="td-overview-link">
+          Open run <ArrowUpRight size={14} aria-hidden="true" />
         </Link>
       ) : null}
     </div>

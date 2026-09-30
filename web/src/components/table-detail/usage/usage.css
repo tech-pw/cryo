@@ -1,0 +1,279 @@
+.td-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.td-usage-secondary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .td-usage-secondary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.td-usage-section-description {
+  margin: 0 0 12px;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.td-usage-caption {
+  margin: 8px 0 0;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.td-usage-coverage {
+  margin: 8px 0 0;
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.td-usage-loading {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.td-usage-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 4px;
+  color: var(--color-muted);
+}
+
+.td-usage-empty h3 {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.td-usage-empty p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.td-usage-query-summary {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.td-usage-query-volume {
+  flex: 1;
+  min-width: 200px;
+}
+
+.td-usage-metrics {
+  display: flex;
+  gap: 24px;
+  margin: 0;
+  flex-wrap: wrap;
+}
+
+.td-usage-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.td-usage-metrics dt {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.td-usage-metrics dd {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.td-usage-metrics span {
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.td-usage-latency {
+  flex: 1;
+  min-width: 220px;
+}
+
+.td-usage-latency h3 {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.td-usage-latency > p {
+  margin: 4px 0 10px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.td-usage-latency dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.td-usage-latency-row {
+  display: grid;
+  grid-template-columns: 90px 70px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.td-usage-latency-row dt {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.td-usage-latency-row dd {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.td-usage-bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-surface-sunken);
+  overflow: hidden;
+}
+
+.td-usage-bar-track span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-chart-primary);
+}
+
+.td-usage-query-details {
+  margin-top: 16px;
+}
+
+.td-usage-query {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.td-usage-query code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  color: var(--color-ink);
+  font-size: 12px;
+}
+
+.td-usage-query span {
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.td-usage-relationship-counts {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+}
+
+.td-usage-relationship-counts > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.td-usage-relationship-counts dt {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.td-usage-relationship-counts dd {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.td-usage-current-table {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-ink);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.td-usage-disclosure {
+  margin-top: 14px;
+}
+
+.td-usage-text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-link);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.td-usage-text-link:hover {
+  text-decoration: underline;
+}
+
+.td-usage-candidates {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.td-usage-candidate-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.td-usage-candidate-heading a {
+  color: var(--color-link);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.td-usage-sql {
+  margin: 8px 0 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--color-surface-sunken);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-x: auto;
+}

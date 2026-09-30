@@ -22,6 +22,7 @@ import { formatTime } from "../../lib/format";
 import { useWriteControl } from "../../lib/useWriteControl";
 import { TableDetailProvider } from "./TableDetailContext";
 import { useTableDetail } from "./useTableDetail";
+import "./tableDetailLayout.css";
 
 const OverviewTabPanel = lazy(() =>
   import("../../components/table-detail/overview/OverviewPanel").then((m) => ({ default: m.OverviewPanel }))
@@ -86,7 +87,7 @@ export const TableDetailShell = () => {
 
   if (!row && !table.isLoading) {
     return (
-      <div className="table-detail">
+      <div className="table-detail table-detail-workspace">
         <PageHeader
           title="Table not found"
           subtitle="It may not have been scanned yet, was removed from the catalog, or this link is out of date."
@@ -116,7 +117,7 @@ export const TableDetailShell = () => {
 
   return (
     <TableDetailProvider value={ctx}>
-      <div className="table-detail">
+      <div className="table-detail table-detail-workspace">
         <TableDetailHeaderBar />
 
         <div className="td-main-column">
@@ -198,7 +199,7 @@ export const TableDetailShell = () => {
               </TabsTrigger>
             </TabsList>
             <TabsContent value="overview" className="td-tab-content mt-0">
-              {lazyPanel(OverviewTabPanel)}
+              {lazyPanel(OverviewTabPanel, { onScan: () => ctx.scan.mutate(), onPreview: () => ctx.setPreviewOpen(true), onEdit: () => ctx.setSettingsOpen(true) })}
             </TabsContent>
             <TabsContent value="files" className="td-tab-content mt-0">
               {lazyPanel(StructureTabPanel)}

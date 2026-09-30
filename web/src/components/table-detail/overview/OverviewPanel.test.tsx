@@ -12,9 +12,7 @@ const mocks = vi.hoisted(() => ({
   getFastPathFindings: vi.fn(),
   getComplianceStatus: vi.fn(),
   getEffectivePreset: vi.fn(),
-  getTableMaintenanceStatus: vi.fn(),
-  beforeAfter: null as { bytesUnreported?: boolean; before?: number | null; after?: number | null } | null,
-  timeSeries: null as { points?: Array<{ value: number | null }>; events?: Array<{ at: string }> } | null
+  getTableMaintenanceStatus: vi.fn()
 }));
 
 vi.mock("../../../api/client", () => ({
@@ -42,20 +40,6 @@ vi.mock("../../../lib/auth", () => ({
 
 vi.mock("../../../lib/useWriteControl", () => ({
   useWriteControl: () => ({ allowed: true, hidden: false, reason: null })
-}));
-
-vi.mock("../../charts/BeforeAfter", () => ({
-  BeforeAfter: (props: { bytesUnreported?: boolean; before?: number | null; after?: number | null }) => {
-    mocks.beforeAfter = props;
-    return <div data-testid="before-after" />;
-  }
-}));
-
-vi.mock("../../charts/TimeSeries", () => ({
-  TimeSeries: (props: { title: string; points?: Array<{ value: number | null }>; events?: Array<{ at: string }> }) => {
-    mocks.timeSeries = props;
-    return <div>{props.title}</div>;
-  }
 }));
 
 const api = { token: "test-token" };
@@ -97,8 +81,6 @@ const renderPanel = (props?: { onScan?: () => void; onPreview?: () => void; onEd
 
 describe("OverviewPanel", () => {
   beforeEach(() => {
-    mocks.beforeAfter = null;
-    mocks.timeSeries = null;
     mocks.getTable.mockReset().mockResolvedValue(unscanned());
     mocks.getTableSignals.mockReset().mockResolvedValue({ table_id: "table-1", checked_at: "", signals: [], any_triggered: false });
     mocks.getTableAudit.mockReset().mockResolvedValue([]);
@@ -224,9 +206,9 @@ describe("OverviewPanel", () => {
 
     await waitFor(() => {
       expect(mocks.getFastPathFindings).toHaveBeenCalledWith(api, "table-1");
-      expect(mocks.timeSeries?.points?.some((point) => point.value === null)).toBe(true);
-      expect(mocks.timeSeries?.points?.some((point) => point.value === 0)).toBe(false);
     });
+    expect(screen.getByText("Gaps indicate missing measurements.")).toBeInTheDocument();
+    expect(screen.queryByText("0 / 100")).not.toBeInTheDocument();
   });
 
   it("says bytes were not reported when actual_bytes_freed is missing", async () => {
@@ -256,12 +238,10 @@ describe("OverviewPanel", () => {
 
     await waitFor(() => {
       expect(mocks.getTableAudit).toHaveBeenCalledWith(api, "table-1", { limit: 1 });
-      expect(mocks.beforeAfter?.bytesUnreported).toBe(true);
-      expect(mocks.beforeAfter?.before).toBe(12);
-      expect(mocks.beforeAfter?.after).toBe(3);
-      expect(mocks.timeSeries?.events).toEqual([
-        expect.objectContaining({ at: "2026-09-27T02:00:00Z", kind: "maintenance" })
-      ]);
     });
+    expect(screen.getByText("Input files")).toBeInTheDocument();
+    expect(screen.getByText("12")).toBeInTheDocument();
+    expect(screen.getByText("Output files")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
   });
 });

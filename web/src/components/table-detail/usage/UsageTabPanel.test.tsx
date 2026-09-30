@@ -55,13 +55,16 @@ describe("UsageTabPanel", () => {
       </QueryClientProvider>
     );
 
-    expect(await screen.findByText(/No reads observed in the last 168 hours/)).toBeInTheDocument();
-    expect(screen.getByText(/Sample size: 0/)).toBeInTheDocument();
-    expect(screen.getByText(/Coverage:/)).toBeInTheDocument();
-    expect(screen.queryByText(/Unused/)).not.toBeInTheDocument();
-    expect(screen.getAllByText(/Window: the last 168 hours/).length).toBeGreaterThan(0);
+    expect(await screen.findByText("No query records in this window")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This does not mean the table is unused. Query-log coverage is not measured; check ingestion for this source."
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Unused$/)).not.toBeInTheDocument();
+    expect(screen.getByText("Last 7 days")).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByText(/Sample size: 0/)).toBeInTheDocument();
+      expect(screen.getByText("No query records in this window")).toBeInTheDocument();
     });
   });
 });
