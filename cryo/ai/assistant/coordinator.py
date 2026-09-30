@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -39,6 +40,7 @@ from cryo.observability.metrics import (
 )
 
 install_tenant_guard()
+logger = logging.getLogger(__name__)
 
 
 def request_stop(message_id: str) -> None:
@@ -228,6 +230,7 @@ async def run_turn(
         yield event
         assistant_turns_total.labels(outcome="verified" if verified_handler else "fallback").inc()
     except Exception:
+        logger.exception("Ask Cryo turn failed")
         assistant_turns_total.labels(outcome="error").inc()
         finish_message(
             session,
