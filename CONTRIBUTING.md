@@ -1,7 +1,7 @@
 # Contributing to Cryo
 
 Thank you for your interest in contributing to Cryo! This document provides guidelines
-and information for contributor.
+and information for the contributor.
 
 ## Table of Contents
 
