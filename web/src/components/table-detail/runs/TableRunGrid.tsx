@@ -14,6 +14,7 @@ import {
   OPERATION_SHORT,
   buildRunColumns,
   formatMs,
+  gradeChange,
   gridRows,
   isActiveTone,
   statChanges,
@@ -206,6 +207,8 @@ const RunDetailPanel = ({ column }: { column: RunColumn }) => {
   const [tab, setTab] = useState<"steps" | "live">("steps");
   const run = column.run;
   const changes = statChanges(run);
+  const grade = gradeChange(run);
+  const hasAfter = Boolean(run.after_stats);
   const cells = [...column.cells.values()].sort(
     (a, b) => Date.parse(a.startedAt ?? a.finishedAt ?? "") - Date.parse(b.startedAt ?? b.finishedAt ?? "")
   );
@@ -255,15 +258,45 @@ const RunDetailPanel = ({ column }: { column: RunColumn }) => {
         ) : null}
         {changes.length ? (
           <div className="td-run-changes">
-            <p className="td-run-subhead">Before → next scan after</p>
+            <p className="td-run-subhead">{hasAfter ? "Before this run → next scan after" : "Table before this run"}</p>
             <table>
+              <thead>
+                <tr>
+                  <th scope="col">
+                    <span className="sr-only">Metric</span>
+                  </th>
+                  <th scope="col">Before</th>
+                  <th scope="col" aria-hidden="true" />
+                  <th scope="col">After</th>
+                  <th scope="col">
+                    <span className="sr-only">Change</span>
+                  </th>
+                </tr>
+              </thead>
               <tbody>
+                {grade ? (
+                  <tr>
+                    <th scope="row">Grade</th>
+                    <td>{grade.before ?? "—"}</td>
+                    <td aria-hidden="true">→</td>
+                    <td>
+                      <b>{grade.after ?? "—"}</b>
+                    </td>
+                    <td className="td-run-delta">{!hasAfter ? "" : grade.before === grade.after ? "no change" : ""}</td>
+                  </tr>
+                ) : null}
                 {changes.map((change) => (
-                  <ChangeRow key={change.label} change={change} />
+                  <ChangeRow key={change.label} change={change} pending={!hasAfter} />
                 ))}
               </tbody>
             </table>
-            <p className="td-run-footnote">The after-scan can include new writes, so treat it as the table's state, not this run's effect alone.</p>
+            <p className="td-run-footnote">
+              {hasAfter
+                ? "The after-scan can include new writes, so treat it as the table's state, not this run's effect alone."
+                : isActiveTone(column.tone)
+                  ? "After-stats appear once the run finishes and the table is rescanned."
+                  : "After-stats appear once the table is next scanned."}
+            </p>
           </div>
         ) : null}
         <Link className="td-run-link" to={`/runs/${run.run_id}`}>
@@ -302,8 +335,23 @@ const RunDetailPanel = ({ column }: { column: RunColumn }) => {
   );
 };
 
-const ChangeRow = ({ change }: { change: ReturnType<typeof statChanges>[number] }) => {
+const ChangeRow = ({ change, pending }: { change: ReturnType<typeof statChanges>[number]; pending: boolean }) => {
   const { before, after } = change;
+  if (pending) {
+    const fmtPending = (value: number | null) =>
+      value == null ? "—" : change.unit === "GB" ? `${value.toFixed(1)} GB` : value.toLocaleString("en-US");
+    return (
+      <tr>
+        <th scope="row">{change.label}</th>
+        <td>
+          <b>{fmtPending(before)}</b>
+        </td>
+        <td aria-hidden="true">→</td>
+        <td className="td-run-pending">pending scan</td>
+        <td />
+      </tr>
+    );
+  }
   const fmt = (value: number | null) =>
     value == null ? "—" : change.unit === "GB" ? `${value.toFixed(1)} GB` : value.toLocaleString("en-US");
   const delta = before != null && after != null ? after - before : null;
