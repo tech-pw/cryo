@@ -4,9 +4,10 @@
 # Do not add new paths. New chart code imports recharts only under components/charts/.
 components/CostSavingsWaterfall.tsx
 components/table-detail/OverviewTab.tsx
-components/table-detail/PartitionAccessChart.tsx
 components/table-detail/StructureTabPanel.tsx
 components/ui/chart-panel.tsx
 pages/SLAStatus.tsx
 pages/cost/CostOverviewTab.tsx
 pages/dev/Styleguide.tsx
+# Lake health still owns a compact donut; migrate it with the next chart-boundary pass.
+pages/home/LakeZone.tsx

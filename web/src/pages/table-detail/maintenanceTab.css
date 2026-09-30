@@ -1,0 +1,125 @@
+.td-maintenance-workspace { display: flex; flex-direction: column; gap: 24px; }
+.td-mt-stage { min-width: 0; }
+.td-mt-stage-description { color: var(--color-muted); font-size: 13px; margin: 0 0 16px; line-height: 1.6; }
+.td-mt-stage > .mb-6 { margin-bottom: 0; }
+.td-mt-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 16px;
+  margin: 0;
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .td-mt-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.td-mt-card {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--color-surface-raised);
+}
+
+.td-mt-kicker {
+  margin: 0 0 6px;
+  color: var(--color-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.td-mt-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.td-mt-status::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-status-warning);
+}
+
+.td-mt-status[data-eligible]::before {
+  background: var(--color-status-success);
+}
+
+.td-mt-lede {
+  margin: 6px 0 0;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.td-mt-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 16px 0 0;
+}
+
+@media (max-width: 640px) {
+  .td-mt-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.td-mt-facts > div {
+  padding: 10px 12px;
+  border-radius: var(--radius-md, 10px);
+  background: var(--color-surface-sunken);
+}
+
+.td-mt-facts dt {
+  color: var(--color-muted);
+  font-size: 11.5px;
+}
+
+.td-mt-facts dd {
+  margin: 2px 0 0;
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.td-mt-subhead {
+  margin: 0 0 8px;
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.td-mt-details {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.td-mt-details summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.td-mt-details p,
+.td-mt-details ul {
+  margin: 8px 0 0;
+}
+
+.td-mt-details ul {
+  padding-left: 16px;
+}

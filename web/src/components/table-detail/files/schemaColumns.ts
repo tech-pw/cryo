@@ -71,7 +71,7 @@ export const formatCount = (value: number | null): string =>
   value == null ? NOT_MEASURED : value.toLocaleString();
 
 export const formatMegabytes = (value: number | null): string =>
-  value == null ? NOT_MEASURED : `${value.toFixed(1)} MB`;
+  value == null ? NOT_MEASURED : `${value.toFixed(1)} MiB`;
 
 export const formatByteCount = (bytes: number | null): string => {
   if (bytes == null) return NOT_MEASURED;
@@ -79,7 +79,7 @@ export const formatByteCount = (bytes: number | null): string => {
   const mb = bytes / (1024 * 1024);
   if (Math.abs(mb) >= 1) {
     const rendered = Number.isInteger(mb) ? String(mb) : mb.toFixed(1);
-    return `${rendered} MB`;
+    return `${rendered} MiB`;
   }
   return `${bytes.toLocaleString()} B`;
 };
@@ -237,7 +237,7 @@ export const fileMeasures = (stats: ScanStats | null | undefined): NamedMeasure[
   const raw = asRecord(stats?.raw);
   const total = measuredNumber(stats?.total_files);
   const small = measuredNumber(stats?.small_files_count);
-  const other = total != null && small != null ? total - small : null;
+  const other = total != null && small != null && total >= 0 && small >= 0 && small <= total ? total - small : null;
   const target = pickCount(stats?.target_file_size_bytes, raw?.target_file_size_bytes);
   const propertyTarget = icebergProperties(stats?.raw)["write.target-file-size-bytes"];
   const targetBytes =
@@ -255,8 +255,8 @@ export const fileMeasures = (stats: ScanStats | null | undefined): NamedMeasure[
     { label: "Manifests", value: formatCount(measuredNumber(stats?.manifest_count)) },
     { label: "Average file size", value: formatMegabytes(measuredNumber(stats?.avg_file_size_mb)) },
     { label: "Writer target", value: formatByteCount(targetBytes) },
-    { label: "Small files", value: formatCount(small) },
-    { label: "Other files", value: formatCount(other) }
+    { label: "Small-file candidates", value: formatCount(small) },
+    { label: "Other data files", value: formatCount(other) }
   ];
 };
 

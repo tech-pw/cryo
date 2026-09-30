@@ -34,7 +34,7 @@ const SEVERITY_RANK: Record<string, number> = {
 };
 
 export function integerScore(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) return null;
   return Math.round(value);
 }
 
@@ -118,17 +118,17 @@ export function healthTrendPoints(
     if (!at) continue;
     plotted.push({
       at,
-      value: typeof point.score === "number" && Number.isFinite(point.score) ? point.score : null,
+      value: typeof point.score === "number" && Number.isFinite(point.score) && point.score >= 0 && point.score <= 100 ? point.score : null,
       grade: typeof point.grade === "string" && point.grade.trim() ? point.grade : null
     });
   }
-  return plotted;
+  return plotted.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
 export function scoreTrendAnswer(points: readonly { at: string; value: number | null }[]): TrendAnswer {
   const measured = points.filter(
     (point): point is { at: string; value: number } => typeof point.value === "number" && Number.isFinite(point.value)
-  );
+  ).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   if (measured.length === 0) return { kind: "none" };
   if (measured.length === 1) return { kind: "single" };
   const first = measured[0];

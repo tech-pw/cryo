@@ -5,7 +5,15 @@ import { useWriteControl } from "../../../lib/useWriteControl";
 import { qualifiedTableName } from "../../../lib/tableLabels";
 import { useTableDetailContext } from "../../../pages/table-detail/TableDetailContext";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
+import { useOperationLauncher } from "../operations/OperationLauncher";
+import { OPERATION_CATALOG, RUNNABLE_OPERATIONS, type RunnableOperation } from "../operations/operationCatalog";
 import { TableDetailHeader } from "./TableDetailHeader";
+
+const HEADER_OPERATIONS = RUNNABLE_OPERATIONS.map((op) => ({
+  op,
+  label: OPERATION_CATALOG[op].title,
+  destructive: OPERATION_CATALOG[op].destructive
+}));
 
 const knownNumber = (value: number | null | undefined): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -15,7 +23,7 @@ export const TableDetailHeaderBar = () => {
   const runAccess = useWriteControl("runMaintenance");
   const workflowAccess = useWriteControl("assignPreset");
   const scanAccess = useWriteControl("triggerScan");
-  const manifestAccess = useWriteControl("manifestRewrite");
+  const launcher = useOperationLauncher();
   const row = ctx.row;
   const stats = ctx.stats;
   const receipt = useQuery({
@@ -77,10 +85,13 @@ export const TableDetailHeaderBar = () => {
       }}
       onPreview={() => ctx.setPreviewOpen(true)}
       onRun={() => ctx.run.mutate()}
-      onRewriteManifests={() => {
-        if (!manifestAccess.allowed || !presetId) return;
-        ctx.manifestRewrite.mutate();
+      operations={launcher ? HEADER_OPERATIONS : []}
+      onRunOperation={(op) => launcher?.launch(op as RunnableOperation)}
+      onOpenRunOnDemand={() => {
+        ctx.handleTabChange("maintenance");
+        window.setTimeout(() => document.getElementById("run-on-demand")?.scrollIntoView({ behavior: "smooth", block: "start" }), 250);
       }}
+      operationsDisabledReason={launcher?.blockedReason ?? null}
       onOpenSettings={() => ctx.setSettingsOpen(true)}
       runPending={ctx.run.isPending}
       scanPending={ctx.scan.isPending}

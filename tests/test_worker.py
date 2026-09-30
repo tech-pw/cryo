@@ -460,6 +460,24 @@ def test_skip_operations_from_preset_derives_the_complement() -> None:
     assert set(skipped) == {"expire_snapshots", "remove_orphan_files"}
 
 
+def test_skip_operations_without_optimize_also_skips_the_compaction_family() -> None:
+    """An orphan-only run must not carry a delete-file rewrite or stats pass along with it."""
+    from cryo.worker.worker import _skip_operations_from_preset
+
+    skipped = _skip_operations_from_preset((OperationType.REMOVE_ORPHAN_FILES,))
+    assert set(skipped) == {
+        "expire_snapshots",
+        "optimize",
+        "optimize_manifests",
+        "convert_deletes",
+        "rewrite_position_deletes",
+        "compute_statistics",
+    }
+    with_optimize = _skip_operations_from_preset((OperationType.OPTIMIZE,))
+    assert "convert_deletes" not in with_optimize
+    assert "compute_statistics" not in with_optimize
+
+
 def test_skip_operations_from_preset_empty_when_no_preset_operations_configured() -> None:
     """None/() means the preset never explicitly set operations -- must not skip anything,
     preserving the pre-existing default behavior for every preset that doesn't use this."""

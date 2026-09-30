@@ -21,6 +21,8 @@ def start_maintenance_run(
     session: Session,
     payload: MaintenanceRunRequest,
     principal: Principal,
+    *,
+    allow_operations_outside_preset: bool = False,
 ) -> MaintenanceRunResponse:
     # Look up helpers on the routes module so existing tests that patch
     # routes.MaintenanceRun / _resolve_selection / build_runtime_wiring still apply.
@@ -46,7 +48,7 @@ def start_maintenance_run(
     requested_ops = sort_operations_canonically(requested_ops)
     if payload.operations is not None:
         preset_ops = set(requested_ops)
-        if not set(payload.operations) <= preset_ops:
+        if not allow_operations_outside_preset and not set(payload.operations) <= preset_ops:
             raise HTTPException(
                 status_code=400,
                 detail="operations must be a subset of the preset's operations",

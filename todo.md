@@ -387,6 +387,10 @@ Last reconciled: 2026-08-04 (against `docs/current-state.md`,
       full cost scan trigger, precision badge. Health page keeps KPI summary + link to `/cost`.
       Explorer columns/filters; Table Detail cost card + mini waterfall; PlanPreview savings summary.
 - [x] **Table Detail** (health card, partitions, snapshot/manifest stats, audit timeline, Run).
+- [x] **Table Detail presentation pass**: compact identity/workflow header; evidence-first Overview; structured
+      Files, Snapshots, Maintenance, Usage, Quality and Cost tabs with explicit unknown/estimated states,
+      responsive card hierarchy, accessible chart tables, and measured maintenance outcomes. See
+      `docs/TABLE_DETAIL_REDESIGN_RESEARCH_2026-09-30.md`.
 - [x] **Table Detail scan UX**: pressing Scan should not redirect immediately — show in-progress
       animation on the scan/run button; navigate to the scan run only after the user follows through
       on the animated button (not on the initial click).

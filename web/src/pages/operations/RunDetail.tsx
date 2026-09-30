@@ -1,6 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Info } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, Info, LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -62,6 +62,7 @@ import {
   targetLabel,
   targetTableId
 } from "../../lib/operations";
+import "./runDetail.css";
 
 const STUCK_STATUSES = new Set(["queued", "deferred"]);
 const STALL_THRESHOLD_MS = 3 * 60 * 1000;
@@ -175,6 +176,88 @@ const DescriptionGrid = ({
     ))}
   </dl>
 );
+
+const RunOutcomeSummary = ({
+  run,
+  jobs,
+  summary,
+  duration,
+  savingsLabel,
+  possiblyStalled,
+  scan
+}: {
+  run?: RunRead;
+  jobs: JobRead[];
+  summary: RunRead["summary"];
+  duration: string;
+  savingsLabel: string | null;
+  possiblyStalled: boolean;
+  scan: boolean;
+}) => {
+  const status = run?.status?.toLowerCase() ?? "unknown";
+  const counts = jobs.reduce(
+    (acc, job) => {
+      const key = job.status.toLowerCase();
+      acc.total += 1;
+      if (key === "succeeded" || key === "skipped") acc.completed += 1;
+      if (key === "failed" || key === "partial") acc.attention += 1;
+      if (IN_PROGRESS_JOB_STATUSES.has(key)) acc.pending += 1;
+      return acc;
+    },
+    { total: 0, completed: 0, attention: 0, pending: 0 }
+  );
+  const outcome =
+    status === "succeeded"
+      ? { label: "Completed", icon: CheckCircle2, tone: "success", copy: "The recorded work finished successfully." }
+      : status === "failed" || status === "partial_failed"
+        ? { label: "Needs attention", icon: AlertTriangle, tone: "danger", copy: "Open the failed jobs below to see the exact table and error." }
+        : status === "cancelled"
+          ? { label: "Cancelled", icon: AlertTriangle, tone: "warning", copy: "This run stopped before all queued work completed." }
+          : status === "running" || status === "admitted"
+            ? { label: "In progress", icon: LoaderCircle, tone: "primary", copy: "Work is still moving through the pipeline; live updates appear below." }
+            : status === "queued" || status === "accepted" || status === "deferred"
+              ? { label: "Waiting to run", icon: Clock3, tone: "warning", copy: "The run is recorded and waiting for admission or worker capacity." }
+              : { label: "Status unavailable", icon: Info, tone: "muted", copy: "The run exists, but its outcome has not been recorded yet." };
+  const OutcomeIcon = outcome.icon;
+  const scanRecords = scan && typeof summary?.discovered === "number" ? summary.discovered : counts.total;
+  const scanCompleted = scan
+    ? (typeof summary?.scanned === "number" ? summary.scanned : 0) +
+      (typeof summary?.skipped === "number" ? summary.skipped : 0)
+    : counts.completed;
+  const scanAttention = scan && typeof summary?.failed === "number" ? summary.failed : counts.attention;
+  const scanPending = scan ? Math.max(0, scanRecords - scanCompleted - scanAttention) : counts.pending;
+  const evidenceValue = savingsLabel
+    ?.replace(/^Freed\s+/i, "")
+    .replace(/\s+\(.+\)$/, "");
+
+  return (
+    <section className="run-outcome-card" aria-labelledby="run-outcome-title">
+      <div className="run-outcome-card__header">
+        <div>
+          <p className="run-outcome-card__eyebrow">{scan ? "Scan outcome" : "Maintenance outcome"}</p>
+          <h2 id="run-outcome-title">{outcome.label}</h2>
+          <p>{outcome.copy}</p>
+        </div>
+        <span className={`run-outcome-card__icon run-outcome-card__icon--${outcome.tone}`} aria-hidden>
+          <OutcomeIcon className={status === "running" || status === "admitted" ? "animate-spin" : undefined} />
+        </span>
+      </div>
+      <dl className="run-outcome-card__metrics">
+        <div><dt>{scan ? "Records" : "Jobs"}</dt><dd>{formatNumber(scanRecords)}</dd></div>
+        <div><dt>Completed</dt><dd>{formatNumber(scanCompleted)}</dd></div>
+        <div><dt>Attention · pending</dt><dd>{formatNumber(scanAttention)} · {formatNumber(scanPending)}</dd></div>
+        <div><dt>Duration</dt><dd>{duration}</dd></div>
+        {evidenceValue ? <div><dt>Storage freed</dt><dd>{evidenceValue}</dd></div> : null}
+      </dl>
+      {possiblyStalled ? (
+        <div className="run-outcome-card__notice" role="status">
+          <AlertTriangle className="size-4" aria-hidden />
+          <span>No live update for more than three minutes. Check the live log or cancel the run if work is stuck.</span>
+        </div>
+      ) : null}
+    </section>
+  );
+};
 
 const laneColumns: ColumnDef<LaneRow, unknown>[] = [
   { id: "lane", header: "Lane", cell: ({ row }) => row.original.lane },
@@ -528,7 +611,7 @@ export const RunDetail = () => {
   const savingsLabel = realizedSavingsLabel(runData);
 
   return (
-    <div>
+    <div className="run-detail-page">
       <div aria-live="polite" className="sr-only">
         {announcement}
       </div>
@@ -630,9 +713,19 @@ export const RunDetail = () => {
         }
       />
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
+      <RunOutcomeSummary
+        run={runData}
+        jobs={jobRows}
+        summary={summary}
+        duration={duration}
+        savingsLabel={savingsLabel}
+        possiblyStalled={possiblyStalled}
+        scan={scan}
+      />
+
+      <div className="run-detail-main-grid grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
         <div className="flex flex-col gap-3">
-          <Card>
+          <Card className="run-pipeline-card">
             <CardContent className="pt-4">
               <OperationPipeline steps={pipelineSteps} title={scan ? "Scan pipeline" : "Maintenance pipeline"} />
             </CardContent>
@@ -680,7 +773,7 @@ export const RunDetail = () => {
             </Card>
           ) : null}
 
-          <Card>
+          <Card className="run-jobs-card">
             <CardHeader className="pb-2">
               <CardTitle>Jobs</CardTitle>
             </CardHeader>
@@ -759,7 +852,8 @@ export const RunDetail = () => {
             </CardContent>
           </Card>
 
-          <ConsoleShell
+          <div className="run-console-card">
+            <ConsoleShell
             title="Live log"
             items={messages}
             wsOpen={wsOpen}
@@ -769,7 +863,8 @@ export const RunDetail = () => {
             onManualReconnect={manualReconnect}
             formatTime={formatTime}
             downloadName={`run-${shortRunId(runId)}-log`}
-          />
+            />
+          </div>
         </div>
 
         <div className="flex flex-col gap-3">
