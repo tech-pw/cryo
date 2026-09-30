@@ -78,10 +78,9 @@ describe("TableCostPanel", () => {
       </QueryClientProvider>
     );
 
-    expect(await screen.findByText(/Estimated storage \$/)).toBeInTheDocument();
-    expect(screen.getAllByText("estimated storage $ vs measured request $ (30 d)").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Estimated storage/)).toBeInTheDocument();
-    expect(screen.getByText(/Measured request \$ \(30 d\)/)).toBeInTheDocument();
+    expect(await screen.findByText("Estimated storage / month")).toBeInTheDocument();
+    expect(screen.getByText("$12")).toBeInTheDocument();
+    expect(screen.getByText("S3 request cost · 30 days")).toBeInTheDocument();
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
     expect(await screen.findByText("Delete-file bytes")).toBeInTheDocument();
     expect(screen.getAllByText(/Modelled/).length).toBeGreaterThan(0);

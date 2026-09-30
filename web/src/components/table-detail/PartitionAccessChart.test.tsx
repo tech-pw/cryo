@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { PartitionAccessChart } from "./PartitionAccessChart";
+import { PartitionAccessChart, partitionDays } from "./PartitionAccessChart";
 
 describe("PartitionAccessChart", () => {
   it("shows an empty-state message when there are no points", () => {
@@ -8,7 +8,7 @@ describe("PartitionAccessChart", () => {
     expect(screen.getByText("No partition access data yet.")).toBeInTheDocument();
   });
 
-  it("renders plotted points and says Y is not time", () => {
+  it("ranks partitions by requests and summarises concentration", () => {
     render(
       <PartitionAccessChart
         points={[
@@ -34,11 +34,11 @@ describe("PartitionAccessChart", () => {
       />
     );
 
-    expect(screen.getAllByText(/Y is not time/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("dt=2026-08-19/").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("dt=2026-08-18/").length).toBeGreaterThan(0);
-    expect(screen.getByText("Today")).toBeInTheDocument();
-    expect(screen.getByText("1d ago")).toBeInTheDocument();
+    expect(screen.getByText("partitions with recorded request counts", { exact: false })).toBeInTheDocument();
+    const ranked = [...document.querySelectorAll(".td-pa-top .td-pa-name")].map((node) => node.textContent);
+    expect(ranked).toEqual(["dt=2026-08-19", "dt=2026-08-18"]);
+    expect(screen.getAllByText("Today").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("1d ago").length).toBeGreaterThan(0);
     expect(screen.getAllByText("42").length).toBeGreaterThan(0);
   });
 
@@ -58,10 +58,28 @@ describe("PartitionAccessChart", () => {
       />
     );
 
-    expect(screen.getAllByText(/Y is not time/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
     expect(screen.queryByText(/^0$/)).not.toBeInTheDocument();
     expect(screen.queryByText("Today")).not.toBeInTheDocument();
+  });
+
+  it("decodes double-encoded S3 partition keys", () => {
+    render(
+      <PartitionAccessChart
+        points={[]}
+        partitions={[
+          {
+            partition_path: "ingest_date%253D2026-09-16/",
+            total_requests: 3,
+            first_seen: "2026-09-16",
+            last_seen: "2026-09-16",
+            days_since_last_access: 0
+          }
+        ]}
+      />
+    );
+    expect(screen.getAllByText("ingest_date=2026-09-16").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/%25/)).not.toBeInTheDocument();
   });
 
   it("labels an empty partition_path as unpartitioned in the data table", () => {
@@ -81,5 +99,29 @@ describe("PartitionAccessChart", () => {
     );
 
     expect(screen.getAllByText("(unpartitioned)").length).toBeGreaterThan(0);
+  });
+
+  it("keeps calendar spacing, aggregates matching days, and preserves missing days separately from zero", () => {
+    expect(partitionDays([
+      { day: "2026-09-01", partition_path: "a", request_count: 3 },
+      { day: "2026-09-01", partition_path: "b", request_count: 5 },
+      { day: "2026-09-03", partition_path: "a", request_count: 0 },
+      { day: "bad", partition_path: "a", request_count: 100 }
+    ])).toEqual([
+      { day: "2026-09-01", requests: 8 },
+      { day: "2026-09-02", requests: null },
+      { day: "2026-09-03", requests: 0 }
+    ]);
+  });
+
+  it("does not draw positive activity for zero counts or imply zero-count partitions were read", () => {
+    render(<PartitionAccessChart points={[
+      { day: "2026-09-01", partition_path: "a", request_count: 0 },
+      { day: "2026-09-03", partition_path: "a", request_count: 2 }
+    ]} partitions={[{ partition_path: "a", total_requests: 0, first_seen: "2026-09-01", last_seen: "2026-09-01", days_since_last_access: 0 }]} />);
+    expect(document.querySelector('.td-pa-day-bars span[title="Sep 1: 0 requests"]')).toHaveStyle({ height: "0%" });
+    expect(screen.getByText("Outlined slots have no recorded count. Missing telemetry is not zero activity.")).toBeInTheDocument();
+    expect(screen.queryByText("partitions read", { exact: false })).not.toBeInTheDocument();
+    expect(screen.getByText("Daily request counts")).toBeInTheDocument();
   });
 });
