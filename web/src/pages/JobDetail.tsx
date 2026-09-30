@@ -40,6 +40,7 @@ import { formatDuration } from "../lib/format";
 import { engineTagColor, formatEngineLabel, isNativeStatement } from "../lib/engines";
 import { isScanRun, shortRunId, targetLabel } from "../lib/operations";
 import { cn } from "../lib/cn";
+import "./jobDetail.css";
 
 interface JobDetail extends JobDetailDashboard {}
 
@@ -258,7 +259,7 @@ export const JobDetail = () => {
       : "/runs";
 
   return (
-    <div>
+    <div className="job-detail-page">
       {data ? (
         <JobBreadcrumbs
           runId={data.run_id}
@@ -285,6 +286,55 @@ export const JobDetail = () => {
           ) : undefined
         }
       />
+
+      {data ? (
+        <section className="job-outcome-card" aria-labelledby="job-outcome-title">
+          <div className="job-outcome-card__header">
+            <div>
+              <p className="job-outcome-card__eyebrow">Execution decision</p>
+              <h2 id="job-outcome-title">
+                {data.status === "failed"
+                  ? "Needs attention"
+                  : STUCK_STATUSES.has(data.status)
+                    ? "Waiting for admission"
+                    : data.status === "running"
+                      ? "In progress"
+                      : data.status === "succeeded"
+                        ? "Completed"
+                        : `Job ${data.status}`}
+              </h2>
+              <p>
+                {data.status === "failed"
+                  ? "Use the diagnosis and rendered statement below to resolve this table safely."
+                  : STUCK_STATUSES.has(data.status)
+                    ? "The scheduler has not admitted this job yet; force run is available when you have verified capacity."
+                    : data.status === "running"
+                      ? "The worker is executing this operation. Artifacts and timings update as the job completes."
+                      : "The recorded job outcome and supporting evidence are shown below."}
+              </p>
+            </div>
+            <StatusTag status={data.status} />
+          </div>
+          <dl className="job-outcome-card__metrics">
+            <div>
+              <dt>Table</dt>
+              <dd>{data.table_name}</dd>
+            </div>
+            <div>
+              <dt>Operation</dt>
+              <dd>{data.operation_type}</dd>
+            </div>
+            <div>
+              <dt>Engine</dt>
+              <dd>{formatEngineLabel(data.engine)}</dd>
+            </div>
+            <div>
+              <dt>Duration</dt>
+              <dd>{formatJobDuration(data.duration_seconds)}</dd>
+            </div>
+          </dl>
+        </section>
+      ) : null}
 
       <AsyncBoundary
         isLoading={isLoading}
