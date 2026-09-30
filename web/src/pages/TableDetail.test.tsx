@@ -474,7 +474,7 @@ describe("TableDetail page", () => {
     expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    const runButton = screen.getByRole("button", { name: "Run now" });
+    const runButton = screen.getByRole("button", { name: "Run full workflow now" });
     expect(runButton).toBeDisabled();
   }, 15000);
 
@@ -506,7 +506,7 @@ describe("TableDetail page", () => {
     expect(await screen.findByRole("heading", { name: "events" })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "More actions" }));
-    const runButton = await screen.findByRole("button", { name: "Run now" });
+    const runButton = await screen.findByRole("button", { name: "Run full workflow now" });
     expect(runButton).not.toBeDisabled();
     fireEvent.click(runButton);
     fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));

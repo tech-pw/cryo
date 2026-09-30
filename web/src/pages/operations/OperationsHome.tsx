@@ -33,6 +33,7 @@ import {
   nightlyBatchRuns,
   NO_PRESETS_COPY
 } from "./nightlyBatch";
+import "./operationsHome.css";
 
 const ControlRoom = lazy(() => import("../ControlRoom").then((m) => ({ default: m.ControlRoom })));
 
@@ -355,7 +356,7 @@ export const OperationsHome = () => {
   );
 
   return (
-    <div>
+    <div className="operations-home-page">
       <PageHeader
         title="Runs"
         subtitle="What ran, what failed, and what is held?"
@@ -375,11 +376,38 @@ export const OperationsHome = () => {
       <span className="sr-only" role="status" aria-live="polite">
         {liveMessage}
       </span>
-      <EngineLoadStrip />
-      <DecisionFunnelStrip />
+      <section className="ops-control-hero" aria-labelledby="ops-control-hero-title">
+        <div className="ops-control-hero__copy">
+          <p className="ops-control-hero__eyebrow">Execution control room</p>
+          <h2 id="ops-control-hero-title">See the fleet, then follow the work.</h2>
+          <p>
+            Start with the signal, move to the workflow, and open the exact run that needs attention.
+            Every status below is backed by a live run or scanner record.
+          </p>
+        </div>
+        <div className="ops-control-hero__actions" aria-label="Run shortcuts">
+          <Button size="sm" variant={activeRuns.length ? "primary" : "secondary"} onClick={() => setRunFilter("active")}>
+            Running now ({activeRuns.length})
+          </Button>
+          <Button size="sm" variant={failed24h.length ? "danger" : "secondary"} onClick={() => setRunFilter("failed")}>
+            Failed runs ({failed24h.length})
+          </Button>
+          <Button size="sm" variant="secondary" asChild>
+            <Link to="/operations/scanner">Overdue scans</Link>
+          </Button>
+          <Button size="sm" variant="secondary" asChild>
+            <Link to="/smart-maintenance">Smart maintenance</Link>
+          </Button>
+        </div>
+      </section>
+
+      <div className="ops-context-grid">
+        <EngineLoadStrip />
+        <DecisionFunnelStrip />
+      </div>
 
       <div className="flex flex-col gap-3">
-        <Card>
+        <Card className="ops-fleet-card">
           <CardHeader className="pb-2">
             <CardTitle>Fleet health</CardTitle>
           </CardHeader>
@@ -416,58 +444,29 @@ export const OperationsHome = () => {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>Quick links</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => setRunFilter("failed")}
-              >
-                Failed runs ({failed24h.length})
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => setRunFilter("active")}
-              >
-                Running now ({activeRuns.length})
-              </Button>
-              <Button size="sm" variant="secondary" asChild>
-                <Link to="/operations/scanner">Overdue scans</Link>
-              </Button>
-              <Button size="sm" variant="secondary" asChild>
-                <Link to="/smart-maintenance">Smart maintenance</Link>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        <section className="ops-workspace-card" aria-label="Run operations workspace">
+          <Tabs
+            value={tab}
+            onValueChange={(key) =>
+              setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                if (key === "workflows") {
+                  next.delete("tab");
+                } else {
+                  next.set("tab", key);
+                }
+                return next;
+              })
+            }
+          >
+            <TabsList>
+              <TabsTrigger value="workflows">Workflows</TabsTrigger>
+              <TabsTrigger value="runs">History</TabsTrigger>
+              <TabsTrigger value="actions">Actions</TabsTrigger>
+              <TabsTrigger value="holds">Holds</TabsTrigger>
+            </TabsList>
 
-        <Tabs
-          value={tab}
-          onValueChange={(key) =>
-            setSearchParams((prev) => {
-              const next = new URLSearchParams(prev);
-              if (key === "workflows") {
-                next.delete("tab");
-              } else {
-                next.set("tab", key);
-              }
-              return next;
-            })
-          }
-        >
-          <TabsList>
-            <TabsTrigger value="workflows">Workflows</TabsTrigger>
-            <TabsTrigger value="runs">History</TabsTrigger>
-            <TabsTrigger value="actions">Actions</TabsTrigger>
-            <TabsTrigger value="holds">Holds</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="workflows">
+            <TabsContent value="workflows">
             <div className="space-y-2">
               {noPresets ? <p className="text-sm text-muted-foreground">{NO_PRESETS_COPY}</p> : null}
               <DataTable
@@ -479,9 +478,9 @@ export const OperationsHome = () => {
                 emptyDescription="Scanner and maintenance presets appear here."
               />
             </div>
-          </TabsContent>
+            </TabsContent>
 
-          <TabsContent value="runs">
+            <TabsContent value="runs">
             <div className="space-y-2">
               <div className="flex flex-wrap gap-2">
                 <Button
@@ -522,17 +521,18 @@ export const OperationsHome = () => {
                 }}
               />
             </div>
-          </TabsContent>
+            </TabsContent>
 
-          <TabsContent value="actions">
-            <ActionsTab />
-          </TabsContent>
-          <TabsContent value="holds">
-            <Suspense fallback={<p className="text-sm text-muted-foreground">Loading holds…</p>}>
-              <ControlRoom />
-            </Suspense>
-          </TabsContent>
-        </Tabs>
+            <TabsContent value="actions">
+              <ActionsTab />
+            </TabsContent>
+            <TabsContent value="holds">
+              <Suspense fallback={<p className="text-sm text-muted-foreground">Loading holds…</p>}>
+                <ControlRoom />
+              </Suspense>
+            </TabsContent>
+          </Tabs>
+        </section>
       </div>
     </div>
   );

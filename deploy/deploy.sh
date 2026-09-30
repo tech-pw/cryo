@@ -71,8 +71,12 @@ log "Building + pushing (multi-arch: linux/amd64, linux/arm64) -- this takes sev
 METADATA_FILE="$(mktemp)"
 trap 'rm -f "$METADATA_FILE"' EXIT
 
+# --provenance=false: since 2026-09-30 GitLab's registry rejects the manifest list when buildx
+# attaches provenance attestations ("blob unknown to registry" for a child manifest), for both
+# this image and the web image. The image content is identical without them.
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
+  --provenance=false \
   -t "${IMAGE}:latest" \
   -f Dockerfile \
   --push \
