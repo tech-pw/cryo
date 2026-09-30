@@ -13,6 +13,7 @@ const knownNumber = (value: number | null | undefined): number | null =>
 export const TableDetailHeaderBar = () => {
   const ctx = useTableDetailContext();
   const runAccess = useWriteControl("runMaintenance");
+  const workflowAccess = useWriteControl("assignPreset");
   const scanAccess = useWriteControl("triggerScan");
   const manifestAccess = useWriteControl("manifestRewrite");
   const row = ctx.row;
@@ -64,6 +65,8 @@ export const TableDetailHeaderBar = () => {
       }
       writeAllowed={runAccess.allowed && Boolean(presetId)}
       writeReason={writeReason}
+      chooseWorkflowAllowed={workflowAccess.allowed}
+      chooseWorkflowReason={workflowAccess.reason}
       scanAllowed={scanAccess.allowed}
       scanReason={scanAccess.reason}
       onScan={() => ctx.scan.mutate()}
