@@ -173,6 +173,7 @@ async def run_turn(
                 conversation_id=conversation_id,
                 user_text=user_text,
                 resolved=resolved,
+                page_context=page_context or {},
                 settings=settings,
                 install=install,
                 client=client,
@@ -257,6 +258,7 @@ async def _stream_tool_loop(
     conversation_id: uuid.UUID,
     user_text: str,
     resolved: dict[str, Any],
+    page_context: dict[str, Any] | None = None,
     settings: AssistantSettings,
     install: Settings,
     client: LLMClient,
@@ -285,7 +287,7 @@ async def _stream_tool_loop(
     calls = 0
     input_tokens = 0
     output_tokens = 0
-    system = _system_prompt(session, resolved, settings)
+    system = _system_prompt(session, resolved, settings, page_context)
     ctx = ToolContext(
         session=session,
         principal=principal,
@@ -670,7 +672,13 @@ def _match_verified(
     }
 
 
-def _system_prompt(session: Session, resolved: dict[str, Any], settings: AssistantSettings) -> str:
+def _system_prompt(
+    session: Session,
+    resolved: dict[str, Any],
+    settings: AssistantSettings,
+    page_context: dict[str, Any] | None = None,
+) -> str:
+    from cryo.ai.assistant.context import screen_block
     from cryo.ai.assistant.prompts import ensure_ask_cryo_skillset, system_prompt
 
     text = system_prompt(
@@ -679,7 +687,7 @@ def _system_prompt(session: Session, resolved: dict[str, Any], settings: Assista
         settings.team_instructions_skillset,
     )
     ensure_ask_cryo_skillset(session, text)
-    return text
+    return f"{text}\n\n{screen_block(resolved, page_context)}"
 
 
 def _ground(text: str, evidence_payloads: list[dict[str, Any]]) -> str:
