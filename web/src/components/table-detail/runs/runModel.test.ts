@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TableRunRead } from "../../../api/types";
-import { buildRunColumns, gridRows, isManualTrigger, statChanges, toneFor } from "./runModel";
+import { buildRunColumns, gradeChange, gridRows, isManualTrigger, statChanges, toneFor } from "./runModel";
 
 const run = (overrides: Partial<TableRunRead>): TableRunRead => ({
   job_id: "job-1",
@@ -65,7 +65,7 @@ describe("runModel", () => {
     expect(gridRows([])).toEqual(["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"]);
   });
 
-  it("reports before/after only when both scans exist", () => {
+  it("reports before/after when both scans exist", () => {
     expect(statChanges(run({}))).toEqual([]);
     const changes = statChanges(
       run({
@@ -74,5 +74,27 @@ describe("runModel", () => {
       })
     );
     expect(changes.find((change) => change.label === "Small files")).toMatchObject({ before: 186, after: 2, lowerIsBetter: true });
+  });
+
+  it("keeps before-stats when the run has no after-scan yet", () => {
+    const changes = statChanges(
+      run({
+        status: "running",
+        before_stats: { scan_at: "a", total_files: 1303, small_files_count: 1303, overall_score: 32, total_size_gb: 1.6 },
+        after_stats: null
+      })
+    );
+    expect(changes.find((change) => change.label === "Data files")).toMatchObject({ before: 1303, after: null });
+    expect(changes.find((change) => change.label === "Health score")).toMatchObject({ before: 32, after: null });
+    // Delete files weren't recorded in this snapshot, so the row is dropped rather than shown empty.
+    expect(changes.find((change) => change.label === "Delete files")).toBeUndefined();
+  });
+
+  it("reports the grade before and after", () => {
+    expect(gradeChange(run({}))).toBeNull();
+    expect(gradeChange(run({ before_stats: { scan_at: "a", grade: "F" } }))).toEqual({ before: "F", after: null });
+    expect(
+      gradeChange(run({ before_stats: { scan_at: "a", grade: "F" }, after_stats: { scan_at: "b", grade: "B" } }))
+    ).toEqual({ before: "F", after: "B" });
   });
 });
