@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Scheduled maintenance",
+    "locale": "en",
+    "output": "site/diagrams/maintenance.sequence.html",
+    "viewBox": [1080, 680],
+    "column_fit": "spread",
+    "visual_preset": "editorial",
+    "quality_profile": "showcase"
+  },
+  "participants": [
+    { "id": "scheduler", "type": "backend", "label": "Scheduler", "sublabel": "presets" },
+    { "id": "postgres", "type": "database", "label": "PostgreSQL", "sublabel": "runs and audit" },
+    { "id": "redis", "type": "messagebus", "label": "Redis", "sublabel": "queue" },
+    { "id": "governor", "type": "backend", "label": "Governor", "sublabel": "admission" },
+    { "id": "worker", "type": "backend", "label": "Worker", "sublabel": "one table" },
+    { "id": "planner", "type": "backend", "label": "Planner", "sublabel": "no SQL" },
+    { "id": "engine", "type": "external", "label": "Destination", "sublabel": "Trino / EMR" }
+  ],
+  "segments": [
+    { "from": 150, "to": 246, "label": "Enqueue" },
+    { "from": 254, "to": 342, "label": "Admit" },
+    { "from": 350, "to": 548, "label": "Execute" }
+  ],
+  "messages": [
+    {
+      "id": "resolve-tables",
+      "from": "scheduler",
+      "to": "postgres",
+      "y": 168,
+      "label": "find due presets, resolve tables (rules+assignments)"
+    },
+    {
+      "id": "create-jobs",
+      "from": "scheduler",
+      "to": "postgres",
+      "y": 200,
+      "label": "create run + jobs (queued)"
+    },
+    {
+      "id": "enqueue-jobs",
+      "from": "scheduler",
+      "to": "redis",
+      "y": 232,
+      "label": "enqueue jobs",
+      "variant": "emphasis"
+    },
+    {
+      "id": "probe-load",
+      "from": "governor",
+      "to": "engine",
+      "y": 268,
+      "label": "probe live load (runtime.queries / EMR slots)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "free-slots",
+      "from": "governor",
+      "to": "redis",
+      "y": 300,
+      "label": "compute free slots (caps, off-peak, budget, cooldown)"
+    },
+    {
+      "id": "admit-job",
+      "from": "governor",
+      "to": "worker",
+      "y": 332,
+      "label": "admit/dispatch job(s)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "read-scan",
+      "from": "worker",
+      "to": "postgres",
+      "y": 368,
+      "label": "read latest scan + partitions"
+    },
+    {
+      "id": "build-plan",
+      "from": "worker",
+      "to": "planner",
+      "y": 400,
+      "label": "build MaintenancePlan (mode, thresholds)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "execute-sql",
+      "from": "worker",
+      "to": "engine",
+      "y": 432,
+      "label": "render dialect SQL + execute (partition-filtered)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "write-audit",
+      "from": "worker",
+      "to": "postgres",
+      "y": 464,
+      "label": "write audit log + job result",
+      "variant": "emphasis"
+    },
+    {
+      "id": "live-state",
+      "from": "worker",
+      "to": "redis",
+      "y": 496,
+      "label": "update live counters/state",
+      "variant": "dashed"
+    },
+    {
+      "id": "finalize-run",
+      "from": "governor",
+      "to": "postgres",
+      "y": 528,
+      "label": "finalize run summary (ok/failed/deferred)"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "One wave",
+      "items": [
+        "Scheduler enqueues queued jobs",
+        "Governor probes live load, then admits",
+        "Worker asks Planner; the engine executes"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Audit",
+      "items": [
+        "The worker writes the audit log and job result",
+        "Governor finalizes ok, failed, and deferred",
+        "A failed job does not stop the run"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Destination",
+      "items": [
+        "Trino or Spark on EMR",
+        "SQL is rendered only at execution"
+      ]
+    }
+  ]
+}

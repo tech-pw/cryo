@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "c49d91cf-c90c-467d-bb9a-9d63a9e00cd4",
+  "status": "current",
+  "command": "deliver",
+  "type": "dataflow",
+  "input": "/Users/aamir/Projects/Cryo/site/diagrams/scan.dataflow.json",
+  "output": "/Users/aamir/Projects/Cryo/site/diagrams/scan.dataflow.html",
+  "specification": {
+    "sha256": "ac33bee86db0b6abd80438e11e582971e05928ac7135fdd714f8340f6e7a288c",
+    "bytes": 2159
+  },
+  "artifact": {
+    "sha256": "41fe755511047646b24c208454e35e46c486dbb8fbd003114abe50f7c44e91cd",
+    "bytes": 748487
+  }
+}

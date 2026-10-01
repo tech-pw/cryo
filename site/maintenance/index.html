@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Maintenance — Cryo</title>
+  <meta name="description" content="A maintenance run on an Apache Iceberg table compacts first, then cleans up, in one fixed order.">
+  <link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="../assets/css/site.css">
+</head>
+<body data-page="maintenance">
+  <a class="skip" href="#content">Skip to content</a>
+  <header id="top"></header>
+  <div class="shell">
+    <aside id="side" class="side"></aside>
+    <main id="content" class="content">
+      <article class="page">
+        <p class="eyebrow">Maintenance</p>
+        <h1 id="order">Compact first, then clean up.</h1>
+        <p class="lede">A maintenance run on an Apache Iceberg table compacts first, then cleans up, in one fixed order. The order is defined in code; no preset can change it.</p>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="why-it-matters">Why maintenance matters</h2>
+        <p>Apache Iceberg's table format is genuinely excellent — hidden partitioning, snapshot isolation, schema evolution, engine-agnostic metadata. What it doesn't give you is any promise those things stay fast. Left alone, four things rot.</p>
+        <div class="grid-2">
+          <figure class="viz" data-chart="matrix">
+            <script type="application/json">
+              {
+                "title": "Four ways a table rots without maintenance",
+                "caption": "Each mode compounds independently — fixing one does not fix the others.",
+                "source": "iceberg.apache.org/docs/latest/maintenance · 2026-09-30",
+                "columns": ["Untended", "Cryo run"],
+                "rows": [
+                  {"label": "Small files pile up (every write adds an open/seek/plan cost)", "marks": [true, false]},
+                  {"label": "Delete files accumulate (every scan re-merges them)", "marks": [true, false]},
+                  {"label": "Snapshot history grows unbounded (planning gets slower)", "marks": [true, false]},
+                  {"label": "Layout drifts from the query pattern (scans read more than needed)", "marks": [true, false]}
+                ]
+              }
+            </script>
+          </figure>
+          <figure class="viz" data-chart="figure">
+            <script type="application/json">
+              {
+                "title": "A table left alone doesn't fail loudly",
+                "caption": "It fails as a slow, compounding tax that eventually shows up as someone else's incident — a timed-out connection pool, a scan that reads far more than it should.",
+                "source": "Illustrative shape · 2026-09-30",
+                "focus": "incident",
+                "groups": [
+                  {"label": "Day 0", "nodes": [{"id": "fresh", "label": "Freshly written table", "kind": "source"}]},
+                  {"label": "Untended", "nodes": [{"id": "small", "label": "Small files, no deletes", "kind": "cryo"}]},
+                  {"label": "Day 90", "nodes": [{"id": "rot", "label": "Files + deletes + snapshots pile up", "kind": "cryo"}]},
+                  {"label": "Someone's query", "nodes": [{"id": "incident", "label": "Slow scan or pool exhaustion", "kind": "engine"}]}
+                ],
+                "edges": [
+                  {"from": "fresh", "to": "small"},
+                  {"from": "small", "to": "rot"},
+                  {"from": "rot", "to": "incident"}
+                ]
+              }
+            </script>
+          </figure>
+        </div>
+
+        <h3 id="strategies" style="margin-top:28px">Compaction is not one operation</h3>
+        <p>Teams pick a compaction strategy based on write pattern and query filters — the same primitive (<code class="mono">optimize</code>) does very different work depending on which one runs.</p>
+        <figure class="viz" data-chart="bars">
+          <script type="application/json">
+            {"title":"Relative compute cost by strategy","unit":"","caption":"Binpack merges small files and reconciles deletes at the lowest cost. Sort clusters by 1-2 filter columns. Z-order clusters by several dimensions at once, for a higher compute cost.","source":"Illustrative relative shape · 2026-09-30","series":[{"label":"Binpack — streaming tables, tight windows","value":1,"tone":"firn"},{"label":"Sort — predictable filters on 1-2 columns","value":2,"tone":"frost"},{"label":"Z-order — several common filter dimensions","value":3,"focus":true,"tone":"core"}]}
+          </script>
+        </figure>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="canonical-order">Canonical order</h2>
+        <figure class="viz viz--wide" data-chart="rail">
+          <script type="application/json">
+            {
+              "title": "Canonical maintenance order",
+              "caption": "Expiry comes after compaction so one run reclaims the space its own compaction freed — instead of expiring while the pre-compaction data files are still live.",
+              "source": "cryo/planner/guardrails.py · 2026-09-30",
+              "focus": "optimize",
+              "steps": [
+                {"id": "convert_deletes", "label": "convert_deletes"},
+                {"id": "rewrite_position_deletes", "label": "rewrite_position_deletes"},
+                {"id": "optimize", "label": "optimize"},
+                {"id": "compute_statistics", "label": "compute_statistics"},
+                {"id": "optimize_manifests", "label": "optimize_manifests"},
+                {"id": "expire_snapshots", "label": "expire_snapshots"},
+                {"id": "remove_orphan_files", "label": "remove_orphan_files"}
+              ]
+            }
+          </script>
+        </figure>
+
+        <div class="grid-2" style="margin-top:14px">
+          <figure class="viz" data-chart="waterfall">
+            <script type="application/json">
+              {"compact":true,"title":"Illustrative bytes reclaimed by operation","start":980,"unit":" GB","items":[{"label":"convert_deletes","value":-12},{"label":"rewrite_position_deletes","value":-8},{"label":"optimize","value":-340},{"label":"compute_statistics","value":0},{"label":"optimize_manifests","value":-2},{"label":"expire_snapshots","value":-218},{"label":"remove_orphan_files","value":-46,"type":"total"}],"caption":"Compaction is the largest single contributor. Expiry follows hours later, not days.","source":"Illustrative shape · 2026-09-30"}
+            </script>
+          </figure>
+          <figure class="viz" data-chart="timeline">
+            <script type="application/json">
+              {"compact":true,"title":"Where each step lives in the run","events":[{"at":0,"atLabel":"00:00","label":"convert_deletes"},{"at":18,"atLabel":"00:18","label":"rewrite"},{"at":42,"atLabel":"00:42","label":"optimize","tone":"marker"},{"at":120,"atLabel":"02:00","label":"stats"},{"at":184,"atLabel":"03:04","label":"manifests"},{"at":206,"atLabel":"03:26","label":"expire","tone":"firn"},{"at":312,"atLabel":"05:12","label":"orphans","tone":"core"}],"caption":"Optimize is the long middle. The tail (expire, orphans) reclaims what the middle produced.","source":"Illustrative · 2026-09-30"}
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="chunking">Planner chunking</h2>
+        <p>Ranked partitions become a chunk under a GB budget, an oversize partition alone, or a small-table bypass. The planner picks one of three paths per run.</p>
+        <div class="grid-3">
+          <figure class="viz" data-chart="figure">
+            <script type="application/json">
+              {
+                "title": "Ranked partitions",
+                "caption": "Ranked by small-file count, descending.",
+                "source": "hld.md section 3.7 · 2026-09-30",
+                "groups": [
+                  {"label": "Partitions", "nodes": [{"id": "ranked", "label": "Ranked partitions", "kind": "source"}]}
+                ]
+              }
+            </script>
+          </figure>
+          <figure class="viz" data-chart="figure">
+            <script type="application/json">
+              {
+                "title": "Three planner paths",
+                "caption": "Under GB budget · oversize alone · small table bypass.",
+                "source": "hld.md section 3.7 · 2026-09-30",
+                "focus": "oversize",
+                "groups": [
+                  {"label": "Planner", "nodes": [
+                    {"id": "chunk", "label": "Chunk under GB budget", "kind": "cryo"},
+                    {"id": "oversize", "label": "Oversize partition alone", "kind": "cryo"},
+                    {"id": "bypass", "label": "Small table bypass", "kind": "cryo"}
+                  ]}
+                ],
+                "edges": [
+                  {"from": "ranked", "to": "chunk", "style": "read"},
+                  {"from": "ranked", "to": "oversize", "style": "read"},
+                  {"from": "ranked", "to": "bypass", "style": "read"}
+                ]
+              }
+            </script>
+          </figure>
+          <figure class="viz" data-chart="compare">
+            <script type="application/json">
+              {"title":"Partition counts across paths","caption":"Illustrative mix per run. Small-table bypass skips chunking entirely.","source":"hld.md section 3.7 · 2026-09-30","pairs":[{"label":"partitions in","before":48,"after":48,"unit":"","delta":0},{"label":"chunks formed","before":0,"after":4,"unit":"","delta":4},{"label":"oversize alone","before":0,"after":1,"unit":"","delta":1},{"label":"bypass (full table)","before":0,"after":1,"unit":"","delta":1}]}
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="admission">Admission — load-aware, never eager</h2>
+        <div class="grid-2">
+          <figure class="viz" data-chart="figure">
+            <script type="application/json">
+              {
+                "title": "Admission",
+                "caption": "Scaling workers does not raise parallel OPTIMIZE count. The Governor does.",
+                "source": "hld.md section 6 · 2026-09-30",
+                "focus": "governor",
+                "groups": [
+                  {"label": "Worker", "nodes": [{"id": "worker", "label": "Worker wants a job", "kind": "cryo"}]},
+                  {"label": "Admission", "nodes": [{"id": "governor", "label": "Governor", "kind": "cryo"}, {"id": "admit", "label": "Admit", "kind": "cryo"}, {"id": "defer", "label": "Defer", "kind": "cryo"}]},
+                  {"label": "Probe", "nodes": [{"id": "trino", "label": "system.runtime.queries", "kind": "engine"}, {"id": "spark", "label": "Spark slots", "kind": "engine"}]}
+                ],
+                "edges": [
+                  {"from": "worker", "to": "governor"},
+                  {"from": "governor", "to": "trino", "style": "read"},
+                  {"from": "governor", "to": "spark", "style": "read"}
+                ]
+              }
+            </script>
+          </figure>
+          <figure class="viz" data-chart="gauge">
+            <script type="application/json">
+              {"title":"Trino slot pressure (illustrative)","value":42,"max":100,"label":"42%","detail":"14 of 32 slots busy","tone":"core","thresholds":"<60 admit · 60-80 warn · >80 defer"}
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="guardrails">Three guardrails, always on</h2>
+        <div class="grid-3">
+          <figure class="viz" data-chart="core">
+            <script type="application/json">{"title":"Cooldown","label":"skip recently maintained","caption":"Skip tables maintained within N hours. Read from audit log + engine history.","source":"hld.md §6"}</script>
+          </figure>
+          <figure class="viz" data-chart="core">
+            <script type="application/json">{"title":"Per-table lock","label":"Redis","caption":"A per-table Redis lock held for the job's lifetime.","source":"hld.md §6"}</script>
+          </figure>
+          <figure class="viz" data-chart="core">
+            <script type="application/json">{"title":"Failure isolation","label":"one table","caption":"One job's failure is recorded; the run continues.","source":"hld.md §6"}</script>
+          </figure>
+        </div>
+
+        <p class="note note--warning" style="margin-top:24px"><strong>Destructive operations are guarded.</strong> <code class="mono">expire_snapshots</code> and <code class="mono">remove_orphan_files</code> require the relevant tier in the scanner. Cryo never touches snapshots the retention policy would keep.</p>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="read-next">Read next</h2>
+        <div class="grid-2">
+          <section class="card">
+            <h3><a href="../engines/index.html">Engines</a></h3>
+            <p>How this same fixed order renders as Trino SQL and Spark SQL.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../health/index.html">Health and cost</a></h3>
+            <p>What a run's grade looked like before compaction, and after.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../architecture/index.html">Architecture</a></h3>
+            <p>Scheduler, Governor, and Worker as running components.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../concepts/index.html">Concepts</a></h3>
+            <p>Why a preset binds tables to a destination, not to raw SQL.</p>
+          </section>
+        </div>
+
+      </article>
+    </main>
+  </div>
+  <footer id="foot"></footer>
+  <script src="../assets/js/charts.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>

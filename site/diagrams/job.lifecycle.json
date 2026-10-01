@@ -1,0 +1,106 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Maintenance job lifecycle",
+    "locale": "en",
+    "output": "site/diagrams/job.lifecycle.html",
+    "visual_preset": "editorial",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "main", "label": "Job" },
+    { "id": "held", "label": "Not admitted" },
+    { "id": "terminal", "label": "Recorded" }
+  ],
+  "states": [
+    {
+      "id": "queued",
+      "type": "start",
+      "label": "Queued",
+      "sublabel": "enqueued",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "admitted",
+      "type": "active",
+      "label": "Admitted",
+      "sublabel": "governor",
+      "lane": "main",
+      "col": 1,
+      "step": "02"
+    },
+    {
+      "id": "running",
+      "type": "active",
+      "label": "Running",
+      "sublabel": "worker",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "succeeded",
+      "type": "success",
+      "label": "Succeeded",
+      "sublabel": "audit written",
+      "lane": "main",
+      "col": 3,
+      "step": "04"
+    },
+    {
+      "id": "deferred",
+      "type": "waiting",
+      "label": "Deferred",
+      "sublabel": "window or budget",
+      "lane": "held",
+      "col": 0
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "Failed",
+      "sublabel": "run continues",
+      "lane": "terminal",
+      "col": 2
+    }
+  ],
+  "transitions": [
+    { "from": "queued", "to": "admitted" },
+    { "from": "admitted", "to": "running" },
+    { "from": "running", "to": "succeeded" },
+    { "from": "queued", "to": "deferred", "label": "deadline", "variant": "dashed" },
+    { "from": "deferred", "to": "queued", "label": "re-queue" },
+    { "from": "running", "to": "failed", "label": "recorded", "variant": "dashed" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Admission",
+      "items": [
+        "Queued jobs wait for Governor admission",
+        "Admitted work is pulled by a Worker",
+        "Running ends as succeeded or failed"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Deferred",
+      "items": [
+        "Off-peak, budget, or deadline holds the job",
+        "A held job can return to queued",
+        "Deferred is not a failure"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Failure isolation",
+      "items": [
+        "A failed job is recorded",
+        "Failure does not stop the run"
+      ]
+    }
+  ]
+}

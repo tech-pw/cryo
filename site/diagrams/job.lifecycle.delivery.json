@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "ea74e33a-d696-4fe7-a71b-c34a9dc0e516",
+  "status": "current",
+  "command": "deliver",
+  "type": "lifecycle",
+  "input": "/Users/aamir/Projects/Cryo/site/diagrams/job.lifecycle.json",
+  "output": "/Users/aamir/Projects/Cryo/site/diagrams/job.lifecycle.html",
+  "specification": {
+    "sha256": "b8738fd914a0d74b71a5289f86d87d345291318953eb7fc96db37f5d300921b5",
+    "bytes": 2479
+  },
+  "artifact": {
+    "sha256": "1d2583cded8852ea2e38c2db376bced6200177a7bce8570299498fe0c4800bed",
+    "bytes": 754011
+  }
+}

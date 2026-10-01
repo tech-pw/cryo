@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cryo — Apache Iceberg maintenance, with receipts</title>
+  <meta name="description" content="Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Read catalogs on one side, run maintenance on the other, leave a receipt for every decision.">
+  <meta property="og:title" content="Cryo — Apache Iceberg maintenance, with receipts">
+  <meta property="og:description" content="Apache-2.0, self-hosted. Read stays apart from write. Plans and admissions keep Trino and Spark honest.">
+  <meta property="og:image" content="assets/svg/core.svg">
+  <link rel="icon" href="assets/svg/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body data-page="home">
+  <a class="skip" href="#content">Skip to content</a>
+  <header id="top"></header>
+  <div class="shell">
+    <aside id="side" class="side"></aside>
+    <main id="content" class="content">
+      <article class="page page--no-toc">
+
+        <!-- ===================== HERO ===================== -->
+        <section class="hero-home" aria-labelledby="home-title">
+          <div class="hero-home__copy">
+            <p class="eyebrow">Apache-2.0 · self-hosted · Iceberg maintenance</p>
+            <h1 id="home-title">Make every Iceberg table easier to <span class="marker-word">run</span>.</h1>
+            <p class="lede">Cryo reads your catalogs, plans maintenance, and admits the work to Trino or Spark — without ever coupling the two. Every run leaves a receipt.</p>
+            <div class="actions hero-home__actions">
+              <a class="btn" href="quickstart/index.html">Start in five minutes <span aria-hidden="true">→</span></a>
+              <a class="btn-link" href="architecture/index.html">Explore the system map</a>
+            </div>
+            <div class="hero-home__proof" aria-label="Cryo guarantees">
+              <span><span class="pulse"></span> Apache-2.0</span>
+              <span>Self-hosted</span>
+              <span>Trino + Spark</span>
+              <span>Helm-ready</span>
+              <span>No data leaves</span>
+            </div>
+          </div>
+          <div class="hero-home__visual">
+            <div class="hero-home__visual-label"><span class="marker-dot" aria-hidden="true"></span> Snow becomes firn becomes ice — snapshots become evidence</div>
+            <div class="hero-core-wrap settle-core">
+              <figure class="viz viz--bare" data-chart="core" aria-label="Ice core schematic: loose files becoming a compacted table">
+                <script type="application/json">
+                  {"title":"Ice core — loose to solid","label":"loose files → compacted table"}
+                </script>
+              </figure>
+            </div>
+            <div class="hero-data">
+              <div class="hero-data-cell"><div class="v">87</div><div class="l">TABLE GRADE (B+)</div></div>
+              <div class="hero-data-cell"><div class="v">9.2k</div><div class="l">FILES COMPACTED / RUN</div></div>
+              <div class="hero-data-cell"><div class="v">100%</div><div class="l">EVIDENCE WRITTEN</div></div>
+            </div>
+            <div class="hero-home__visual-foot"><span>docs/brand/CRYO_BRAND_GUIDE.md §7.2</span></div>
+          </div>
+        </section>
+
+        <!-- ===================== TRUST STRIP ===================== -->
+        <div class="trust-strip" aria-label="Cryo at a glance">
+          <div><span class="label">License</span><span class="value">Apache-2.0</span></div>
+          <div><span class="label">Hosting</span><span class="value">Self-hosted</span></div>
+          <div><span class="label">Engines</span><span class="value">Trino · Spark</span></div>
+          <div><span class="label">Catalogs</span><span class="value">Iceberg REST · Hive · Glue</span></div>
+          <div><span class="label">Deploy</span><span class="value">Helm · Kubernetes</span></div>
+          <div><span class="label">Version</span><span class="value">v0.9 · pre-1.0</span></div>
+        </div>
+
+        <!-- ===================== FOUR STEPS ===================== -->
+        <section class="signal-section" aria-labelledby="signal-title">
+          <div class="section-heading">
+            <div><p class="eyebrow">The operator view</p><h2 id="signal-title">Four answers before the next run.</h2></div>
+            <p>Observe the fleet, decide what is safe to run, watch it happen, and prove what changed.</p>
+          </div>
+          <div class="signal-grid">
+            <article class="signal-card signal-card--observe">
+              <div class="signal-card__top"><span class="step-number">01</span><span class="signal-card__tag">Observe</span></div>
+              <h3>Which tables need care?</h3>
+              <p>The Scanner grades every table from stored metadata — no live data scans on the hot path.</p>
+              <figure class="viz mini-viz" data-chart="donut"><script type="application/json">
+                {"compact":true,"title":"Illustrative fleet grades","centre":"B+","centreSub":"median fleet grade","parts":[{"label":"A (90+)","value":142,"tone":"core"},{"label":"B (75-89)","value":408,"tone":"firn"},{"label":"C (60-74)","value":284,"tone":"frost"},{"label":"D-F","value":98,"tone":"ice"}],"unit":" tables"}
+              </script></figure>
+            </article>
+            <article class="signal-card signal-card--decide">
+              <div class="signal-card__top"><span class="step-number">02</span><span class="signal-card__tag">Decide</span></div>
+              <h3>What is safe to run?</h3>
+              <p>The Planner emits an ordered plan. The Governor admits it only when Trino or Spark have headroom.</p>
+              <figure class="viz mini-viz" data-chart="funnel"><script type="application/json">
+                {"title":"Illustrative decision funnel","steps":[{"label":"tables with work","value":614},{"label":"eligible (cooldowns, locks)","value":412},{"label":"admitted (load-aware)","value":148,"detail":"round-robin across replicas"}]}
+              </script></figure>
+            </article>
+            <article class="signal-card signal-card--run">
+              <div class="signal-card__top"><span class="step-number">03</span><span class="signal-card__tag">Run</span></div>
+              <h3>What is happening now?</h3>
+              <p>Workers execute one table at a time. Failure on one table stays on that table — the run continues.</p>
+              <figure class="viz mini-viz" data-chart="sparkline"><script type="application/json">
+                {"title":"Illustrative admitted jobs / 24h","label":"active jobs","latest":"peak 86","values":[12,18,16,28,36,33,46,52,61,58,72,68,80,86,78,72,64,58,52,46,38,32,24,18],"bands":true}
+              </script></figure>
+            </article>
+            <article class="signal-card signal-card--prove">
+              <div class="signal-card__top"><span class="step-number">04</span><span class="signal-card__tag">Prove</span></div>
+              <h3>What changed, exactly?</h3>
+              <p>An audit row per run: table, operation, engine, duration, before/after. Stored, queryable, exportable.</p>
+              <figure class="viz mini-viz" data-chart="receipt"><script type="application/json">
+                {"title":"Illustrative audit receipt","items":[{"label":"table","value":"orders_daily"},{"label":"operation","value":"optimize"},{"label":"engine","value":"trino / 42s"},{"label":"files before","value":"9,184"},{"label":"files after","value":"2,316"},{"label":"recorded","value":"audit.cryo:0x7e9…"}]}
+              </script></figure>
+            </article>
+          </div>
+        </section>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <!-- ===================== MAINTENANCE STORY ===================== -->
+        <section class="story-section" aria-labelledby="story-title">
+          <div class="section-heading section-heading--tight">
+            <div><p class="eyebrow">The maintenance story</p><h2 id="story-title">Compact first, then clean up.</h2></div>
+            <a class="text-link" href="maintenance/index.html">See the guardrails →</a>
+          </div>
+          <p class="lede" style="max-width:64ch">A single run on one table walks the operations in a fixed order. Compaction creates new files; expiry removes old ones — so one pass reclaims the space its own compaction freed.</p>
+          <figure class="viz viz--wide" data-chart="rail">
+            <script type="application/json">
+              {"title":"Canonical maintenance order","caption":"Compact first, measure the effect, then clean up what the new state makes reclaimable.","source":"cryo/planner/guardrails.py · 2026-09-30","focus":"optimize","steps":[{"id":"convert_deletes","label":"convert_deletes"},{"id":"rewrite_position_deletes","label":"rewrite_position_deletes"},{"id":"optimize","label":"optimize"},{"id":"compute_statistics","label":"compute_statistics"},{"id":"optimize_manifests","label":"optimize_manifests"},{"id":"expire_snapshots","label":"expire_snapshots"},{"id":"remove_orphan_files","label":"remove_orphan_files"}]}
+            </script>
+          </figure>
+          <div class="grid-2" style="margin-top:18px">
+            <figure class="viz" data-chart="waterfall">
+              <script type="application/json">
+                {"title":"Illustrative bytes reclaimed by operation","start":980,"unit":" GB","items":[{"label":"convert_deletes","value":-12},{"label":"rewrite_position_deletes","value":-8},{"label":"optimize","value":-340},{"label":"compute_statistics","value":0},{"label":"optimize_manifests","value":-2},{"label":"expire_snapshots","value":-218},{"label":"remove_orphan_files","value":-46,"type":"total"}]}
+              </script>
+            </figure>
+            <figure class="viz" data-chart="timeline">
+              <script type="application/json">
+                {"title":"A run on one table — illustrative timeline","events":[{"at":0,"atLabel":"00:00","label":"queued","detail":"enqueue"},{"at":18,"atLabel":"00:18","label":"admitted","detail":"governor","tone":"frost"},{"at":42,"atLabel":"00:42","label":"scanned","detail":"read partitions","tone":"frost"},{"at":120,"atLabel":"02:00","label":"optimize","detail":"Trino","tone":"marker"},{"at":184,"atLabel":"03:04","label":"expired","detail":"reclaim"},{"at":206,"atLabel":"03:26","label":"recorded","detail":"audit","tone":"core"}]}
+              </script>
+            </figure>
+          </div>
+        </section>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <!-- ===================== ARCHITECTURE ===================== -->
+        <section class="arch-section" aria-labelledby="architecture-title">
+          <div class="section-heading">
+            <div><p class="eyebrow">Architecture as a living map</p><h2 id="architecture-title">Read stays apart from write. By design.</h2></div>
+            <a class="text-link" href="architecture/index.html">Open the full architecture →</a>
+          </div>
+          <figure class="archify archify--tall" aria-label="Interactive Cryo system architecture map">
+            <iframe class="archify-frame" title="Interactive Cryo system architecture map" loading="lazy" src="diagrams/system.architecture.html?embed=1&theme=light" data-theme-default="light"></iframe>
+            <figcaption class="archify-caption">Sources (read) → Cryo → Destinations (write). PostgreSQL holds durable state, Redis holds the queue and locks, object storage holds the data.</figcaption>
+          </figure>
+          <p class="source" style="margin-top:12px">Interactive map generated with <a href="https://github.com/tt-a1i/archify">Archify</a> · shipped as a self-contained HTML artifact · <a href="diagrams/system.architecture.html?present=1">open full viewer</a></p>
+        </section>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <!-- ===================== EVIDENCE ===================== -->
+        <section class="evidence-section" aria-labelledby="evidence-title">
+          <div class="section-heading">
+            <div><p class="eyebrow">Make the outcome legible</p><h2 id="evidence-title">Charts for decisions, receipts for trust.</h2></div>
+            <p>Illustrative shapes show the questions Cryo makes visible. Your deployment supplies the values.</p>
+          </div>
+          <div class="grid-2">
+            <figure class="viz evidence-card" data-chart="compare">
+              <script type="application/json">
+                {"title":"File count — before vs after compaction","caption":"Per-table, not a fleet average. Each row is one optimization run.","source":"Illustrative shape · 2026-09-30","pairs":[{"label":"orders_daily","before":9184,"after":2316,"unit":" files","delta":-6868},{"label":"sessions_v3","before":5421,"after":1208,"unit":" files","delta":-4213},{"label":"events_raw","before":14820,"after":3204,"unit":" files","delta":-11616}]}
+              </script>
+            </figure>
+            <figure class="viz evidence-card" data-chart="donut">
+              <script type="application/json">
+                {"compact":true,"title":"Where the bytes live (illustrative table)","centre":"3.4 TB","centreSub":"total projected","parts":[{"label":"live data","value":2.1,"unit":" TB","tone":"core"},{"label":"expirable","value":820,"unit":" GB","tone":"firn"},{"label":"manifests + metadata","value":96,"unit":" GB","tone":"frost"},{"label":"orphan candidates","value":390,"unit":" GB","tone":"ice"}]}
+              </script>
+            </figure>
+          </div>
+          <div class="grid-3" style="margin-top:14px">
+            <figure class="viz evidence-card" data-chart="gauge">
+              <script type="application/json">
+                {"title":"Fleet health today","value":87,"max":100,"label":"B+","detail":"weighted median","tone":"core","thresholds":"A≥90  B≥75  C≥60  D≥40"}
+              </script>
+            </figure>
+            <figure class="viz evidence-card" data-chart="sparkline">
+              <script type="application/json">
+                {"title":"Admitted work over the last 14 days","label":"jobs / day","latest":"+ 18% wk-on-wk","values":[64,72,68,82,90,88,108,124,118,140,138,162,158,176],"bands":true}
+              </script>
+            </figure>
+            <figure class="viz evidence-card" data-chart="bars">
+              <script type="application/json">
+                {"title":"Operation share of last 7 days","unit":"%","caption":"Most runs end at optimize. Expiry trails by hours, not days.","source":"Illustrative · 2026-09-30","series":[{"label":"convert_deletes","value":4},{"label":"optimize","value":48,"focus":true},{"label":"compute_statistics","value":12},{"label":"optimize_manifests","value":9},{"label":"expire_snapshots","value":22},{"label":"remove_orphan_files","value":5}]}
+              </script>
+            </figure>
+          </div>
+        </section>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <!-- ===================== INSTALL ===================== -->
+        <section class="operations-section" aria-labelledby="install-title">
+          <div>
+            <p class="eyebrow">Try the shape locally</p>
+            <h2 id="install-title">A real lake in four commands.</h2>
+            <p class="lede">Start with the demo, then connect your own catalog and engines through the same source/destination split.</p>
+          </div>
+          <div class="terminal" aria-label="Quickstart commands">
+            <div class="terminal-bar">
+              <div class="terminal-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+              <div class="terminal-title">bash · cryo-local</div>
+              <button class="terminal-copy" type="button" aria-label="Copy commands">Copy</button>
+            </div>
+            <div class="terminal-body"><span class="prompt">$</span> <span class="cmd-strong">git clone</span> https://github.com/shelf-project/Cryo.git
+<span class="prompt">$</span> <span class="cmd-strong">cd</span> Cryo && <span class="cmd-strong">make up</span>
+<span class="muted">… waiting for API and Postgres to be healthy</span>
+<span class="prompt">$</span> <span class="cmd-strong">make seed</span>
+<span class="muted">… creates demo Iceberg tables with intentional maintenance issues</span>
+<span class="prompt">$</span> <span class="cmd-strong">open</span> <span class="ok">http://localhost:5173</span></div>
+          </div>
+          <a class="btn btn--light" href="quickstart/index.html">Read the full quickstart <span aria-hidden="true">→</span></a>
+        </section>
+
+        <!-- ===================== NOTE ===================== -->
+        <p class="note note--home">Cryo is pre-1.0. The launch-tier surface is the scanner, planner, governor, Trino and Spark engines, presets, audit, and the run console.</p>
+
+      </article>
+    </main>
+  </div>
+  <footer id="foot"></footer>
+  <script src="assets/js/charts.js"></script>
+  <script src="assets/js/site.js"></script>
+</body>
+</html>

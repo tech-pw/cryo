@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Engines — Cryo</title>
+  <meta name="description" content="The planner is engine-agnostic. Trino SQL and Spark SQL are rendered apart.">
+  <link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="../assets/css/site.css">
+</head>
+<body data-page="engines">
+  <a class="skip" href="#content">Skip to content</a>
+  <header id="top"></header>
+  <div class="shell">
+    <aside id="side" class="side"></aside>
+    <main id="content" class="content">
+      <article class="page">
+        <p class="eyebrow">Engines</p>
+        <h1 id="one-plan">One plan, two dialects.</h1>
+        <p class="lede">The planner is engine-agnostic. Trino SQL and Spark SQL are rendered apart. The same plan produces different SQL, never different intent.</p>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="rendered-operations">Rendered operations</h2>
+        <figure class="viz" data-chart="dot-matrix">
+          <script type="application/json">
+            {
+              "title": "Operations rendered per engine",
+              "caption": "Same operation, different SQL. rewrite_position_deletes is Spark-only today.",
+              "source": "cryo/engines/trino/sql.py and cryo/engines/spark/sql.py · 2026-09-30",
+              "legend": ["no", "partial", "yes", "strong"],
+              "columns": ["Trino", "Spark"],
+              "rows": [
+                {"label": "convert_deletes", "marks": [2, 2]},
+                {"label": "rewrite_position_deletes", "marks": [0, 2]},
+                {"label": "optimize", "marks": [3, 3]},
+                {"label": "compute_statistics", "marks": [2, 2]},
+                {"label": "optimize_manifests", "marks": [2, 2]},
+                {"label": "expire_snapshots", "marks": [2, 2]},
+                {"label": "remove_orphan_files", "marks": [2, 2]}
+              ]
+            }
+          </script>
+        </figure>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="plan-to-renderers">Plan to renderers</h2>
+        <div class="grid-2">
+          <figure class="viz" data-chart="figure">
+            <script type="application/json">
+              {
+                "title": "Plan to renderers",
+                "caption": "The plan carries operations and partition predicates, not SQL.",
+                "source": "cryo/engines/trino/sql.py and cryo/engines/spark/sql.py · 2026-09-30",
+                "focus": "planner",
+                "groups": [
+                  {"label": "Plan", "nodes": [{"id": "planner", "label": "Planner", "kind": "cryo"}]},
+                  {"label": "Renderers", "nodes": [{"id": "trino", "label": "Trino renderer", "kind": "engine"}, {"id": "spark", "label": "Spark renderer", "kind": "engine"}]}
+                ],
+                "edges": [
+                  {"from": "planner", "to": "trino"},
+                  {"from": "planner", "to": "spark"}
+                ]
+              }
+            </script>
+          </figure>
+          <figure class="viz" data-chart="matrix">
+            <script type="application/json">
+              {
+                "title": "What a planner change touches vs. what a renderer change touches",
+                "caption": "The plan carries operations and partition predicates only — never a column type or SQL keyword. A planner change reaches both engines; a renderer change reaches only its own SQL. The two never drift into each other.",
+                "source": "cryo/planner and cryo/engines · 2026-09-30",
+                "columns": ["Trino SQL", "Spark SQL"],
+                "rows": [
+                  {"label": "Operation order (planner change)", "marks": [true, true]},
+                  {"label": "Partition predicates (planner change)", "marks": [true, true]},
+                  {"label": "SQL dialect (Trino renderer change)", "marks": [true, false]},
+                  {"label": "SQL dialect (Spark renderer change)", "marks": [false, true]}
+                ]
+              }
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="sql-snippets">The same operation, side by side</h2>
+        <div class="grid-2">
+          <div>
+            <p class="eyebrow" style="color:var(--glacier)">Trino</p>
+            <pre class="cmd">ALTER TABLE prod.orders_daily
+  EXECUTE optimize
+  WHERE ts &gt;= TIMESTAMP '2026-09-01'</pre>
+          </div>
+          <div>
+            <p class="eyebrow" style="color:var(--glacier)">Spark</p>
+            <pre class="cmd">CALL prod.system.rewrite_data_files(
+  table =&gt; 'prod.orders_daily',
+  strategy =&gt; 'sort',
+  sort_order =&gt; 'ts ASC',
+  options =&gt; map('target-file-size-bytes','536870912')
+)</pre>
+          </div>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="native-compaction">Native compaction</h2>
+        <div class="grid-2">
+          <section class="card">
+            <h3>Native Go compaction</h3>
+            <p>Native Go compaction is a configured engine path, not assumed on. The Planner does not change shape for it.</p>
+          </section>
+          <figure class="viz" data-chart="timeline">
+            <script type="application/json">
+              {"title":"Engine path comparison (illustrative)","events":[{"at":0,"atLabel":"t0","label":"scan partitions","tone":"frost"},{"at":42,"atLabel":"native","label":"Go rewrite","tone":"core"},{"at":120,"atLabel":"trino","label":"SQL OPTIMIZE","tone":"core"},{"at":184,"atLabel":"spark","label":"rewrite_data_files","tone":"core"}],"caption":"Three execution paths. Same plan, different runtime.","source":"cryo/engines · 2026-09-30"}
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="read-next">Read next</h2>
+        <div class="grid-2">
+          <section class="card">
+            <h3><a href="../maintenance/index.html">Maintenance</a></h3>
+            <p>The plan these renderers execute, and the fixed order behind it.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../architecture/index.html">Architecture</a></h3>
+            <p>Where the Planner and Workers sit relative to Trino and Spark.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../deployment/index.html">Deployment</a></h3>
+            <p>Engines stay outside the Helm chart — see how they connect.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../reference/index.html">Reference</a></h3>
+            <p>Feature presence across engines and adjacent tools.</p>
+          </section>
+        </div>
+
+      </article>
+    </main>
+  </div>
+  <footer id="foot"></footer>
+  <script src="../assets/js/charts.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>
