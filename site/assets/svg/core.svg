@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 320" role="img" aria-labelledby="coreTitle coreDesc">
+  <title id="coreTitle">Ice core</title>
+  <desc id="coreDesc">A cut-open core. Loose tiles on the left pack into solid blocks on the right. One survey marker sits on the solid end.</desc>
+  <rect width="720" height="320" fill="#F5FAFD"/>
+  <line x1="48" y1="268" x2="672" y2="268" stroke="#5C667A" stroke-width="1.5"/>
+  <g fill="none" stroke="#B8E1F3" stroke-width="1.5">
+    <path d="M40 36h180"/>
+    <path d="M40 44h180"/>
+    <path d="M40 52h180"/>
+  </g>
+  <g>
+    <rect x="78" y="118" width="520" height="112" rx="56" fill="#EAF7FD" stroke="#143E60" stroke-width="2"/>
+    <ellipse cx="598" cy="174" rx="28" ry="56" fill="#EAF7FD" stroke="#143E60" stroke-width="2"/>
+    <path d="M118 118v112" stroke="#143E60" stroke-width="2"/>
+    <path d="M118 118h480" stroke="#143E60" stroke-width="2"/>
+    <path d="M118 230h480" stroke="#143E60" stroke-width="2"/>
+  </g>
+  <g fill="none" stroke="#B8E1F3" stroke-width="1.25">
+    <path d="M132 146h470"/>
+    <path d="M132 164h470"/>
+    <path d="M132 182h470"/>
+    <path d="M132 200h470"/>
+  </g>
+  <g fill="#EAF7FD" stroke="#143E60" stroke-width="1.25">
+    <rect x="136" y="136" width="16" height="16" transform="rotate(-12 144 144)"/>
+    <rect x="158" y="168" width="16" height="16" transform="rotate(8 166 176)"/>
+    <rect x="150" y="198" width="14" height="14" transform="rotate(-6 157 205)"/>
+    <rect x="178" y="140" width="14" height="14" transform="rotate(14 185 147)"/>
+    <rect x="186" y="186" width="16" height="16" transform="rotate(-18 194 194)"/>
+    <rect x="204" y="156" width="14" height="14" transform="rotate(6 211 163)"/>
+    <rect x="214" y="204" width="12" height="12" transform="rotate(-8 220 210)"/>
+    <rect x="228" y="132" width="16" height="16" transform="rotate(10 236 140)"/>
+    <rect x="236" y="176" width="14" height="14" transform="rotate(-14 243 183)"/>
+    <rect x="252" y="150" width="12" height="12" transform="rotate(4 258 156)"/>
+    <rect x="260" y="196" width="16" height="16" transform="rotate(-10 268 204)"/>
+    <rect x="274" y="138" width="14" height="14" transform="rotate(16 281 145)"/>
+  </g>
+  <g fill="#B8E1F3" stroke="#143E60" stroke-width="1.25">
+    <rect x="312" y="136" width="36" height="22"/>
+    <rect x="354" y="136" width="36" height="22"/>
+    <rect x="312" y="164" width="36" height="22"/>
+    <rect x="354" y="164" width="36" height="22"/>
+    <rect x="312" y="192" width="36" height="22"/>
+    <rect x="354" y="192" width="36" height="22"/>
+    <rect x="396" y="148" width="34" height="28"/>
+    <rect x="396" y="182" width="34" height="28"/>
+  </g>
+  <g fill="#277ABE" stroke="#143E60" stroke-width="1.5">
+    <rect x="448" y="132" width="132" height="28"/>
+    <rect x="448" y="166" width="132" height="28"/>
+    <rect x="448" y="200" width="132" height="22"/>
+    <path d="M456 140h108" stroke="#EAF7FD" stroke-width="1.5"/>
+    <path d="M456 174h108" stroke="#EAF7FD" stroke-width="1.5"/>
+  </g>
+  <g>
+    <line x1="548" y1="118" x2="548" y2="78" stroke="#143E60" stroke-width="1.5"/>
+    <path d="M548 78h22l-6 8 6 8h-22z" fill="#EA580C" stroke="#143E60" stroke-width="1.25"/>
+  </g>
+</svg>

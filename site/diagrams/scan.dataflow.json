@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Scan data flow",
+    "locale": "en",
+    "output": "site/diagrams/scan.dataflow.html",
+    "visual_preset": "editorial",
+    "quality_profile": "showcase"
+  },
+  "stages": [
+    { "label": "Catalog" },
+    { "label": "Scan" },
+    { "label": "Store" }
+  ],
+  "nodes": [
+    {
+      "id": "iceberg",
+      "type": "external",
+      "label": "Iceberg REST",
+      "sublabel": "catalog",
+      "stage": 0,
+      "row": 0,
+      "width": 132,
+      "tag": "metadata"
+    },
+    {
+      "id": "hive",
+      "type": "external",
+      "label": "Hive or Glue",
+      "sublabel": "metastore",
+      "stage": 0,
+      "row": 2,
+      "width": 132,
+      "tag": "metadata"
+    },
+    {
+      "id": "scanner",
+      "type": "backend",
+      "label": "Scanner",
+      "sublabel": "PyIceberg",
+      "stage": 1,
+      "row": 1,
+      "width": 132,
+      "tag": "metadata only"
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "table stats",
+      "stage": 2,
+      "row": 1,
+      "width": 132,
+      "tag": "metadata only"
+    }
+  ],
+  "flows": [
+    {
+      "id": "rest-metadata",
+      "from": "iceberg",
+      "to": "scanner",
+      "label": "metadata",
+      "classification": "metadata only",
+      "variant": "emphasis"
+    },
+    {
+      "id": "hive-metadata",
+      "from": "hive",
+      "to": "scanner",
+      "label": "metadata",
+      "classification": "metadata only"
+    },
+    {
+      "id": "stats-upsert",
+      "from": "scanner",
+      "to": "postgres",
+      "label": "table stats",
+      "classification": "metadata only",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Metadata only",
+      "items": [
+        "Catalog metadata moves into the Scanner",
+        "Stats are written to PostgreSQL",
+        "Object storage is not on the default path"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "What is stored",
+      "items": [
+        "File, partition, snapshot, and grade stats",
+        "No live data-file read on this path"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "e1865995-e296-4bc9-9606-b48b50ca92c9",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "/Users/aamir/Projects/Cryo/site/diagrams/assign.workflow.json",
+  "output": "/Users/aamir/Projects/Cryo/site/diagrams/assign.workflow.html",
+  "specification": {
+    "sha256": "3e0cb5193e58aa459cb3a2e517105e95bb6d71ee8393bb6c003ee859f0c01fbd",
+    "bytes": 3075
+  },
+  "artifact": {
+    "sha256": "46f3ff626c83eba111193ed9476adbe171e50338fd49dfd63bf60a1ed7e0af66",
+    "bytes": 753485
+  }
+}

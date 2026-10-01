@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture — Cryo</title>
+  <meta name="description" content="Cryo sits between Apache Iceberg catalogs on the read side and engines on the write side.">
+  <link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="../assets/css/site.css">
+</head>
+<body data-page="architecture">
+  <a class="skip" href="#content">Skip to content</a>
+  <header id="top" class="top"></header>
+  <div class="shell">
+    <aside id="side" class="side"></aside>
+    <main id="content" class="content">
+      <article class="page">
+        <p class="eyebrow">Architecture</p>
+        <h1 id="system-architecture">Where the work sits.</h1>
+        <p class="lede">Cryo sits between Apache Iceberg catalogs on the read side and engines on the write side. Sources never reach destinations without going through the plan.</p>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="system-context">System context</h2>
+        <div class="grid-2">
+          <figure class="viz" data-chart="figure">
+            <script type="application/json">
+              {
+                "title": "System context",
+                "caption": "Scanner only reads Sources. Workers execute on Destinations. PostgreSQL holds durable state, Redis holds the queue and locks.",
+                "source": "hld.md section 2 · 2026-09-30",
+                "focus": "governor",
+                "groups": [
+                  {"label": "Sources (read)", "nodes": [{"id": "iceberg-rest", "label": "Iceberg REST", "kind": "source"}, {"id": "hive-glue", "label": "Hive or Glue", "kind": "source"}]},
+                  {"label": "Cryo", "nodes": [{"id": "web-ui", "label": "Web UI", "kind": "cryo"}, {"id": "api", "label": "API", "kind": "cryo"}, {"id": "scanner", "label": "Scanner", "kind": "cryo"}, {"id": "scheduler", "label": "Scheduler", "kind": "cryo"}, {"id": "governor", "label": "Governor", "kind": "cryo"}, {"id": "workers", "label": "Workers", "kind": "cryo"}, {"id": "planner", "label": "Planner", "kind": "cryo"}]},
+                  {"label": "Stores", "nodes": [{"id": "postgres", "label": "PostgreSQL", "kind": "store"}, {"id": "redis", "label": "Redis", "kind": "store"}]},
+                  {"label": "Destinations (write)", "nodes": [{"id": "trino", "label": "Trino", "kind": "engine"}, {"id": "spark", "label": "Spark on EMR", "kind": "engine"}]},
+                  {"label": "Storage", "nodes": [{"id": "object-storage", "label": "Object storage", "kind": "store"}]}
+                ],
+                "edges": [
+                  {"from": "iceberg-rest", "to": "scanner", "style": "read"},
+                  {"from": "hive-glue", "to": "scanner", "style": "read"},
+                  {"from": "workers", "to": "trino", "style": "write"},
+                  {"from": "workers", "to": "spark", "style": "write"},
+                  {"from": "trino", "to": "object-storage", "style": "write"},
+                  {"from": "spark", "to": "object-storage", "style": "write"}
+                ]
+              }
+            </script>
+          </figure>
+          <figure class="viz" data-chart="treemap">
+            <script type="application/json">
+              {"title":"Component responsibility share (illustrative)","caption":"Sizes are illustrative of responsibility surface, not LOC.","source":"AGENTS.md §3 · 2026-09-30","items":[{"label":"Planner","value":120,"tone":"core"},{"label":"Governor","value":80,"tone":"core"},{"label":"Scanner","value":70,"tone":"firn"},{"label":"Workers","value":60,"tone":"firn"},{"label":"API","value":55,"tone":"frost"},{"label":"Scheduler","value":40,"tone":"frost"},{"label":"Web UI","value":30,"tone":"ice"}]}
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="system-architecture-map">System architecture</h2>
+        <figure class="archify archify--tall" aria-label="Interactive Cryo system architecture map">
+          <iframe class="archify-frame" title="System architecture" loading="lazy" src="../diagrams/system.architecture.html?embed=1&theme=light" data-theme-default="light"></iframe>
+          <figcaption class="archify-caption">PostgreSQL holds durable state, Redis holds the queue and locks, object storage holds the table data.</figcaption>
+          <p class="archify-actions"><a href="../diagrams/system.architecture.html?present=1">Open in full viewer →</a> · <a href="https://github.com/tt-a1i/archify">Generated with Archify</a></p>
+        </figure>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="scan-flow">Scan flow</h2>
+        <figure class="archify archify--tall" aria-label="Scan data flow">
+          <iframe class="archify-frame" title="Scan data flow" loading="lazy" src="../diagrams/scan.dataflow.html?embed=1&theme=light" data-theme-default="light"></iframe>
+          <figcaption class="archify-caption">A scan reads a Source and writes table shape to PostgreSQL, not to an engine. Object storage stays untouched.</figcaption>
+        </figure>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="maintenance-sequence">Maintenance</h2>
+        <figure class="archify archify--tall" aria-label="Maintenance sequence">
+          <iframe class="archify-frame" title="Maintenance sequence" loading="lazy" src="../diagrams/maintenance.sequence.html?embed=1&theme=light" data-theme-default="light"></iframe>
+          <figcaption class="archify-caption">Scheduler enqueues, Governor probes live load, the Worker asks the Planner, the engine executes, the audit is written.</figcaption>
+        </figure>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="job-lifecycle">Job lifecycle</h2>
+        <div class="grid-2">
+          <figure class="archify archify--tall" aria-label="Job lifecycle">
+            <iframe class="archify-frame" title="Job lifecycle" loading="lazy" src="../diagrams/job.lifecycle.html?embed=1&theme=light" data-theme-default="light"></iframe>
+          </figure>
+          <figure class="viz" data-chart="timeline">
+            <script type="application/json">
+              {"title":"Lifecycle at a glance","events":[{"at":0,"atLabel":"queued","label":"created","detail":"Redis"},{"at":12,"atLabel":"admit","label":"governor","tone":"frost"},{"at":42,"atLabel":"run","label":"worker + engine","tone":"marker"},{"at":206,"atLabel":"end","label":"recorded","tone":"core"},{"at":312,"atLabel":"hold","label":"deferred","detail":"re-queue","tone":"firn"}],"caption":"A failure does not stop the run. A deferred job re-queues when its window opens.","source":"cryo/governor · 2026-09-30"}
+            </script>
+          </figure>
+        </div>
+        <p class="caption">Nothing runs until the Governor admits the job. A failure stays on that table.</p>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="assignment">Assignment</h2>
+        <figure class="archify archify--tall" aria-label="Assignment workflow">
+          <iframe class="archify-frame" title="Assignment workflow" loading="lazy" src="../diagrams/assign.workflow.html?embed=1&theme=light" data-theme-default="light"></iframe>
+          <figcaption class="archify-caption">An assignment sends a filter spec, never a page of table ids.</figcaption>
+        </figure>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="component-jobs">Component jobs</h2>
+        <div class="grid-2">
+          <section class="card">
+            <h3>Scanner</h3>
+            <p>The Scanner reads Sources and is the single source of truth for what shape every table is in. It never reads data files.</p>
+            <figure class="viz" data-chart="core" style="margin:8px 0 0"><script type="application/json">{"title":"Scanner","label":"metadata read","caption":"CronJob-driven. Reads catalog metadata into PostgreSQL."}</script></figure>
+          </section>
+          <section class="card">
+            <h3>Planner</h3>
+            <p>The Planner emits ordered operations and partition predicates, but no SQL strings. The engine renders the SQL.</p>
+            <figure class="viz" data-chart="core" style="margin:8px 0 0"><script type="application/json">{"title":"Planner","label":"no SQL","caption":"Engine-agnostic. Order is fixed in cryo/planner/guardrails.py."}</script></figure>
+          </section>
+          <section class="card">
+            <h3>Governor</h3>
+            <p>The Governor decides whether and when a job may run. It probes live load, applies caps, and round-robins replicas.</p>
+            <figure class="viz" data-chart="core" style="margin:8px 0 0"><script type="application/json">{"title":"Governor","label":"admission","caption":"Reads runtime.queries / EMR slots. Honors cooldowns and off-peak windows."}</script></figure>
+          </section>
+          <section class="card">
+            <h3>Worker</h3>
+            <p>A Worker executes one table's maintenance on one destination engine. Failure on that table is recorded; the run continues.</p>
+            <figure class="viz" data-chart="core" style="margin:8px 0 0"><script type="application/json">{"title":"Worker","label":"one table","caption":"Per-table lock held in Redis for the job's lifetime."}</script></figure>
+          </section>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="read-next">Read next</h2>
+        <div class="grid-2">
+          <section class="card">
+            <h3><a href="../concepts/index.html">Concepts</a></h3>
+            <p>Source, preset, destination — the three parts that never collapse into one.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../maintenance/index.html">Maintenance</a></h3>
+            <p>The fixed order a run walks, and the guardrails that never turn off.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../deployment/index.html">Deployment</a></h3>
+            <p>What these components look like as Kubernetes workloads and their request floor.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../reference/index.html">Reference</a></h3>
+            <p>Feature presence, public surfaces, and what is in the box.</p>
+          </section>
+        </div>
+
+      </article>
+    </main>
+  </div>
+  <footer id="foot" class="foot"></footer>
+  <script src="../assets/js/charts.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>

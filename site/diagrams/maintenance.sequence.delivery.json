@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "af9ea76c-ce6d-4844-9200-b211290436aa",
+  "status": "current",
+  "command": "deliver",
+  "type": "sequence",
+  "input": "/Users/aamir/Projects/Cryo/site/diagrams/maintenance.sequence.json",
+  "output": "/Users/aamir/Projects/Cryo/site/diagrams/maintenance.sequence.html",
+  "specification": {
+    "sha256": "447d80aa6d40650caea3eabb5330ce9912d0c307dc52a4ce58a684748e3d6b75",
+    "bytes": 3905
+  },
+  "artifact": {
+    "sha256": "ea098bd97e405fcbcb0001a9a3c30705af9ad3cc88e0849460991644200401c9",
+    "bytes": 759836
+  }
+}

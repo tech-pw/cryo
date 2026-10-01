@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "f8ace0dd-7c07-42ed-b409-52dc26bd87d0",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/Users/aamir/Projects/Cryo/site/diagrams/system.architecture.json",
+  "output": "/Users/aamir/Projects/Cryo/site/diagrams/system.architecture.html",
+  "specification": {
+    "sha256": "7b2f0adb77b61c952fb0f47036caccdfd7ed2f16cceb012c3b0a5d60eb6cecb7",
+    "bytes": 5567
+  },
+  "artifact": {
+    "sha256": "972848594ba0c177095d90e638f927acdb9ff024e03ee6f287dd72b963ec0e99",
+    "bytes": 774404
+  }
+}

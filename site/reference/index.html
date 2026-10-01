@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reference — Cryo</title>
+  <meta name="description" content="Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance platform.">
+  <link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="../assets/css/site.css">
+</head>
+<body data-page="reference">
+  <a class="skip" href="#content">Skip to content</a>
+  <header id="top"></header>
+  <div class="shell">
+    <aside id="side" class="side"></aside>
+    <main id="content" class="content">
+      <article class="page">
+        <p class="eyebrow">Reference</p>
+        <h1 id="what-is-in-the-box">What is in the box.</h1>
+        <p class="lede">Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance platform. This page lists what is in the box and what is not.</p>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="feature-presence">Feature presence, not a ranking</h2>
+        <figure class="viz" data-chart="dot-matrix">
+          <script type="application/json">
+            {
+              "title": "Feature presence vs. adjacent tools",
+              "caption": "Filled marks are an unqualified yes in the README. Empty marks mean no, or that the cell is partial, limited, varies, not documented, N/A, only-if-you-built-it, or otherwise qualified. Cryo sorting is Spark-only and Hilbert is capability-gated. Amoro load-aware admission and fleet UI are limited. LakeOps health grading is partial. Crunch health grading is savings-focused, not an A–F grade. DIY maintenance, sorting, and admission are only-if-you-built-them. Managed-cloud sorting and health grading vary; admission is N/A.",
+              "source": "README.md comparison table · 2026-09-30",
+              "legend": ["no", "partial", "yes", "strong"],
+              "columns": ["Cryo", "DIY", "Amoro", "LakeOps", "Crunch", "Managed cloud"],
+              "rows": [
+                {"label": "Maintenance ops", "marks": [3, 1, 3, 3, 3, 3]},
+                {"label": "Sorting or clustering", "marks": [1, 0, 3, 3, 3, 0]},
+                {"label": "Below ZSTD compress", "marks": [0, 0, 0, 0, 3, 0]},
+                {"label": "Load-aware admission", "marks": [3, 0, 1, 3, 0, 0]},
+                {"label": "Health grade and cost", "marks": [3, 0, 0, 1, 0, 0]},
+                {"label": "Data leaves your infra", "marks": [0, 0, 0, 3, 0, 3]},
+                {"label": "Fleet assignment UI", "marks": [3, 0, 1, 3, 3, 3]}
+              ]
+            }
+          </script>
+        </figure>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="public-surfaces">Public surfaces</h2>
+        <div class="grid-2">
+          <figure class="viz" data-chart="figure">
+            <script type="application/json">
+              {
+                "title": "Public surfaces",
+                "caption": "The UI talks only to the API. The platform services are reached through the API.",
+                "source": "hld.md section 3.1 · 2026-09-30",
+                "focus": "api",
+                "groups": [
+                  {"label": "Web UI", "nodes": [{"id": "web", "label": "Web UI", "kind": "cryo"}]},
+                  {"label": "API", "nodes": [{"id": "api", "label": "API", "kind": "cryo"}]},
+                  {"label": "Platform", "nodes": [{"id": "scanner", "label": "Scanner", "kind": "cryo"}, {"id": "scheduler", "label": "Scheduler", "kind": "cryo"}, {"id": "governor", "label": "Governor", "kind": "cryo"}, {"id": "worker", "label": "Worker", "kind": "cryo"}]}
+                ],
+                "edges": [
+                  {"from": "web", "to": "api"}
+                ]
+              }
+            </script>
+          </figure>
+          <figure class="viz" data-chart="bars">
+            <script type="application/json">
+              {"title":"API surface area (illustrative endpoints)","unit":" endpoints","caption":"OpenAPI spec lives at /openapi.json. Types are generated from the schema.","source":"cryo/api · 2026-09-30","series":[{"label":"/tables","value":68,"focus":true},{"label":"/runs","value":48},{"label":"/presets","value":36},{"label":"/assignments","value":24},{"label":"/audit","value":20},{"label":"/sources","value":14},{"label":"/destinations","value":12}]}
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="read-next">Read next</h2>
+        <div class="grid-2">
+          <section class="card">
+            <h3><a href="../architecture/index.html">Architecture</a></h3>
+            <p>Catalogs stay on the read side. Engines stay on the write side. Cryo is the plan in the middle.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../maintenance/index.html">Maintenance</a></h3>
+            <p>The planner emits a plan with no SQL strings. The order is fixed in code.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../deployment/index.html">Deployment</a></h3>
+            <p>Self-hosted on Kubernetes. Engines stay where they are.</p>
+          </section>
+          <section class="card">
+            <h3><a href="https://github.com/shelf-project/Cryo">GitHub</a></h3>
+            <p>The Apache-2.0 source is public. Issues, PRs, and discussions are open.</p>
+          </section>
+        </div>
+
+      </article>
+    </main>
+  </div>
+  <footer id="foot"></footer>
+  <script src="../assets/js/charts.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>
