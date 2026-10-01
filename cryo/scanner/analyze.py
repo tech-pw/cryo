@@ -111,6 +111,8 @@ class _PartitionAccum:
     small: int = 0
     size_bytes: int = 0
     delete_files: int = 0
+    last_write_ms: int | None = None
+    sample_path: str | None = None
 
 
 def analyze_catalog_table(
@@ -210,13 +212,16 @@ def analyze_table(
 
     max_workers = settings.scan_parallel_manifests if parallel_manifests else 1
     manifest_read_errors: list[str] = []
-    for data_file in iter_data_files(
+    snapshot_times = _snapshot_times_by_id(table_obj)
+    for entry in _iter_live_entries(
         table_obj,
         manifests,
         parallel=parallel_manifests,
         max_workers=max_workers,
         manifest_errors=manifest_read_errors,
     ):
+        data_file = _attr(entry, "data_file", entry)
+        write_ms = _entry_write_ms(entry, snapshot_times)
         raw_size = _attr(data_file, "file_size_in_bytes", None)
         if raw_size is None:
             unknown_file_sizes += 1
@@ -256,6 +261,7 @@ def analyze_table(
                 ),
             )
             accum.delete_files += 1
+            _note_last_write(accum, write_ms)
             continue
         total_files += 1
         total_size_bytes += file_size
@@ -287,6 +293,11 @@ def analyze_table(
         accum.size_bytes += file_size
         if file_size < settings.scan_small_file_mb * MB:
             accum.small += 1
+        _note_last_write(accum, write_ms)
+        if accum.sample_path is None:
+            file_path = _attr(data_file, "file_path", None)
+            if isinstance(file_path, str) and file_path:
+                accum.sample_path = file_path
 
     partition_rows = [
         partition_row(key, accum)
@@ -569,13 +580,30 @@ def iter_data_files(
     pool. Entries from each completed manifest are yielded immediately so at most
     ``max_workers`` entry-lists are retained at once (not the whole snapshot).
     """
-    # Do not call scan().plan_files() — see docstring.
+    for entry in _iter_live_entries(
+        table_obj,
+        manifests,
+        parallel=parallel,
+        max_workers=max_workers,
+        manifest_errors=manifest_errors,
+    ):
+        yield _attr(entry, "data_file", entry)
+
+
+def _iter_live_entries(
+    table_obj: object,
+    manifests: Sequence[object] | None = None,
+    *,
+    parallel: bool = True,
+    max_workers: int = 8,
+    manifest_errors: list[str] | None = None,
+) -> Iterable[object]:
     manifest_list = list(manifests) if manifests is not None else _manifests(table_obj)
     io = _attr(table_obj, "io", None)
 
     if not parallel or len(manifest_list) <= 1:
         for manifest in manifest_list:
-            yield from _iter_manifest_data_files(manifest, io, manifest_errors=manifest_errors)
+            yield from _iter_manifest_entries(manifest, io, manifest_errors=manifest_errors)
         return
 
     workers = max(1, min(max_workers, len(manifest_list)))
@@ -591,23 +619,22 @@ def iter_data_files(
             for entry in entries:
                 if _entry_status_deleted(entry):
                     continue
-                yield _attr(entry, "data_file", entry)
+                yield entry
 
 
-def _iter_manifest_data_files(
+def _iter_manifest_entries(
     manifest: object,
     io: object,
     *,
     manifest_errors: list[str] | None = None,
 ) -> Iterable[object]:
-    """Iterate over data files from a single manifest (serial path)."""
     entries, error = _read_manifest_entries(manifest, io)
     if error and manifest_errors is not None:
         manifest_errors.append(error)
     for entry in entries:
         if _entry_status_deleted(entry):
             continue
-        yield _attr(entry, "data_file", entry)
+        yield entry
 
 
 def _read_manifest_entries(manifest: object, io: object) -> tuple[list[object], str | None]:
@@ -682,8 +709,90 @@ def partition_row(key: str, accum: _PartitionAccum) -> PartitionAnalysis:
         small_files_in_partition_count=accum.small,
         partition_size_gb=round(accum.size_bytes / GB, 6),
         compaction_status="F" if accum.small > 1 and accum.files > 1 else "T",
-        raw={"partition_values": dict(accum.values), "delete_files": accum.delete_files},
+        raw=_partition_raw(accum),
     )
+
+
+def _partition_raw(accum: _PartitionAccum) -> dict[str, Any]:
+    raw: dict[str, Any] = {
+        "partition_values": dict(accum.values),
+        "delete_files": accum.delete_files,
+    }
+    if accum.last_write_ms is not None:
+        raw["last_write_at"] = _format_last_write_at(accum.last_write_ms)
+    if accum.sample_path:
+        raw["sample_file_path"] = accum.sample_path
+    return raw
+
+
+def _note_last_write(accum: _PartitionAccum, write_ms: int | None) -> None:
+    if write_ms is None:
+        return
+    if accum.last_write_ms is None or write_ms > accum.last_write_ms:
+        accum.last_write_ms = write_ms
+
+
+def _format_last_write_at(ms: int) -> str:
+    seconds, millis = divmod(ms, 1000)
+    utc = datetime.fromtimestamp(seconds, tz=UTC)
+    return f"{utc.strftime('%Y-%m-%dT%H:%M:%S')}.{millis:03d}Z"
+
+
+def _snapshot_times_by_id(table_obj: object) -> dict[int, int]:
+    times: dict[int, int] = {}
+    for snapshot in _table_snapshots(table_obj):
+        snapshot_id = _optional_int(_attr(snapshot, "snapshot_id", None))
+        millis = _snapshot_millis(snapshot)
+        if snapshot_id is None or millis is None:
+            continue
+        times[snapshot_id] = millis
+    return times
+
+
+def _entry_write_ms(entry: object, times: Mapping[int, int]) -> int | None:
+    """Snapshot time that added the file. When that snapshot has been expired, the file is
+    older than the oldest retained snapshot, so that timestamp is a conservative stand-in
+    (it can only make a partition look more recently written, never colder)."""
+    snapshot_id = _entry_snapshot_id(entry)
+    if snapshot_id is None:
+        return None
+    known = times.get(snapshot_id)
+    if known is not None:
+        return known
+    return min(times.values()) if times else None
+
+
+def _entry_snapshot_id(entry: object) -> int | None:
+    value = getattr(entry, "snapshot_id", None)
+    if callable(value):
+        try:
+            value = value()
+        except TypeError:
+            return None
+    return _optional_int(value)
+
+
+def _snapshot_millis(snapshot: object) -> int | None:
+    raw = _attr(snapshot, "timestamp_ms", None)
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        return int(raw)
+    committed = _attr(snapshot, "committed_at", None)
+    if isinstance(committed, datetime):
+        utc = committed if committed.tzinfo else committed.replace(tzinfo=UTC)
+        return int(utc.timestamp() * 1000)
+    return None
+
+
+def _table_snapshots(table_obj: object) -> list[object]:
+    metadata = _attr(table_obj, "metadata", None)
+    snapshots = _call_or_attr(table_obj, "snapshots", default=None)
+    if snapshots is None:
+        snapshots = _attr(metadata, "snapshots", []) or []
+    return list(snapshots or [])
 
 
 def _needs_compaction(total_files: int, small_files: int, max_files_per_partition: int) -> bool:
@@ -730,10 +839,7 @@ def _entry_status_deleted(entry: object) -> bool:
 
 def _snapshot_info(table_obj: object) -> dict[str, Any]:
     metadata = _attr(table_obj, "metadata", None)
-    snapshots = _call_or_attr(table_obj, "snapshots", default=None)
-    if snapshots is None:
-        snapshots = _attr(metadata, "snapshots", []) or []
-    snapshots = list(snapshots or [])
+    snapshots = _table_snapshots(table_obj)
     committed_at = [
         ts for snapshot in snapshots if (ts := _snapshot_timestamp(snapshot)) is not None
     ]

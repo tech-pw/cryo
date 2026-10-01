@@ -426,4 +426,5 @@ plan rather than its exact file-path assumptions.
 ### Nice-to-have:
 - Full golden-test parity across all three engines
 - MCP server as standalone process (currently API-embedded)
-- Tiering execution (currently identifies candidates only)
+- Tiering execution (currently identifies candidates only) — researched and phased in
+  [`ARCHIVE_TIERING_RESEARCH_2026-10-01.md`](./ARCHIVE_TIERING_RESEARCH_2026-10-01.md)

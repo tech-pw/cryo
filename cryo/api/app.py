@@ -24,6 +24,7 @@ from cryo.api.middleware import RateLimitMiddleware
 from cryo.api.phase8_routes import router as phase8_router
 from cryo.api.routes import router as api_router
 from cryo.api.routes_alerts import router as alerts_router
+from cryo.api.routes_archive import router as archive_router
 from cryo.api.routes_audit import router as audit_router
 from cryo.api.routes_batch import router as batch_router
 from cryo.api.routes_cost_attribution import router as cost_attribution_router
@@ -190,6 +191,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(cost_attribution_router)
     app.include_router(anomalies_router)
     app.include_router(partition_access_router)
+    app.include_router(archive_router)
     app.include_router(quality_constraints_router)
     app.include_router(explorer_views_router)
     app.include_router(alerts_router)

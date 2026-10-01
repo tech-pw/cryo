@@ -71,7 +71,7 @@ def test_analyze_table_for_tiering_uses_s3_pricing_for_standard_cost(session):
 
 
 def test_analyze_table_for_tiering_recommends_enable_for_cold_table(session):
-    """Tables without recent access should recommend Intelligent-Tiering."""
+    """Measured access older than 90 days, still inside the lookback, recommends tiering."""
     table = _seed_table(session, schema_name="archive", table_name="stale_data")
     source = session.get(Source, table.source_id)
 
@@ -101,7 +101,7 @@ def test_analyze_table_for_tiering_recommends_enable_for_cold_table(session):
     )
     session.commit()
 
-    rec = analyze_table_for_tiering(session, table.id, lookback_days=90)
+    rec = analyze_table_for_tiering(session, table.id, lookback_days=150)
 
     assert rec.recommendation == "enable"
     assert rec.days_since_last_access >= 90

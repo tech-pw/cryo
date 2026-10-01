@@ -465,7 +465,9 @@ def _partition_from_go(part: Mapping[str, Any], fields: list[dict[str, Any]]) ->
         small_files_in_partition_count=small,
         partition_size_gb=round(size_bytes / GB, 6),
         compaction_status="F" if small > 1 and files > 1 else "T",
-        raw={"partition_values": values, "delete_files": delete_files},
+        raw=_partition_raw_from_go(
+            values, delete_files, part.get("last_write_at"), part.get("sample_file_path")
+        ),
     )
 
 
@@ -552,6 +554,20 @@ def _below_target_stats(payload: Mapping[str, Any]) -> dict[str, int]:
         "bytes_below_target": int(payload.get("bytes_below_target") or 0),
         "reduction_target_bytes": int(payload.get("reduction_target_bytes") or 0),
     }
+
+
+def _partition_raw_from_go(
+    values: Mapping[str, Any],
+    delete_files: int,
+    last_write_at: Any,
+    sample_file_path: Any = None,
+) -> dict[str, Any]:
+    raw: dict[str, Any] = {"partition_values": dict(values), "delete_files": delete_files}
+    if isinstance(sample_file_path, str) and sample_file_path:
+        raw["sample_file_path"] = sample_file_path
+    if isinstance(last_write_at, str) and last_write_at:
+        raw["last_write_at"] = last_write_at
+    return raw
 
 
 def _parse_snapshot_ts(value: Any) -> datetime | None:

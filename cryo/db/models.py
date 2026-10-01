@@ -2223,6 +2223,26 @@ class PartitionAccessDaily(TimestampMixin, Base):
     last_seen_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
 
+class PartitionLastAccess(TimestampMixin, Base):
+    """Durable last-read day per (table, partition path).
+
+    ``PartitionAccessDaily`` is pruned at 35 days, so "no read in 90 days" cannot be proven from
+    it. This keeps one row per partition and is only ever advanced by log ingestion
+    (``cryo.scanner.s3_request_cost_ingest._upsert_partition_access``); it is not pruned by age.
+    """
+
+    __tablename__ = "partition_last_access"
+
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    partition_path: Mapped[str] = mapped_column(Text, primary_key=True)
+    first_read_day: Mapped[date] = mapped_column(Date, nullable=False)
+    last_read_day: Mapped[date] = mapped_column(Date, nullable=False)
+
+
 class QueryCostAttributionDaily(Base):
     """Per-day, per-client, per-schema rollup of real Trino query scan bytes -- a "who/what is
     driving scan cost" report, built entirely from data Trino's own query-completion event
