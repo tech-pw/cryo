@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Health and cost — Cryo</title>
+  <meta name="description" content="A grade is a score with the deductions still attached. The scanner never scans data files on the request path.">
+  <link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="../assets/css/site.css">
+</head>
+<body data-page="health">
+  <a class="skip" href="#content">Skip to content</a>
+  <header id="top"></header>
+  <div class="shell">
+    <aside id="side" class="side"></aside>
+    <main id="content" class="content">
+      <article class="page">
+        <p class="eyebrow">Health and cost</p>
+        <h1 id="grade-is-a-score">A grade is a score with the deductions still attached.</h1>
+        <p class="lede">The Scanner grades a table from stored metadata. It does not scan data files on the request path. Object storage is not an input.</p>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="grades">Grades</h2>
+        <div class="grid-2">
+          <figure class="viz" data-chart="bands">
+            <script type="application/json">
+              {"title":"Grade letters","caption":"A ≥ 90, B ≥ 75, C ≥ 60, D ≥ 40, otherwise F.","source":"cryo/scanner/health.py · 2026-09-30","bands":[{"label":"A","tone":"core","count":"90+"},{"label":"B","tone":"firn","count":"75-89"},{"label":"C","tone":"frost","count":"60-74"},{"label":"D","tone":"frost","count":"40-59"},{"label":"F","tone":"ice","count":"<40"}]}
+            </script>
+          </figure>
+          <figure class="viz" data-chart="donut">
+            <script type="application/json">
+              {"compact":true,"title":"Illustrative fleet distribution","centre":"B+","centreSub":"weighted median","parts":[{"label":"A","value":142,"unit":" tables","tone":"core"},{"label":"B","value":408,"unit":" tables","tone":"firn"},{"label":"C","value":284,"unit":" tables","tone":"frost"},{"label":"D-F","value":98,"unit":" tables","tone":"ice"}],"caption":"Weighted by table size. The median grade is the headline.","source":"Illustrative shape · 2026-09-30"}
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="deductions">Deductions</h2>
+        <div class="grid-2">
+          <figure class="viz" data-chart="bars">
+            <script type="application/json">
+              {"title":"Score deductions","unit":" pts","caption":"Score starts at 100. Warning subtracts 8. Critical subtracts 20. Those are the only deduction sizes.","source":"cryo/scanner/health.py · 2026-09-30","series":[{"label":"Warning","value":8,"tone":"firn"},{"label":"Critical","value":20,"focus":true,"tone":"core"}]}
+            </script>
+          </figure>
+          <figure class="viz" data-chart="waterfall">
+            <script type="application/json">
+              {"title":"How a grade of 64 is reached","start":100,"unit":"","items":[{"label":"small file warning","value":-8},{"label":"missing statistics warning","value":-8},{"label":"missing snapshot warning","value":-8},{"label":"stale manifest critical","value":-20,"type":"total"}],"caption":"Deductions stack from 100. Final score is 64, which is a C.","source":"cryo/scanner/health.py · 2026-09-30"}
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="projection">Projection path — scanner to stored cost</h2>
+        <div class="grid-2">
+          <figure class="viz" data-chart="figure">
+            <script type="application/json">
+              {
+                "title": "Scanner to cost estimator to stored projection",
+                "caption": "Object storage is not an input. Orphan precision is an opt-in scanner tier.",
+                "source": "hld.md section 3.10 · 2026-09-30",
+                "focus": "estimator",
+                "groups": [
+                  {"label": "Scan", "nodes": [{"id": "scanner", "label": "Scanner", "kind": "cryo"}]},
+                  {"label": "Estimate", "nodes": [{"id": "estimator", "label": "Cost estimator", "kind": "cryo"}]},
+                  {"label": "Stored", "nodes": [{"id": "projection", "label": "Stored projection", "kind": "store"}]},
+                  {"label": "Not an input", "nodes": [{"id": "object-storage", "label": "Object storage", "kind": "store"}]}
+                ],
+                "edges": [
+                  {"from": "scanner", "to": "estimator"},
+                  {"from": "estimator", "to": "projection"}
+                ]
+              }
+            </script>
+          </figure>
+          <figure class="viz" data-chart="donut">
+            <script type="application/json">
+              {"compact":true,"title":"Where the bytes live (illustrative table)","centre":"3.4 TB","centreSub":"total projected","parts":[{"label":"live data","value":2.1,"unit":" TB","tone":"core"},{"label":"expirable","value":820,"unit":" GB","tone":"firn"},{"label":"manifests + metadata","value":96,"unit":" GB","tone":"frost"},{"label":"orphan candidates","value":390,"unit":" GB","tone":"ice"}],"caption":"Byte classes, not money. Cryo does not show modelled savings as currency.","source":"Illustrative shape · 2026-09-30"}
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="operations">What each operation projects</h2>
+        <div class="grid-2">
+          <section class="card">
+            <h3 class="mono">expire_snapshots</h3>
+            <p>Projects bytes referenced only by snapshots the retention policy would drop — and only when no surviving snapshot still references the file.</p>
+            <figure class="viz" data-chart="compare" style="margin-top:8px">
+              <script type="application/json">{"title":"Illustrative expire_snapshots","pairs":[{"label":"bytes before","before":1200,"after":982,"unit":" GB","delta":-218}]}</script>
+            </figure>
+          </section>
+          <section class="card">
+            <h3 class="mono">remove_orphan_files</h3>
+            <p>Projects bytes present in storage but referenced by no snapshot. Precise only on the scanner's opt-in listing tier; otherwise flagged as last-known.</p>
+            <figure class="viz" data-chart="compare" style="margin-top:8px">
+              <script type="application/json">{"title":"Illustrative remove_orphan_files","pairs":[{"label":"bytes before","before":46,"after":0,"unit":" GB","delta":-46}]}</script>
+            </figure>
+          </section>
+          <section class="card">
+            <h3 class="mono">optimize</h3>
+            <p>Projects delete-file bytes merged away. Data bytes are rewritten, so the storage change is left to the later expiry projection.</p>
+            <figure class="viz" data-chart="compare" style="margin-top:8px">
+              <script type="application/json">{"title":"Illustrative optimize","pairs":[{"label":"files before","before":9184,"after":2316,"unit":"","delta":-6868}]}</script>
+            </figure>
+          </section>
+          <section class="card">
+            <h3 class="mono">optimize_manifests</h3>
+            <p>Projects manifest and metadata bytes reclaimed by consolidation. Small in volume, big in plan-list latency.</p>
+            <figure class="viz" data-chart="compare" style="margin-top:8px">
+              <script type="application/json">{"title":"Illustrative optimize_manifests","pairs":[{"label":"manifest bytes","before":2400,"after":2380,"unit":" MB","delta":-20}]}</script>
+            </figure>
+          </section>
+        </div>
+        <p class="source">hld.md section 3.10 · 2026-09-30</p>
+        <p class="note">A modelled saving is not shown as money on this site.</p>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="read-next">Read next</h2>
+        <div class="grid-2">
+          <section class="card">
+            <h3><a href="../maintenance/index.html">Maintenance</a></h3>
+            <p>The fixed order that turns a low grade back into a high one.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../concepts/index.html">Concepts</a></h3>
+            <p>Why the scan path never touches a data file.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../architecture/index.html">Architecture</a></h3>
+            <p>Where the scanner and cost estimator sit in the running system.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../reference/index.html">Reference</a></h3>
+            <p>How Cryo's health grading compares to adjacent tools.</p>
+          </section>
+        </div>
+
+      </article>
+    </main>
+  </div>
+  <footer id="foot"></footer>
+  <script src="../assets/js/charts.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>

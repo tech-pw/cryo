@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How Cryo fits — Cryo</title>
+  <meta name="description" content="Sources read, Cryo plans, destinations write. The three parts never collapse into one.">
+  <link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="../assets/css/site.css">
+</head>
+<body data-page="concepts">
+  <a class="skip" href="#content">Skip to content</a>
+  <header id="top"></header>
+  <div class="shell">
+    <aside id="side" class="side"></aside>
+    <main id="content" class="content">
+      <article class="page">
+        <p class="eyebrow">Concepts</p>
+        <h1>Read stays apart from write.</h1>
+        <p class="lede">A source answers where an Apache Iceberg table lives. A destination answers where maintenance runs. Cryo holds the plan, admission, locks, and evidence between them.</p>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="three-parts">Three parts, never collapsed</h2>
+        <div class="grid-3">
+          <figure class="viz" data-chart="core">
+            <script type="application/json">{"title":"Source","label":"read side","caption":"A source answers where this table lives and how to read its metadata.","source":"AGENTS.md §1 + hld.md §3"}</script>
+          </figure>
+          <figure class="viz" data-chart="core">
+            <script type="application/json">{"title":"Preset","label":"binding","caption":"A preset binds what to do, on which destination, when, and to which tables.","source":"AGENTS.md §1"}</script>
+          </figure>
+          <figure class="viz" data-chart="core">
+            <script type="application/json">{"title":"Destination","label":"write side","caption":"A destination answers where to submit maintenance work.","source":"hld.md §3.4"}</script>
+          </figure>
+        </div>
+
+        <figure class="viz" data-chart="figure" style="margin-top:18px">
+          <script type="application/json">
+            {
+              "title": "Read → Bind → Write",
+              "caption": "Sources feed the Scanner. Presets bind tables to destinations. Cryo schedules and admits the work.",
+              "source": "hld.md section 4. 2026-09-30.",
+              "focus": "preset",
+              "groups": [
+                {"label": "Source (read)", "nodes": [{"id": "catalog", "label": "Iceberg catalog", "kind": "source"}]},
+                {"label": "Cryo", "nodes": [{"id": "scanner", "label": "Scanner", "kind": "cryo"}, {"id": "table", "label": "Tables", "kind": "cryo"}]},
+                {"label": "Binding", "nodes": [{"id": "preset", "label": "Preset", "kind": "cryo"}]},
+                {"label": "Destination (write)", "nodes": [{"id": "engine", "label": "Trino or Spark", "kind": "engine"}]}
+              ],
+              "edges": [
+                {"from": "catalog", "to": "scanner", "style": "read"},
+                {"from": "scanner", "to": "table"},
+                {"from": "table", "to": "preset"},
+                {"from": "preset", "to": "engine", "style": "write"}
+              ]
+            }
+          </script>
+        </figure>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="scan-path">Scan path — metadata only, no live data files</h2>
+        <div class="grid-2">
+          <figure class="viz" data-chart="figure">
+            <script type="application/json">
+              {
+                "title": "Scan path",
+                "caption": "The Scanner reads metadata and stores stats. It never reads data files and never invokes OPTIMIZE.",
+                "source": "hld.md section 5.1. 2026-09-30.",
+                "focus": "scanner",
+                "groups": [
+                  {"label": "Schedule", "nodes": [{"id": "cron", "label": "CronJob", "kind": "cryo"}]},
+                  {"label": "Cryo", "nodes": [{"id": "scanner", "label": "Scanner", "kind": "cryo"}]},
+                  {"label": "Source (read)", "nodes": [{"id": "catalog", "label": "Iceberg catalog", "kind": "source"}]},
+                  {"label": "Store", "nodes": [{"id": "postgres", "label": "Postgres", "kind": "store"}]}
+                ],
+                "edges": [
+                  {"from": "cron", "to": "scanner"},
+                  {"from": "scanner", "to": "catalog", "style": "read"},
+                  {"from": "scanner", "to": "postgres"}
+                ]
+              }
+            </script>
+          </figure>
+          <figure class="viz" data-chart="donut">
+            <script type="application/json">
+              {"compact":true,"title":"What the scanner reads (per table)","centre":"metadata","centreSub":"only metadata is read","parts":[{"label":"manifest lists","value":40,"unit":"%","tone":"core"},{"label":"manifest files","value":30,"unit":"%","tone":"firn"},{"label":"partition stats","value":20,"unit":"%","tone":"frost"},{"label":"table / schema","value":10,"unit":"%","tone":"ice"}],"caption":"The scanner never reads a data file. Object storage stays untouched on the scan path.","source":"cryo/scanner · 2026-09-30"}
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="maintenance-wave">Maintenance wave</h2>
+        <figure class="viz" data-chart="figure">
+          <script type="application/json">
+            {
+              "title": "Maintenance wave",
+              "caption": "Scheduler finds due presets. Governor decides whether to admit. Worker executes via the destination engine.",
+              "source": "hld.md section 5.2. 2026-09-30.",
+              "focus": "governor",
+              "groups": [
+                {"label": "Schedule", "nodes": [{"id": "scheduler", "label": "Scheduler", "kind": "cryo"}]},
+                {"label": "Admit", "nodes": [{"id": "governor", "label": "Governor", "kind": "cryo"}]},
+                {"label": "Run", "nodes": [{"id": "worker", "label": "Worker", "kind": "cryo"}]},
+                {"label": "Plan", "nodes": [{"id": "planner", "label": "Planner", "kind": "cryo"}]},
+                {"label": "Destination (write)", "nodes": [{"id": "engine", "label": "Engine", "kind": "engine"}]}
+              ],
+              "edges": [
+                {"from": "scheduler", "to": "governor"},
+                {"from": "governor", "to": "worker"},
+                {"from": "worker", "to": "planner"},
+                {"from": "planner", "to": "engine", "style": "write"},
+                {"from": "governor", "to": "engine", "style": "read"}
+              ]
+            }
+          </script>
+        </figure>
+
+        <div class="grid-2" style="margin-top:14px">
+          <figure class="viz" data-chart="funnel">
+            <script type="application/json">
+              {"title":"How a job reaches a worker","caption":"Many tables need work; fewer are eligible; fewer still get admitted when the engine is loaded.","steps":[{"label":"tables with work","value":614},{"label":"eligible (cooldown, lock, off-peak)","value":412},{"label":"admitted (load-aware)","value":148,"detail":"round-robin per replica"}]}
+            </script>
+          </figure>
+          <figure class="viz" data-chart="timeline">
+            <script type="application/json">
+              {"title":"One job, one table, end to end","events":[{"at":0,"atLabel":"t0","label":"queued"},{"at":18,"atLabel":"+18s","label":"admitted","tone":"frost"},{"at":42,"atLabel":"+42s","label":"scanned","tone":"frost"},{"at":120,"atLabel":"+2:00","label":"optimize","tone":"marker"},{"at":184,"atLabel":"+3:04","label":"expired","tone":"firn"},{"at":206,"atLabel":"+3:26","label":"recorded","tone":"core"}],"caption":"Queued → admitted → scanned → optimize → expire → recorded.","source":"cryo/governor · 2026-09-30"}
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="grades">Fleet grades, at a glance</h2>
+        <div class="grid-2">
+          <figure class="viz" data-chart="donut">
+            <script type="application/json">
+              {"compact":true,"title":"Illustrative fleet grade distribution","centre":"B+","centreSub":"median grade","parts":[{"label":"A (90+)","value":142,"unit":" tables","tone":"core"},{"label":"B (75-89)","value":408,"unit":" tables","tone":"firn"},{"label":"C (60-74)","value":284,"unit":" tables","tone":"frost"},{"label":"D-F","value":98,"unit":" tables","tone":"ice"}],"caption":"Weighted by table size, not table count. The median grade is the headline.","source":"Illustrative shape · 2026-09-30"}
+            </script>
+          </figure>
+          <figure class="viz" data-chart="bars">
+            <script type="application/json">
+              {"title":"Score deductions","unit":" pts","caption":"Score starts at 100. Warning subtracts 8. Critical subtracts 20. Those are the only deduction sizes.","source":"cryo/scanner/health.py · 2026-09-30","series":[{"label":"Warning","value":8,"tone":"firn"},{"label":"Critical","value":20,"focus":true,"tone":"core"}]}
+            </script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="read-next">Read next</h2>
+        <div class="grid-2">
+          <section class="card">
+            <h3><a href="../architecture/index.html">Architecture</a></h3>
+            <p>Where these three parts sit as running components, and how they connect.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../maintenance/index.html">Maintenance</a></h3>
+            <p>What the destination side actually runs, in a fixed order.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../health/index.html">Health and cost</a></h3>
+            <p>How the scanner turns metadata into a grade, without reading data files.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../quickstart/index.html">Quickstart</a></h3>
+            <p>See a source, a preset, and a destination connected in five minutes.</p>
+          </section>
+        </div>
+
+      </article>
+    </main>
+  </div>
+  <footer id="foot"></footer>
+  <script src="../assets/js/charts.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>

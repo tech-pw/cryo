@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Cryo platform",
+    "locale": "en",
+    "output": "site/diagrams/system.architecture.html",
+    "visual_preset": "editorial",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "iceberg",
+      "type": "external",
+      "label": "Iceberg REST",
+      "sublabel": "catalog",
+      "pos": [36, 48],
+      "size": [184, 68]
+    },
+    {
+      "id": "hive",
+      "type": "external",
+      "label": "Hive or Glue",
+      "sublabel": "metastore",
+      "pos": [36, 176],
+      "size": [184, 68]
+    },
+    {
+      "id": "scanner",
+      "type": "backend",
+      "label": "Scanner",
+      "sublabel": "metadata read",
+      "pos": [320, 96],
+      "size": [168, 68]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "stats and audit",
+      "pos": [568, 96],
+      "size": [180, 68]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "Web UI",
+      "sublabel": "operator",
+      "pos": [320, 252],
+      "size": [152, 68]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API",
+      "sublabel": "FastAPI",
+      "pos": [548, 252],
+      "size": [144, 68]
+    },
+    {
+      "id": "scheduler",
+      "type": "backend",
+      "label": "Scheduler",
+      "sublabel": "presets",
+      "pos": [320, 424],
+      "size": [168, 68]
+    },
+    {
+      "id": "redis",
+      "type": "messagebus",
+      "label": "Redis",
+      "sublabel": "queue and locks",
+      "pos": [568, 424],
+      "size": [156, 68]
+    },
+    {
+      "id": "governor",
+      "type": "backend",
+      "label": "Governor",
+      "sublabel": "admission",
+      "pos": [812, 424],
+      "size": [168, 68]
+    },
+    {
+      "id": "workers",
+      "type": "backend",
+      "label": "Workers",
+      "sublabel": "one table",
+      "pos": [1060, 424],
+      "size": [160, 68]
+    },
+    {
+      "id": "planner",
+      "type": "backend",
+      "label": "Planner",
+      "sublabel": "no SQL",
+      "pos": [1300, 424],
+      "size": [152, 68]
+    },
+    {
+      "id": "trino",
+      "type": "external",
+      "label": "Trino",
+      "sublabel": "SQL",
+      "pos": [320, 612],
+      "size": [168, 68]
+    },
+    {
+      "id": "spark",
+      "type": "external",
+      "label": "Spark on EMR",
+      "sublabel": "Spark SQL",
+      "pos": [1090, 612],
+      "size": [180, 68]
+    },
+    {
+      "id": "storage",
+      "type": "cloud",
+      "label": "Object storage",
+      "sublabel": "Iceberg data",
+      "pos": [704, 800],
+      "size": [196, 68]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Sources (read)",
+      "wraps": ["iceberg", "hive"]
+    },
+    {
+      "kind": "region",
+      "label": "Cryo",
+      "wraps": ["web", "api", "scanner", "scheduler", "governor", "workers", "planner", "postgres", "redis"]
+    },
+    {
+      "kind": "region",
+      "label": "Destinations (write)",
+      "wraps": ["trino", "spark"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "rest-to-scanner",
+      "from": "iceberg",
+      "to": "scanner",
+      "label": "metadata"
+    },
+    {
+      "id": "hive-to-scanner",
+      "from": "hive",
+      "to": "scanner",
+      "label": "metadata"
+    },
+    {
+      "id": "scanner-to-postgres",
+      "from": "scanner",
+      "to": "postgres",
+      "label": "stats",
+      "variant": "emphasis"
+    },
+    {
+      "id": "web-to-api",
+      "from": "web",
+      "to": "api",
+      "label": "REST",
+      "variant": "emphasis"
+    },
+    {
+      "id": "scheduler-to-redis",
+      "from": "scheduler",
+      "to": "redis",
+      "label": "enqueue"
+    },
+    {
+      "id": "governor-to-redis",
+      "from": "governor",
+      "to": "redis",
+      "label": "slots"
+    },
+    {
+      "id": "governor-to-workers",
+      "from": "governor",
+      "to": "workers",
+      "label": "admit",
+      "variant": "emphasis"
+    },
+    {
+      "id": "workers-to-planner",
+      "from": "workers",
+      "to": "planner",
+      "label": "plan"
+    },
+    {
+      "id": "governor-to-trino",
+      "from": "governor",
+      "to": "trino",
+      "label": "live load"
+    },
+    {
+      "id": "governor-to-spark",
+      "from": "governor",
+      "to": "spark",
+      "label": "job slots"
+    },
+    {
+      "id": "workers-to-trino",
+      "from": "workers",
+      "to": "trino",
+      "label": "execute"
+    },
+    {
+      "id": "workers-to-spark",
+      "from": "workers",
+      "to": "spark",
+      "label": "execute",
+      "variant": "emphasis"
+    },
+    {
+      "id": "trino-to-storage",
+      "from": "trino",
+      "to": "storage",
+      "label": "write"
+    },
+    {
+      "id": "spark-to-storage",
+      "from": "spark",
+      "to": "storage",
+      "label": "write",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Read path",
+      "items": [
+        "Catalog metadata is read into the Scanner",
+        "Stats land in PostgreSQL",
+        "The default scan is metadata only"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Write path",
+      "items": [
+        "Workers ask the Planner, then execute",
+        "Trino and Spark on EMR write object storage",
+        "Governor probes live load before admit"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Operation order",
+      "items": [
+        "convert_deletes, rewrite_position_deletes, optimize",
+        "compute_statistics, optimize_manifests",
+        "expire_snapshots, then remove_orphan_files"
+      ]
+    }
+  ]
+}

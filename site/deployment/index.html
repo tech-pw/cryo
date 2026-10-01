@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deployment — Cryo</title>
+  <meta name="description" content="Cryo deploys as a control plane beside Trino and Apache Spark.">
+  <link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="../assets/css/site.css">
+</head>
+<body data-page="deployment">
+  <a class="skip" href="#content">Skip to content</a>
+  <header id="top"></header>
+  <div class="shell">
+    <aside id="side" class="side"></aside>
+    <main id="content" class="content">
+      <article class="page">
+        <p class="eyebrow">Deployment</p>
+        <h1 id="control-plane">A small control plane, plus the engines you already run.</h1>
+        <p class="lede">Cryo does not replace Trino or Apache Spark. It plans maintenance and admits that work to the engines you already run. Deploy as a Helm chart; keep your engines where they are.</p>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="kubernetes-services">Cryo services on Kubernetes</h2>
+        <div class="grid-2">
+          <figure class="viz" data-chart="figure">
+            <script type="application/json">
+              {
+                "title": "Cryo services on Kubernetes. The Governor is the focus.",
+                "caption": "Scheduler and Governor are leader-elected. Scaling workers does not by itself raise OPTIMIZE concurrency.",
+                "source": "hld.md section 7 and section 6 · 2026-09-30",
+                "focus": "governor",
+                "groups": [
+                  {"label": "Cryo", "nodes": [{"id": "api", "label": "API", "kind": "cryo"}, {"id": "web", "label": "Web", "kind": "cryo"}, {"id": "scheduler", "label": "Scheduler", "kind": "cryo"}, {"id": "governor", "label": "Governor", "kind": "cryo"}, {"id": "worker", "label": "Worker", "kind": "cryo"}, {"id": "scanner", "label": "Scanner CronJob", "kind": "cryo"}]},
+                  {"label": "Store", "nodes": [{"id": "postgres", "label": "PostgreSQL", "kind": "store"}, {"id": "redis", "label": "Redis", "kind": "store"}]}
+                ]
+              }
+            </script>
+          </figure>
+          <figure class="viz" data-chart="treemap">
+            <script type="application/json">{"title":"Helm release components","items":[{"label":"api","value":40,"tone":"core"},{"label":"worker","value":40,"tone":"firn"},{"label":"scannerWorker","value":35,"tone":"firn"},{"label":"governor","value":20,"tone":"frost"},{"label":"scheduler","value":15,"tone":"frost"},{"label":"web","value":12,"tone":"ice"}],"unit":"%","caption":"Proportional release shape. The scanner CronJob is separate.","source":"deploy/helm/cryo · 2026-09-30"}</script>
+          </figure>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="request-floor">Request floor — committed Helm defaults</h2>
+        <div class="grid-2">
+          <figure class="viz" data-chart="bars">
+            <script type="application/json">
+              {"title":"CPU request totals across replicas","unit":" cores","caption":"Committed Helm defaults, steady-state idle. These totals across replicas sum to 3.35 CPU cores. scannerWorker is not the Scanner CronJob.","source":"deploy/helm/cryo/values.yaml via scripts/deployment_footprint.py · 2026-09-30","series":[{"label":"api","value":0.5},{"label":"worker","value":1},{"label":"governor","value":0.25},{"label":"scheduler","value":0.1},{"label":"scannerWorker","value":1.5,"focus":true}]}
+            </script>
+          </figure>
+          <figure class="viz" data-chart="bars">
+            <script type="application/json">
+              {"title":"Memory request totals across replicas","unit":" GiB","caption":"Committed Helm defaults, steady-state idle. These totals across replicas sum to 6.00 GiB.","source":"deploy/helm/cryo/values.yaml via scripts/deployment_footprint.py · 2026-09-30","series":[{"label":"api","value":1.5},{"label":"worker","value":2},{"label":"governor","value":0.5},{"label":"scheduler","value":0.5},{"label":"scannerWorker","value":1.5,"focus":true}]}
+            </script>
+          </figure>
+        </div>
+        <p>Reproduce the floor from the committed chart defaults.</p>
+        <div class="terminal" aria-label="Reproduce command">
+          <div class="terminal-bar">
+            <div class="terminal-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+            <div class="terminal-title">bash · deployment footprint</div>
+            <button class="terminal-copy" type="button" aria-label="Copy command">Copy</button>
+          </div>
+          <div class="terminal-body"><span class="prompt">$</span> <span class="cmd-strong">make</span> deployment-footprint</div>
+        </div>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="layout">Layout in three lines</h2>
+        <div class="grid-3">
+          <section class="card">
+            <h3>Helm chart</h3>
+            <p>The chart path is <code class="mono">deploy/helm/cryo</code>. Values are committed; overrides are per-environment.</p>
+          </section>
+          <section class="card">
+            <h3>Stores</h3>
+            <p>PostgreSQL and Redis are required. Both are external to the chart so you can bring managed services.</p>
+          </section>
+          <section class="card">
+            <h3>Engines</h3>
+            <p>Engines stay outside the chart. Cryo connects to them via source and destination configs.</p>
+          </section>
+        </div>
+
+        <p class="note">This page is the public shape. It is not a production runbook.</p>
+
+        <div class="layer-rule" aria-hidden="true"></div>
+
+        <h2 id="read-next">Read next</h2>
+        <div class="grid-2">
+          <section class="card">
+            <h3><a href="../architecture/index.html">Architecture</a></h3>
+            <p>The system context these Kubernetes workloads implement.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../engines/index.html">Engines</a></h3>
+            <p>How the same plan renders as Trino SQL or Spark SQL once admitted.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../quickstart/index.html">Quickstart</a></h3>
+            <p>Run the same components locally with Docker before deploying to Kubernetes.</p>
+          </section>
+          <section class="card">
+            <h3><a href="../reference/index.html">Reference</a></h3>
+            <p>Public API surfaces and what is in the box.</p>
+          </section>
+        </div>
+
+      </article>
+    </main>
+  </div>
+  <footer id="foot"></footer>
+  <script src="../assets/js/charts.js"></script>
+  <script src="../assets/js/site.js"></script>
+</body>
+</html>
