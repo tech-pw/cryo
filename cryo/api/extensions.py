@@ -2042,18 +2042,36 @@ def _latest_preset_idle_hours(session: Any, table_id: uuid.UUID) -> float | None
 
 
 def _sample_file_paths(session: Any, table_id: uuid.UUID, limit: int = 5) -> list[str]:
-    """Sample of recent data-file paths for the storage_class checklist item.
+    """Sample data-file paths for the storage_class checklist item.
 
-    Confirmed: TablePartition.raw (cryo/scanner/analyze.py) does not currently persist
-    per-partition file paths, only {"partition_values", "delete_files"} -- so there is no
-    cheap pre-existing source to read here yet. Returns [] until the scanner is extended to
-    persist a representative file path per partition; _check_storage_class already degrades
-    to status="unknown" (not a false "green") when given no sample, so this is a known,
-    explicit gap rather than a silent wrong answer. A live $files query would make this
-    correct today but turns every checklist call into a catalog round-trip, which is too
-    expensive for the fleet-wide endpoint below -- worth doing as a follow-up that samples
-    lazily (e.g. only when a caller explicitly asks for storage_class detail on one table)."""
-    return []
+    The scanner stores one live file path per partition (``raw.sample_file_path``). Oldest
+    partitions are sampled first because cold data is what lifecycle rules move to
+    restore-required classes. Returns [] when no scan has recorded paths yet, which the
+    checklist reports as unknown rather than green."""
+    from sqlalchemy import desc, select
+
+    from cryo.db.models import TablePartition
+
+    latest = session.scalar(
+        select(TablePartition.scan_at)
+        .where(TablePartition.table_id == table_id)
+        .order_by(desc(TablePartition.scan_at))
+        .limit(1)
+    )
+    if latest is None:
+        return []
+    rows = session.scalars(
+        select(TablePartition.raw)
+        .where(TablePartition.table_id == table_id, TablePartition.scan_at == latest)
+        .limit(500)
+    )
+    found: list[tuple[str, str]] = []
+    for raw in rows:
+        path = (raw or {}).get("sample_file_path")
+        if isinstance(path, str) and path:
+            found.append((str((raw or {}).get("last_write_at") or ""), path))
+    found.sort(key=lambda item: (item[0] == "", item[0]))
+    return [path for _, path in found[:limit]]
 
 
 @router.get(

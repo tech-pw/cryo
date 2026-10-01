@@ -43,11 +43,17 @@ import { TableSearchSelect } from "./TableSearchSelect";
 
 const TIER_PAGE_SIZE = 8;
 
-const STORAGE_CLASSES = ["STANDARD_IA", "GLACIER", "DEEP_ARCHIVE", "INTELLIGENT_TIERING"] as const;
+const STORAGE_CLASSES = ["STANDARD_IA", "GLACIER_IR", "INTELLIGENT_TIERING"] as const;
 type StorageClass = (typeof STORAGE_CLASSES)[number];
 
+const STORAGE_CLASS_LABELS: Record<StorageClass, string> = {
+  STANDARD_IA: "Cool",
+  GLACIER_IR: "Archive-instant",
+  INTELLIGENT_TIERING: "Auto"
+};
+
 const asStorageClass = (value: string): StorageClass =>
-  (STORAGE_CLASSES as readonly string[]).includes(value) ? (value as StorageClass) : "STANDARD_IA";
+  (STORAGE_CLASSES as readonly string[]).includes(value) ? (value as StorageClass) : "INTELLIGENT_TIERING";
 
 const tierPolicyFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -165,7 +171,15 @@ export const PoliciesTab = () => {
   const tierColumns = useMemo<ColumnDef<TierPolicyRead, unknown>[]>(
     () => [
       { accessorKey: "name", header: "Name" },
-      { accessorKey: "storage_class", header: "Storage class", size: 140 },
+      {
+        accessorKey: "storage_class",
+        header: "Storage class",
+        size: 140,
+        cell: ({ getValue }) => {
+          const value = String(getValue() ?? "");
+          return STORAGE_CLASS_LABELS[value as StorageClass] ?? value;
+        }
+      },
       {
         accessorKey: "min_age_days",
         header: "Min age (days)",
@@ -561,13 +575,21 @@ export const PoliciesTab = () => {
                     value={String(field.value ?? "")}
                     onChange={(event) => field.onChange(event.target.value)}
                   >
-                    <option value="STANDARD_IA">STANDARD_IA</option>
-                    <option value="GLACIER">GLACIER</option>
-                    <option value="DEEP_ARCHIVE">DEEP_ARCHIVE</option>
-                    <option value="INTELLIGENT_TIERING">INTELLIGENT_TIERING</option>
+                    {STORAGE_CLASSES.map((value) => (
+                      <option key={value} value={value}>
+                        {STORAGE_CLASS_LABELS[value]}
+                      </option>
+                    ))}
                   </select>
                 )}
               </FormField>
+              {policyModal !== null &&
+              policyModal !== "new" &&
+              !(STORAGE_CLASSES as readonly string[]).includes(policyModal.storage_class) ? (
+                <p className="text-sm text-muted-foreground">
+                  Offline classes are not offered. Saving stores Cool, Archive-instant, or Auto.
+                </p>
+              ) : null}
               <FormField<TierPolicyFormValues> name="min_age_days" label="Minimum age (days)">
                 {(field) => (
                   <Input

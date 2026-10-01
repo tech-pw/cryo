@@ -13,12 +13,13 @@ Read-only, same as routes_cost_attribution.py -- there is no action to take here
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from collections.abc import Sequence
+from datetime import UTC, date, datetime, timedelta
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import Select, false, func, select
 
 from cryo.api.deps import SessionDep, require_viewer
 from cryo.api.schemas import (
@@ -30,11 +31,69 @@ from cryo.db.models import PartitionAccessDaily, Table
 
 router = APIRouter(prefix="/api/v1", tags=["partition-access"])
 
-# Bounds the response size regardless of how many distinct partitions a table has -- a
-# table with thousands of partitions (e.g. hourly-partitioned over years) shouldn't ship its
-# entire history to the browser for a chart. Ranked by recency (most-recently-accessed first)
-# since that's the axis a retention/storage-class decision actually cares about.
+# Applied in the SQL itself (GROUP BY + LIMIT), not after loading every (day, partition,
+# role) row into Python. Ranked by recency (most-recently-accessed first).
 _MAX_PARTITIONS = 500
+# Query(le=90) times the partition cap: one point per selected partition per day.
+_MAX_POINTS = _MAX_PARTITIONS * 90
+
+
+def partition_access_summary_statement(
+    table_id: UUID,
+    since: date,
+    *,
+    limit: int = _MAX_PARTITIONS,
+) -> Select[Any]:
+    """Per-partition totals for the window, capped in SQL."""
+    total_requests = func.coalesce(func.sum(PartitionAccessDaily.request_count), 0)
+    first_seen = func.min(PartitionAccessDaily.day)
+    last_seen = func.max(PartitionAccessDaily.day)
+    return (
+        select(
+            PartitionAccessDaily.partition_path,
+            total_requests.label("total_requests"),
+            first_seen.label("first_seen"),
+            last_seen.label("last_seen"),
+        )
+        .where(
+            PartitionAccessDaily.table_id == table_id,
+            PartitionAccessDaily.day >= since,
+        )
+        .group_by(PartitionAccessDaily.partition_path)
+        .order_by(last_seen.desc(), PartitionAccessDaily.partition_path.asc())
+        .limit(limit)
+    )
+
+
+def partition_access_points_statement(
+    table_id: UUID,
+    since: date,
+    partition_paths: Sequence[str],
+    *,
+    limit: int = _MAX_POINTS,
+) -> Select[Any]:
+    """One point per (day, partition) for the already-capped partition set."""
+    request_count = func.coalesce(func.sum(PartitionAccessDaily.request_count), 0)
+    path_filter = (
+        PartitionAccessDaily.partition_path.in_(tuple(partition_paths))
+        if partition_paths
+        else false()
+    )
+    return (
+        select(
+            PartitionAccessDaily.day,
+            PartitionAccessDaily.partition_path,
+            request_count.label("request_count"),
+        )
+        .where(
+            PartitionAccessDaily.table_id == table_id,
+            PartitionAccessDaily.day >= since,
+            path_filter,
+        )
+        .group_by(PartitionAccessDaily.day, PartitionAccessDaily.partition_path)
+        .order_by(PartitionAccessDaily.day, PartitionAccessDaily.partition_path)
+        .limit(limit)
+    )
 
 
 @router.get(
@@ -55,55 +114,34 @@ def get_partition_access(
     since = (now - timedelta(days=days)).date()
     today = now.date()
 
-    rows = session.execute(
-        select(
-            PartitionAccessDaily.day,
-            PartitionAccessDaily.partition_path,
-            PartitionAccessDaily.request_count,
-        ).where(
-            PartitionAccessDaily.table_id == table_id,
-            PartitionAccessDaily.day >= since,
-        )
+    summary_rows = session.execute(
+        partition_access_summary_statement(table_id, since, limit=_MAX_PARTITIONS)
     ).all()
-
-    # The scatter chart wants one point per (day, partition) -- this table's own grain also
-    # includes requester_role, so collapse that dimension here (a per-role breakdown is
-    # explicitly out of scope for this pass, see the plan doc).
-    points_by_key: dict[tuple, int] = {}
-    for day, partition_path, request_count in rows:
-        key = (day, partition_path)
-        points_by_key[key] = points_by_key.get(key, 0) + request_count
-
-    points = [
-        PartitionAccessPoint(day=day, partition_path=partition_path, request_count=count)
-        for (day, partition_path), count in sorted(points_by_key.items())
+    partitions = [
+        PartitionAccessSummary(
+            partition_path=row.partition_path,
+            total_requests=int(row.total_requests or 0),
+            first_seen=row.first_seen,
+            last_seen=row.last_seen,
+            days_since_last_access=(today - row.last_seen).days,
+        )
+        for row in summary_rows
     ]
-
-    # Per-partition summary across the full window, for the sidebar/table view alongside the
-    # scatter chart and for days_since_last_access (the number a retention decision would
-    # actually key off of).
-    by_partition: dict[str, list] = {}
-    for day, partition_path, request_count in rows:
-        bucket = by_partition.setdefault(partition_path, [0, day, day])
-        bucket[0] += request_count
-        if day < bucket[1]:
-            bucket[1] = day
-        if day > bucket[2]:
-            bucket[2] = day
-
-    partitions = sorted(
-        (
-            PartitionAccessSummary(
-                partition_path=partition_path,
-                total_requests=total,
-                first_seen=first_seen,
-                last_seen=last_seen,
-                days_since_last_access=(today - last_seen).days,
-            )
-            for partition_path, (total, first_seen, last_seen) in by_partition.items()
-        ),
-        key=lambda summary: summary.days_since_last_access,
-    )[:_MAX_PARTITIONS]
+    selected = [row.partition_path for row in partitions]
+    if selected:
+        point_rows = session.execute(
+            partition_access_points_statement(table_id, since, selected, limit=_MAX_POINTS)
+        ).all()
+    else:
+        point_rows = []
+    points = [
+        PartitionAccessPoint(
+            day=row.day,
+            partition_path=row.partition_path,
+            request_count=int(row.request_count or 0),
+        )
+        for row in point_rows
+    ]
 
     return PartitionAccessResponse(
         table_id=table_id, since=since, points=points, partitions=partitions

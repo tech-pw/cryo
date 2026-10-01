@@ -529,6 +529,21 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
 - [x] Data tiering candidates (`cryo/tiering/`, `tier_policies` table, S3 analyzer);
       `GET /tables/{id}/tier-candidates`; tier policy CRUD.
 - [ ] Tiering **execution** — move cold partitions to cheaper storage classes (candidates only today).
+      Researched 2026-10-01: `docs/ARCHIVE_TIERING_RESEARCH_2026-10-01.md` (instant-access classes
+      only; Glacier Flexible/Deep Archive are unsafe on live Iceberg tables). Do the P0 items first:
+  - [x] Fix the S3 tiering recommender: it reads only `QueryLog` (empty for the `cdp` source), so
+        every large table shows "not accessed in 90 days"; fall back to `TableQueryActivity`, report
+        `unknown`, use region prices, drop the placeholder `summarize_tier_savings`.
+  - [x] Scanner: record per-partition `last_write_at` (Python + Go; expired snapshots fall back to the
+        oldest retained snapshot time, which only makes a partition look more recent); the tier candidates and the
+        planner hot-partition guard (`_partition_is_cold`) both read it and never get it.
+  - [~] S3 access-log ingest for bronze/silver/gold/temp is stale since mid-Sept 2026 (code fix: flat
+        `SimplePrefix` delivery now discovered + durable `partition_last_access`; verify after deploy)
+        ("No date-partitioned log directories found"); repair it and add a durable per-partition
+        last-read rollup (`PartitionAccessDaily` is pruned at 35 days, partition access is empty).
+  - [x] Storage-class checklist: classify readable vs restore-required; scanner now stores one
+        `sample_file_path` per partition so the check actually runs (needs a rescan).
+  - [ ] Advisory **Archive** section on the table page (Usage tab), then execution behind approval.
 - [x] Signal-driven maintenance triggers (`cryo/triggers/`); governor signal bypass of cooldown/off-peak.
 - [x] AutoComp benefit scoring (`cryo/planner/benefit_score.py`); partition ranking in planner.
 - [x] Compaction effectiveness ratio tracking in audit log.

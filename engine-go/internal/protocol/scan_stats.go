@@ -63,6 +63,12 @@ type ScanStatsPartitionAccum struct {
 	// 2026-07-28) so callers can scope delete-cleanup work by where deletes are actually
 	// concentrated, independent of where small data files are concentrated.
 	DeleteFiles int `json:"delete_files"`
+	// LastWriteAt is the max snapshot commit time of this partition's live manifest
+	// entries. UTC ISO-8601 with millisecond precision (2006-01-02T15:04:05.000Z).
+	// Omitted when no entry snapshot timestamp could be resolved.
+	LastWriteAt *string `json:"last_write_at,omitempty"`
+	// SampleFilePath is one live data-file path, used for storage-class spot checks.
+	SampleFilePath *string `json:"sample_file_path,omitempty"`
 }
 
 // ScanStatsColumnQuality mirrors analyze.py raw.column_quality entries.

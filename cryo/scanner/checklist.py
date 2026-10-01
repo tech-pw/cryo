@@ -28,7 +28,7 @@ Item inventory (matches the checklist shared with the user 2026-09-14):
     9.  snapshot_retention   3% -- snapshot count/age tuned, not left at infinite defaults
     10. orphan_cleanup       3% -- remove_orphan_files actually runs, not just expire_snapshots
     11. schema_width         2% -- no obviously dead/unused wide columns (best-effort, informational)
-    12. storage_class        2% -- data files reachable (not GLACIER/DEEP_ARCHIVE) (NEW)
+    12. storage_class        2% -- data files directly readable (not restore-required classes)
 """
 
 from __future__ import annotations
@@ -49,6 +49,20 @@ from cryo.scanner.property_recommendations import count_suboptimal_property_issu
 logger = logging.getLogger(__name__)
 
 ChecklistStatus = Literal["green", "yellow", "red", "unknown"]
+StorageClassVerdict = Literal["readable", "restore_required", "unknown"]
+
+# HeadObject StorageClass values a normal GET can read. INTELLIGENT_TIERING is in this set
+# only when ArchiveStatus is absent; an archive tier sets that field and is not readable.
+_DIRECTLY_READABLE_STORAGE_CLASSES = frozenset(
+    {
+        "STANDARD",
+        "INTELLIGENT_TIERING",
+        "STANDARD_IA",
+        "ONEZONE_IA",
+        "GLACIER_IR",
+    }
+)
+_RESTORE_REQUIRED_STORAGE_CLASSES = frozenset({"GLACIER", "DEEP_ARCHIVE"})
 
 # item_key -> (label, weight_pct, tier)
 CHECKLIST_ITEMS: dict[str, tuple[str, float, int]] = {
@@ -282,16 +296,46 @@ def _check_schema_width(stats: Mapping[str, Any]) -> ChecklistItem:
     return _item("schema_width", "green", f"{column_count} columns")
 
 
+def classify_object_storage_class(
+    storage_class: str | None,
+    archive_status: str | None = None,
+) -> StorageClassVerdict:
+    """Map a HeadObject StorageClass/ArchiveStatus pair to readable vs restore-required.
+
+    Omitted StorageClass is STANDARD. ArchiveStatus is set only for Intelligent-Tiering
+    archive tiers; those objects fail a normal GET even though StorageClass stays
+    INTELLIGENT_TIERING. An unrecognized class is unknown, not red and not green.
+    """
+    normalized = (storage_class or "STANDARD").strip().upper()
+    archived = archive_status is not None and bool(str(archive_status).strip())
+    if normalized in _RESTORE_REQUIRED_STORAGE_CLASSES:
+        return "restore_required"
+    if archived and normalized == "INTELLIGENT_TIERING":
+        return "restore_required"
+    if normalized in _DIRECTLY_READABLE_STORAGE_CLASSES:
+        return "readable"
+    if archived:
+        return "restore_required"
+    return "unknown"
+
+
+def _s3_bucket_key(path: str) -> tuple[str, str] | None:
+    if not path.startswith(("s3://", "s3a://")):
+        return None
+    _, _, rest = path.partition("://")
+    bucket, _, key = rest.partition("/")
+    if not bucket or not key:
+        return None
+    return bucket, key
+
+
 def _check_storage_class(
     session: Session, table_id: uuid.UUID, *, sample_paths: list[str] | None = None
 ) -> ChecklistItem:
-    """NEW. Confirmed live 2026-09-11: a rewrite on a fleet table hard-failed with
-    InvalidObjectStateException because backing files had transitioned to a storage class
-    (Glacier/IA-with-restore-required) that doesn't support direct GET -- Cryo's own cost
-    model hardcodes S3StorageClass.STANDARD and never checks this. Spot-checks a handful of
-    recent file paths via head_object rather than a full listing (matches the existing
-    orphan-scan-cost preflight's sampling philosophy) since a full per-table S3 LIST/HEAD scan
-    is expensive at fleet scale."""
+    """Spot-check up to 5 paths via HeadObject. Confirmed live 2026-09-11: a rewrite failed
+    with InvalidObjectStateException because backing files were in a restore-required class.
+    A full LIST/HEAD per table is too expensive at fleet scale, so a missing sample stays
+    unknown rather than a false green."""
     if not sample_paths:
         return _item("storage_class", "unknown", "No file sample available to check storage class")
 
@@ -314,26 +358,47 @@ def _check_storage_class(
             aws_access_key_id=cfg.get("s3.access-key-id"),
             aws_secret_access_key=cfg.get("s3.secret-access-key"),
         )
-        non_standard = []
+        blocked: list[str] = []
+        unclassified: list[str] = []
+        checked = 0
         for path in sample_paths[:5]:
-            if not path.startswith("s3a://") and not path.startswith("s3://"):
+            parsed = _s3_bucket_key(path)
+            if parsed is None:
                 continue
-            _, _, rest = path.partition("://")
-            bucket, _, key = rest.partition("/")
+            bucket, key = parsed
+            checked += 1
             try:
                 head = s3.head_object(Bucket=bucket, Key=key)
             except Exception as exc:  # noqa: BLE001 - a single unreachable object is itself the finding
-                non_standard.append(f"{key} (unreachable: {exc})")
+                blocked.append(f"{key} (unreachable: {exc})")
                 continue
-            storage_class = head.get("StorageClass", "STANDARD")
-            if storage_class not in ("STANDARD", "INTELLIGENT_TIERING"):
-                non_standard.append(f"{key} ({storage_class})")
-        if non_standard:
+            storage_class = head.get("StorageClass") or "STANDARD"
+            archive_status = head.get("ArchiveStatus")
+            verdict = classify_object_storage_class(storage_class, archive_status)
+            if verdict == "restore_required":
+                detail = storage_class
+                if archive_status:
+                    detail = f"{storage_class} archive_status={archive_status}"
+                blocked.append(f"{key} ({detail})")
+            elif verdict == "unknown":
+                unclassified.append(f"{key} ({storage_class})")
+        if checked == 0:
             return _item(
-                "storage_class", "red",
-                f"{len(non_standard)}/{min(len(sample_paths), 5)} sampled files not directly readable: {non_standard[0]}",
+                "storage_class", "unknown", "No file sample available to check storage class"
             )
-        return _item("storage_class", "green", f"Sampled {min(len(sample_paths), 5)} files, all directly readable")
+        if blocked:
+            return _item(
+                "storage_class",
+                "red",
+                f"{len(blocked)}/{checked} sampled files not directly readable: {blocked[0]}",
+            )
+        if unclassified:
+            return _item(
+                "storage_class",
+                "unknown",
+                f"Could not classify storage class for {unclassified[0]}",
+            )
+        return _item("storage_class", "green", f"Sampled {checked} files, all directly readable")
     except Exception as exc:  # noqa: BLE001 - storage-class check is best-effort, must never break the checklist
         logger.debug("storage_class check failed for %s: %s", table_id, exc)
         return _item("storage_class", "unknown", f"Could not verify storage class: {exc}")

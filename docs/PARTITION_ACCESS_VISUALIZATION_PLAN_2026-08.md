@@ -83,7 +83,9 @@ already built or a straightforward extension of an existing pattern.
   deliberate follow-up once the visualization has been used manually for at least one real
   storage-class/retention decision, not bundled into the same change that introduces the data.
 - **S3 Storage Class / Intelligent-Tiering automation.** Yelp's 33% number came from *acting*
-  on the visualization (manually re-tiering objects), not from the visualization itself. Cryo
+  on the visualization (recommending storage classes and expanding deletion-based retention; the
+  post does not say objects were re-tiered by hand -- corrected 2026-10-01), not from the
+  visualization itself. Researched in `ARCHIVE_TIERING_RESEARCH_2026-10-01.md`. Cryo
   doesn't currently manage S3 storage class at all — that's a materially bigger, separate
   feature (needs S3 PutObject-tagging/lifecycle-policy write access, a new safety boundary).
   This plan only builds the visibility Yelp used to make that call by hand.

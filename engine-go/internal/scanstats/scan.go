@@ -31,14 +31,15 @@ const (
 
 // FileRecord is a synthetic manifest entry for unit tests / parity fixtures.
 type FileRecord struct {
-	SizeBytes       int64
-	RecordCount     int64
-	Content         string // "DATA", "POSITION_DELETES", "EQUALITY_DELETES", "1", "2"
-	FileFormat      string
-	SpecID          int32
-	Partition       map[string]any // partition_field name → value
-	NullValueCounts map[int]int64
-	ValueCounts     map[int]int64
+	SizeBytes           int64
+	RecordCount         int64
+	Content             string // "DATA", "POSITION_DELETES", "EQUALITY_DELETES", "1", "2"
+	FileFormat          string
+	SpecID              int32
+	Partition           map[string]any // partition_field name → value
+	NullValueCounts     map[int]int64
+	ValueCounts         map[int]int64
+	SnapshotTimestampMs *int64
 }
 
 // AggregateFromRecords mirrors the Python analyze loop without Iceberg I/O.
@@ -153,6 +154,7 @@ func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protoc
 		}
 	}
 	acc.manifestCount = len(manifests)
+	snapshotTimesByID := snapshotTimes(tbl)
 	for _, m := range manifests {
 		acc.manifestTotalBytes += m.Length()
 		for entry, entryErr := range m.Entries(fs, true) {
@@ -167,7 +169,8 @@ func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protoc
 			if df == nil {
 				continue
 			}
-			acc.addDataFile(df, fields)
+			writeMs, hasWrite := entrySnapshotTime(entry, snapshotTimesByID)
+			acc.addDataFile(df, fields, writeMs, hasWrite)
 		}
 	}
 
@@ -227,6 +230,54 @@ func summaryInt(props map[string]string, key string) *int64 {
 		return nil
 	}
 	return &v
+}
+
+func snapshotTimes(tbl *table.Table) map[int64]int64 {
+	out := map[int64]int64{}
+	if tbl == nil || tbl.Metadata() == nil {
+		return out
+	}
+	for _, snap := range tbl.Metadata().Snapshots() {
+		out[snap.SnapshotID] = snap.TimestampMs
+		if oldest, ok := out[oldestSnapshotKey]; !ok || snap.TimestampMs < oldest {
+			out[oldestSnapshotKey] = snap.TimestampMs
+		}
+	}
+	return out
+}
+
+// oldestSnapshotKey holds the oldest retained snapshot time; real snapshot ids never equal it.
+const oldestSnapshotKey = int64(-1 << 63)
+
+func entrySnapshotTime(entry iceberg.ManifestEntry, times map[int64]int64) (int64, bool) {
+	if entry == nil {
+		return 0, false
+	}
+	id := entry.SnapshotID()
+	if id == -1 {
+		return 0, false
+	}
+	if ms, ok := times[id]; ok {
+		return ms, true
+	}
+	// The adding snapshot was expired, so the file predates the oldest retained snapshot.
+	// Using that timestamp can only make a partition look more recently written.
+	oldest, ok := times[oldestSnapshotKey]
+	return oldest, ok
+}
+
+func formatLastWriteAt(ms int64) string {
+	return time.UnixMilli(ms).UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+func (p *partAccum) observeWrite(ms int64, ok bool) {
+	if p == nil || !ok {
+		return
+	}
+	if !p.hasLastWrite || ms > p.lastWriteMs {
+		p.lastWriteMs = ms
+		p.hasLastWrite = true
+	}
 }
 
 func snapshotMeta(tbl *table.Table) snapshotInfo {
@@ -439,12 +490,15 @@ func transformParam(transformRaw string) *int {
 }
 
 type partAccum struct {
-	values      map[string]any
-	specID      *int32
-	files       int
-	small       int
-	sizeBytes   int64
-	deleteFiles int
+	values       map[string]any
+	specID       *int32
+	files        int
+	small        int
+	sizeBytes    int64
+	deleteFiles  int
+	lastWriteMs  int64
+	hasLastWrite bool
+	samplePath   string
 }
 
 type columnAccum struct {
@@ -489,13 +543,13 @@ type accumulator struct {
 
 func newAccumulator(fields []protocol.ScanStatsPartitionField, opts Options) *accumulator {
 	return &accumulator{
-		fields:      fields,
-		opts:        opts,
-		partitions:  make(map[string]*partAccum),
-		fileFormats: make(map[string]struct{}),
-		columnDefs:  make(map[int]protocol.AggregateFixtureColumn),
-		columns:     make(map[int]*columnAccum),
-		columnTypes: make(map[int]iceberg.Type),
+		fields:         fields,
+		opts:           opts,
+		partitions:     make(map[string]*partAccum),
+		fileFormats:    make(map[string]struct{}),
+		columnDefs:     make(map[int]protocol.AggregateFixtureColumn),
+		columns:        make(map[int]*columnAccum),
+		columnTypes:    make(map[int]iceberg.Type),
 		fileSamples:    make(map[string]protocol.ScanStatsFileBoundSample),
 		dataSizeBins:   make([]int64, fileSizeBinCount),
 		deleteSizeBins: make([]int64, fileSizeBinCount),
@@ -559,6 +613,9 @@ func (a *accumulator) addRecord(rec FileRecord) {
 			a.partitions[key] = acc
 		}
 		acc.deleteFiles++
+		if rec.SnapshotTimestampMs != nil {
+			acc.observeWrite(*rec.SnapshotTimestampMs, true)
+		}
 		return
 	}
 	a.totalFiles++
@@ -585,6 +642,9 @@ func (a *accumulator) addRecord(rec FileRecord) {
 	acc.sizeBytes += rec.SizeBytes
 	if float64(rec.SizeBytes) < a.opts.SmallFileMB*float64(mb) {
 		acc.small++
+	}
+	if rec.SnapshotTimestampMs != nil {
+		acc.observeWrite(*rec.SnapshotTimestampMs, true)
 	}
 }
 
@@ -626,7 +686,12 @@ func (a *accumulator) addColumnStats(nulls, vals map[int]int64) {
 	}
 }
 
-func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanStatsPartitionField) {
+func (a *accumulator) addDataFile(
+	df iceberg.DataFile,
+	fields []protocol.ScanStatsPartitionField,
+	writeMs int64,
+	hasWrite bool,
+) {
 	size := df.FileSizeBytes()
 	if fmt := string(df.FileFormat()); fmt != "" {
 		a.fileFormats[strings.ToUpper(fmt)] = struct{}{}
@@ -671,6 +736,7 @@ func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanSta
 			a.partitions[key] = acc
 		}
 		acc.deleteFiles++
+		acc.observeWrite(writeMs, hasWrite)
 		return
 	}
 	a.totalFiles++
@@ -706,6 +772,10 @@ func (a *accumulator) addDataFile(df iceberg.DataFile, fields []protocol.ScanSta
 	acc.sizeBytes += size
 	if float64(size) < a.opts.SmallFileMB*float64(mb) {
 		acc.small++
+	}
+	acc.observeWrite(writeMs, hasWrite)
+	if acc.samplePath == "" {
+		acc.samplePath = df.FilePath()
 	}
 }
 
@@ -985,6 +1055,16 @@ func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) p
 			sort.Strings(names)
 			partitionValue = fmt.Sprint(acc.values[names[0]])
 		}
+		var lastWrite *string
+		if acc.hasLastWrite {
+			formatted := formatLastWriteAt(acc.lastWriteMs)
+			lastWrite = &formatted
+		}
+		var samplePath *string
+		if acc.samplePath != "" {
+			sp := acc.samplePath
+			samplePath = &sp
+		}
 		parts = append(parts, protocol.ScanStatsPartitionAccum{
 			PartitionKey:    key,
 			PartitionValue:  partitionValue,
@@ -994,6 +1074,8 @@ func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) p
 			Small:           acc.small,
 			SizeBytes:       acc.sizeBytes,
 			DeleteFiles:     acc.deleteFiles,
+			LastWriteAt:     lastWrite,
+			SampleFilePath:  samplePath,
 		})
 	}
 	sort.Slice(parts, func(i, j int) bool {

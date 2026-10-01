@@ -175,6 +175,56 @@ func TestAggregateFromRecordsDayPartitioned(t *testing.T) {
 	}
 }
 
+func TestPartitionLastWriteAtIsMaxResolvedSnapshotTime(t *testing.T) {
+	older := int64(1_704_067_200_000)
+	newer := int64(1_710_491_400_123)
+	fields := []protocol.ScanStatsPartitionField{{
+		BaseColumn: "event_date", PartitionField: "event_date_day", Transform: "day",
+	}}
+	resp := AggregateFromRecords([]FileRecord{
+		{SizeBytes: 10, RecordCount: 1, Content: "DATA", Partition: map[string]any{"event_date_day": "2024-03-01"}, SnapshotTimestampMs: &older},
+		{SizeBytes: 10, RecordCount: 1, Content: "POSITION_DELETES", Partition: map[string]any{"event_date_day": "2024-03-01"}, SnapshotTimestampMs: &newer},
+		{SizeBytes: 10, RecordCount: 1, Content: "DATA", Partition: map[string]any{"event_date_day": "2024-03-02"}},
+	}, fields, Options{})
+	byKey := map[string]protocol.ScanStatsPartitionAccum{}
+	for _, part := range resp.Partitions {
+		byKey[part.PartitionKey] = part
+	}
+	got := byKey["event_date_day=2024-03-01"]
+	if got.LastWriteAt == nil || *got.LastWriteAt != "2024-03-15T08:30:00.123Z" {
+		t.Fatalf("last_write_at = %v, want 2024-03-15T08:30:00.123Z", got.LastWriteAt)
+	}
+	if missing := byKey["event_date_day=2024-03-02"]; missing.LastWriteAt != nil {
+		t.Fatalf("unknown timestamp must be omitted, got %s", *missing.LastWriteAt)
+	}
+	epoch := int64(0)
+	zero := AggregateFromRecords([]FileRecord{
+		{SizeBytes: 10, RecordCount: 1, Content: "DATA", SnapshotTimestampMs: &epoch},
+	}, nil, Options{})
+	if zero.Partitions[0].LastWriteAt == nil || *zero.Partitions[0].LastWriteAt != "1970-01-01T00:00:00.000Z" {
+		t.Fatalf("real epoch timestamp must be kept, got %v", zero.Partitions[0].LastWriteAt)
+	}
+}
+
+func TestEntrySnapshotTimeOmitsMissingAndExpired(t *testing.T) {
+	id := int64(42)
+	entry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &id, nil, nil, nil)
+	if _, ok := entrySnapshotTime(entry, map[int64]int64{7: 1}); ok {
+		t.Fatal("expired snapshot id must not invent a time")
+	}
+	ms, ok := entrySnapshotTime(entry, map[int64]int64{42: 1_710_491_400_123})
+	if !ok || ms != 1_710_491_400_123 {
+		t.Fatalf("resolved = %d ok=%v", ms, ok)
+	}
+	missing := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, nil, nil, nil, nil)
+	if _, ok := entrySnapshotTime(missing, map[int64]int64{-1: 1}); ok {
+		t.Fatal("nil snapshot id must be omitted")
+	}
+	if got := formatLastWriteAt(1_710_491_400_123); got != "2024-03-15T08:30:00.123Z" {
+		t.Fatalf("format = %s", got)
+	}
+}
+
 func TestAggregateFromRecordsDeletesAndUnpartitioned(t *testing.T) {
 	const mb = 1024 * 1024
 	records := []FileRecord{

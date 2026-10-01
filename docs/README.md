@@ -105,6 +105,9 @@ The authoritative architecture / contract docs live at the repo root:
 - [`cost-savings.md`](./cost-savings.md) — cost model and savings math.
 - [`s3-request-cost-tracking.md`](./s3-request-cost-tracking.md) — design for per-table S3
   GET/PUT request-cost attribution via server access logs + Trino (not yet implemented).
+- [`ARCHIVE_TIERING_RESEARCH_2026-10-01.md`](./ARCHIVE_TIERING_RESEARCH_2026-10-01.md) — research
+  and recommendation for a partition-aware Archive section / storage tiering (S3 mechanics,
+  competitors, live fleet sizing, existing-code defects, phased plan).
 
 ### Local development
 

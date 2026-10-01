@@ -1,7 +1,7 @@
 """Accurate S3 cost calculations based on AWS pricing (2026).
 
 Pricing data sourced from: https://aws.amazon.com/s3/pricing/
-Region: us-east-1 (default)
+Default region: us-east-1. ap-south-1 (Mumbai) rates are used when that region is passed.
 
 Storage Classes:
 - S3 Standard: $0.023/GB/month
@@ -111,6 +111,94 @@ S3_PRICING_US_EAST_1: dict[S3StorageClass, S3PricingModel] = {
     ),
 }
 
+_AP_SOUTH_1_STANDARD_TIERS_GB: tuple[tuple[float, float], ...] = (
+    (50 * 1024, 0.025),
+    (450 * 1024, 0.024),
+    (float("inf"), 0.023),
+)
+
+S3_PRICING_AP_SOUTH_1: dict[S3StorageClass, S3PricingModel] = {
+    S3StorageClass.STANDARD: S3PricingModel(
+        storage_class=S3StorageClass.STANDARD,
+        region="ap-south-1",
+        storage_cost_per_gb_month=0.025,
+        put_request_cost_per_1k=0.005,
+        get_request_cost_per_1k=0.0004,
+    ),
+    S3StorageClass.STANDARD_IA: S3PricingModel(
+        storage_class=S3StorageClass.STANDARD_IA,
+        region="ap-south-1",
+        storage_cost_per_gb_month=0.0138,
+        put_request_cost_per_1k=0.01,
+        get_request_cost_per_1k=0.001,
+    ),
+    S3StorageClass.ONEZONE_IA: S3PricingModel(
+        storage_class=S3StorageClass.ONEZONE_IA,
+        region="ap-south-1",
+        storage_cost_per_gb_month=0.011,
+        put_request_cost_per_1k=0.01,
+        get_request_cost_per_1k=0.001,
+    ),
+    S3StorageClass.GLACIER_IR: S3PricingModel(
+        storage_class=S3StorageClass.GLACIER_IR,
+        region="ap-south-1",
+        storage_cost_per_gb_month=0.005,
+        put_request_cost_per_1k=0.02,
+        get_request_cost_per_1k=0.01,
+    ),
+    S3StorageClass.GLACIER: S3PricingModel(
+        storage_class=S3StorageClass.GLACIER,
+        region="ap-south-1",
+        storage_cost_per_gb_month=0.0045,
+        put_request_cost_per_1k=0.036,
+    ),
+    S3StorageClass.DEEP_ARCHIVE: S3PricingModel(
+        storage_class=S3StorageClass.DEEP_ARCHIVE,
+        region="ap-south-1",
+        storage_cost_per_gb_month=0.002,
+        put_request_cost_per_1k=0.07,
+    ),
+    S3StorageClass.INTELLIGENT_TIERING: S3PricingModel(
+        storage_class=S3StorageClass.INTELLIGENT_TIERING,
+        region="ap-south-1",
+        storage_cost_per_gb_month=0.025,
+        put_request_cost_per_1k=0.01,
+        get_request_cost_per_1k=0.0004,
+        monitoring_cost_per_1k_objects=0.0025,
+    ),
+}
+
+_PRICING_BY_REGION: dict[str, dict[S3StorageClass, S3PricingModel]] = {
+    "us-east-1": S3_PRICING_US_EAST_1,
+    "ap-south-1": S3_PRICING_AP_SOUTH_1,
+}
+
+
+def _normalize_region(region: str | None) -> str:
+    if region is None:
+        return "us-east-1"
+    text = region.strip().lower()
+    return text or "us-east-1"
+
+
+def pricing_for_region(region: str | None = "us-east-1") -> dict[S3StorageClass, S3PricingModel]:
+    """Regional storage rates. Unknown regions fall back to us-east-1."""
+    return _PRICING_BY_REGION.get(_normalize_region(region), S3_PRICING_US_EAST_1)
+
+
+def _ap_south_1_standard_monthly_cost(size_gb: float) -> float:
+    if size_gb <= 0:
+        return 0.0
+    remaining = size_gb
+    cost = 0.0
+    for band_gb, rate in _AP_SOUTH_1_STANDARD_TIERS_GB:
+        take = remaining if band_gb == float("inf") else min(remaining, band_gb)
+        cost += take * rate
+        remaining -= take
+        if remaining <= 0:
+            break
+    return cost
+
 
 def calculate_monthly_storage_cost(
     size_gb: float,
@@ -127,11 +215,14 @@ def calculate_monthly_storage_cost(
     Returns:
         Monthly cost in USD
     """
-    pricing = S3_PRICING_US_EAST_1.get(storage_class)
-    if not pricing:
-        # Fallback to Standard pricing
-        pricing = S3_PRICING_US_EAST_1[S3StorageClass.STANDARD]
-
+    normalized = _normalize_region(region)
+    if normalized == "ap-south-1" and storage_class in {
+        S3StorageClass.STANDARD,
+        S3StorageClass.INTELLIGENT_TIERING,
+    }:
+        return _ap_south_1_standard_monthly_cost(size_gb)
+    table = pricing_for_region(normalized)
+    pricing = table.get(storage_class) or table[S3StorageClass.STANDARD]
     return size_gb * pricing.storage_cost_per_gb_month
 
 

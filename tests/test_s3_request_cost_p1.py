@@ -372,7 +372,7 @@ class _FakeListClient:
     def __init__(self, tree: dict[str, list[str]]):
         self.tree = tree
 
-    def list_objects_v2(self, *, Bucket, Prefix, Delimiter):  # noqa: N803
+    def list_objects_v2(self, *, Bucket, Prefix, Delimiter=None):  # noqa: N803
         children = self.tree.get(Prefix, [])
         return {"CommonPrefixes": [{"Prefix": c} for c in children]}
 

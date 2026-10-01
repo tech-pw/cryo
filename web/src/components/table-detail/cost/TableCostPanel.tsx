@@ -139,15 +139,18 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
         <Link className="td-cost-link" to={`/tables/${tableId}?tab=maintenance`}>Review maintenance <ArrowRight size={15} aria-hidden /></Link>
       </CostCard>
 
-      <CostCard id="cost-tiering" title="Storage tiering" description="A separate opportunity to reduce the cost of colder objects.">
+      <CostCard id="cost-tiering" title="Storage tiering" description="Read-only summary. Archive advice is on the Usage tab.">
         <QueryErrorAlert error={tiering.error} title="Failed to load S3 tiering" />
         {tiering.isLoading ? <p className="td-cost-muted">Loading tiering…</p> : null}
         {tiering.isSuccess ? <>
           <p className="td-cost-recommendation">{tiering.data.recommendation}</p>
           <p className="td-cost-muted">{tiering.data.reason}</p>
-          <p className="td-cost-secondary-value">{money(tiering.data.estimated_annual_savings_usd)}<span>estimated savings / year</span></p>
-          <p className="td-cost-footnote">Annual estimate; not added to the monthly maintenance savings above.</p>
+          <p className="td-cost-secondary-value">
+            {numberOrNull(tiering.data.estimated_annual_savings_usd) == null ? "Not estimated" : money(tiering.data.estimated_annual_savings_usd)}
+            <span>estimated savings / year</span>
+          </p>
         </> : null}
+        <Link className="td-cost-link" to={`/tables/${tableId}?tab=usage#archive`}>Open archive advice <ArrowRight size={15} aria-hidden /></Link>
       </CostCard>
 
       <CostCard id="cost-compaction" title="Compaction economics" description="The 30-day model for up to 10 ranked partition candidates.">
