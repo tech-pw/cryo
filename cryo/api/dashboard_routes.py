@@ -966,7 +966,7 @@ class S3TieringRecommendationRead(BaseModel):
     table_name: str
     current_size_gb: float
     avg_file_size_kb: float
-    days_since_last_access: int
+    days_since_last_access: int | None
     current_monthly_cost_usd: float
     intelligent_tiering_monthly_cost_usd: float
     estimated_annual_savings_usd: float

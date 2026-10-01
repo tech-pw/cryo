@@ -52,6 +52,7 @@ from trino.auth import BasicAuthentication
 from cryo.config import Settings, get_settings
 from cryo.db.models import (
     PartitionAccessDaily,
+    PartitionLastAccess,
     S3BucketLogConfig,
     S3RequestCostDaily,
     Table,
@@ -268,6 +269,7 @@ def _aggregate_log_objects(
     max_objects_per_day: int,
     max_workers: int,
     table_partition_context: dict[str, TablePartitionContext] | None = None,
+    source_bucket: str | None = None,
 ) -> _AggregationOutcome:
     """Read every log object under each located date-partition, parse each line, and aggregate
     into ``(table_id_or_None, log_date, operation_tier) -> request_count`` -- the same grouping
@@ -289,7 +291,9 @@ def _aggregate_log_objects(
     archived_object_count = 0
     location_prefix = f"s3a://{log_target_bucket}/"
 
-    def _read_and_parse(object_key: str) -> tuple[list[tuple[str, str, str | None]], bool]:
+    def _read_and_parse(
+        object_key: str, only_bucket: str | None = None
+    ) -> tuple[list[tuple[str, str, str | None]], bool]:
         """A single unreadable object must not abort the whole ingestion pass -- live-confirmed
         2026-09-08: the shared logging bucket transitions objects under s3-access-logs/ to
         DEEP_ARCHIVE after 7 days (bucket lifecycle rule 'accesss3-access-logs'). Once
@@ -316,6 +320,8 @@ def _aggregate_log_objects(
             raise
         results = []
         for line in body.decode("utf-8", errors="replace").splitlines():
+            if only_bucket is not None and _line_bucket(line) != only_bucket:
+                continue
             parsed = _parse_log_line(line)
             if parsed:
                 results.append(parsed)
@@ -343,7 +349,11 @@ def _aggregate_log_objects(
             if truncated:
                 truncated_dates.append(log_date)
 
-            for parsed_lines, was_archived in executor.map(_read_and_parse, object_keys):
+            flat = not location.endswith("/")
+            only_bucket = source_bucket if flat else None
+            for parsed_lines, was_archived in executor.map(
+                lambda key, _b=only_bucket: _read_and_parse(key, _b), object_keys
+            ):
                 if was_archived:
                     archived_object_count += 1
                     continue
@@ -374,6 +384,11 @@ def _aggregate_log_objects(
     )
 
 
+def _line_bucket(line: str) -> str | None:
+    match = _S3_LOG_LINE_RE.match(line)
+    return match.group(2) if match else None
+
+
 def locate_date_partition(
     client: Any,
     *,
@@ -402,6 +417,41 @@ def locate_date_partition(
     documented AWS layout (account-id, region, source-bucket, then year/month/day = 6 levels)
     with one level of slack.
     """
+    partitioned = _locate_partitioned_date(
+        client,
+        bucket=bucket,
+        prefix=prefix,
+        target_date=target_date,
+        source_bucket=source_bucket,
+        max_depth=max_depth,
+    )
+    if partitioned is not None:
+        return partitioned
+    return _locate_flat_date(client, bucket=bucket, prefix=prefix, target_date=target_date)
+
+
+def _locate_flat_date(client: Any, *, bucket: str, prefix: str, target_date: date) -> str | None:
+    """Flat (``SimplePrefix``) delivery names objects ``[prefix]YYYY-mm-DD-HH-MM-SS-UNIQUE``, so a
+    day is a key prefix, not a directory. The returned prefix ends in ``-`` (partitioned
+    locations end in ``/``), which tells the aggregator to filter lines by source bucket: a
+    shared logging bucket interleaves every source bucket's deliveries under one prefix."""
+    day_prefix = f"{prefix}{target_date:%Y-%m-%d}-"
+    try:
+        response = client.list_objects_v2(Bucket=bucket, Prefix=day_prefix)
+    except ClientError:
+        return None
+    return day_prefix if response.get("Contents") else None
+
+
+def _locate_partitioned_date(
+    client: Any,
+    *,
+    bucket: str,
+    prefix: str,
+    target_date: date,
+    source_bucket: str | None,
+    max_depth: int,
+) -> str | None:
     wanted = [f"{target_date.year:04d}", f"{target_date.month:02d}", f"{target_date.day:02d}"]
     current = prefix
     for _ in range(max_depth):
@@ -527,9 +577,12 @@ def _upsert_partition_access(
     line whose requester field didn't parse), and Postgres's ``ON CONFLICT`` doesn't dedupe
     across NULL values.
     """
-    for (table_id_raw, log_date, partition_path, requester_role), request_count in (
-        partition_counts.items()
-    ):
+    for (
+        table_id_raw,
+        log_date,
+        partition_path,
+        requester_role,
+    ), request_count in partition_counts.items():
         table_id = uuid.UUID(table_id_raw)
         existing = session.scalar(
             select(PartitionAccessDaily).where(
@@ -556,6 +609,30 @@ def _upsert_partition_access(
         else:
             existing.request_count = request_count
             existing.last_seen_at = now
+        _advance_last_access(session, table_id, partition_path, log_date)
+
+
+def _advance_last_access(
+    session: Session, table_id: uuid.UUID, partition_path: str, log_date: date
+) -> None:
+    """Advance the durable last-read day; never moves it backwards."""
+    row = session.get(PartitionLastAccess, (table_id, partition_path))
+    if row is None:
+        session.add(
+            PartitionLastAccess(
+                table_id=table_id,
+                partition_path=partition_path,
+                first_read_day=log_date,
+                last_read_day=log_date,
+            )
+        )
+        # Flush so a later (day, role) row for the same partition in this pass finds it.
+        session.flush()
+        return
+    if log_date > row.last_read_day:
+        row.last_read_day = log_date
+    if log_date < row.first_read_day:
+        row.first_read_day = log_date
 
 
 def ingest_bucket(
@@ -585,7 +662,8 @@ def ingest_bucket(
     # tick (run_s3_ingest_tick runs daily) picks up where this one left off.
     window_end = min(today, window_start + timedelta(days=_MAX_CATCHUP_DAYS))
     candidate_dates = [
-        window_start + timedelta(days=offset) for offset in range((window_end - window_start).days + 1)
+        window_start + timedelta(days=offset)
+        for offset in range((window_end - window_start).days + 1)
     ]
     through_date = window_end
 
@@ -631,9 +709,9 @@ def ingest_bucket(
             0,
             0,
             error=(
-                "No date-partitioned log directories found under the configured target -- this "
-                "bucket's log delivery may not use partitioned prefixes yet, or no logs have "
-                "landed for the reconciliation window"
+                "No log objects found under the configured target (neither date-partitioned "
+                "directories nor flat YYYY-mm-DD- keys) -- no logs have landed for the "
+                "reconciliation window, or the target prefix is wrong"
             ),
         )
 
@@ -644,6 +722,7 @@ def ingest_bucket(
             located=located,
             table_prefixes=table_prefixes,
             table_partition_context=table_partition_context,
+            source_bucket=config.bucket,
             max_objects_per_day=settings.s3_log_ingest_max_objects_per_day,
             max_workers=settings.s3_log_ingest_concurrency,
         )

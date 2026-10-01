@@ -66,11 +66,26 @@ def test_config_from_config_env_fallback(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_config_from_config_defaults() -> None:
     cfg = SparkK8sConfig.from_config({})
+    # Not a hardcoded "default": confirmed live 2026-10-01, a destination.config with no
+    # explicit namespace fell back to the literal Kubernetes "default" namespace, where the
+    # Governor's RBAC Role has no grant -- every Spark-on-K8s dispatch 403'd trying to create
+    # the driver's S3-credentials Secret there. Falls back to wherever this process is
+    # actually running (current_k8s_namespace()); outside a pod (e.g. this test) that's
+    # "default" too, since there's no /var/run/secrets/.../namespace file to read.
     assert cfg.namespace == "default"
     assert cfg.service_account == "default"
     assert cfg.image_pull_secrets == ()
     assert cfg.driver_mem_mib == 2048
     assert cfg.executor_instances == 2
+
+
+def test_config_from_config_namespace_falls_back_to_pod_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In-cluster, the fallback must be the pod's own namespace, not a hardcoded literal."""
+    monkeypatch.setattr(k8s_module, "current_k8s_namespace", lambda: "cryo")
+    cfg = SparkK8sConfig.from_config({})
+    assert cfg.namespace == "cryo"
 
 
 def test_submit_spark_sql_creates_job_with_expected_shape() -> None:

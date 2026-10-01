@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from kubernetes import client
 
 from cryo.engines.k8s_cost_labels import cost_attribution_labels
+from cryo.engines.native.job_state import current_k8s_namespace
 from cryo.engines.spark.sizing import (
     ExecutorProfile,
     cap_deadline_seconds,
@@ -128,7 +129,13 @@ class SparkK8sConfig:
             node_selector = {"karpenter.sh/capacity-type": "on-demand"}
 
         return cls(
-            namespace=str(_get("namespace") or "default"),
+            # Confirmed live 2026-10-01: a destination.config with no explicit "namespace"
+            # key previously fell back to the literal string "default" -- the Governor's RBAC
+            # Role only grants batch/jobs and secrets verbs in its own namespace, so dispatch
+            # 403'd trying to create the driver's S3-credentials Secret in Kubernetes'
+            # "default" namespace. current_k8s_namespace() (same helper the native engine
+            # uses) falls back to wherever this process is actually running instead.
+            namespace=str(_get("namespace") or current_k8s_namespace()),
             image=str(_get("image") or _DEFAULT_IMAGE),
             image_pull_policy=str(_get("image_pull_policy") or "IfNotPresent"),
             image_pull_secrets=pull_secrets,

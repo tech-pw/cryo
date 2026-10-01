@@ -933,6 +933,16 @@ def _stats_params(params: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def partition_has_write_signal(row: Mapping[str, Any]) -> bool:
+    """True only when a real last-write timestamp is present. Unknown is not cold."""
+    last_write = row.get("last_write_at")
+    if last_write is None or last_write == "":
+        return False
+    if isinstance(last_write, str) and not last_write.strip():
+        return False
+    return True
+
+
 def _partition_is_cold(row: Mapping[str, Any], idle_hours: int) -> bool:
     from datetime import UTC, datetime, timedelta
 

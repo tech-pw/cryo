@@ -62,19 +62,45 @@ def summarize_tier_savings(
     standard_price_per_gb: float = 0.023,
     tier_price_per_gb: float = 0.0125,
 ) -> dict[str, Any]:
-    """Rough monthly savings estimate for tiering candidates (directional only)."""
+    """Monthly savings from measured candidate bytes. Missing sizes are not estimated."""
     count = len(candidates)
     if count == 0:
-        return {"candidate_count": 0, "estimated_savings_usd_month": 0.0}
-    # Placeholder: without per-partition bytes we estimate from candidate count only.
-    estimated_gb = count * 10.0
-    savings = max(0.0, (standard_price_per_gb - tier_price_per_gb) * estimated_gb)
+        return {"candidate_count": 0, "estimated_savings_usd_month": 0.0, "measured": True}
+    measured_gb = _measured_candidate_gb(candidates)
+    if measured_gb is None:
+        return {
+            "candidate_count": count,
+            "estimated_savings_usd_month": None,
+            "measured": False,
+            "note": "not measured",
+        }
+    savings = max(0.0, (standard_price_per_gb - tier_price_per_gb) * measured_gb)
     return {
         "candidate_count": count,
         "estimated_savings_usd_month": round(savings, 2),
+        "measured": True,
         "assumptions": {
             "standard_price_per_gb": standard_price_per_gb,
             "tier_price_per_gb": tier_price_per_gb,
-            "estimated_gb_per_candidate": 10.0,
+            "measured_gb": measured_gb,
         },
     }
+
+
+def _measured_candidate_gb(candidates: list[TierCandidate]) -> float | None:
+    total = 0.0
+    for candidate in candidates:
+        size_gb = _candidate_size_gb(candidate)
+        if size_gb is None:
+            return None
+        total += size_gb
+    return total
+
+
+def _candidate_size_gb(candidate: TierCandidate) -> float | None:
+    for name in ("size_gb", "partition_size_gb", "current_size_gb"):
+        value = getattr(candidate, name, None)
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            continue
+        return float(value)
+    return None
