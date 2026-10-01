@@ -8,7 +8,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Added
 - Open-source license metadata: `LICENSE` (Apache-2.0) at repo root, README license badge
-  corrected from `TBD` to Apache-2.0.
+  corrected from the `TBD` to Apache-2.0.
 - `SECURITY.md` with GitHub Security Advisory routing and supported-versions table.
 - `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
 - `.github/ISSUE_TEMPLATE/` (bug, feature) and `.github/PULL_REQUEST_TEMPLATE.md`.
