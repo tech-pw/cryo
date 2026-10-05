@@ -572,6 +572,53 @@ class Settings(BaseSettings):
         le=1_000_000,
         description="Maximum audit rows deleted by one daily leader-scheduler retention tick.",
     )
+    table_stats_history_retention_days: int = Field(
+        default=180,
+        ge=90,
+        le=3650,
+        description=(
+            "Days to retain per-scan TableStatsHistory snapshots. Had no retention at all "
+            "until 2026-10-05 -- one row per table per scan, every 6h (scanner.schedule), with "
+            "nothing ever deleting old rows: 49GB of a 61GB production DB, 80% of the metadata "
+            "database, for 853K rows. The longest real consumer lookback is 90 days "
+            "(cost_model_refresh_interval_hours's build_outcome_dataset); 180 is a safety "
+            "margin above that, not a measured requirement."
+        ),
+    )
+    table_stats_history_prune_batch_size: int = Field(
+        default=10_000,
+        ge=100,
+        le=100_000,
+        description="Maximum table_stats_history rows deleted in one transaction.",
+    )
+    table_stats_history_prune_max_rows_per_tick: int = Field(
+        default=100_000,
+        ge=100,
+        le=1_000_000,
+        description="Maximum table_stats_history rows deleted by one daily retention tick.",
+    )
+    job_retention_days: int = Field(
+        default=180,
+        ge=30,
+        le=3650,
+        description=(
+            "Days to retain finished MaintenanceJob rows (status terminal, finished_at set). "
+            "Had no retention at all until 2026-10-05. Only ever deletes rows with a non-null "
+            "finished_at, so queued/admitted/running jobs are never eligible."
+        ),
+    )
+    job_prune_batch_size: int = Field(
+        default=10_000,
+        ge=100,
+        le=100_000,
+        description="Maximum job rows deleted in one transaction.",
+    )
+    job_prune_max_rows_per_tick: int = Field(
+        default=100_000,
+        ge=100,
+        le=1_000_000,
+        description="Maximum job rows deleted by one daily retention tick.",
+    )
     query_log_iceberg_window_hours: int = Field(
         default=1,
         gt=0,
