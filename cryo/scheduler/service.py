@@ -129,6 +129,8 @@ class SchedulerService:
         self._last_telemetry_ingest: datetime | None = None
         self._last_query_log_purge: datetime | None = None
         self._last_audit_log_prune: datetime | None = None
+        self._last_table_stats_history_prune: datetime | None = None
+        self._last_job_prune: datetime | None = None
         self._last_rollout_safety_check: datetime | None = None
         self._last_silent_loss_sweep: datetime | None = None
         self._silent_loss_cursor: Any | None = None
@@ -179,6 +181,8 @@ class SchedulerService:
         self._maybe_ingest_telemetry(current)
         self._maybe_purge_query_logs(current)
         self._maybe_prune_audit_logs(current)
+        self._maybe_prune_table_stats_history(current)
+        self._maybe_prune_jobs(current)
         self._maybe_check_rollout_safety(current)
         self._maybe_silent_data_loss_sweep(current)
         self._maybe_check_unmatched_tables(current)
@@ -811,6 +815,78 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("Audit retention tick failed: %s", exc)
+
+    def _maybe_prune_table_stats_history(self, current: datetime) -> None:
+        from datetime import timedelta
+
+        if self._last_table_stats_history_prune is not None:
+            if current - self._last_table_stats_history_prune < timedelta(days=1):
+                return
+
+        try:
+            from cryo.config import get_settings
+            from cryo.db.repositories.table_stats_history_retention import (
+                prune_table_stats_history,
+            )
+
+            settings = get_settings()
+            with SessionLocal() as session:
+                result = prune_table_stats_history(
+                    session,
+                    settings.table_stats_history_retention_days,
+                    now=current,
+                    batch_size=settings.table_stats_history_prune_batch_size,
+                    max_rows=settings.table_stats_history_prune_max_rows_per_tick,
+                )
+
+            import logging
+
+            logging.getLogger(__name__).info(
+                "Table stats history retention tick: %s rows deleted, %s expired rows remain",
+                result.deleted,
+                result.remaining,
+            )
+            self._last_table_stats_history_prune = current
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Table stats history retention tick failed: %s", exc
+            )
+
+    def _maybe_prune_jobs(self, current: datetime) -> None:
+        from datetime import timedelta
+
+        if self._last_job_prune is not None:
+            if current - self._last_job_prune < timedelta(days=1):
+                return
+
+        try:
+            from cryo.config import get_settings
+            from cryo.db.repositories.job_retention import prune_finished_jobs
+
+            settings = get_settings()
+            with SessionLocal() as session:
+                result = prune_finished_jobs(
+                    session,
+                    settings.job_retention_days,
+                    now=current,
+                    batch_size=settings.job_prune_batch_size,
+                    max_rows=settings.job_prune_max_rows_per_tick,
+                )
+
+            import logging
+
+            logging.getLogger(__name__).info(
+                "Job retention tick: %s rows deleted, %s expired rows remain",
+                result.deleted,
+                result.remaining,
+            )
+            self._last_job_prune = current
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Job retention tick failed: %s", exc)
 
     def _maybe_detect_dark_tables(self, current: datetime) -> None:
         """Once a day, advance every active table's consecutive-zero-query-window counter.
