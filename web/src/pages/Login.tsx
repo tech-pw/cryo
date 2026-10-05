@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { useGoogleIdentityServices } from "../hooks/useGoogleIdentityServices";
 import { roleOptions, useAuth } from "../lib/auth";
 import { cn } from "../lib/cn";
 
@@ -30,7 +31,9 @@ export const Login = () => {
   const [subject, setSubject] = useState("operator");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<RoleToken>("operator");
+  const [googleError, setGoogleError] = useState<string | null>(null);
   const errorRef = useRef<HTMLDivElement | null>(null);
+  const { requestIdToken } = useGoogleIdentityServices();
 
   useEffect(() => {
     if (error) {
@@ -51,14 +54,14 @@ export const Login = () => {
                 ? "Production sign-in uses your organization identity provider. Development sign-in is enabled on this production install."
                 : "Production sign-in uses your organization identity provider. Dev token issuance is disabled."}
             </p>
-            {error ? (
+            {error || googleError ? (
               <div ref={errorRef} tabIndex={-1} className="focus-visible:outline-none">
                 <Alert
                   variant="error"
                   title="Sign-in failed"
                   description={
                     <>
-                      <p>{error}</p>
+                      <p>{error ?? googleError}</p>
                       <p className="mt-1">
                         Try again, or contact your administrator if single sign-on keeps failing.
                       </p>
@@ -72,14 +75,10 @@ export const Login = () => {
                 variant="secondary"
                 className="w-full"
                 onClick={() => {
-                  const google = (window as Window & { google?: { accounts: { id: { initialize: (options: object) => void; prompt: () => void } } } }).google;
-                  google?.accounts.id.initialize({
-                    client_id: googleClientId,
-                    callback: (response: { credential: string }) => {
-                      void signInWithGoogle(response.credential);
-                    }
-                  });
-                  google?.accounts.id.prompt();
+                  setGoogleError(null);
+                  requestIdToken(googleClientId)
+                    .then((idToken) => signInWithGoogle(idToken))
+                    .catch((err: Error) => setGoogleError(err.message));
                 }}
               >
                 Sign in with Google
