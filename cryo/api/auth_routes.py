@@ -228,7 +228,12 @@ def _auth_settings() -> AuthSettings:
             session.expunge(row)
             return row
     except SQLAlchemyError:
-        return AuthSettings(id=1, password_login_enabled=False, google_enabled=False)
+        return AuthSettings(
+            id=1,
+            password_login_enabled=False,
+            google_enabled=False,
+            google_auto_provision=False,
+        )
 
 
 def _issue_for_user(user: LocalUser) -> TokenResponse:
@@ -244,6 +249,22 @@ class LoginRequest(BaseModel):
 
 class GoogleLoginRequest(BaseModel):
     id_token: str
+
+
+class GoogleConfigTestRequest(BaseModel):
+    """A candidate Client ID/domain, tested against a real Google ID token obtained from a
+    one-off sign-in popup -- never against saved AuthSettings, so admins can verify a change
+    before persisting it (the same "test before save" shape as a destination connection test)."""
+
+    id_token: str
+    client_id: str
+    hosted_domain: str | None = None
+
+
+class GoogleConfigTestResponse(BaseModel):
+    ok: bool
+    email: str | None = None
+    message: str
 
 
 class UserWrite(BaseModel):
@@ -338,6 +359,40 @@ def login_with_google(payload: GoogleLoginRequest) -> TokenResponse:
                 detail="This Google account is not allowed to sign in",
             )
         return _issue_for_user(user)
+
+
+@router.post(
+    "/settings/google/test",
+    response_model=GoogleConfigTestResponse,
+    dependencies=[Depends(require_admin)],
+)
+def test_google_config(payload: GoogleConfigTestRequest) -> GoogleConfigTestResponse:
+    """Verify a candidate Client ID/domain against a real ID token the admin just obtained
+    from a one-off Google sign-in popup -- confirms the Client ID is real, the token's
+    audience matches it, and (if set) the signed-in account is actually on the allowed
+    domain, all before anything is saved to AuthSettings."""
+    claims = verify_google_id_token(
+        payload.id_token,
+        client_id=payload.client_id,
+        hosted_domain=payload.hosted_domain,
+    )
+    if claims is None:
+        domain_hint = (
+            f" and that your account is on {payload.hosted_domain}" if payload.hosted_domain else ""
+        )
+        return GoogleConfigTestResponse(
+            ok=False,
+            message=(
+                "Google rejected this sign-in for the given Client ID. Check that the "
+                "Client ID is correct, that this origin is in its Authorized JavaScript "
+                f"origins,{domain_hint}."
+            ),
+        )
+    return GoogleConfigTestResponse(
+        ok=True,
+        email=claims["email"],
+        message=f"Verified as {claims['email']}. Save to enable sign-in for this domain.",
+    )
 
 
 @router.get("/roles")
