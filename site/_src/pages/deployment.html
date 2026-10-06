@@ -1,0 +1,51 @@
+---
+title: Deployment
+lede: Cryo does not replace Trino or Apache Spark. It plans maintenance and admits the work to the engines you already run. Deploy it as a Helm chart and keep your engines where they are.
+description: How Cryo deploys on Kubernetes with Helm, what it needs from you, and the committed CPU and memory request floor.
+updated: 2026-10-05
+---
+<h2 id="kubernetes-services">Cryo on Kubernetes</h2>
+<diagram name="k8s" caption="The Helm release holds Cryo's services. PostgreSQL and Redis are yours, and so are the engines." />
+<p>The scheduler and the governor are leader-elected, so several replicas may start but only one is active. Scaling workers does not by itself raise <code>OPTIMIZE</code> concurrency, because the governor bounds real concurrency against engine load.</p>
+
+<h2 id="layout">Layout in three lines</h2>
+<dl>
+  <dt>Helm chart</dt>
+  <dd>The chart lives at <code>deploy/helm/cryo</code>. Defaults are committed, and overrides are per environment.</dd>
+  <dt>Stores</dt>
+  <dd>PostgreSQL and Redis are required. Both are external to the chart, so you can bring managed services.</dd>
+  <dt>Engines</dt>
+  <dd>Engines stay outside the chart. Cryo reaches them through source and destination configs stored in the database.</dd>
+</dl>
+
+<h2 id="request-floor">Request floor</h2>
+<p>These are the resources the committed Helm defaults request when Cryo is idle, summed across replicas. <code>scannerWorker</code> is the ad-hoc scan consumer, not the scanner CronJob.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Service</th><th class="num">CPU (cores)</th><th class="num">Memory (GiB)</th></tr></thead>
+  <tbody>
+    <tr><td><code>api</code></td><td class="num">0.50</td><td class="num">1.50</td></tr>
+    <tr><td><code>worker</code></td><td class="num">1.00</td><td class="num">2.00</td></tr>
+    <tr><td><code>governor</code></td><td class="num">0.25</td><td class="num">0.50</td></tr>
+    <tr><td><code>scheduler</code></td><td class="num">0.10</td><td class="num">0.50</td></tr>
+    <tr><td><code>scannerWorker</code></td><td class="num">1.50</td><td class="num">1.50</td></tr>
+  </tbody>
+  <tfoot><tr><td>Total</td><td class="num">3.35</td><td class="num">6.00</td></tr></tfoot>
+</table>
+</div>
+<p>Reproduce the table from the chart defaults:</p>
+<codeblock lang="bash" title="terminal">
+$ make deployment-footprint
+</codeblock>
+
+<callout type="note" title="Public shape, not a runbook">
+  <p>This page describes the shape of a deployment. It is not a production runbook.</p>
+</callout>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/architecture/" title="Architecture">The system context these workloads implement.</linkcard>
+  <linkcard href="@/engines/" title="Engines">How the same plan renders as Trino or Spark SQL.</linkcard>
+  <linkcard href="@/quickstart/" title="Quickstart">Run the same components locally with Docker first.</linkcard>
+  <linkcard href="@/reference/" title="Reference">Public API surfaces and what is in the box.</linkcard>
+</linkcards>

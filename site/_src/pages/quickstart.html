@@ -1,0 +1,81 @@
+---
+title: Quickstart
+lede: Run a local lake with deliberate maintenance problems, then watch Cryo scan it, grade it and plan the work.
+description: Install Cryo locally with Docker. Clone, start the stack, seed demo Iceberg tables and open the UI in about five minutes.
+updated: 2026-10-06
+---
+<callout type="note" title="Before you start">
+  <p>You need Docker, Python 3.12 or newer, and Node 22 or newer. The local stack is a demo lake. It is not the production topology.</p>
+</callout>
+
+<h2 id="install">Install and start</h2>
+
+<steps>
+  <step title="Clone the repository">
+    <p>The default branch is stable. You are in the repo when the next prompt is inside <code>Cryo/</code>.</p>
+    <codeblock lang="bash" title="terminal">
+$ git clone https://github.com/tech-pw/cryo.git
+$ cd Cryo
+    </codeblock>
+  </step>
+  <step title="Start the local stack">
+    <p>This starts the API, the web UI, PostgreSQL, Redis and a demo Trino. The stack is up when the API and PostgreSQL report healthy.</p>
+    <codeblock lang="bash" title="terminal">
+$ make up
+    </codeblock>
+    <p class="expect">Done when <code>docker compose ps</code> shows the API and PostgreSQL as <code>healthy</code>.</p>
+  </step>
+  <step title="Seed demo tables">
+    <p>This creates five Iceberg tables in the local REST catalog: small files, stale manifests and expirable snapshots, so there is something to find.</p>
+    <codeblock lang="bash" title="terminal">
+$ make seed
+    </codeblock>
+    <p class="expect">Done when the log prints <code>Created rest.demo.customers</code>, <code>products</code>, <code>orders</code>, <code>order_items</code> and <code>shipments</code>.</p>
+  </step>
+  <step title="Open the UI">
+    <p>Open <a href="http://localhost:5173">http://localhost:5173</a>. On macOS, <code>open http://localhost:5173</code> does the same thing.</p>
+    <p class="expect">Done when the home screen loads at <code>http://localhost:5173</code>.</p>
+  </step>
+</steps>
+
+<h2 id="what-runs-locally">What runs locally</h2>
+<p>You use the web UI, which talks only to the API. The scanner reads the demo catalog. Nothing here needs a cloud account.</p>
+<diagram name="local" caption="The local stack reads a demo catalog. Production keeps the same split with your own catalogs and engines." />
+
+<h2 id="next">What to try first</h2>
+<ul>
+  <li><strong>Home</strong> shows the whole lake: how many tables sit at each grade, and how much storage maintenance could reclaim.</li>
+  <li>Open <strong>Tables</strong>. The seeded tables already show a health grade and their small-file counts.</li>
+  <li>Open <strong>Runs</strong>. The scheduler queues jobs for tables that need work, and the governor admits them as the demo Trino has headroom.</li>
+  <li>Open any run to see its jobs and receipts: operation, engine, status and duration.</li>
+</ul>
+
+<tabs group="ui">
+  <tab title="Home">
+    <screenshot name="health" url="localhost:5173/" alt="Cryo home screen. A donut chart shows 14 tracked tables by grade, with 4 tables at grade D or F, 1.7 TB of data and 38.4 GB reclaimed by last night's maintenance." caption="Home after the first scan. The donut counts tables per grade. Storage impact shows what last night's run reclaimed." />
+  </tab>
+  <tab title="Tables">
+    <screenshot name="tables" url="localhost:5173/tables" alt="Catalogs and tables page. One catalog with 14 tables, 8 needing compaction. The table list shows grade, compaction status, small and total files, size and last scan per table, sorted by small-file count." caption="Tables lists every table the scanner has seen. This view is sorted by small-file count, and each row shows the grade next to the counts that produced it." />
+  </tab>
+  <tab title="Run">
+    <screenshot name="run-detail" url="localhost:5173/runs/7f3c9a21" alt="A completed maintenance run: 9 jobs, 8 completed, 1 failed, 38.4 GB freed in 83 minutes, with a timeline of when each table ran." caption="One run, end to end. Each bar is one table's job, and every job leaves an audit row." />
+  </tab>
+</tabs>
+
+<callout type="note" title="Pre-1.0">
+  <p>The launch-tier surface is the scanner, planner, governor, Trino and Spark engines, presets, audit, and the run console. <a href="@/architecture/">Architecture</a> shows the real component split.</p>
+</callout>
+
+<h2 id="for-agents">For agents</h2>
+<p>There is no chat on this site. Give an agent this prompt, then the page it asked about:</p>
+<codeblock lang="text" title="prompt">
+Read https://tech-pw.github.io/cryo/llms.txt, then answer only from those pages. If a fact is not on one of them, say so.
+</codeblock>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/concepts/" title="How Cryo fits">What source, preset and destination mean once you look past the demo.</linkcard>
+  <linkcard href="@/maintenance/" title="Maintenance">The fixed order the seeded tables run through.</linkcard>
+  <linkcard href="@/health/" title="Health and cost">Why the seeded tables show the grades they show.</linkcard>
+  <linkcard href="@/deployment/" title="Deployment">Move from <code>make up</code> to a Kubernetes install.</linkcard>
+</linkcards>

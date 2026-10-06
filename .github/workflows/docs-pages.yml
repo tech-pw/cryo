@@ -25,9 +25,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify generated pages match the sources
+        run: node site/scripts/build.mjs --check
+      - name: Stage the publishable tree
+        run: |
+          mkdir _site
+          rsync -a --exclude '_src' --exclude 'scripts' --exclude 'README.md' --exclude '.DS_Store' site/ _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

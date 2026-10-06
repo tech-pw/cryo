@@ -3,8 +3,9 @@
 These interactive HTML diagrams are generated with [Archify](https://github.com/tt-a1i/archify)
 and checked into the Pages artifact so the public site stays portable and does not depend on a
 runtime diagram service. The adjacent JSON files are the editable diagram sources; the HTML
-files are the self-contained viewer outputs. The public site embeds the architecture map in
-`embed=1` mode and links to the full viewer for route tracing and presentation mode.
+files are the self-contained viewer outputs. The main site no longer embeds them: its own
+diagrams are generated at build time from `site/scripts/diagrams.mjs`. These viewers are kept as
+optional deep dives (route tracing, presentation mode) and are linked from the Architecture page.
 
 - `system.architecture.html` — architecture — Cryo reads catalog metadata into the Scanner and writes Iceberg data from Workers through Trino or Spark on EMR.
 - `scan.dataflow.html` — dataflow — The default scan moves catalog metadata into PostgreSQL; object storage is not on that path.

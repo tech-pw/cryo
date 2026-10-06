@@ -1,0 +1,286 @@
+<svg class="maintenance-flow-svg is-wide" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" role="img" aria-labelledby="maintenanceFlowTitle maintenanceFlowDesc">
+  <title id="maintenanceFlowTitle">Cryo maintains one Iceberg table: scan, admit, rewrite, receipt</title>
+  <desc id="maintenanceFlowDesc">The same Iceberg table is shown on both sides. On the left it is fragmented with many small files. Cryo scans stored stats, admits the rewrite when engines have headroom, then packs the files. On the right the same table holds a few right-sized files and an audit receipt.</desc>
+
+  <defs>
+    <pattern id="instrumentDots" width="18" height="18" patternUnits="userSpaceOnUse">
+      <circle class="instrument-dot" cx="1" cy="1" r="1"/>
+    </pattern>
+  </defs>
+
+  <rect class="instrument-field" width="1200" height="400"/>
+  <rect width="1200" height="400" fill="url(#instrumentDots)"/>
+
+  <path class="instrument-rule" d="M48 52h1104"/>
+  <path class="instrument-ticks" d="M70 52v9m32-9v5m32-5v5m32-5v5m32-5v9m804-9v9m32-9v5m32-5v5m32-5v5m32-5v9"/>
+
+  <text class="instrument-kicker" x="64" y="40">ONE TABLE · ONE PARTITION CHUNK</text>
+  <text class="instrument-state" x="1136" y="40" text-anchor="end">EVERY ACTION AUDITED</text>
+
+  <g class="table-card table-in">
+    <rect class="table-shell" x="64" y="86" width="228" height="248" rx="8"/>
+    <rect class="table-head" x="64" y="86" width="228" height="38" rx="8"/>
+    <rect class="table-head-clip" x="64" y="108" width="228" height="16"/>
+    <g class="table-glyph" transform="translate(80 99)">
+      <rect width="7" height="7" rx="1"/>
+      <rect x="9" width="7" height="7" rx="1"/>
+      <rect y="9" width="7" height="7" rx="1"/>
+      <rect x="9" y="9" width="7" height="7" rx="1"/>
+    </g>
+    <text class="table-name" x="108" y="111">TABLE</text>
+    <text class="table-meta" x="268" y="111" text-anchor="end">BEFORE</text>
+    <path class="table-strata" d="M80 146h196M80 186h196M80 226h196M80 266h196"/>
+    <g class="file-slivers">
+      <g class="sliver-row" style="--i:0"><rect x="86" y="136" width="58" height="8" rx="2"/><rect x="150" y="136" width="36" height="8" rx="2"/><rect x="192" y="136" width="24" height="8" rx="2"/><rect x="222" y="136" width="50" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:1"><rect x="86" y="156" width="28" height="8" rx="2"/><rect x="120" y="156" width="64" height="8" rx="2"/><rect x="190" y="156" width="42" height="8" rx="2"/><rect x="238" y="156" width="34" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:2"><rect x="86" y="176" width="48" height="8" rx="2"/><rect x="140" y="176" width="22" height="8" rx="2"/><rect x="168" y="176" width="70" height="8" rx="2"/><rect x="244" y="176" width="28" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:3"><rect x="86" y="196" width="32" height="8" rx="2"/><rect x="124" y="196" width="54" height="8" rx="2"/><rect x="184" y="196" width="26" height="8" rx="2"/><rect x="216" y="196" width="56" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:4"><rect x="86" y="216" width="66" height="8" rx="2"/><rect x="158" y="216" width="30" height="8" rx="2"/><rect x="194" y="216" width="48" height="8" rx="2"/><rect x="248" y="216" width="24" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:5"><rect x="86" y="236" width="24" height="8" rx="2"/><rect x="116" y="236" width="72" height="8" rx="2"/><rect x="194" y="236" width="34" height="8" rx="2"/><rect x="234" y="236" width="38" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:6"><rect x="86" y="256" width="52" height="8" rx="2"/><rect x="144" y="256" width="28" height="8" rx="2"/><rect x="178" y="256" width="60" height="8" rx="2"/><rect x="244" y="256" width="28" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:7"><rect x="86" y="276" width="36" height="8" rx="2"/><rect x="128" y="276" width="48" height="8" rx="2"/><rect x="182" y="276" width="22" height="8" rx="2"/><rect x="210" y="276" width="62" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:8"><rect x="86" y="296" width="44" height="8" rx="2"/><rect x="136" y="296" width="68" height="8" rx="2"/><rect x="210" y="296" width="30" height="8" rx="2"/><rect x="246" y="296" width="26" height="8" rx="2"/></g>
+    </g>
+    <rect class="scan-line" x="78" y="128" width="200" height="1.5" style="--scan-travel:176px"/>
+  </g>
+  <text class="bank-title" x="64" y="356">FRAGMENTED TABLE</text>
+  <text class="bank-note" x="64" y="374">many small files inside</text>
+
+  <path class="flow-rail" d="M292 216h164M744 216h164"/>
+  <path class="flow-chevron" d="m442 208 14 8-14 8M894 208l14 8-14 8"/>
+
+  <g class="flow-packets" style="--travel-x:148px;--travel-y:0px">
+    <rect class="flow-packet packet-a" x="298" y="196" width="30" height="8" rx="2"/>
+    <rect class="flow-packet packet-b" x="298" y="212" width="22" height="8" rx="2"/>
+    <rect class="flow-packet packet-c" x="298" y="228" width="35" height="8" rx="2"/>
+  </g>
+
+  <g class="cryo-aperture">
+    <circle class="aperture-outer" cx="600" cy="216" r="114"/>
+    <circle class="stage-track" cx="600" cy="216" r="104"/>
+    <path class="stage-progress" pathLength="100" d="M526.46 142.46A104 104 0 0 1 673.54 142.46"/>
+    <circle class="aperture-dial" cx="600" cy="216" r="88"/>
+    <circle class="aperture-core" cx="600" cy="216" r="66"/>
+    <circle class="aperture-bezel" cx="600" cy="216" r="51"/>
+    <svg class="aperture-logo" x="553" y="169" width="94" height="94" viewBox="0 0 512 512" aria-hidden="true">
+      <g transform="translate(0 -10)">
+        <g stroke-width="1" stroke-linejoin="round">
+          <path d="M92 206 L268 206 L186 300 L104 262 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
+          <path d="M268 206 L262 340 L186 300 Z" fill="#277ABE" stroke="#277ABE"/>
+          <path d="M104 262 L186 300 L166 404 L142 330 Z" fill="#277ABE" stroke="#277ABE"/>
+          <path d="M186 300 L262 340 L248 500 L166 404 Z" fill="#1A579A" stroke="#1A579A"/>
+          <path d="M268 206 L420 206 L412 236 L380 292 L352 290 Z" fill="#57AEE1" stroke="#57AEE1"/>
+          <path d="M352 290 L380 292 L386 330 L330 410 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
+          <path d="M268 206 L352 290 L262 340 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
+          <path d="M352 290 L330 410 L248 500 L262 340 Z" fill="#277ABE" stroke="#277ABE"/>
+        </g>
+        <g stroke-width="1" stroke-linejoin="round">
+          <path d="M262 36 L304 119 L332 166 L276 198 Z" fill="#E3F2FC" stroke="#E3F2FC"/>
+          <path d="M304 119 L318 104 L332 166 Z" fill="#B8E1F3" stroke="#B8E1F3"/>
+          <path d="M318 104 L392 198 L332 166 Z" fill="#E3F2FC" stroke="#E3F2FC"/>
+          <path d="M332 166 L392 198 L276 198 Z" fill="#B8E1F3" stroke="#B8E1F3"/>
+          <path d="M262 36 L276 198 L200 130 Z" fill="#8ECDEF" stroke="#8ECDEF"/>
+          <path d="M200 130 L276 198 L140 198 Z" fill="#68C1EA" stroke="#68C1EA"/>
+        </g>
+        <path d="M64 202 Q256 188 448 202 Q256 216 64 202 Z" fill="#68C1EA"/>
+        <path transform="translate(285 212) rotate(22)" fill="#0B0F16" d="M26 -54.1 A60 60 0 0 1 23 55.4 L20 205 A20 20 0 0 1 -20 205 L-23 55.4 A60 60 0 0 1 -26 -54.1 L-26 -11 Q-26 -3 -18 -3 L18 -3 Q26 -3 26 -11 Z"/>
+      </g>
+    </svg>
+
+    <g class="stage-signal signal-scan">
+      <path d="M520.8 136.8 510 126"/>
+      <circle class="signal-halo" cx="526.46" cy="142.46" r="11"/>
+      <circle class="signal-node" cx="526.46" cy="142.46" r="6"/>
+      <text x="502" y="131" text-anchor="end"><tspan class="stage-index">01</tspan> SCAN</text>
+    </g>
+    <g class="stage-signal signal-admit">
+      <path d="M600 104V90"/>
+      <circle class="signal-halo" cx="600" cy="112" r="11"/>
+      <circle class="signal-node" cx="600" cy="112" r="6"/>
+      <text x="600" y="80" text-anchor="middle"><tspan class="stage-index">02</tspan> ADMIT</text>
+    </g>
+    <g class="stage-signal signal-rewrite">
+      <path d="M679.2 136.8 690 126"/>
+      <circle class="signal-halo" cx="673.54" cy="142.46" r="11"/>
+      <circle class="signal-node" cx="673.54" cy="142.46" r="6"/>
+      <text x="698" y="131"><tspan class="stage-index">03</tspan> REWRITE</text>
+    </g>
+
+    <g class="survey-marker">
+      <path class="survey-pole" d="M673.54 135V92"/>
+      <path class="survey-flag" d="M673.54 92h24l-6 8 6 8h-24z"/>
+    </g>
+
+    <text class="bank-title" x="600" y="356" text-anchor="middle">CRYO CONTROL PLANE</text>
+    <text class="bank-note" x="600" y="374" text-anchor="middle">admits work when engines have headroom</text>
+  </g>
+
+  <g class="table-card table-out">
+    <rect class="table-shell" x="908" y="86" width="228" height="248" rx="8"/>
+    <rect class="table-head" x="908" y="86" width="228" height="38" rx="8"/>
+    <rect class="table-head-clip" x="908" y="108" width="228" height="16"/>
+    <g class="table-glyph" transform="translate(924 99)">
+      <rect width="7" height="7" rx="1"/>
+      <rect x="9" width="7" height="7" rx="1"/>
+      <rect y="9" width="7" height="7" rx="1"/>
+      <rect x="9" y="9" width="7" height="7" rx="1"/>
+    </g>
+    <text class="table-name" x="952" y="111">TABLE</text>
+    <text class="table-meta" x="1112" y="111" text-anchor="end">AFTER</text>
+    <rect class="output-slot" x="924" y="144" width="196" height="44" rx="5"/>
+    <rect class="output-slot" x="924" y="200" width="196" height="44" rx="5"/>
+    <rect class="output-slot" x="924" y="256" width="196" height="44" rx="5"/>
+    <g class="maintenance-output" style="--enter-x:-20px;--enter-y:0px">
+      <g class="output-unit" style="--d:0.28s"><rect class="output-file" x="924" y="144" width="196" height="44" rx="5"/><path class="output-line" d="M944 166h156"/></g>
+      <g class="output-unit" style="--d:0.48s"><rect class="output-file" x="924" y="200" width="196" height="44" rx="5"/><path class="output-line" d="M944 222h156"/></g>
+      <g class="output-unit" style="--d:0.68s"><rect class="output-file" x="924" y="256" width="196" height="44" rx="5"/><path class="output-line" d="M944 278h156"/></g>
+    </g>
+    <g class="receipt-tag">
+      <path class="receipt-link" d="M1109 86v-2"/>
+      <rect class="receipt-card" x="1078" y="58" width="62" height="26" rx="3"/>
+      <path class="receipt-check" pathLength="1" d="m1087 71 4 4 8-8"/>
+      <path class="receipt-lines" d="M1107 67h22M1107 75h14"/>
+    </g>
+  </g>
+  <text class="bank-title" x="908" y="356">MAINTAINED TABLE</text>
+  <text class="bank-note" x="908" y="374">same table, with a receipt</text>
+</svg>
+<svg class="maintenance-flow-svg is-compact" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 752" role="img" aria-labelledby="maintenanceFlowTitleCompact maintenanceFlowDescCompact">
+  <title id="maintenanceFlowTitleCompact">Cryo maintains one Iceberg table: scan, admit, rewrite, receipt</title>
+  <desc id="maintenanceFlowDescCompact">The same Iceberg table is shown above and below Cryo. Above it is fragmented with many small files. Cryo scans, admits, then rewrites. Below, the same table holds a few right-sized files and an audit receipt.</desc>
+
+  <defs>
+    <pattern id="instrumentDotsCompact" width="18" height="18" patternUnits="userSpaceOnUse">
+      <circle class="instrument-dot" cx="1" cy="1" r="1"/>
+    </pattern>
+  </defs>
+
+  <rect class="instrument-field" width="360" height="752"/>
+  <rect width="360" height="752" fill="url(#instrumentDotsCompact)"/>
+
+  <path class="instrument-rule" d="M24 44h312"/>
+  <path class="instrument-ticks" d="M36 44v8m24-8v5m24-5v5m24-5v8m168-8v8m-24-8v5m-24-5v5m-24-5v8"/>
+
+  <text class="instrument-kicker" x="24" y="30">ONE TABLE · ONE CHUNK</text>
+  <text class="instrument-state" x="336" y="30" text-anchor="end">AUDITED</text>
+
+  <g class="table-card table-in">
+    <rect class="table-shell" x="28" y="58" width="304" height="168" rx="8"/>
+    <rect class="table-head" x="28" y="58" width="304" height="34" rx="8"/>
+    <rect class="table-head-clip" x="28" y="76" width="304" height="16"/>
+    <g class="table-glyph" transform="translate(44 69)">
+      <rect width="6" height="6" rx="1"/>
+      <rect x="8" width="6" height="6" rx="1"/>
+      <rect y="8" width="6" height="6" rx="1"/>
+      <rect x="8" y="8" width="6" height="6" rx="1"/>
+    </g>
+    <text class="table-name" x="70" y="81">TABLE</text>
+    <text class="table-meta" x="316" y="81" text-anchor="end">BEFORE</text>
+    <g class="file-slivers">
+      <g class="sliver-row" style="--i:0"><rect x="44" y="106" width="82" height="8" rx="2"/><rect x="132" y="106" width="48" height="8" rx="2"/><rect x="186" y="106" width="28" height="8" rx="2"/><rect x="220" y="106" width="92" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:1"><rect x="44" y="124" width="36" height="8" rx="2"/><rect x="86" y="124" width="110" height="8" rx="2"/><rect x="202" y="124" width="54" height="8" rx="2"/><rect x="262" y="124" width="50" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:2"><rect x="44" y="142" width="96" height="8" rx="2"/><rect x="146" y="142" width="32" height="8" rx="2"/><rect x="184" y="142" width="78" height="8" rx="2"/><rect x="268" y="142" width="44" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:3"><rect x="44" y="160" width="48" height="8" rx="2"/><rect x="98" y="160" width="88" height="8" rx="2"/><rect x="192" y="160" width="40" height="8" rx="2"/><rect x="238" y="160" width="74" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:4"><rect x="44" y="178" width="70" height="8" rx="2"/><rect x="120" y="178" width="52" height="8" rx="2"/><rect x="178" y="178" width="96" height="8" rx="2"/><rect x="280" y="178" width="32" height="8" rx="2"/></g>
+      <g class="sliver-row" style="--i:5"><rect x="44" y="196" width="40" height="8" rx="2"/><rect x="90" y="196" width="108" height="8" rx="2"/><rect x="204" y="196" width="36" height="8" rx="2"/><rect x="246" y="196" width="66" height="8" rx="2"/></g>
+    </g>
+    <rect class="scan-line" x="40" y="100" width="280" height="1.5" style="--scan-travel:110px"/>
+  </g>
+  <text class="bank-title" x="28" y="246">FRAGMENTED TABLE</text>
+  <text class="bank-note" x="28" y="264">many small files inside</text>
+
+  <path class="flow-rail" d="M148 278v36M148 516v28"/>
+  <path class="flow-chevron" d="m140 304 8 12 8-12M140 534l8 12 8-12"/>
+
+  <g class="flow-packets" style="--travel-x:0px;--travel-y:36px">
+    <rect class="flow-packet packet-a" x="134" y="280" width="28" height="6" rx="2"/>
+    <rect class="flow-packet packet-b" x="138" y="280" width="20" height="6" rx="2"/>
+    <rect class="flow-packet packet-c" x="132" y="280" width="32" height="6" rx="2"/>
+  </g>
+
+  <g class="cryo-aperture">
+    <circle class="aperture-outer" cx="148" cy="400" r="88"/>
+    <circle class="stage-track" cx="148" cy="400" r="78"/>
+    <path class="stage-progress" pathLength="100" d="M203.15 344.85A78 78 0 0 1 203.15 455.15"/>
+    <circle class="aperture-dial" cx="148" cy="400" r="64"/>
+    <circle class="aperture-core" cx="148" cy="400" r="50"/>
+    <circle class="aperture-bezel" cx="148" cy="400" r="38"/>
+    <svg class="aperture-logo" x="114" y="366" width="68" height="68" viewBox="0 0 512 512" aria-hidden="true">
+      <g transform="translate(0 -10)">
+        <g stroke-width="1" stroke-linejoin="round">
+          <path d="M92 206 L268 206 L186 300 L104 262 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
+          <path d="M268 206 L262 340 L186 300 Z" fill="#277ABE" stroke="#277ABE"/>
+          <path d="M104 262 L186 300 L166 404 L142 330 Z" fill="#277ABE" stroke="#277ABE"/>
+          <path d="M186 300 L262 340 L248 500 L166 404 Z" fill="#1A579A" stroke="#1A579A"/>
+          <path d="M268 206 L420 206 L412 236 L380 292 L352 290 Z" fill="#57AEE1" stroke="#57AEE1"/>
+          <path d="M352 290 L380 292 L386 330 L330 410 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
+          <path d="M268 206 L352 290 L262 340 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
+          <path d="M352 290 L330 410 L248 500 L262 340 Z" fill="#277ABE" stroke="#277ABE"/>
+        </g>
+        <g stroke-width="1" stroke-linejoin="round">
+          <path d="M262 36 L304 119 L332 166 L276 198 Z" fill="#E3F2FC" stroke="#E3F2FC"/>
+          <path d="M304 119 L318 104 L332 166 Z" fill="#B8E1F3" stroke="#B8E1F3"/>
+          <path d="M318 104 L392 198 L332 166 Z" fill="#E3F2FC" stroke="#E3F2FC"/>
+          <path d="M332 166 L392 198 L276 198 Z" fill="#B8E1F3" stroke="#B8E1F3"/>
+          <path d="M262 36 L276 198 L200 130 Z" fill="#8ECDEF" stroke="#8ECDEF"/>
+          <path d="M200 130 L276 198 L140 198 Z" fill="#68C1EA" stroke="#68C1EA"/>
+        </g>
+        <path d="M64 202 Q256 188 448 202 Q256 216 64 202 Z" fill="#68C1EA"/>
+        <path transform="translate(285 212) rotate(22)" fill="#0B0F16" d="M26 -54.1 A60 60 0 0 1 23 55.4 L20 205 A20 20 0 0 1 -20 205 L-23 55.4 A60 60 0 0 1 -26 -54.1 L-26 -11 Q-26 -3 -18 -3 L18 -3 Q26 -3 26 -11 Z"/>
+      </g>
+    </svg>
+
+    <g class="stage-signal signal-scan">
+      <path d="M208 340 218 330"/>
+      <circle class="signal-halo" cx="203.15" cy="344.85" r="10"/>
+      <circle class="signal-node" cx="203.15" cy="344.85" r="5.5"/>
+      <text x="224" y="332"><tspan class="stage-index">01</tspan> SCAN</text>
+    </g>
+    <g class="stage-signal signal-admit">
+      <path d="M234 400h12"/>
+      <circle class="signal-halo" cx="226" cy="400" r="10"/>
+      <circle class="signal-node" cx="226" cy="400" r="5.5"/>
+      <text x="252" y="405"><tspan class="stage-index">02</tspan> ADMIT</text>
+    </g>
+    <g class="stage-signal signal-rewrite">
+      <path d="M208 460 218 470"/>
+      <circle class="signal-halo" cx="203.15" cy="455.15" r="10"/>
+      <circle class="signal-node" cx="203.15" cy="455.15" r="5.5"/>
+      <text x="224" y="478"><tspan class="stage-index">03</tspan> REWRITE</text>
+    </g>
+
+    <g class="survey-marker">
+      <path class="survey-pole" d="M328 478v-22"/>
+      <path class="survey-flag" d="M328 456h18l-5 7 5 7h-18z"/>
+    </g>
+  </g>
+
+  <g class="table-card table-out">
+    <rect class="table-shell" x="28" y="560" width="304" height="148" rx="8"/>
+    <rect class="table-head" x="28" y="560" width="304" height="34" rx="8"/>
+    <rect class="table-head-clip" x="28" y="578" width="304" height="16"/>
+    <g class="table-glyph" transform="translate(44 571)">
+      <rect width="6" height="6" rx="1"/>
+      <rect x="8" width="6" height="6" rx="1"/>
+      <rect y="8" width="6" height="6" rx="1"/>
+      <rect x="8" y="8" width="6" height="6" rx="1"/>
+    </g>
+    <text class="table-name" x="70" y="583">TABLE</text>
+    <text class="table-meta" x="316" y="583" text-anchor="end">AFTER</text>
+    <rect class="output-slot" x="44" y="606" width="210" height="26" rx="4"/>
+    <rect class="output-slot" x="44" y="638" width="210" height="26" rx="4"/>
+    <rect class="output-slot" x="44" y="670" width="210" height="26" rx="4"/>
+    <g class="maintenance-output" style="--enter-x:0px;--enter-y:-10px">
+      <g class="output-unit" style="--d:0.28s"><rect class="output-file" x="44" y="606" width="210" height="26" rx="4"/><path class="output-line" d="M58 619h182"/></g>
+      <g class="output-unit" style="--d:0.48s"><rect class="output-file" x="44" y="638" width="210" height="26" rx="4"/><path class="output-line" d="M58 651h182"/></g>
+      <g class="output-unit" style="--d:0.68s"><rect class="output-file" x="44" y="670" width="210" height="26" rx="4"/><path class="output-line" d="M58 683h182"/></g>
+    </g>
+    <g class="receipt-tag">
+      <path class="receipt-link" d="M254 619h22"/>
+      <rect class="receipt-card" x="276" y="604" width="42" height="30" rx="3"/>
+      <path class="receipt-check" pathLength="1" d="m284 619 4 4 8-8"/>
+    </g>
+  </g>
+  <text class="bank-title" x="28" y="728">MAINTAINED TABLE</text>
+  <text class="bank-note" x="28" y="746">same table, with a receipt</text>
+</svg>

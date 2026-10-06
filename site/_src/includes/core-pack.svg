@@ -1,0 +1,68 @@
+<svg class="core-pack-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 300" aria-hidden="true">
+  <path class="core-shadow" d="M74 238h574l18 10-18 10H74l-18-10z"/>
+  <g class="core-strata" fill="none">
+    <path d="M34 42h128"/>
+    <path d="M34 50h128"/>
+    <path d="M34 58h128"/>
+  </g>
+  <g class="core-shell">
+    <path class="core-body" d="M78 78h556c34 0 62 32 62 72s-28 72-62 72H78c-34 0-62-32-62-72s28-72 62-72z"/>
+    <ellipse class="core-end" cx="634" cy="150" rx="62" ry="72"/>
+    <path class="core-cut" d="M78 104h556c22 0 40 20 40 46s-18 46-40 46H78c-22 0-40-20-40-46s18-46 40-46z"/>
+    <path class="core-rim" d="M78 104c-22 0-40 20-40 46s18 46 40 46"/>
+  </g>
+  <g class="core-zone-washes">
+    <path class="core-zone-loose" d="M78 105h198v90H78c-22 0-39-20-39-45s17-45 39-45z"/>
+    <rect class="core-zone-pack" x="276" y="105" width="194" height="90"/>
+    <path class="core-zone-solid" d="M470 105h164c22 0 39 20 39 45s-17 45-39 45H470z"/>
+  </g>
+  <g class="core-layers" fill="none">
+    <path d="M58 124h596"/>
+    <path d="M48 142h615"/>
+    <path d="M48 160h615"/>
+    <path d="M58 178h596"/>
+  </g>
+  <g class="core-dividers">
+    <path d="M276 105v90"/>
+    <path d="M470 105v90"/>
+  </g>
+  <g class="core-tiles">
+    <rect class="core-tile" width="18" height="18" data-fx="84" data-fy="117" data-fr="-12" data-tx="306" data-ty="118" data-tr="0"/>
+    <rect class="core-tile" width="18" height="18" data-fx="126" data-fy="151" data-fr="8" data-tx="350" data-ty="118" data-tr="0"/>
+    <rect class="core-tile" width="16" height="16" data-fx="90" data-fy="170" data-fr="-6" data-tx="396" data-ty="119" data-tr="0"/>
+    <rect class="core-tile" width="16" height="16" data-fx="146" data-fy="113" data-fr="14" data-tx="438" data-ty="119" data-tr="0"/>
+    <rect class="core-tile" width="18" height="18" data-fx="172" data-fy="163" data-fr="-18" data-tx="306" data-ty="148" data-tr="0"/>
+    <rect class="core-tile" width="16" height="16" data-fx="203" data-fy="127" data-fr="6" data-tx="352" data-ty="149" data-tr="0"/>
+    <rect class="core-tile" width="14" height="14" data-fx="216" data-fy="172" data-fr="-8" data-tx="398" data-ty="150" data-tr="0"/>
+    <rect class="core-tile" width="18" height="18" data-fx="238" data-fy="111" data-fr="10" data-tx="436" data-ty="148" data-tr="0"/>
+    <rect class="core-tile" width="16" height="16" data-fx="61" data-fy="145" data-fr="-14" data-tx="307" data-ty="176" data-tr="0"/>
+    <rect class="core-tile" width="14" height="14" data-fx="116" data-fy="121" data-fr="4" data-tx="353" data-ty="177" data-tr="0"/>
+    <rect class="core-tile" width="18" height="18" data-fx="185" data-fy="112" data-fr="-10" data-tx="397" data-ty="175" data-tr="0"/>
+    <rect class="core-tile" width="16" height="16" data-fx="248" data-fy="164" data-fr="16" data-tx="437" data-ty="176" data-tr="0"/>
+  </g>
+  <g class="core-packing-blocks">
+    <rect x="294" y="114" width="48" height="24" rx="3"/>
+    <rect x="350" y="114" width="48" height="24" rx="3"/>
+    <rect x="406" y="114" width="48" height="24" rx="3"/>
+    <rect x="294" y="146" width="48" height="24" rx="3"/>
+    <rect x="350" y="146" width="48" height="24" rx="3"/>
+    <rect x="406" y="146" width="48" height="24" rx="3"/>
+    <rect x="322" y="178" width="48" height="12" rx="3"/>
+    <rect x="378" y="178" width="48" height="12" rx="3"/>
+  </g>
+  <g class="core-solid">
+    <path d="M480 112h148c20 0 36 17 36 38s-16 38-36 38H480z"/>
+    <path class="core-solid-line" d="M492 132h147"/>
+    <path class="core-solid-line" d="M492 154h158"/>
+    <path class="core-solid-line" d="M492 176h147"/>
+  </g>
+  <g class="core-marker-main">
+    <line x1="566" y1="105" x2="566" y2="52"/>
+    <path class="core-marker-flag" d="M566 52h28l-7 9 7 9h-28z"/>
+  </g>
+  <g class="core-zone-labels">
+    <text x="78" y="278">Loose files</text>
+    <text x="372" y="278" text-anchor="middle">Packing</text>
+    <text x="634" y="278" text-anchor="end">Solid blocks</text>
+  </g>
+</svg>

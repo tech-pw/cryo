@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test baseline capabilities-docs capabilities-docs-check cryobench-fixture migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report shared-s3-anomalies shared-s3-anomalies-notify up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures seed-native-compaction-fixtures seed-native-compaction-perf-fixture test-hms-integration test-native-e2e test-native-e2e-go test-native-e2e-local test-native-e2e-local-go test-native-compaction-e2e test-native-compaction-e2e-go test-native-compaction-e2e-local test-native-compaction-e2e-local-go test-native-compaction-perf test-native-compaction-perf-go test-native-compaction-throughput-go validate-dense-compaction-memory build-engine-go build-engine-go-linux build-seed-native-fixtures test-engine-go smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-quality web-axe web-impeccable web-visual web-gen start-local stop-local status-local
+.PHONY: install lint format typecheck test baseline capabilities-docs capabilities-docs-check cryobench-fixture migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report shared-s3-anomalies shared-s3-anomalies-notify up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures seed-native-compaction-fixtures seed-native-compaction-perf-fixture test-hms-integration test-native-e2e test-native-e2e-go test-native-e2e-local test-native-e2e-local-go test-native-compaction-e2e test-native-compaction-e2e-go test-native-compaction-e2e-local test-native-compaction-e2e-local-go test-native-compaction-perf test-native-compaction-perf-go test-native-compaction-throughput-go validate-dense-compaction-memory build-engine-go build-engine-go-linux build-seed-native-fixtures test-engine-go smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-quality web-axe web-impeccable web-visual web-gen docs docs-preview start-local stop-local status-local
 
 PYTHON ?= python3.12
 TRINO_VERSION ?= 480
@@ -254,6 +254,12 @@ web-visual:
 
 web-gen:
 	$(NPM) --prefix web run gen:api
+
+docs:
+	node site/scripts/build.mjs
+
+docs-preview:
+	node site/scripts/preview.mjs
 
 start-local:
 	./start-local.sh start

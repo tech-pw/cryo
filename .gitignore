@@ -32,6 +32,10 @@ node_modules/
 .env.*
 !.env.example
 
+# Local motion-reel outputs (H.264, audio, Playwright captures)
+videos/
+.playwright-mcp/
+
 # Local perf / profiling artifacts (MinIO throughput loop)
 tmp/
 *.pprof

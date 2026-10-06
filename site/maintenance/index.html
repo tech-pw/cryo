@@ -1,236 +1,147 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Maintenance — Cryo</title>
-  <meta name="description" content="A maintenance run on an Apache Iceberg table compacts first, then cleans up, in one fixed order.">
-  <link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="../assets/css/site.css">
-</head>
-<body data-page="maintenance">
-  <a class="skip" href="#content">Skip to content</a>
-  <header id="top"></header>
-  <div class="shell">
-    <aside id="side" class="side"></aside>
-    <main id="content" class="content">
-      <article class="page">
-        <p class="eyebrow">Maintenance</p>
-        <h1 id="order">Compact first, then clean up.</h1>
-        <p class="lede">A maintenance run on an Apache Iceberg table compacts first, then cleans up, in one fixed order. The order is defined in code; no preset can change it.</p>
-
-        <div class="layer-rule" aria-hidden="true"></div>
-
-        <h2 id="why-it-matters">Why maintenance matters</h2>
-        <p>Apache Iceberg's table format is genuinely excellent — hidden partitioning, snapshot isolation, schema evolution, engine-agnostic metadata. What it doesn't give you is any promise those things stay fast. Left alone, four things rot.</p>
-        <div class="grid-2">
-          <figure class="viz" data-chart="matrix">
-            <script type="application/json">
-              {
-                "title": "Four ways a table rots without maintenance",
-                "caption": "Each mode compounds independently — fixing one does not fix the others.",
-                "source": "iceberg.apache.org/docs/latest/maintenance · 2026-09-30",
-                "columns": ["Untended", "Cryo run"],
-                "rows": [
-                  {"label": "Small files pile up (every write adds an open/seek/plan cost)", "marks": [true, false]},
-                  {"label": "Delete files accumulate (every scan re-merges them)", "marks": [true, false]},
-                  {"label": "Snapshot history grows unbounded (planning gets slower)", "marks": [true, false]},
-                  {"label": "Layout drifts from the query pattern (scans read more than needed)", "marks": [true, false]}
-                ]
-              }
-            </script>
-          </figure>
-          <figure class="viz" data-chart="figure">
-            <script type="application/json">
-              {
-                "title": "A table left alone doesn't fail loudly",
-                "caption": "It fails as a slow, compounding tax that eventually shows up as someone else's incident — a timed-out connection pool, a scan that reads far more than it should.",
-                "source": "Illustrative shape · 2026-09-30",
-                "focus": "incident",
-                "groups": [
-                  {"label": "Day 0", "nodes": [{"id": "fresh", "label": "Freshly written table", "kind": "source"}]},
-                  {"label": "Untended", "nodes": [{"id": "small", "label": "Small files, no deletes", "kind": "cryo"}]},
-                  {"label": "Day 90", "nodes": [{"id": "rot", "label": "Files + deletes + snapshots pile up", "kind": "cryo"}]},
-                  {"label": "Someone's query", "nodes": [{"id": "incident", "label": "Slow scan or pool exhaustion", "kind": "engine"}]}
-                ],
-                "edges": [
-                  {"from": "fresh", "to": "small"},
-                  {"from": "small", "to": "rot"},
-                  {"from": "rot", "to": "incident"}
-                ]
-              }
-            </script>
-          </figure>
-        </div>
-
-        <h3 id="strategies" style="margin-top:28px">Compaction is not one operation</h3>
-        <p>Teams pick a compaction strategy based on write pattern and query filters — the same primitive (<code class="mono">optimize</code>) does very different work depending on which one runs.</p>
-        <figure class="viz" data-chart="bars">
-          <script type="application/json">
-            {"title":"Relative compute cost by strategy","unit":"","caption":"Binpack merges small files and reconciles deletes at the lowest cost. Sort clusters by 1-2 filter columns. Z-order clusters by several dimensions at once, for a higher compute cost.","source":"Illustrative relative shape · 2026-09-30","series":[{"label":"Binpack — streaming tables, tight windows","value":1,"tone":"firn"},{"label":"Sort — predictable filters on 1-2 columns","value":2,"tone":"frost"},{"label":"Z-order — several common filter dimensions","value":3,"focus":true,"tone":"core"}]}
-          </script>
-        </figure>
-
-        <div class="layer-rule" aria-hidden="true"></div>
-
-        <h2 id="canonical-order">Canonical order</h2>
-        <figure class="viz viz--wide" data-chart="rail">
-          <script type="application/json">
-            {
-              "title": "Canonical maintenance order",
-              "caption": "Expiry comes after compaction so one run reclaims the space its own compaction freed — instead of expiring while the pre-compaction data files are still live.",
-              "source": "cryo/planner/guardrails.py · 2026-09-30",
-              "focus": "optimize",
-              "steps": [
-                {"id": "convert_deletes", "label": "convert_deletes"},
-                {"id": "rewrite_position_deletes", "label": "rewrite_position_deletes"},
-                {"id": "optimize", "label": "optimize"},
-                {"id": "compute_statistics", "label": "compute_statistics"},
-                {"id": "optimize_manifests", "label": "optimize_manifests"},
-                {"id": "expire_snapshots", "label": "expire_snapshots"},
-                {"id": "remove_orphan_files", "label": "remove_orphan_files"}
-              ]
-            }
-          </script>
-        </figure>
-
-        <div class="grid-2" style="margin-top:14px">
-          <figure class="viz" data-chart="waterfall">
-            <script type="application/json">
-              {"compact":true,"title":"Illustrative bytes reclaimed by operation","start":980,"unit":" GB","items":[{"label":"convert_deletes","value":-12},{"label":"rewrite_position_deletes","value":-8},{"label":"optimize","value":-340},{"label":"compute_statistics","value":0},{"label":"optimize_manifests","value":-2},{"label":"expire_snapshots","value":-218},{"label":"remove_orphan_files","value":-46,"type":"total"}],"caption":"Compaction is the largest single contributor. Expiry follows hours later, not days.","source":"Illustrative shape · 2026-09-30"}
-            </script>
-          </figure>
-          <figure class="viz" data-chart="timeline">
-            <script type="application/json">
-              {"compact":true,"title":"Where each step lives in the run","events":[{"at":0,"atLabel":"00:00","label":"convert_deletes"},{"at":18,"atLabel":"00:18","label":"rewrite"},{"at":42,"atLabel":"00:42","label":"optimize","tone":"marker"},{"at":120,"atLabel":"02:00","label":"stats"},{"at":184,"atLabel":"03:04","label":"manifests"},{"at":206,"atLabel":"03:26","label":"expire","tone":"firn"},{"at":312,"atLabel":"05:12","label":"orphans","tone":"core"}],"caption":"Optimize is the long middle. The tail (expire, orphans) reclaims what the middle produced.","source":"Illustrative · 2026-09-30"}
-            </script>
-          </figure>
-        </div>
-
-        <div class="layer-rule" aria-hidden="true"></div>
-
-        <h2 id="chunking">Planner chunking</h2>
-        <p>Ranked partitions become a chunk under a GB budget, an oversize partition alone, or a small-table bypass. The planner picks one of three paths per run.</p>
-        <div class="grid-3">
-          <figure class="viz" data-chart="figure">
-            <script type="application/json">
-              {
-                "title": "Ranked partitions",
-                "caption": "Ranked by small-file count, descending.",
-                "source": "hld.md section 3.7 · 2026-09-30",
-                "groups": [
-                  {"label": "Partitions", "nodes": [{"id": "ranked", "label": "Ranked partitions", "kind": "source"}]}
-                ]
-              }
-            </script>
-          </figure>
-          <figure class="viz" data-chart="figure">
-            <script type="application/json">
-              {
-                "title": "Three planner paths",
-                "caption": "Under GB budget · oversize alone · small table bypass.",
-                "source": "hld.md section 3.7 · 2026-09-30",
-                "focus": "oversize",
-                "groups": [
-                  {"label": "Planner", "nodes": [
-                    {"id": "chunk", "label": "Chunk under GB budget", "kind": "cryo"},
-                    {"id": "oversize", "label": "Oversize partition alone", "kind": "cryo"},
-                    {"id": "bypass", "label": "Small table bypass", "kind": "cryo"}
-                  ]}
-                ],
-                "edges": [
-                  {"from": "ranked", "to": "chunk", "style": "read"},
-                  {"from": "ranked", "to": "oversize", "style": "read"},
-                  {"from": "ranked", "to": "bypass", "style": "read"}
-                ]
-              }
-            </script>
-          </figure>
-          <figure class="viz" data-chart="compare">
-            <script type="application/json">
-              {"title":"Partition counts across paths","caption":"Illustrative mix per run. Small-table bypass skips chunking entirely.","source":"hld.md section 3.7 · 2026-09-30","pairs":[{"label":"partitions in","before":48,"after":48,"unit":"","delta":0},{"label":"chunks formed","before":0,"after":4,"unit":"","delta":4},{"label":"oversize alone","before":0,"after":1,"unit":"","delta":1},{"label":"bypass (full table)","before":0,"after":1,"unit":"","delta":1}]}
-            </script>
-          </figure>
-        </div>
-
-        <div class="layer-rule" aria-hidden="true"></div>
-
-        <h2 id="admission">Admission — load-aware, never eager</h2>
-        <div class="grid-2">
-          <figure class="viz" data-chart="figure">
-            <script type="application/json">
-              {
-                "title": "Admission",
-                "caption": "Scaling workers does not raise parallel OPTIMIZE count. The Governor does.",
-                "source": "hld.md section 6 · 2026-09-30",
-                "focus": "governor",
-                "groups": [
-                  {"label": "Worker", "nodes": [{"id": "worker", "label": "Worker wants a job", "kind": "cryo"}]},
-                  {"label": "Admission", "nodes": [{"id": "governor", "label": "Governor", "kind": "cryo"}, {"id": "admit", "label": "Admit", "kind": "cryo"}, {"id": "defer", "label": "Defer", "kind": "cryo"}]},
-                  {"label": "Probe", "nodes": [{"id": "trino", "label": "system.runtime.queries", "kind": "engine"}, {"id": "spark", "label": "Spark slots", "kind": "engine"}]}
-                ],
-                "edges": [
-                  {"from": "worker", "to": "governor"},
-                  {"from": "governor", "to": "trino", "style": "read"},
-                  {"from": "governor", "to": "spark", "style": "read"}
-                ]
-              }
-            </script>
-          </figure>
-          <figure class="viz" data-chart="gauge">
-            <script type="application/json">
-              {"title":"Trino slot pressure (illustrative)","value":42,"max":100,"label":"42%","detail":"14 of 32 slots busy","tone":"core","thresholds":"<60 admit · 60-80 warn · >80 defer"}
-            </script>
-          </figure>
-        </div>
-
-        <div class="layer-rule" aria-hidden="true"></div>
-
-        <h2 id="guardrails">Three guardrails, always on</h2>
-        <div class="grid-3">
-          <figure class="viz" data-chart="core">
-            <script type="application/json">{"title":"Cooldown","label":"skip recently maintained","caption":"Skip tables maintained within N hours. Read from audit log + engine history.","source":"hld.md §6"}</script>
-          </figure>
-          <figure class="viz" data-chart="core">
-            <script type="application/json">{"title":"Per-table lock","label":"Redis","caption":"A per-table Redis lock held for the job's lifetime.","source":"hld.md §6"}</script>
-          </figure>
-          <figure class="viz" data-chart="core">
-            <script type="application/json">{"title":"Failure isolation","label":"one table","caption":"One job's failure is recorded; the run continues.","source":"hld.md §6"}</script>
-          </figure>
-        </div>
-
-        <p class="note note--warning" style="margin-top:24px"><strong>Destructive operations are guarded.</strong> <code class="mono">expire_snapshots</code> and <code class="mono">remove_orphan_files</code> require the relevant tier in the scanner. Cryo never touches snapshots the retention policy would keep.</p>
-
-        <div class="layer-rule" aria-hidden="true"></div>
-
-        <h2 id="read-next">Read next</h2>
-        <div class="grid-2">
-          <section class="card">
-            <h3><a href="../engines/index.html">Engines</a></h3>
-            <p>How this same fixed order renders as Trino SQL and Spark SQL.</p>
-          </section>
-          <section class="card">
-            <h3><a href="../health/index.html">Health and cost</a></h3>
-            <p>What a run's grade looked like before compaction, and after.</p>
-          </section>
-          <section class="card">
-            <h3><a href="../architecture/index.html">Architecture</a></h3>
-            <p>Scheduler, Governor, and Worker as running components.</p>
-          </section>
-          <section class="card">
-            <h3><a href="../concepts/index.html">Concepts</a></h3>
-            <p>Why a preset binds tables to a destination, not to raw SQL.</p>
-          </section>
-        </div>
-
-      </article>
-    </main>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Maintenance · Cryo</title><meta name="description" content="Why Iceberg tables need maintenance, the seven operations Cryo runs in a fixed order, how the planner chunks work, how admission works, and the guardrails that stay on."><link rel="canonical" href="https://tech-pw.github.io/cryo/maintenance/"><link rel="alternate" type="text/markdown" href="../maintenance/index.md" title="Markdown version"><meta name="theme-color" content="#F5FAFD" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0F16" media="(prefers-color-scheme: dark)"><meta property="og:type" content="website"><meta property="og:site_name" content="Cryo"><meta property="og:title" content="Maintenance · Cryo"><meta property="og:description" content="Why Iceberg tables need maintenance, the seven operations Cryo runs in a fixed order, how the planner chunks work, how admission works, and the guardrails that stay on."><meta property="og:url" content="https://tech-pw.github.io/cryo/maintenance/"><meta property="og:image" content="https://tech-pw.github.io/cryo/assets/img/og.png"><meta name="twitter:card" content="summary_large_image"><link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="../assets/fonts/ibm-plex-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin><script>(function(){try{var t=localStorage.getItem("cryo-site-theme");if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}})()</script><link rel="stylesheet" href="../assets/css/site.css?v=dd66c3236f"></head><body class="docs" data-page="maintenance" data-root="../"><a class="skip" href="#main">Skip to content</a><header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><a class="logo" href="../" aria-label="Cryo home"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 512 512" aria-hidden="true"><g transform="translate(0 -10)">
+    <g stroke-width="1" stroke-linejoin="round">
+      <path d="M92 206 L268 206 L186 300 L104 262 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
+      <path d="M268 206 L262 340 L186 300 Z" fill="#277ABE" stroke="#277ABE"/>
+      <path d="M104 262 L186 300 L166 404 L142 330 Z" fill="#277ABE" stroke="#277ABE"/>
+      <path d="M186 300 L262 340 L248 500 L166 404 Z" fill="#1A579A" stroke="#1A579A"/>
+      <path d="M268 206 L420 206 L412 236 L380 292 L352 290 Z" fill="#57AEE1" stroke="#57AEE1"/>
+      <path d="M352 290 L380 292 L386 330 L330 410 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
+      <path d="M268 206 L352 290 L262 340 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
+      <path d="M352 290 L330 410 L248 500 L262 340 Z" fill="#277ABE" stroke="#277ABE"/>
+    </g>
+    <g stroke-width="1" stroke-linejoin="round">
+      <path d="M262 36 L304 119 L332 166 L276 198 Z" fill="#E3F2FC" stroke="#E3F2FC"/>
+      <path d="M304 119 L318 104 L332 166 Z" fill="#B8E1F3" stroke="#B8E1F3"/>
+      <path d="M318 104 L392 198 L332 166 Z" fill="#E3F2FC" stroke="#E3F2FC"/>
+      <path d="M332 166 L392 198 L276 198 Z" fill="#B8E1F3" stroke="#B8E1F3"/>
+      <path d="M262 36 L276 198 L200 130 Z" fill="#8ECDEF" stroke="#8ECDEF"/>
+      <path d="M200 130 L276 198 L140 198 Z" fill="#68C1EA" stroke="#68C1EA"/>
+    </g>
+    <path d="M64 202 Q256 188 448 202 Q256 216 64 202 Z" fill="#68C1EA"/>
+    <path transform="translate(285 212) rotate(22)" fill="#0B0F16"
+      d="M26 -54.1 A60 60 0 0 1 23 55.4 L20 205 A20 20 0 0 1 -20 205 L-23 55.4 A60 60 0 0 1 -26 -54.1 L-26 -11 Q-26 -3 -18 -3 L18 -3 Q26 -3 26 -11 Z"/>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><nav class="hdr-tabs" aria-label="Sections"><a class="hdr-tab" href="../quickstart/">Get started</a><a class="hdr-tab" href="../concepts/" aria-current="true">Concepts</a><a class="hdr-tab" href="../health/">Operate</a><a class="hdr-tab" href="../reference/">Reference</a></nav><div class="hdr-end"><button class="search-open" type="button" aria-label="Search the docs" aria-haspopup="dialog"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="so-text">Search</span><kbd class="so-kbd">⌘K</kbd></button><a class="icon-btn" href="https://github.com/tech-pw/cryo" aria-label="Cryo on GitHub"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><button class="icon-btn theme-toggle" type="button" aria-label="Toggle colour theme"><svg class="i-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="i-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></button></div></div></header><div class="shell"><nav class="side" id="side" aria-label="Documentation"><div class="side-in"><div class="nav-group"><p class="nav-label">Get started</p><ul><li><a class="nav-link" href="../">Overview</a></li><li><a class="nav-link" href="../quickstart/">Quickstart</a></li></ul></div><div class="nav-group"><p class="nav-label">Concepts</p><ul><li><a class="nav-link" href="../concepts/">How Cryo fits</a></li><li><a class="nav-link" href="../architecture/">Architecture</a></li><li><a class="nav-link" href="../maintenance/" aria-current="page">Maintenance</a></li></ul></div><div class="nav-group"><p class="nav-label">Operate</p><ul><li><a class="nav-link" href="../health/">Health and cost</a></li><li><a class="nav-link" href="../engines/">Engines</a></li><li><a class="nav-link" href="../deployment/">Deployment</a></li></ul></div><div class="nav-group"><p class="nav-label">Reference</p><ul><li><a class="nav-link" href="../reference/">Reference</a></li></ul></div></div><button class="side-collapse" type="button" aria-label="Collapse sidebar" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg></button></nav><div class="scrim" hidden></div><main class="main" id="main"><article class="doc"><header class="doc-head"><nav class="crumbs" aria-label="Breadcrumb"><a href="../" aria-label="Cryo home"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></a><span class="crumb-sep" aria-hidden="true">›</span><span>Concepts</span><span class="crumb-sep" aria-hidden="true">›</span><span class="crumb-here" aria-current="page">Maintenance</span></nav><h1>Maintenance</h1><p class="lede">A maintenance run compacts first, then cleans up, in one fixed order. The order is defined in code and no preset can change it.</p><div class="doc-meta"><span>Updated <time datetime="2026-10-06">2026-10-06</time></span><span class="dot" aria-hidden="true"></span><span>5 min read</span><span class="meta-links"><a href="https://github.com/tech-pw/cryo/edit/main/site/_src/pages/maintenance.html"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>Edit this page</a><button class="share-page" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"/></svg><span>Share</span></button><a href="https://github.com/tech-pw/cryo/issues/new?title=docs%3A%20Maintenance&body=Page%3A%20https%3A%2F%2Ftech-pw.github.io%2Fcryo%2Fmaintenance%2F%0A%0AWhat%20is%20wrong%20or%20missing%3F%0A&labels=documentation"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="13" rx="5"/><path d="M9 7a3 3 0 0 1 6 0M3 13h4M17 13h4M4 7l3 2M20 7l-3 2M4 19l3-2M20 19l-3-2"/></svg>Report an issue</a><a class="md-page" href="../maintenance/index.md">View as Markdown</a></span><button class="copy-page" type="button" data-md="../maintenance/index.md">Copy page</button></div></header><details class="toc-m"><summary>On this page</summary><ul><li class="toc-l2"><a href="#canonical-order">Canonical order</a></li><li class="toc-l2"><a href="#why-it-matters">Why maintenance matters</a></li><li class="toc-l3"><a href="#strategies">Compaction is not one operation</a></li><li class="toc-l2"><a href="#operations">What each operation does</a></li><li class="toc-l3"><a href="#convert-deletes">convert_deletes</a></li><li class="toc-l3"><a href="#rewrite-position-deletes">rewrite_position_deletes</a></li><li class="toc-l3"><a href="#optimize">optimize</a></li><li class="toc-l3"><a href="#compute-statistics">compute_statistics</a></li><li class="toc-l3"><a href="#optimize-manifests">optimize_manifests</a></li><li class="toc-l3"><a href="#expire-snapshots">expire_snapshots</a></li><li class="toc-l3"><a href="#remove-orphan-files">remove_orphan_files</a></li><li class="toc-l2"><a href="#chunking">Planner chunking</a></li><li class="toc-l2"><a href="#admission">Admission: load-aware, never eager</a></li><li class="toc-l2"><a href="#guardrails">Three guardrails, always on</a></li><li class="toc-l2"><a href="#read-next">Where to go next</a></li></ul></details><div class="prose"><h2 id="canonical-order">Canonical order<a class="anchor" href="#canonical-order" aria-label="Link to Canonical order">#</a></h2>
+<p>Seven operations, skipping the ones a table does not need. Expiry comes after compaction so one run reclaims the space its own compaction freed.</p>
+<div class="ops">
+  <div class="ops-group">
+    <p class="ops-phase">Compact</p>
+    <ol>
+      <li><div><a href="#convert-deletes"><code>convert_deletes</code></a><p>Rewrites data files so delete files are applied and no longer re-merged on every read.</p></div></li>
+      <li><div><a href="#rewrite-position-deletes"><code>rewrite_position_deletes</code></a><p>Consolidates position-delete files without rewriting data. Spark only.</p></div></li>
+      <li class="is-focus"><div><a href="#optimize"><code>optimize</code></a><p>Partition-aware compaction of small files, planned from stored scan data.</p></div></li>
+    </ol>
   </div>
-  <footer id="foot"></footer>
-  <script src="../assets/js/charts.js"></script>
-  <script src="../assets/js/site.js"></script>
-</body>
-</html>
+  <div class="ops-group">
+    <p class="ops-phase">Measure</p>
+    <ol>
+      <li><div><a href="#compute-statistics"><code>compute_statistics</code></a><p>Refreshes table statistics straight after compaction, while the new layout is fresh.</p></div></li>
+    </ol>
+  </div>
+  <div class="ops-group">
+    <p class="ops-phase">Clean up</p>
+    <ol>
+      <li><div><a href="#optimize-manifests"><code>optimize_manifests</code></a><p>Consolidates manifests. Trino calls it <code>optimize_manifests</code> and Spark calls it <code>rewrite_manifests</code>.</p></div></li>
+      <li><div><a href="#expire-snapshots"><code>expire_snapshots</code></a><p>Drops snapshots the retention policy would not keep, and the files only they referenced.</p></div></li>
+      <li><div><a href="#remove-orphan-files"><code>remove_orphan_files</code></a><p>Deletes files in storage that no snapshot references.</p></div></li>
+    </ol>
+  </div>
+</div>
+<p>A finished run shows that order table by table. Each bar is one table's job; a failed job stays on its table and the rest of the run carries on.</p>
+<figure class="shot"><div class="shot-frame"><div class="shot-bar"><div class="shot-chrome" aria-hidden="true"><span></span><span></span><span></span></div><p>cryo.local/runs/7f3c9a21</p><em class="shot-demo">Demo data</em></div><button class="shot-zoom" type="button" aria-label="Enlarge screenshot: A completed maintenance run on the seeded demo lake: 9 jobs, 8 completed, 1 failed, 1 skipped, 38.4 GB freed in 83 minutes. A timeline shows when each of the nine tables ran."><img class="shot-light" src="../assets/img/screens/run-detail-light.png" width="1440" height="960" alt="A completed maintenance run on the seeded demo lake: 9 jobs, 8 completed, 1 failed, 1 skipped, 38.4 GB freed in 83 minutes. A timeline shows when each of the nine tables ran." loading="lazy" decoding="async"><img class="shot-dark" src="../assets/img/screens/run-detail-dark.png" width="1440" height="960" alt="A completed maintenance run on the seeded demo lake: 9 jobs, 8 completed, 1 failed, 1 skipped, 38.4 GB freed in 83 minutes. A timeline shows when each of the nine tables ran." loading="lazy" decoding="async"></button></div><figcaption>Seeded demo lake, not a production fleet. The failed job is isolated to its table.</figcaption></figure>
+
+<h2 id="why-it-matters">Why maintenance matters<a class="anchor" href="#why-it-matters" aria-label="Link to Why maintenance matters">#</a></h2>
+<p>Apache Iceberg gives you hidden partitioning, snapshot isolation, schema evolution and engine-agnostic metadata. It does not promise that tables stay fast. Left alone, four things pile up, and each one compounds independently, so fixing one does not fix the others.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>What piles up</th><th>What it costs</th><th>What fixes it</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Small files</strong></td><td>Every write adds a file, and every file adds open, seek and planning cost.</td><td><a href="#optimize"><code>optimize</code></a></td></tr>
+    <tr><td><strong>Delete files</strong></td><td>Every scan has to merge them back into the data it reads.</td><td><a href="#convert-deletes"><code>convert_deletes</code></a>, <a href="#rewrite-position-deletes"><code>rewrite_position_deletes</code></a></td></tr>
+    <tr><td><strong>Snapshot history</strong></td><td>Planning slows as metadata grows, and old files stay referenced.</td><td><a href="#optimize-manifests"><code>optimize_manifests</code></a>, <a href="#expire-snapshots"><code>expire_snapshots</code></a></td></tr>
+    <tr><td><strong>Layout drift</strong></td><td>Scans read more than the query needs, because the layout no longer matches the filters.</td><td><a href="#optimize"><code>optimize</code></a> with a sort or z-order strategy</td></tr>
+  </tbody>
+</table>
+</div>
+<aside class="callout callout-note" role="note"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8h.01M11 12h1v5h1"/><circle cx="12" cy="12" r="9"/></svg><div class="callout-body"><p class="callout-title">A table left alone does not fail loudly</p><p>It becomes a slow, compounding tax that shows up as someone else's incident: a timed-out connection pool, or a scan that reads far more than it should.</p></div></aside>
+
+<h3 id="strategies">Compaction is not one operation<a class="anchor" href="#strategies" aria-label="Link to Compaction is not one operation">#</a></h3>
+<p>Teams pick a strategy from their write pattern and query filters. The same primitive, <code>optimize</code>, does very different work depending on which one runs.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Strategy</th><th>Use it for</th><th>Compute cost</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Binpack</strong></td><td>Streaming tables and tight windows. Merges small files and reconciles deletes.</td><td>Lowest</td></tr>
+    <tr><td><strong>Sort</strong></td><td>Predictable filters on one or two columns.</td><td>Higher</td></tr>
+    <tr><td><strong>Z-order</strong></td><td>Several common filter dimensions at once.</td><td>Highest</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="operations">What each operation does<a class="anchor" href="#operations" aria-label="Link to What each operation does">#</a></h2>
+<h3 id="convert-deletes">convert_deletes<a class="anchor" href="#convert-deletes" aria-label="Link to convert_deletes">#</a></h3>
+<p>Rewrites data files so delete files are applied and no longer re-merged on every read. On Spark it passes a delete-file threshold. On Trino it runs as an <code>OPTIMIZE</code>.</p>
+<h3 id="rewrite-position-deletes">rewrite_position_deletes<a class="anchor" href="#rewrite-position-deletes" aria-label="Link to rewrite_position_deletes">#</a></h3>
+<p>Consolidates position-delete files without rewriting data. Spark only, because Trino does not support it.</p>
+<h3 id="optimize">optimize<a class="anchor" href="#optimize" aria-label="Link to optimize">#</a></h3>
+<p>Partition-aware compaction of small files, planned from stored scan data. This is the step the chunking rules below exist to protect.</p>
+<h3 id="compute-statistics">compute_statistics<a class="anchor" href="#compute-statistics" aria-label="Link to compute_statistics">#</a></h3>
+<p>Refreshes table statistics straight after compaction, while the new layout is fresh.</p>
+<h3 id="optimize-manifests">optimize_manifests<a class="anchor" href="#optimize-manifests" aria-label="Link to optimize_manifests">#</a></h3>
+<p>Consolidates manifests. Trino calls it <code>optimize_manifests</code> and Spark calls it <code>rewrite_manifests</code>.</p>
+<h3 id="expire-snapshots">expire_snapshots<a class="anchor" href="#expire-snapshots" aria-label="Link to expire_snapshots">#</a></h3>
+<p>Drops snapshots the retention policy would not keep, and the files only they referenced. Guarded, and forcing it is audited.</p>
+<h3 id="remove-orphan-files">remove_orphan_files<a class="anchor" href="#remove-orphan-files" aria-label="Link to remove_orphan_files">#</a></h3>
+<p>Deletes files in storage that no snapshot references. Guarded, and forcing it is audited.</p>
+
+<h2 id="chunking">Planner chunking<a class="anchor" href="#chunking" aria-label="Link to Planner chunking">#</a></h2>
+<p>A large table is never compacted in one statement. The planner ranks partitions by small-file count, highest first, skips those under the <code>min_small_files</code> threshold, and then picks one of three paths.</p>
+<figure class="fig" id="fig-chunking"><div class="fig-bar"><span class="fig-tag">Figure 1</span><span class="fig-title">The planner never sends one giant OPTIMIZE to a big table</span><button class="fig-expand" type="button" aria-label="Expand figure 1">Expand</button></div><div class="fig-canvas" tabindex="0" role="group" aria-label="The planner never sends one giant OPTIMIZE to a big table (scroll to pan)"><svg style="--minw:590px" class="dgm" viewBox="0 0 820 288" role="img" aria-labelledby="dgm-chunking-t dgm-chunking-d" data-diagram="dgm-chunking"><title id="dgm-chunking-t">The planner never sends one giant OPTIMIZE to a big table</title><desc id="dgm-chunking-d">Partitions are ranked by small-file count, then the Planner takes one of three paths: usually it chunks partitions under a GB budget; a partition bigger than the budget runs alone; a small table gets one full-table OPTIMIZE.</desc><defs><marker id="dgm-chunking-ah-read" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path class="ah ah-read" d="M1 1.2 L9.5 5 L1 8.8 L2.6 5 z"/></marker><marker id="dgm-chunking-ah-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path class="ah ah-write" d="M1 1.2 L9.5 5 L1 8.8 L2.6 5 z"/></marker><marker id="dgm-chunking-ah-ctl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path class="ah ah-ctl" d="M1 1.2 L9.5 5 L1 8.8 L2.6 5 z"/></marker></defs><g class="lanes"><g class="lane lane-read"><rect x="16" y="16" width="228" height="256" rx="14"/><text x="32" y="41">Scan data<tspan class="lane-q" dx="6">read</tspan></text></g><g class="lane lane-cryo"><rect x="300" y="16" width="504" height="256" rx="14"/><text x="316" y="41">Planner picks one path per run</text></g></g><g class="strips"></g><g class="edges"><g class="edge e-write" data-from="ranked" data-to="chunk"><path d="M228 156 L264 156 Q272 156 272 148 L272 92 Q272 84 280 84 L316 84" marker-end="url(#dgm-chunking-ah-write)"/><circle class="port" cx="228" cy="156" r="2.75"/></g><g class="edge e-write" data-from="ranked" data-to="oversize"><path d="M228 156 L316 156" marker-end="url(#dgm-chunking-ah-write)"/></g><g class="edge e-write" data-from="ranked" data-to="bypass"><path d="M228 156 L264 156 Q272 156 272 164 L272 220 Q272 228 280 228 L316 228" marker-end="url(#dgm-chunking-ah-write)"/></g></g><g class="chevrons"></g><g class="nodes"><g class="node n-source" data-id="ranked"><rect class="n-shadow" x="32" y="130" width="196" height="56" rx="10"/><rect class="n-box" x="32" y="128" width="196" height="56" rx="10"/><g class="n-tile t-source"><rect x="46" y="143" width="26" height="26" rx="7"/><path class="n-glyph" d="M4 5h16M4 10h12M4 15h8M4 20h4" transform="translate(51 148) scale(0.6666666666666666)"/></g><text class="n-label" x="82" y="152">Ranked partitions</text><text class="n-sub" x="82" y="169">most small files first</text></g><g class="node n-cryo" data-id="chunk"><rect class="n-shadow" x="316" y="58" width="472" height="56" rx="10"/><rect class="n-box" x="316" y="56" width="472" height="56" rx="10"/><g class="n-tile t-cryo"><rect x="330" y="71" width="26" height="26" rx="7"/><path class="n-glyph" d="M4 3h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM15 3h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM4 14h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1zM15 14h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z" transform="translate(335 76) scale(0.6666666666666666)"/></g><text class="n-label" x="366" y="80">Chunk under a GB budget</text><text class="n-sub" x="366" y="97">usually · a capped number of partitions per chunk</text></g><g class="node n-cryo" data-id="oversize"><rect class="n-shadow" x="316" y="130" width="472" height="56" rx="10"/><rect class="n-box" x="316" y="128" width="472" height="56" rx="10"/><g class="n-tile t-cryo"><rect x="330" y="143" width="26" height="26" rx="7"/><path class="n-glyph" d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3M9 8h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" transform="translate(335 148) scale(0.6666666666666666)"/></g><text class="n-label" x="366" y="152">Run the partition alone</text><text class="n-sub" x="366" y="169">when one partition is bigger than the budget</text></g><g class="node n-cryo" data-id="bypass"><rect class="n-shadow" x="316" y="202" width="472" height="56" rx="10"/><rect class="n-box" x="316" y="200" width="472" height="56" rx="10"/><g class="n-tile t-cryo"><rect x="330" y="215" width="26" height="26" rx="7"/><path class="n-glyph" d="M5 4l10 8-10 8V4zM19 5v14" transform="translate(335 220) scale(0.6666666666666666)"/></g><text class="n-label" x="366" y="224">One full-table OPTIMIZE</text><text class="n-sub" x="366" y="241">when the whole table is small</text></g></g></svg></div><figcaption>The planner picks one path per run.</figcaption><ul class="legend" aria-label="Legend"><li class="lg lg-write"><i></i>Write or execute</li></ul><details class="fig-alt"><summary>Text description</summary><ul><li>Ranked partitions to Chunk under a GB budget</li><li>Ranked partitions to Run the partition alone</li><li>Ranked partitions to One full-table OPTIMIZE</li></ul></details></figure>
+<ul>
+  <li><strong>Chunk under a GB budget.</strong> Ranked partitions are grouped until the budget is full, and a cap on partitions per chunk keeps Trino's filter planning tractable.</li>
+  <li><strong>Oversize partition alone.</strong> A partition larger than the budget runs by itself.</li>
+  <li><strong>Small-table bypass.</strong> A small table skips chunking and gets a single full-table <code>OPTIMIZE</code>.</li>
+</ul>
+
+<h2 id="admission">Admission: load-aware, never eager<a class="anchor" href="#admission" aria-label="Link to Admission: load-aware, never eager">#</a></h2>
+<p>A worker asks the governor for permission before it runs anything. The governor probes live load, from <code>system.runtime.queries</code> on Trino and from slots on Spark on EMR, and either admits the job or defers it. It also applies per-replica caps and round-robins across replicas.</p>
+<figure class="fig" id="fig-admission"><div class="fig-bar"><span class="fig-tag">Figure 2</span><span class="fig-title">A job starts only when the engine has room for it</span><button class="fig-expand" type="button" aria-label="Expand figure 2">Expand</button></div><div class="fig-canvas" tabindex="0" role="group" aria-label="A job starts only when the engine has room for it (scroll to pan)"><svg style="--minw:619px" class="dgm" viewBox="0 0 860 380" role="img" aria-labelledby="dgm-admission-t dgm-admission-d" data-diagram="dgm-admission"><title id="dgm-admission-t">A job starts only when the engine has room for it</title><desc id="dgm-admission-d">Step 1: a Worker asks for a job. Step 2: the Governor probes live engine load, Trino system.runtime.queries or Spark job slots. Step 3: with headroom the job is admitted; otherwise it is deferred.</desc><defs><marker id="dgm-admission-ah-read" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path class="ah ah-read" d="M1 1.2 L9.5 5 L1 8.8 L2.6 5 z"/></marker><marker id="dgm-admission-ah-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path class="ah ah-write" d="M1 1.2 L9.5 5 L1 8.8 L2.6 5 z"/></marker><marker id="dgm-admission-ah-ctl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path class="ah ah-ctl" d="M1 1.2 L9.5 5 L1 8.8 L2.6 5 z"/></marker></defs><g class="lanes"><g class="lane lane-write"><rect x="16" y="252" width="608" height="112" rx="14"/><text x="32" y="277">Probe live load</text></g></g><g class="strips"></g><g class="edges"><g class="edge e-ctl is-main" data-from="governor" data-to="spark"><path d="M380 156 L380 216 Q380 224 388 224 L458 224 Q466 224 466 232 L466 292" marker-end="url(#dgm-admission-ah-ctl)"/><circle class="port" cx="380" cy="156" r="2.75"/></g><g class="edge e-ctl is-main" data-from="governor" data-to="defer"><path d="M440 140 L504 140 Q512 140 512 148 L512 184 Q512 192 520 192 L584 192" marker-end="url(#dgm-admission-ah-ctl)"/><circle class="port" cx="440" cy="140" r="2.75"/><text class="elabel on-canvas" x="548" y="185" text-anchor="middle">no room</text></g><g class="edge e-write is-main" data-from="worker" data-to="governor"><path d="M220 128 L272 128" marker-end="url(#dgm-admission-ah-write)"/><circle class="port" cx="220" cy="128" r="2.75"/><g class="step"><circle cx="246" cy="128" r="9"/><text x="246" y="132" text-anchor="middle">1</text></g><text class="elabel on-canvas" x="246" y="114" text-anchor="middle">ask</text></g><g class="edge e-ctl is-main" data-from="governor" data-to="trino"><path d="M332 156 L332 216 Q332 224 324 224 L182 224 Q174 224 174 232 L174 292" marker-end="url(#dgm-admission-ah-ctl)"/><circle class="port" cx="332" cy="156" r="2.75"/><g class="step"><circle cx="332" cy="190" r="9"/><text x="332" y="194" text-anchor="middle">2</text></g><text class="elabel on-canvas" x="316" y="194" text-anchor="end">probe</text></g><g class="edge e-write is-main" data-from="governor" data-to="admit"><path d="M440 116 L504 116 Q512 116 512 108 L512 72 Q512 64 520 64 L584 64" marker-end="url(#dgm-admission-ah-write)"/><circle class="port" cx="440" cy="116" r="2.75"/><g class="step"><circle cx="548" cy="64" r="9"/><text x="548" y="68" text-anchor="middle">3</text></g><text class="elabel on-canvas" x="548" y="50" text-anchor="middle">room</text></g></g><g class="chevrons"></g><g class="nodes"><g class="node n-cryo" data-id="worker"><rect class="n-shadow" x="16" y="102" width="204" height="56" rx="10"/><rect class="n-box" x="16" y="100" width="204" height="56" rx="10"/><g class="n-tile t-cryo"><rect x="30" y="115" width="26" height="26" rx="7"/><path class="n-glyph" d="M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 9h6v6H9zM15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2" transform="translate(35 120) scale(0.6666666666666666)"/></g><text class="n-label" x="66" y="124">Worker wants a job</text><text class="n-sub" x="66" y="141">pull model</text></g><g class="node n-cryo" data-id="governor"><rect class="n-shadow" x="272" y="102" width="168" height="56" rx="10"/><rect class="n-box" x="272" y="100" width="168" height="56" rx="10"/><g class="n-tile t-cryo"><rect x="286" y="115" width="26" height="26" rx="7"/><path class="n-glyph" d="m12 14 4-4M3.34 19a10 10 0 1 1 17.32 0" transform="translate(291 120) scale(0.6666666666666666)"/></g><text class="n-label" x="322" y="124">Governor</text><text class="n-sub" x="322" y="141">decides</text><g class="marker" aria-hidden="true"><path class="marker-pole" d="M422 100V86"/><path class="marker-flag" d="M422 86l10 4l-10 4z"/></g></g><g class="node n-state" data-id="admit"><rect class="n-shadow" x="584" y="38" width="260" height="56" rx="10"/><rect class="n-box" x="584" y="36" width="260" height="56" rx="10"/><g class="n-tile tone-ok"><rect x="598" y="51" width="26" height="26" rx="7"/><path class="n-glyph" d="M20 6 9 17l-5-5" transform="translate(603 56) scale(0.6666666666666666)"/></g><text class="n-label" x="634" y="60">Admit</text><text class="n-sub" x="634" y="77">headroom available</text></g><g class="node n-state" data-id="defer"><rect class="n-shadow" x="584" y="166" width="260" height="56" rx="10"/><rect class="n-box" x="584" y="164" width="260" height="56" rx="10"/><g class="n-tile tone-warn"><rect x="598" y="179" width="26" height="26" rx="7"/><path class="n-glyph" d="M8 4v16M16 4v16" transform="translate(603 184) scale(0.6666666666666666)"/></g><text class="n-label" x="634" y="188">Defer</text><text class="n-sub" x="634" y="205">cooldown, off-peak or no headroom</text></g><g class="node n-engine" data-id="trino"><rect class="n-shadow" x="48" y="294" width="252" height="56" rx="10"/><rect class="n-box" x="48" y="292" width="252" height="56" rx="10"/><g class="n-tile t-engine"><rect x="62" y="307" width="26" height="26" rx="7"/><path class="n-glyph" d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" transform="translate(67 312) scale(0.6666666666666666)"/></g><text class="n-label" x="98" y="316">Trino</text><text class="n-sub n-code" x="98" y="333">system.runtime.queries</text></g><g class="node n-engine" data-id="spark"><rect class="n-shadow" x="340" y="294" width="252" height="56" rx="10"/><rect class="n-box" x="340" y="292" width="252" height="56" rx="10"/><g class="n-tile t-engine"><rect x="354" y="307" width="26" height="26" rx="7"/><path class="n-glyph" d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" transform="translate(359 312) scale(0.6666666666666666)"/></g><text class="n-label" x="390" y="316">Spark on EMR</text><text class="n-sub" x="390" y="333">job slots</text></g></g></svg></div><figcaption>Scaling workers does not raise the number of parallel rewrites. The governor does.</figcaption><ul class="legend" aria-label="Legend"><li class="lg lg-write"><i></i>Write or execute</li><li class="lg lg-ctl"><i></i>Control or probe</li></ul><details class="fig-alt"><summary>Text description</summary><ul><li>Step 1: Worker wants a job to Governor (ask)</li><li>Step 2: Governor to Trino (probe)</li><li>Step 3: Governor to Admit (room)</li><li>Governor to Spark on EMR</li><li>Governor to Defer (no room)</li></ul></details></figure>
+<p>You can watch admission in the Runs view. Engine load shows the slots the governor is using against the cap for each destination.</p>
+<figure class="shot"><div class="shot-frame"><div class="shot-bar"><div class="shot-chrome" aria-hidden="true"><span></span><span></span><span></span></div><p>cryo.local/runs</p><em class="shot-demo">Demo data</em></div><button class="shot-zoom" type="button" aria-label="Enlarge screenshot: Runs page. Engine load shows demo-trino at 2 of 6 slots, admitting. Fleet health shows the scanner idle with 14 of 14 tables measured, and the run history lists last night's maintenance run as succeeded with 38.4 GB freed."><img class="shot-light" src="../assets/img/screens/runs-light.png" width="1440" height="820" alt="Runs page. Engine load shows demo-trino at 2 of 6 slots, admitting. Fleet health shows the scanner idle with 14 of 14 tables measured, and the run history lists last night's maintenance run as succeeded with 38.4 GB freed." loading="lazy" decoding="async"><img class="shot-dark" src="../assets/img/screens/runs-dark.png" width="1440" height="820" alt="Runs page. Engine load shows demo-trino at 2 of 6 slots, admitting. Fleet health shows the scanner idle with 14 of 14 tables measured, and the run history lists last night's maintenance run as succeeded with 38.4 GB freed." loading="lazy" decoding="async"></button></div><figcaption>Runs: engine load at the top, the run history below. demo-trino is using 2 of its 6 slots, so the governor is still admitting.</figcaption></figure>
+<aside class="callout callout-important" role="note"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 3h7L21 8.5v7L15.5 21h-7L3 15.5v-7L8.5 3zM12 8v5M12 16h.01"/></svg><div class="callout-body"><p class="callout-title">Workers are not concurrency</p><p>A worker runs one job at a time, so the fleet drains at roughly replicas divided by job duration. Engine headroom decides how much work is admitted, and worker count decides how fast it is picked up.</p></div></aside>
+
+<h2 id="guardrails">Three guardrails, always on<a class="anchor" href="#guardrails" aria-label="Link to Three guardrails, always on">#</a></h2>
+<dl>
+  <dt>Cooldown</dt>
+  <dd>Skip tables maintained within the last N hours, read from the audit log and engine history.</dd>
+  <dt>Per-table lock</dt>
+  <dd>A Redis lock held for the job's lifetime, so a table is never maintained twice at once.</dd>
+  <dt>Failure isolation</dt>
+  <dd>One job's failure is recorded against that table. The run continues with the next one.</dd>
+</dl>
+<aside class="callout callout-caution" role="note"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2.8 20h18.4L12 4zM12 10v4.5M12 17.5h.01"/></svg><div class="callout-body"><p class="callout-title">Destructive operations are guarded</p><p><code>expire_snapshots</code> and <code>remove_orphan_files</code> require the relevant tier in the scanner, and forcing them is audited. Cryo never touches snapshots the retention policy would keep.</p></div></aside>
+
+<h2 id="read-next">Where to go next<a class="anchor" href="#read-next" aria-label="Link to Where to go next">#</a></h2>
+<div class="linkcards"><a class="linkcard" href="../engines/"><span class="lc-title">Engines</span><span class="lc-desc">How this same order renders as Trino SQL and Spark SQL.</span></a><a class="linkcard" href="../health/"><span class="lc-title">Health and cost</span><span class="lc-desc">How a table's grade improves after a run.</span></a><a class="linkcard" href="../architecture/"><span class="lc-title">Architecture</span><span class="lc-desc">Scheduler, governor and worker as running components.</span></a><a class="linkcard" href="../concepts/"><span class="lc-title">How Cryo fits</span><span class="lc-desc">Why a preset binds tables to a destination, not to raw SQL.</span></a></div>
+</div><aside class="community"><div><p class="cm-h">Stuck, or have an idea?</p><p>Cryo is built in the open. Ask in GitHub Discussions, open an issue, or send a pull request.</p></div><div class="cm-actions"><a class="btn btn-sm" href="https://github.com/tech-pw/cryo/discussions">Discussions</a><a class="btn btn-sm" href="https://github.com/tech-pw/cryo/issues">Issues</a><a class="btn btn-sm btn-primary" href="https://github.com/tech-pw/cryo"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>Star on GitHub</a></div></aside><nav class="pager" aria-label="Previous and next pages"><a class="pg pg-prev" href="../architecture/"><span class="pg-k">Previous</span><span class="pg-t">Architecture</span></a><a class="pg pg-next" href="../health/"><span class="pg-k">Next</span><span class="pg-t">Health and cost</span></a></nav></article></main><aside class="toc" aria-label="On this page"><p class="toc-h">On this page</p><ul><li class="toc-l2"><a href="#canonical-order">Canonical order</a></li><li class="toc-l2"><a href="#why-it-matters">Why maintenance matters</a></li><li class="toc-l3"><a href="#strategies">Compaction is not one operation</a></li><li class="toc-l2"><a href="#operations">What each operation does</a></li><li class="toc-l3"><a href="#convert-deletes">convert_deletes</a></li><li class="toc-l3"><a href="#rewrite-position-deletes">rewrite_position_deletes</a></li><li class="toc-l3"><a href="#optimize">optimize</a></li><li class="toc-l3"><a href="#compute-statistics">compute_statistics</a></li><li class="toc-l3"><a href="#optimize-manifests">optimize_manifests</a></li><li class="toc-l3"><a href="#expire-snapshots">expire_snapshots</a></li><li class="toc-l3"><a href="#remove-orphan-files">remove_orphan_files</a></li><li class="toc-l2"><a href="#chunking">Planner chunking</a></li><li class="toc-l2"><a href="#admission">Admission: load-aware, never eager</a></li><li class="toc-l2"><a href="#guardrails">Three guardrails, always on</a></li><li class="toc-l2"><a href="#read-next">Where to go next</a></li></ul><a class="toc-top" href="#main">Back to top ↑</a></aside></div><footer class="foot"><div class="foot-in"><div class="foot-brand"><a class="logo" href="../"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 512 512" aria-hidden="true"><g transform="translate(0 -10)">
+    <g stroke-width="1" stroke-linejoin="round">
+      <path d="M92 206 L268 206 L186 300 L104 262 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
+      <path d="M268 206 L262 340 L186 300 Z" fill="#277ABE" stroke="#277ABE"/>
+      <path d="M104 262 L186 300 L166 404 L142 330 Z" fill="#277ABE" stroke="#277ABE"/>
+      <path d="M186 300 L262 340 L248 500 L166 404 Z" fill="#1A579A" stroke="#1A579A"/>
+      <path d="M268 206 L420 206 L412 236 L380 292 L352 290 Z" fill="#57AEE1" stroke="#57AEE1"/>
+      <path d="M352 290 L380 292 L386 330 L330 410 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
+      <path d="M268 206 L352 290 L262 340 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
+      <path d="M352 290 L330 410 L248 500 L262 340 Z" fill="#277ABE" stroke="#277ABE"/>
+    </g>
+    <g stroke-width="1" stroke-linejoin="round">
+      <path d="M262 36 L304 119 L332 166 L276 198 Z" fill="#E3F2FC" stroke="#E3F2FC"/>
+      <path d="M304 119 L318 104 L332 166 Z" fill="#B8E1F3" stroke="#B8E1F3"/>
+      <path d="M318 104 L392 198 L332 166 Z" fill="#E3F2FC" stroke="#E3F2FC"/>
+      <path d="M332 166 L392 198 L276 198 Z" fill="#B8E1F3" stroke="#B8E1F3"/>
+      <path d="M262 36 L276 198 L200 130 Z" fill="#8ECDEF" stroke="#8ECDEF"/>
+      <path d="M200 130 L276 198 L140 198 Z" fill="#68C1EA" stroke="#68C1EA"/>
+    </g>
+    <path d="M64 202 Q256 188 448 202 Q256 216 64 202 Z" fill="#68C1EA"/>
+    <path transform="translate(285 212) rotate(22)" fill="#0B0F16"
+      d="M26 -54.1 A60 60 0 0 1 23 55.4 L20 205 A20 20 0 0 1 -20 205 L-23 55.4 A60 60 0 0 1 -26 -54.1 L-26 -11 Q-26 -3 -18 -3 L18 -3 Q26 -3 26 -11 Z"/>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><p>Apache-2.0, self-hosted Iceberg maintenance with a receipt for every decision.</p></div><div><p class="foot-h">Docs</p><ul><li><a href="../quickstart/">Quickstart</a></li><li><a href="../concepts/">Concepts</a></li><li><a href="../architecture/">Architecture</a></li><li><a href="../reference/">Reference</a></li></ul></div><div><p class="foot-h">Operate</p><ul><li><a href="../maintenance/">Maintenance</a></li><li><a href="../health/">Health and cost</a></li><li><a href="../engines/">Engines</a></li><li><a href="../deployment/">Deployment</a></li></ul></div><div><p class="foot-h">Project</p><ul><li><a href="https://github.com/tech-pw/cryo">GitHub</a></li><li><a href="https://github.com/tech-pw/cryo/issues">Issues</a></li><li><a href="../llms.txt">llms.txt</a></li><li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 licence</a></li></ul></div></div><p class="foot-fine">Apache, Apache Iceberg, Iceberg and Apache Spark are trademarks of The Apache Software Foundation. Other names may be trademarks of their respective owners.</p></footer><dialog class="search" id="search" aria-label="Search the docs"><form method="dialog" class="search-box"><div class="search-field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="search-input" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="search-list"><kbd>Esc</kbd></div><ul class="search-list" id="search-list" role="listbox"></ul><p class="search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to open</span></p></form></dialog><script src="../assets/js/site.js?v=542a9eb2e2" defer></script></body></html>

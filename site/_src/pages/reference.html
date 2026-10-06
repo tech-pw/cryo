@@ -1,0 +1,39 @@
+---
+title: Reference
+lede: Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance platform. This page lists what is in the box, what is not, and how it compares.
+description: Feature presence compared with DIY scripts, Amoro, LakeOps, Crunch and managed cloud services, plus Cryo's public surfaces.
+updated: 2026-10-05
+---
+<h2 id="feature-presence">Feature presence, not a ranking</h2>
+<p>A filled mark is an unqualified yes in the project README. A half mark means partial, limited or capability-gated. An empty mark means no, or that the cell is not documented or not applicable.</p>
+<div class="tbl">
+<table>
+  <caption>Source: README comparison table. For Cryo, sorting is Spark only and Hilbert is capability-gated. For DIY, maintenance and admission exist only if you build them. For managed cloud services, sorting and health grading vary and admission is not applicable. Crunch health reporting is savings-focused, not an A to F grade.</caption>
+  <thead><tr><th>Capability</th><th>Cryo</th><th>DIY</th><th>Amoro</th><th>LakeOps</th><th>Crunch</th><th>Managed cloud</th></tr></thead>
+  <tbody>
+    <tr><td>Maintenance operations</td><td><span class="yes">Yes</span></td><td><span class="part">Partial</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td></tr>
+    <tr><td>Sorting or clustering</td><td><span class="part">Partial</span></td><td><span class="no">No</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="no">No</span></td></tr>
+    <tr><td>Compression below ZSTD</td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="yes">Yes</span></td><td><span class="no">No</span></td></tr>
+    <tr><td>Load-aware admission</td><td><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="part">Limited</span></td><td><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
+    <tr><td>Health grade and cost</td><td><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="part">Partial</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
+    <tr><td>Data leaves your infrastructure</td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="yes">Yes</span></td></tr>
+    <tr><td>Fleet assignment UI</td><td><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="part">Limited</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="public-surfaces">Public surfaces</h2>
+<p>The web UI talks only to the API. The scanner, scheduler, governor and workers are reached through the API and never directly from a browser.</p>
+<diagram name="surfaces" caption="The API is the only public entry point." />
+<p>The API groups its resources as <code>tables</code>, <code>runs</code>, <code>presets</code>, <code>assignments</code>, <code>audit</code>, <code>sources</code> and <code>destinations</code>. The OpenAPI document is served at <code>/openapi.json</code>, and the web client's types are generated from it.</p>
+
+<h2 id="launch-tier">Launch tier</h2>
+<p>Cryo is pre-1.0. The launch-tier surface is the scanner, planner, governor, Trino and Spark engines, presets, audit, and the run console. Native Go compaction is a configured path, not assumed on.</p>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/architecture/" title="Architecture">Catalogs on the read side, engines on the write side, Cryo in the middle.</linkcard>
+  <linkcard href="@/maintenance/" title="Maintenance">The planner emits a plan with no SQL strings. The order is fixed in code.</linkcard>
+  <linkcard href="@/deployment/" title="Deployment">Self-hosted on Kubernetes with your engines where they are.</linkcard>
+  <linkcard href="https://github.com/tech-pw/cryo" title="GitHub">The Apache-2.0 source is public. Issues and pull requests are open.</linkcard>
+</linkcards>

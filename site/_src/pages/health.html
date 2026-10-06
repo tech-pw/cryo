@@ -1,0 +1,70 @@
+---
+title: Health and cost
+lede: The scanner grades a table from stored metadata. It does not scan data files on the request path, and object storage is not an input.
+description: How Cryo grades tables from A to F, how deductions work with a worked example, and what each maintenance operation projects.
+updated: 2026-10-06
+---
+<h2 id="grades">Grades</h2>
+<p>Every table starts at 100 points and loses points for each problem the scan finds. The grade is the letter for the final score. At fleet level the headline is the median grade, weighted by table size.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Grade</th><th>Score</th></tr></thead>
+  <tbody>
+    <tr><td><span class="grade grade-a"><b>A</b></span></td><td>90 or more</td></tr>
+    <tr><td><span class="grade grade-b"><b>B</b></span></td><td>75 to 89</td></tr>
+    <tr><td><span class="grade grade-c"><b>C</b></span></td><td>60 to 74</td></tr>
+    <tr><td><span class="grade grade-d"><b>D</b></span></td><td>40 to 59</td></tr>
+    <tr><td><span class="grade grade-f"><b>F</b></span></td><td>Below 40</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The home screen rolls those grades up across the lake, so you can see at a glance how many tables need work and how much storage maintenance could give back.</p>
+<screenshot name="health" url="cryo.local/" alt="Cryo home screen. A donut chart shows 14 tracked tables: 3 excellent, 3 good, 4 fair, 2 poor and 2 critical. Below it, 1.7 TB of data, 145.2K small files, and 38.4 GB reclaimed yesterday." caption="Lake health on the home screen. Each slice is a grade; the panel on the right is Cryo's own platform health, not a table grade." />
+
+<h2 id="deductions">Deductions</h2>
+<p>There are two deduction sizes and no others: a warning costs 8 points and a critical finding costs 20. Two warnings and one critical is 100 − 8 − 8 − 20 = 64, grade C. The <a href="@/maintenance/#canonical-order">seeded demo run</a> is the same lake, not a production fleet.</p>
+<div class="tbl">
+<table>
+  <caption>Worked example: how a table reaches 64.</caption>
+  <thead><tr><th>Step</th><th class="num">Points</th><th class="num">Running score</th></tr></thead>
+  <tbody>
+    <tr><td>Start</td><td class="num"></td><td class="num">100</td></tr>
+    <tr><td>Small-file warning</td><td class="num">−8</td><td class="num">92</td></tr>
+    <tr><td>Missing-statistics warning</td><td class="num">−8</td><td class="num">84</td></tr>
+    <tr><td>Stale-manifest critical</td><td class="num">−20</td><td class="num">64</td></tr>
+  </tbody>
+  <tfoot><tr><td>Final score and grade</td><td class="num"></td><td class="num"><span class="grade grade-c"><b>C</b>&nbsp;64</span></td></tr></tfoot>
+</table>
+</div>
+<p>In the table list, every row carries its grade and the evidence behind it: small files out of total files, size, and when the scanner last looked. Sorting by grade puts the tables that need work first.</p>
+<screenshot name="tables" url="cryo.local/tables" alt="Catalogs and tables page. One REST catalog with 14 tables and 8 needing compaction. The list shows analytics.events at grade F with 41,930 of 48,210 files small, and analytics.page_views at grade D." caption="The table explorer. A grade is never shown without the counts that produced it." />
+<p>Open a table to see its score and how it got there. This one scores 28: it has lost 72 points to two critical findings and four warnings.</p>
+<screenshot name="table-detail" url="cryo.local/tables/analytics.events" alt="Table detail for analytics.events: 412.6 GB, 48,210 files, 41,930 compaction candidates, 1,284 snapshots, health score 28 of 100, grade F, Critical." caption="A grade F table. The score gauge, the compaction candidates and the snapshot count all come from the last scan." />
+
+<h2 id="projection">Projection: from scan to stored cost</h2>
+<p>The cost estimator turns the scanner's stored statistics into a projected byte count for each operation and stores it. Nothing is read from object storage to produce it. Orphan-file precision is an opt-in scanner tier. Without it, the number is flagged as last-known.</p>
+<diagram name="projection" caption="Object storage is not an input to the projection." />
+<callout type="note" title="Bytes, not money">
+  <p>A modelled saving is not shown as money anywhere in Cryo or on this site. Projections are byte classes: live data, expirable, manifests and metadata, and orphan candidates.</p>
+</callout>
+
+<h2 id="operations">What each operation projects</h2>
+<div class="tbl">
+<table>
+  <thead><tr><th>Operation</th><th>Projected effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>expire_snapshots</code></td><td>Bytes referenced only by snapshots the retention policy would drop, and only when no surviving snapshot still references the file.</td></tr>
+    <tr><td><code>remove_orphan_files</code></td><td>Bytes present in storage but referenced by no snapshot. Precise only on the scanner's opt-in listing tier.</td></tr>
+    <tr><td><code>optimize</code></td><td>Delete-file bytes merged away. Data bytes are rewritten, so the storage change shows up in the later expiry projection.</td></tr>
+    <tr><td><code>optimize_manifests</code></td><td>Manifest and metadata bytes reclaimed by consolidation. Small in volume, large in plan-time latency.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/maintenance/" title="Maintenance">The fixed order that turns a low grade back into a high one.</linkcard>
+  <linkcard href="@/concepts/" title="How Cryo fits">Why the scan path never touches a data file.</linkcard>
+  <linkcard href="@/architecture/" title="Architecture">Where the scanner and cost estimator sit in the running system.</linkcard>
+  <linkcard href="@/reference/" title="Reference">How Cryo's health grading compares with adjacent tools.</linkcard>
+</linkcards>

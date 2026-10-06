@@ -98,6 +98,9 @@ The authoritative architecture / contract docs live at the repo root:
 - [`brand/CRYO_BRAND_GUIDE.md`](./brand/CRYO_BRAND_GUIDE.md) — brand and image guide for the
   website, LinkedIn and blog diagrams: the ice-core motif, palette, type, Mermaid theme,
   LinkedIn sizes and copy-paste prompts for image AI tools.
+- [`DOCS_SITE_REDESIGN_HANDOFF_2026-10-05.md`](./DOCS_SITE_REDESIGN_HANDOFF_2026-10-05.md) —
+  current state of the public `site/` redesign. Read this before continuing that work.
+  Measurements are in [`DOCS_SITE_DESIGN_RESEARCH_2026-10-05.md`](./DOCS_SITE_DESIGN_RESEARCH_2026-10-05.md).
 
 ### Cost / FinOps
 

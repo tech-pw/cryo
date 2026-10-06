@@ -1,0 +1,54 @@
+---
+title: Architecture
+lede: Cryo sits between Apache Iceberg catalogs on the read side and engines on the write side. Sources never reach destinations without going through the plan.
+description: Cryo's place in the lakehouse, system context, the scheduled maintenance sequence, the job lifecycle, assignment, and the job of each component.
+updated: 2026-10-06
+---
+<h2 id="platform">Where Cryo sits</h2>
+<p>Cryo is a maintenance control plane for the lakehouse you already run. It does not replace the catalog, Trino, Spark or object storage. Operators, catalogs and engines sit on the left; Cryo is the middle; the lake stays on the right.</p>
+<diagram name="platform" caption="Select a Cryo service to open the page that explains it. Cryo is not a catalog: it reads metadata, plans work, and admits it to engines you already operate." />
+
+<h2 id="system-context">System context</h2>
+<p>The scanner only reads sources. Workers only execute on destinations. PostgreSQL holds durable state, Redis holds the queue and the locks, and object storage holds the table data.</p>
+<diagram name="system" caption="Select a node to open the page that explains it. Hover a node to follow its connections." />
+
+<h2 id="maintenance-sequence">Scheduled maintenance</h2>
+<p>The scheduler enqueues work for presets that are due. The governor probes live engine load and admits jobs. A worker asks the planner for a plan, the engine executes it, and the result is written to the audit log.</p>
+<diagram name="sequence" caption="One scheduled job, from enqueue to audit." />
+
+<h2 id="job-lifecycle">Job lifecycle</h2>
+<p>Nothing runs until the governor admits the job. A failure stays on that table and the run continues. A deferred job goes back to the queue and is retried when its window opens.</p>
+<diagram name="lifecycle" caption="A job ends as recorded, whether it succeeded, failed or was skipped." />
+<p>The run view groups jobs by how they ended. This one shows 9 jobs: 8 completed, 1 failed and 1 skipped. The failed job stays on its table.</p>
+<screenshot name="run-detail" url="cryo.local/runs/7f3c9a21" alt="A completed maintenance run on the seeded demo lake: 9 jobs, 8 completed, 1 failed, 1 skipped, 38.4 GB freed in 83 minutes. The filter bar shows All, Running, Completed and Failed." caption="Seeded demo lake, not a production fleet. The failed job is isolated to its table." />
+
+<h2 id="assignment">Assignment</h2>
+<p>Assigning a preset to many tables sends a filter spec, never a page of table ids. The API resolves the filter, shows a preview, and only then creates the binding.</p>
+<diagram name="workflow" caption="An assignment carries a filter, so selecting 'all matching tables' works across pages." />
+
+<h2 id="component-jobs">Component jobs</h2>
+<div class="tbl">
+<table>
+  <thead><tr><th>Component</th><th>Job</th><th>Boundary</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Scanner</strong></td><td>Reads sources and stores the shape of every table. Runs from a CronJob and from an ad-hoc scan queue.</td><td>Never reads data files. Never starts a rewrite.</td></tr>
+    <tr><td><strong>Planner</strong></td><td>Turns stored table shape into ordered operations with partition predicates.</td><td>Engine-agnostic. Emits no SQL strings. Operation order is fixed in <code>cryo/planner/guardrails.py</code>.</td></tr>
+    <tr><td><strong>Scheduler</strong></td><td>Finds due presets and enqueues jobs.</td><td>Leader-elected. Several replicas may start, one is active.</td></tr>
+    <tr><td><strong>Governor</strong></td><td>Decides whether and when a job may run. Probes live load (<code>system.runtime.queries</code> for Trino, slots for Spark on EMR), applies per-replica caps and round-robins across replicas.</td><td>Leader-elected. Honors cooldowns and off-peak windows. Bounds real concurrency, so more workers do not mean more parallel rewrites.</td></tr>
+    <tr><td><strong>Worker</strong></td><td>Executes one table's maintenance on one destination engine.</td><td>Holds a per-table Redis lock for the job's lifetime. A failure is recorded and the run continues.</td></tr>
+    <tr><td><strong>API and web UI</strong></td><td>The API serves tables, runs, presets, assignments and audit. The UI is a client of the API.</td><td>The UI talks only to the API.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<callout type="tip" title="Interactive deep dives">
+  <p>Standalone viewers with route tracing and a presentation mode: <a href="@/diagrams/system.architecture.html?present=1">system architecture</a>, <a href="@/diagrams/maintenance.sequence.html?present=1">maintenance sequence</a>, <a href="@/diagrams/job.lifecycle.html?present=1">job lifecycle</a>, <a href="@/diagrams/scan.dataflow.html?present=1">scan data flow</a> and <a href="@/diagrams/assign.workflow.html?present=1">assignment workflow</a>.</p>
+</callout>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/concepts/" title="How Cryo fits">Source, preset and destination: the three parts that never collapse into one.</linkcard>
+  <linkcard href="@/maintenance/" title="Maintenance">The fixed order a run walks and the guardrails that stay on.</linkcard>
+  <linkcard href="@/deployment/" title="Deployment">What these components look like as Kubernetes workloads.</linkcard>
+  <linkcard href="@/reference/" title="Reference">Feature presence, public surfaces and what is in the box.</linkcard>
+</linkcards>
