@@ -222,7 +222,7 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
                     return (
                       <Command.Item
                         key={`${group.type}-${hit.id}`}
-                        value={`${hit.qualified_name ?? hit.name} ${subtitle ?? ""} table search`}
+                        value={`${debouncedSearch} ${hit.name} ${hit.qualified_name ?? ""} ${subtitle ?? ""} table`}
                         onSelect={() => go(href, hit.qualified_name ?? hit.name, "table")}
                       >
                         <LayoutDashboard size={14} aria-hidden />

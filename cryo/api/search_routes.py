@@ -1,9 +1,9 @@
-"""Global catalog search — literal + semantic matching over fleet metadata."""
+"""Global catalog search — bounded literal matching over fleet metadata."""
 
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,7 +16,7 @@ from cryo.ai.embeddings import cosine_similarity, embed_text
 from cryo.api.deps import SessionDep, require_viewer
 from cryo.db.model_utils import catalog_name_for_source, qualified_name
 from cryo.db.models import Source, Table, TableColumn, TableStats
-from cryo.db.tenant_scope import require_tenant, scope_by_tenant, scoped_select
+from cryo.db.tenant_scope import require_tenant, scope_by_tenant
 
 router = APIRouter(prefix="/api/v1", tags=["search"])
 
@@ -169,24 +169,47 @@ def search_semantic_tables(
     return hits[:limit]
 
 
-def _literal_catalog_hits(session: Session, pattern: str, tenant_id: UUID) -> list[SearchMatchRead]:
-    stmt = scoped_select(session, Source).where(Source.name.ilike(pattern, escape="\\"))
-    sources = session.execute(stmt).scalars().all()
-    hits: list[SearchMatchRead] = []
-    for source in sources:
-        hits.append(
-            SearchMatchRead(
-                asset_type="catalog",
-                name=source.name,
-                catalog_id=source.id,
-                catalog_name=source.name,
-                match_reason="name",
-            )
+def _count_rows(session: Session, stmt: Select[Any]) -> int:
+    counted = select(func.count()).select_from(stmt.order_by(None).subquery())
+    return int(session.scalar(counted) or 0)
+
+
+def _literal_catalog_hits(
+    session: Session,
+    pattern: str,
+    tenant_id: UUID,
+    *,
+    offset: int,
+    limit: int,
+) -> tuple[list[SearchMatchRead], int]:
+    stmt = scope_by_tenant(
+        select(Source).where(Source.name.ilike(pattern, escape="\\")).order_by(Source.name),
+        Source,
+        tenant_id,
+    )
+    total = _count_rows(session, stmt)
+    sources = session.scalars(stmt.offset(offset).limit(limit)).all()
+    hits = [
+        SearchMatchRead(
+            asset_type="catalog",
+            name=source.name,
+            catalog_id=source.id,
+            catalog_name=source.name,
+            match_reason="name",
         )
-    return hits
+        for source in sources
+    ]
+    return hits, total
 
 
-def _literal_schema_hits(session: Session, pattern: str, tenant_id: UUID) -> list[SearchMatchRead]:
+def _literal_schema_hits(
+    session: Session,
+    pattern: str,
+    tenant_id: UUID,
+    *,
+    offset: int,
+    limit: int,
+) -> tuple[list[SearchMatchRead], int]:
     stmt: Select[tuple[UUID, str, str]] = (
         select(Table.source_id, Table.schema_name, Source.name)
         .join(Source, Table.source_id == Source.id)
@@ -195,8 +218,9 @@ def _literal_schema_hits(session: Session, pattern: str, tenant_id: UUID) -> lis
         .order_by(Source.name, Table.schema_name)
     )
     stmt = scope_by_tenant(stmt, Table, tenant_id)
-    rows = session.execute(stmt).all()
-    return [
+    total = _count_rows(session, stmt)
+    rows = session.execute(stmt.offset(offset).limit(limit)).all()
+    hits = [
         SearchMatchRead(
             asset_type="schema",
             name=schema_name,
@@ -208,6 +232,7 @@ def _literal_schema_hits(session: Session, pattern: str, tenant_id: UUID) -> lis
         )
         for source_id, schema_name, catalog_name in rows
     ]
+    return hits, total
 
 
 def _literal_table_hits(
@@ -216,11 +241,12 @@ def _literal_table_hits(
     query: str,
     pattern: str,
     tenant_id: UUID,
-) -> list[SearchMatchRead]:
+    offset: int,
+    limit: int,
+) -> tuple[list[SearchMatchRead], int]:
     stmt = (
         select(Table)
         .join(Source, Table.source_id == Source.id)
-        .options(selectinload(Table.source))
         .where(
             or_(
                 Table.table_name.ilike(pattern, escape="\\"),
@@ -233,7 +259,10 @@ def _literal_table_hits(
         .order_by(Source.name, Table.schema_name, Table.table_name)
     )
     stmt = scope_by_tenant(stmt, Table, tenant_id)
-    tables = session.execute(stmt).scalars().all()
+    total = _count_rows(session, stmt)
+    tables = session.scalars(
+        stmt.options(selectinload(Table.source)).offset(offset).limit(limit)
+    ).all()
     hits: list[SearchMatchRead] = []
     for table in tables:
         catalog = catalog_name_for_source(table.source)
@@ -244,8 +273,6 @@ def _literal_table_hits(
             table_name=table.table_name,
             qualified=qualified,
         )
-        if reason is None:
-            continue
         hits.append(
             SearchMatchRead(
                 asset_type="table",
@@ -255,18 +282,24 @@ def _literal_table_hits(
                 catalog_name=catalog,
                 schema_name=table.schema_name,
                 table_id=table.id,
-                match_reason=reason,
+                match_reason=reason or "name",
             )
         )
-    return hits
+    return hits, total
 
 
-def _literal_column_hits(session: Session, pattern: str, tenant_id: UUID) -> list[SearchMatchRead]:
+def _literal_column_hits(
+    session: Session,
+    pattern: str,
+    tenant_id: UUID,
+    *,
+    offset: int,
+    limit: int,
+) -> tuple[list[SearchMatchRead], int]:
     stmt = (
         select(TableColumn, Table)
         .join(Table, TableColumn.table_id == Table.id)
         .join(Source, Table.source_id == Source.id)
-        .options(selectinload(Table.source))
         .where(
             or_(
                 TableColumn.column_name.ilike(pattern, escape="\\"),
@@ -281,7 +314,10 @@ def _literal_column_hits(session: Session, pattern: str, tenant_id: UUID) -> lis
         )
     )
     stmt = scope_by_tenant(stmt, Table, tenant_id)
-    rows = session.execute(stmt).all()
+    total = _count_rows(session, stmt)
+    rows = session.execute(
+        stmt.options(selectinload(Table.source)).offset(offset).limit(limit)
+    ).all()
     hits: list[SearchMatchRead] = []
     for column, table in rows:
         catalog = catalog_name_for_source(table.source)
@@ -300,7 +336,7 @@ def _literal_column_hits(session: Session, pattern: str, tenant_id: UUID) -> lis
                 match_reason="column",
             )
         )
-    return hits
+    return hits, total
 
 
 def _fleet_rows(
@@ -335,10 +371,6 @@ def _fleet_rows(
     return fleet_rows, table_by_id
 
 
-def _paginate(hits: list[SearchMatchRead], *, offset: int, limit: int) -> list[SearchMatchRead]:
-    return hits[offset : offset + limit]
-
-
 @router.get("/search", response_model=SearchResponse)
 def search_assets(
     session: SessionDep,
@@ -351,74 +383,67 @@ def search_assets(
     ] = None,
     offset: Annotated[int, Query(ge=0, description="Pagination offset within a group")] = 0,
 ) -> SearchResponse:
-    """Search catalogs, schemas, tables, and columns via literal and semantic matching."""
+    """Search catalogs, schemas, tables, and columns by name.
+
+    Literal SQL only, each group limited in the database. A full-fleet embedding
+    scan loads every ``TableStats.raw`` blob and OOM-kills the API on a real fleet.
+    """
     query = q.strip()
     if not query:
         raise HTTPException(status_code=400, detail="q must not be blank")
 
     tenant_id = require_tenant(session)
     pattern = ilike_pattern(query)
+    page_offset = offset if group is not None else 0
 
-    catalog_hits = _literal_catalog_hits(session, pattern, tenant_id)
-    schema_hits = _literal_schema_hits(session, pattern, tenant_id)
-    literal_table_hits = _literal_table_hits(
-        session, query=query, pattern=pattern, tenant_id=tenant_id
+    def empty() -> tuple[list[SearchMatchRead], int]:
+        return [], 0
+
+    catalog_hits, catalog_total = (
+        _literal_catalog_hits(session, pattern, tenant_id, offset=page_offset, limit=limit)
+        if group in {None, "catalogs"}
+        else empty()
     )
-    column_hits = _literal_column_hits(session, pattern, tenant_id)
-
-    fleet_rows, table_by_id = _fleet_rows(session, tenant_id)
-    semantic_table_hits = search_semantic_tables(
-        session,
-        query=query,
-        fleet_rows=fleet_rows,
-        limit=max(limit * 3, 50),
-        table_by_id=table_by_id,
+    schema_hits, schema_total = (
+        _literal_schema_hits(session, pattern, tenant_id, offset=page_offset, limit=limit)
+        if group in {None, "schemas"}
+        else empty()
     )
-    table_hits = merge_table_matches(literal_table_hits, semantic_table_hits)
+    table_hits, table_total = (
+        _literal_table_hits(
+            session,
+            query=query,
+            pattern=pattern,
+            tenant_id=tenant_id,
+            offset=page_offset,
+            limit=limit,
+        )
+        if group in {None, "tables"}
+        else empty()
+    )
+    column_hits, column_total = (
+        _literal_column_hits(session, pattern, tenant_id, offset=page_offset, limit=limit)
+        if group in {None, "columns"}
+        else empty()
+    )
 
-    groups_by_type: dict[SearchGroupName, list[SearchMatchRead]] = {
-        "catalogs": catalog_hits,
-        "schemas": schema_hits,
-        "tables": table_hits,
-        "columns": column_hits,
+    selected: dict[SearchGroupName, tuple[list[SearchMatchRead], int]] = {
+        "catalogs": (catalog_hits, catalog_total),
+        "schemas": (schema_hits, schema_total),
+        "tables": (table_hits, table_total),
+        "columns": (column_hits, column_total),
     }
-
     if group is not None:
-        selected = groups_by_type[group]
-        paged = _paginate(selected, offset=offset, limit=limit)
+        hits, total = selected[group]
         return SearchResponse(
             query=query,
-            groups=[
-                SearchGroupRead(
-                    asset_type=group,
-                    total=len(selected),
-                    hits=paged,
-                )
-            ],
+            groups=[SearchGroupRead(asset_type=group, total=total, hits=hits)],
         )
 
     return SearchResponse(
         query=query,
         groups=[
-            SearchGroupRead(
-                asset_type="catalogs",
-                total=len(catalog_hits),
-                hits=_paginate(catalog_hits, offset=0, limit=limit),
-            ),
-            SearchGroupRead(
-                asset_type="schemas",
-                total=len(schema_hits),
-                hits=_paginate(schema_hits, offset=0, limit=limit),
-            ),
-            SearchGroupRead(
-                asset_type="tables",
-                total=len(table_hits),
-                hits=_paginate(table_hits, offset=0, limit=limit),
-            ),
-            SearchGroupRead(
-                asset_type="columns",
-                total=len(column_hits),
-                hits=_paginate(column_hits, offset=0, limit=limit),
-            ),
+            SearchGroupRead(asset_type=name, total=total, hits=hits)
+            for name, (hits, total) in selected.items()
         ],
     )
