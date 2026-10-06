@@ -128,7 +128,7 @@ def test_scheduler_wires_telemetry_credentials_into_ingester(session, monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# Query-level error detection (PDAE-8277)
+# Query-level error detection ()
 #
 # Trino's /v1/statement API returns HTTP 200 even when the query itself fails (bad SQL,
 # COLUMN_NOT_FOUND, permission denied, ...) -- the failure lives in the JSON body's "error"

@@ -20,7 +20,7 @@ class TrinoQueryError(RuntimeError):
     """Trino accepted the HTTP request but the query itself failed (bad SQL, permission
     denied, COLUMN_NOT_FOUND, ...). Trino's /v1/statement API always returns HTTP 200 for
     this case, so callers must check the JSON body's "error" key -- see the comment in
-    TrinoQueryIngester.fetch_recent_queries for the incident this fixed (PDAE-8277).
+    TrinoQueryIngester.fetch_recent_queries for the incident this fixed ().
     """
 
     def __init__(self, trino_error: dict[str, Any]) -> None:
@@ -79,7 +79,7 @@ class TrinoQueryIngester:
         # also selected execution_time_ms, peak_*_memory_bytes, physical_input_bytes/rows,
         # output_*, written_*, cumulative_memory, completed_splits, cpu_time_ms, and
         # wall_time_ms, none of which this table carries on every Trino version/config
-        # (confirmed missing on Trino 480 in prod -- PDAE-8277). Trino rejects the whole
+        # (confirmed missing on Trino 480 in prod -- ). Trino rejects the whole
         # query on any unresolvable column (COLUMN_NOT_FOUND), so a single optional column
         # in the SELECT list silently zeroed out every fetch. rows_from_trino_queries()
         # already treats bytes_read/rows_read/files_read as optional (q.get(...) with a
@@ -163,7 +163,7 @@ class TrinoQueryIngester:
         stats on -- confirmed live 2026-09-28: ``system.runtime.queries`` (the bulk table
         ``fetch_recent_queries`` reads) has no ``physical_input_bytes``/rows/files columns
         at all on this deployment (``DESCRIBE`` returns 15 columns, none of them stats;
-        that's *why* the PDAE-8277 fix narrowed the bulk SELECT to the safe subset -- there
+        that's *why* the  fix narrowed the bulk SELECT to the safe subset -- there
         was nothing to select). ``/v1/query/{id}`` does carry ``queryStats.
         physicalInputDataSize`` (a Trino ``DataSize`` string, e.g. ``"4536702B"``) and
         ``inputs[]`` (real per-table catalog/schema/table identity, more reliable than

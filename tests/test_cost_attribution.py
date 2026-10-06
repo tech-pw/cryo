@@ -170,20 +170,20 @@ class TestAggregateQueryCostAttribution:
                     "query": "select 1",
                     "d": query_time,
                     "source": "Metabase v0.60.0 [abc-123]",
-                    "schema": "pw_bq",
+                    "schema": "analytics",
                     "query_state": "FINISHED",
                     "inputs_json": json.dumps(
-                        [{"schema": "pw_bq", "table": "t", "physicalInputBytes": 1000}]
+                        [{"schema": "analytics", "table": "t", "physicalInputBytes": 1000}]
                     ),
                 },
                 {
                     "query": "select 2",
                     "d": query_time,
                     "source": "Metabase v0.60.0 [abc-123]",
-                    "schema": "pw_bq",
+                    "schema": "analytics",
                     "query_state": "FAILED",
                     "inputs_json": json.dumps(
-                        [{"schema": "pw_bq", "table": "t", "physicalInputBytes": 500}]
+                        [{"schema": "analytics", "table": "t", "physicalInputBytes": 500}]
                     ),
                 },
             ]
@@ -205,7 +205,7 @@ class TestAggregateQueryCostAttribution:
         assert result.queries_read == 2
         # No "user" column in this fixture's rows -- falls back to "unknown", same as an
         # unconfigured/disabled user_column would.
-        key = (query_time.date(), "Metabase v0.60.0", "pw_bq", "unknown")
+        key = (query_time.date(), "Metabase v0.60.0", "analytics", "unknown")
         assert key in captured
         query_count, failed_count, bytes_scanned = captured[key]
         assert query_count == 2
@@ -228,10 +228,10 @@ class TestAggregateQueryCostAttribution:
                     "query": "select 1",
                     "d": query_time,
                     "source": "trino-python-client",
-                    "schema": "pw_bq",
+                    "schema": "analytics",
                     "query_state": "FINISHED",
                     "inputs_json": json.dumps(
-                        [{"schema": "pw_bq", "table": "t", "physicalInputBytes": 1000}]
+                        [{"schema": "analytics", "table": "t", "physicalInputBytes": 1000}]
                     ),
                     "user": "alice",
                 },
@@ -239,10 +239,10 @@ class TestAggregateQueryCostAttribution:
                     "query": "select 2",
                     "d": query_time,
                     "source": "trino-python-client",
-                    "schema": "pw_bq",
+                    "schema": "analytics",
                     "query_state": "FINISHED",
                     "inputs_json": json.dumps(
-                        [{"schema": "pw_bq", "table": "t", "physicalInputBytes": 2000}]
+                        [{"schema": "analytics", "table": "t", "physicalInputBytes": 2000}]
                     ),
                     "user": "bob",
                 },
@@ -263,8 +263,8 @@ class TestAggregateQueryCostAttribution:
         )
 
         assert result.queries_read == 2
-        alice_key = (query_time.date(), "trino-python-client", "pw_bq", "alice")
-        bob_key = (query_time.date(), "trino-python-client", "pw_bq", "bob")
+        alice_key = (query_time.date(), "trino-python-client", "analytics", "alice")
+        bob_key = (query_time.date(), "trino-python-client", "analytics", "bob")
         assert captured[alice_key] == [1, 0, 1000]
         assert captured[bob_key] == [1, 0, 2000]
 
@@ -292,10 +292,10 @@ class TestAggregateQueryCostAttribution:
                     "query": "select 1",
                     "d": query_time,
                     "source": "trino-python-client",
-                    "schema": "pw_bq",
+                    "schema": "analytics",
                     "query_state": "FINISHED",
                     "inputs_json": json.dumps(
-                        [{"schema": "pw_bq", "table": "t", "physicalInputBytes": 1000}]
+                        [{"schema": "analytics", "table": "t", "physicalInputBytes": 1000}]
                     ),
                     "user": "alice",
                 },
@@ -315,7 +315,7 @@ class TestAggregateQueryCostAttribution:
             session, source, now=now, window_hours=6, max_windows_per_tick=4
         )
 
-        key = (query_time.date(), "trino-python-client", "pw_bq", "unknown")
+        key = (query_time.date(), "trino-python-client", "analytics", "unknown")
         assert key in captured
 
     def test_watermark_advances_and_persists(self, session, monkeypatch) -> None:
@@ -422,7 +422,7 @@ class TestBytesScannedByDay:
                     source_id=source.id,
                     day=day,
                     client="Metabase",
-                    schema_name="cdp_revenue",
+                    schema_name="revenue",
                     query_count=10,
                     failed_query_count=0,
                     physical_bytes_scanned=100,
@@ -453,7 +453,7 @@ class TestBytesScannedByDay:
                     source_id=source.id,
                     day=old_day,
                     client="Metabase",
-                    schema_name="cdp_revenue",
+                    schema_name="revenue",
                     query_count=1,
                     failed_query_count=0,
                     physical_bytes_scanned=999,
@@ -462,7 +462,7 @@ class TestBytesScannedByDay:
                     source_id=source.id,
                     day=recent_day,
                     client="Metabase",
-                    schema_name="cdp_revenue",
+                    schema_name="revenue",
                     query_count=1,
                     failed_query_count=0,
                     physical_bytes_scanned=100,
@@ -486,7 +486,7 @@ class TestApplyScanCostPrices:
                     source_id=source.id,
                     day=day,
                     client="Metabase",
-                    schema_name="cdp_revenue",
+                    schema_name="revenue",
                     query_count=10,
                     failed_query_count=0,
                     physical_bytes_scanned=300,
@@ -531,7 +531,7 @@ class TestApplyScanCostPrices:
             source_id=source.id,
             day=day,
             client="Metabase",
-            schema_name="cdp_revenue",
+            schema_name="revenue",
             query_count=10,
             failed_query_count=0,
             physical_bytes_scanned=300,

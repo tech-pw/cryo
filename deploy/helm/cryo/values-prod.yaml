@@ -120,23 +120,11 @@ global:
     # See cryo/reporting/cost_ceiling.py.
     CRYO_COST_CEILING_ENABLED: "true"
     CRYO_GRAFANA_BASE_URL: "https://internal.example.com"
+    CRYO_GRAFANA_ATHENA_DATASOURCE_UID: "fe0bimj2kv9xca"
     CRYO_COST_CEILING_CLUSTER_NAME: "data-platform-eks"
-    # Explicit, deliberate bridge until real OIDC (CRYO_OIDC_ISSUER_URL/CLIENT_ID) is
-    # configured -- re-enables the dev sign-in form (self-declared role, no real identity
-    # check) even though environment=='prod'. See cryo/api/auth_routes.py::_dev_token_enabled.
-    # Anyone reaching the UI can self-grant any role while this is true.
-    #
-    # Re-enabled 2026-08-05: briefly turned off in the same deploy that shipped this comment,
-    # which (correctly, per this comment's own warning) locked every human out of the web UI
-    # since OIDC was never configured -- turned back on as an explicit, deliberate choice to
-    # keep UI access working, not an oversight. Turn off again once real OIDC
-    # (CRYO_OIDC_ISSUER_URL/CRYO_OIDC_CLIENT_ID) is actually configured -- see
-    # docs/deployment.md or ask before flipping this back off, since it will re-lock the UI.
-    CRYO_ALLOW_DEV_TOKEN_IN_PROD: "true"
-
-    # Disabled 2026-09-17, live-confirmed incident: the native (iceberg-go) engine has no
+    # Disabled 2026-09-17: the native (iceberg-go) engine has no
     # independent verification that its own self-reported success actually mutated the
-    # Iceberg table (gold_dbt_poll_dashboard_view ran 25min, reported success on every
+    # Iceberg table (a table ran 25min, reported success on every
     # operation, committed zero snapshots -- see cryo/engines/native/watcher.py's
     # _reported_zero_work_operations). native.enabled (Helm-level: whether K8s-dispatch
     # RBAC/templates render for the Governor's native-Job-per-table path) and this Python
@@ -475,7 +463,7 @@ spark:
     # margin on memory (worst case is OOMKill) -- still ~2x observed peak on both,
     # not cut to the observed average. If real optimize_manifests OOMs start
     # showing up, raise executorMemMib first; that's the one with the least slack.
-    # PDAE-8544: Jobs still omit AWS-generated aws:eks:workload-name; native + Spark
+    # : Jobs still omit AWS-generated aws:eks:workload-name; native + Spark
     # pods now set eks-workload-name / eks-workload-type / cryo-engine / cryo-operation.
     # Activate those user tags; Athena: resource_tags_user_eks_workload_name.
     driverCpuMilli: 500

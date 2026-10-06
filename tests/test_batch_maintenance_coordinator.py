@@ -129,7 +129,7 @@ def _settings(**overrides: Any) -> Settings:
 
 def _seed(session_factory: Any, *, tables: int = 3) -> list[uuid.UUID]:
     with session_factory() as session:
-        source = Source(id=uuid.uuid4(), name="cdp", type="hive", config={}, enabled=True)
+        source = Source(id=uuid.uuid4(), name="sample", type="hive", config={}, enabled=True)
         session.add(source)
         session.add(
             Destination(
@@ -137,7 +137,7 @@ def _seed(session_factory: Any, *, tables: int = 3) -> list[uuid.UUID]:
                 name="spark-k8s-fallback",
                 engine="spark_emr",
                 enabled=True,
-                config={"catalog": "cdp", "spark_k8s": {"namespace": "cryo"}},
+                config={"catalog": "sample", "spark_k8s": {"namespace": "cryo"}},
             )
         )
         ids: list[uuid.UUID] = []
@@ -177,7 +177,7 @@ def _load_table(session_factory: Any) -> Any:
             assert table is not None
             return TableData(
                 stats={
-                    "catalog": "cdp",
+                    "catalog": "sample",
                     "schema_name": table.schema_name,
                     "table_name": table.table_name,
                     "small_files_count": 500,

@@ -44,7 +44,7 @@ def _chunked_optimize_plan(predicate_counts: tuple[int, ...]) -> MaintenancePlan
         operations.append(Operation(OperationType.OPTIMIZE, {}, predicates=predicates))
         next_predicate += predicate_count
     return MaintenancePlan(
-        table_ref="cdp.pw_bq.silver_dbt_widget_clicked",
+        table_ref="demo.analytics.silver_widget_clicked",
         mode=Mode.DEEP,
         operations=tuple(operations),
     )
@@ -90,7 +90,7 @@ def test_predicate_count_is_observed_without_mutating_scope() -> None:
 
 
 def test_execute_plan_keeps_filters_for_high_predicate_count() -> None:
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "sample"})
     mock_client = MagicMock()
     mock_client.submit_spark_sql.return_value = "cryo-spark-oom1"
     mock_client.wait_for_completion.return_value = JobRunResult(
@@ -107,7 +107,7 @@ def test_execute_plan_keeps_filters_for_high_predicate_count() -> None:
 
 
 def test_execute_plan_keeps_filters_for_small_tables() -> None:
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "sample"})
     mock_client = MagicMock()
     mock_client.submit_spark_sql.return_value = "cryo-spark-small"
     mock_client.wait_for_completion.return_value = JobRunResult(
@@ -142,7 +142,7 @@ def test_validate_spark_worker_plan_preserves_scoped_outlier() -> None:
 
 def test_validate_spark_plan_rejects_out_of_budget_full_table_rewrite() -> None:
     plan = MaintenancePlan(
-        table_ref="cdp.pw_bq.silver_dbt_widget_clicked",
+        table_ref="demo.analytics.silver_widget_clicked",
         mode=Mode.DEEP,
         operations=(Operation(OperationType.OPTIMIZE, {"chunk_size_gb": 50}),),
     )
@@ -152,11 +152,11 @@ def test_validate_spark_plan_rejects_out_of_budget_full_table_rewrite() -> None:
 
 
 def test_execute_plan_rejects_unscoped_optimize_without_scan_size_evidence() -> None:
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "sample"})
     mock_client = MagicMock()
     engine._client = mock_client
     plan = MaintenancePlan(
-        table_ref="cdp.pw_bq.silver_dbt_widget_clicked",
+        table_ref="demo.analytics.silver_widget_clicked",
         mode=Mode.DEEP,
         operations=(Operation(OperationType.OPTIMIZE, {"chunk_size_gb": 50}),),
     )
@@ -167,11 +167,11 @@ def test_execute_plan_rejects_unscoped_optimize_without_scan_size_evidence() -> 
 
 
 def test_execute_plan_rejects_out_of_budget_unscoped_optimize_with_table_stats() -> None:
-    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats({"total_size_gb": 50.1})
+    engine = SparkK8sEngine(config={"catalog": "sample"}).with_table_stats({"total_size_gb": 50.1})
     mock_client = MagicMock()
     engine._client = mock_client
     plan = MaintenancePlan(
-        table_ref="cdp.pw_bq.silver_dbt_widget_clicked",
+        table_ref="demo.analytics.silver_widget_clicked",
         mode=Mode.DEEP,
         operations=(Operation(OperationType.OPTIMIZE, {"chunk_size_gb": 50}),),
     )
@@ -185,11 +185,11 @@ def test_execute_plan_rejects_out_of_budget_unscoped_optimize_with_table_stats()
 def test_execute_plan_rejects_duplicate_unscoped_optimize_calls(
     predicates: tuple[PartitionPredicate, ...] | None,
 ) -> None:
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "sample"})
     mock_client = MagicMock()
     engine._client = mock_client
     plan = MaintenancePlan(
-        table_ref="cdp.pw_bq.silver_dbt_widget_clicked",
+        table_ref="demo.analytics.silver_widget_clicked",
         mode=Mode.DEEP,
         operations=(
             Operation(OperationType.OPTIMIZE, {}, predicates=predicates),

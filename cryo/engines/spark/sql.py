@@ -157,7 +157,7 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
     elif sort_columns:
         # Linear sort. Regression, 2026-08-11: rewrite_data_files(strategy => 'sort') does
         # NOT read a linear sort order from the options map the way it does for zorder --
-        # confirmed live on lsq_pw.silver_prospect_activity_base, which failed with
+        # confirmed live on schema.example_table, which failed with
         # "Cannot sort data without a valid sort order, table ... is unsorted and no sort
         # order is provided" even though 'sort-order' was set in options. Iceberg's rewrite
         # procedure only honors a linear sort strategy against the table's own persisted

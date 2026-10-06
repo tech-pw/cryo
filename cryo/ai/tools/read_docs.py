@@ -37,7 +37,7 @@ def _docs() -> list[Path]:
         return []
     found = []
     for path in sorted(_DOCS.rglob("*.md")):
-        if "_private-pw" in path.parts:
+        if "_private" in path.parts:
             continue
         found.append(path)
     return found
@@ -100,7 +100,7 @@ def search_runbooks(ctx: ToolContext, parsed: BaseModel) -> EvidenceEnvelope:
             error_category="abstain",
             warnings=["No matching runbook under docs/. Abstaining."],
             measurement_method="docs",
-            coverage={"searched": "docs/**/*.md", "excluded": "docs/_private-pw"},
+            coverage={"searched": "docs/**/*.md", "excluded": "docs/_private"},
         )
     return make_envelope(
         "search_runbooks",
@@ -116,7 +116,7 @@ def search_runbooks(ctx: ToolContext, parsed: BaseModel) -> EvidenceEnvelope:
         coverage={
             "returned": len(matches),
             "searched": "docs/**/*.md",
-            "excluded": "docs/_private-pw",
+            "excluded": "docs/_private",
         },
         row_count=len(matches),
         measurement_method="docs",
@@ -268,7 +268,7 @@ SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="search_runbooks",
         family="docs",
-        description="Search docs/*.md, excluding docs/_private-pw. No match abstains.",
+        description="Search docs/*.md, excluding docs/_private. No match abstains.",
         input_model=DocsInput,
         output_model=EvidenceEnvelope,
         tier=0,

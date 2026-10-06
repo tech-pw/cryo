@@ -113,10 +113,10 @@ def test_deepest_caused_by_none_when_absent() -> None:
 
 
 def test_deepest_caused_by_falls_back_to_py4j_wrapped_exception_header() -> None:
-    """Regression, PDAE-8346, confirmed live 2026-08-18: not every JVM exception chain uses
+    """Regression, , confirmed live 2026-08-18: not every JVM exception chain uses
     the literal "Caused by:" marker. Py4J wraps a Java exception as
     "py4j.protocol.Py4JJavaError: An error occurred...\\n: <real exception>: <message>" --
-    real sample pulled from a live failed job on gold_dbt_pw_bq's parent dataset, an Iceberg
+    real sample pulled from a live failed job on gold_events's parent dataset, an Iceberg
     ValidationException with no "Caused by:" line anywhere in the captured text."""
     message = (
         "Spark-on-K8s Job FAILED: some INFO chatter\n"
@@ -149,7 +149,7 @@ def test_deepest_caused_by_falls_back_to_bare_qualified_exception_line() -> None
 
 
 def test_deepest_caused_by_none_for_bare_stack_frames_with_no_exception_identity() -> None:
-    """Confirmed live, PDAE-8346: a real sample of 19/47 truncated errors over 14 days had
+    """Confirmed live, : a real sample of 19/47 truncated errors over 14 days had
     NO exception class or message anywhere in the captured text at all -- only bare
     `at pkg.Class.method(File.java:N)` frames, because the real header line had already
     scrolled past whatever tail window was captured (fixed separately by widening

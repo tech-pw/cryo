@@ -267,7 +267,7 @@ class Governor:
         self._roi_gate = ROIGate()
         self._shadow_sample_rate = settings.governor_shadow_sample_rate
         # Fallbacks not yet dispatched because the current wave already spent its
-        # one slot_cap-sized concurrent batch (PDAE-8352). Drained at the end of
+        # one slot_cap-sized concurrent batch. Drained at the end of
         # subsequent run_wave ticks so regular queue admission is never blocked
         # behind a multi-batch cohort.
         self._pending_fallback_dispatches: list[_PendingFallbackDispatch] = []
@@ -277,7 +277,7 @@ class Governor:
         parameter on reconcile_stale_running_jobs but never actually passed from anywhere in
         the codebase -- every RUNNING job past stale_after_seconds (default 6h) got reaped
         unconditionally, with no way to tell "worker died" from "job is huge and still going".
-        Confirmed live: a 24TB rewrite (cdp.unified_bq.gold_dbt_pw_bq) legitimately still
+        Confirmed live: a 24TB rewrite legitimately still
         processing after ~5h, driver pod genuinely Running, would have been force-FAILED by
         this reaper within the hour despite doing real, uninterrupted work the whole time.
 

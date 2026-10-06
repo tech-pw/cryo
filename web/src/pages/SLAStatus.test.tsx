@@ -41,8 +41,8 @@ const renderPage = (initialEntries: string[] = ["/"]) => {
 
 const row = (overrides: Partial<SLAResponse["slas"][number]>): SLAResponse["slas"][number] => ({
   table_id: "t-1",
-  table_name: "lms.gold_banners",
-  schema_name: "lms",
+  table_name: "demo.orders",
+  schema_name: "demo",
   freshness_hours: 1,
   freshness_sla_hours: 24,
   freshness_breached: false,
@@ -134,14 +134,14 @@ describe("SLAStatus page", () => {
       slas: [
         row({
           table_id: "t-1",
-          table_name: "lms.gold_banners",
+          table_name: "demo.orders",
           freshness_breached: true,
           freshness_hours: 100
         }),
         row({
           table_id: "t-2",
-          table_name: "cdp_revenue.silver_x",
-          schema_name: "cdp_revenue",
+          table_name: "analytics.events",
+          schema_name: "analytics",
           maintenance_breached: true,
           maintenance_days: 40
         })
@@ -188,9 +188,9 @@ describe("SLAStatus page", () => {
   it("builds the SLA matrix by schema from the full table list", async () => {
     vi.mocked(getSlaStatusDashboard).mockResolvedValue({
       slas: [
-        row({ table_id: "t-1", schema_name: "lms", freshness_breached: true }),
-        row({ table_id: "t-2", schema_name: "lms" }),
-        row({ table_id: "t-3", schema_name: "cdp_revenue", maintenance_breached: true })
+        row({ table_id: "t-1", schema_name: "demo", freshness_breached: true }),
+        row({ table_id: "t-2", schema_name: "demo" }),
+        row({ table_id: "t-3", schema_name: "analytics", maintenance_breached: true })
       ],
       total_breached: 2,
       total_monitored: 3
@@ -199,11 +199,11 @@ describe("SLAStatus page", () => {
 
     const matrixHeader = await screen.findByText(/SLA matrix by schema/i);
     fireEvent.click(matrixHeader);
-    expect(await screen.findByText("lms")).toBeInTheDocument();
-    expect(screen.getByText("cdp_revenue")).toBeInTheDocument();
-    // cdp_revenue: 1 table, 1 breached -> 0.0% compliance
+    expect(await screen.findByText("demo")).toBeInTheDocument();
+    expect(screen.getByText("analytics")).toBeInTheDocument();
+    // analytics: 1 table, 1 breached -> 0.0% compliance
     expect(screen.getByText("0.0%")).toBeInTheDocument();
-    // lms: 2 tables, 1 breached -> 50.0% compliance
+    // demo: 2 tables, 1 breached -> 50.0% compliance
     expect(screen.getByText("50.0%")).toBeInTheDocument();
   });
 
@@ -252,57 +252,57 @@ describe("SLAStatus page", () => {
   it("filters the table by search text on the table name", async () => {
     vi.mocked(getSlaStatusDashboard).mockResolvedValue({
       slas: [
-        row({ table_id: "t-1", table_name: "lms.gold_banners" }),
-        row({ table_id: "t-2", table_name: "cdp_revenue.silver_x" })
+        row({ table_id: "t-1", table_name: "demo.orders" }),
+        row({ table_id: "t-2", table_name: "analytics.events" })
       ],
       total_breached: 0,
       total_monitored: 2
     } satisfies SLAResponse);
     renderPage();
 
-    expect(await screen.findByText("lms.gold_banners")).toBeInTheDocument();
-    expect(screen.getByText("cdp_revenue.silver_x")).toBeInTheDocument();
+    expect(await screen.findByText("demo.orders")).toBeInTheDocument();
+    expect(screen.getByText("analytics.events")).toBeInTheDocument();
 
     const search = screen.getByPlaceholderText("Search table name");
-    fireEvent.change(search, { target: { value: "gold_banners" } });
+    fireEvent.change(search, { target: { value: "orders" } });
 
-    expect(await screen.findByText("lms.gold_banners")).toBeInTheDocument();
-    expect(screen.queryByText("cdp_revenue.silver_x")).not.toBeInTheDocument();
+    expect(await screen.findByText("demo.orders")).toBeInTheDocument();
+    expect(screen.queryByText("analytics.events")).not.toBeInTheDocument();
   });
 
   it("search is case-insensitive and matches on partial table name", async () => {
     vi.mocked(getSlaStatusDashboard).mockResolvedValue({
       slas: [
-        row({ table_id: "t-1", table_name: "lms.gold_banners" }),
-        row({ table_id: "t-2", table_name: "cdp_revenue.silver_x" })
+        row({ table_id: "t-1", table_name: "demo.orders" }),
+        row({ table_id: "t-2", table_name: "analytics.events" })
       ],
       total_breached: 0,
       total_monitored: 2
     } satisfies SLAResponse);
     renderPage();
-    await screen.findByText("lms.gold_banners");
+    await screen.findByText("demo.orders");
 
     const search = screen.getByPlaceholderText("Search table name");
-    fireEvent.change(search, { target: { value: "REVENUE" } });
+    fireEvent.change(search, { target: { value: "EVENTS" } });
 
-    expect(await screen.findByText("cdp_revenue.silver_x")).toBeInTheDocument();
-    expect(screen.queryByText("lms.gold_banners")).not.toBeInTheDocument();
+    expect(await screen.findByText("analytics.events")).toBeInTheDocument();
+    expect(screen.queryByText("demo.orders")).not.toBeInTheDocument();
   });
 
   it("restores the table search filter from the URL on load", async () => {
     vi.mocked(getSlaStatusDashboard).mockResolvedValue({
       slas: [
-        row({ table_id: "t-1", table_name: "lms.gold_banners" }),
-        row({ table_id: "t-2", table_name: "cdp_revenue.silver_x" })
+        row({ table_id: "t-1", table_name: "demo.orders" }),
+        row({ table_id: "t-2", table_name: "analytics.events" })
       ],
       total_breached: 0,
       total_monitored: 2
     } satisfies SLAResponse);
-    renderPage(["/?q=gold_banners"]);
+    renderPage(["/?q=orders"]);
 
-    expect(await screen.findByText("lms.gold_banners")).toBeInTheDocument();
-    expect(screen.queryByText("cdp_revenue.silver_x")).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Search table name")).toHaveValue("gold_banners");
+    expect(await screen.findByText("demo.orders")).toBeInTheDocument();
+    expect(screen.queryByText("analytics.events")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search table name")).toHaveValue("orders");
   });
 
   it("restores the freshness bucket filter from the URL on load", async () => {
@@ -394,17 +394,17 @@ describe("SLAStatus page", () => {
   it("announces the filtered result count after a brief pause rather than on every refresh", async () => {
     vi.mocked(getSlaStatusDashboard).mockResolvedValue({
       slas: [
-        row({ table_id: "t-1", table_name: "lms.gold_banners" }),
-        row({ table_id: "t-2", table_name: "cdp_revenue.silver_x" })
+        row({ table_id: "t-1", table_name: "demo.orders" }),
+        row({ table_id: "t-2", table_name: "analytics.events" })
       ],
       total_breached: 0,
       total_monitored: 2
     } satisfies SLAResponse);
     renderPage();
-    await screen.findByText("lms.gold_banners");
+    await screen.findByText("demo.orders");
 
     const search = screen.getByPlaceholderText("Search table name");
-    fireEvent.change(search, { target: { value: "gold" } });
+    fireEvent.change(search, { target: { value: "orders" } });
 
     await waitFor(() => {
       expect(screen.getByText("Showing 1 table of 2.")).toBeInTheDocument();

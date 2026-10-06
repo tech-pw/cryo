@@ -37,7 +37,7 @@ def test_parse_cur_csv_row_extracts_bucket_from_resource_arn() -> None:
         "lineItem/UsageStartDate": "2026-07-01T00:00:00Z",
         "lineItem/ProductCode": "AmazonS3",
         "lineItem/UsageType": "TimedStorage-ByteHrs",
-        "lineItem/ResourceId": "arn:aws:s3:::prod-iceberg/db/sales/data.parquet",
+        "lineItem/ResourceId": "arn:aws:s3:::lake-bucket/db/sales/data.parquet",
         "lineItem/UnblendedCost": "12.34567890",
         "lineItem/UsageAmount": "1024",
         "lineItem/UsageUnit": "GB-Mo",
@@ -45,7 +45,7 @@ def test_parse_cur_csv_row_extracts_bucket_from_resource_arn() -> None:
     }
     parsed = aws_cost_insights._parse_cur_row_csv(row)
     assert parsed is not None
-    assert parsed.bucket == "prod-iceberg"
+    assert parsed.bucket == "lake-bucket"
     assert parsed.usage_date == date(2026, 7, 1)
     assert parsed.unblended_cost == 12.34567890
     assert parsed.usage_quantity == 1024.0
@@ -200,7 +200,7 @@ def _write_cur_fixture(tmp_path: Path) -> Path:
                 "2026-07-01T00:00:00Z",
                 "AmazonS3",
                 "TimedStorage-ByteHrs",
-                "arn:aws:s3:::prod-iceberg/db/sales/x",
+                "arn:aws:s3:::lake-bucket/db/sales/x",
                 "10.0",
                 "100",
                 "GB-Mo",
@@ -210,7 +210,7 @@ def _write_cur_fixture(tmp_path: Path) -> Path:
                 "2026-07-01T00:00:00Z",
                 "AmazonS3",
                 "TimedStorage-ByteHrs",
-                "arn:aws:s3:::prod-iceberg/db/users/x",
+                "arn:aws:s3:::lake-bucket/db/users/x",
                 "5.0",
                 "50",
                 "GB-Mo",
@@ -220,7 +220,7 @@ def _write_cur_fixture(tmp_path: Path) -> Path:
                 "2026-07-02T00:00:00Z",
                 "AmazonS3",
                 "Requests-Tier1",
-                "arn:aws:s3:::prod-iceberg/db/sales/x",
+                "arn:aws:s3:::lake-bucket/db/sales/x",
                 "0.05",
                 "1000",
                 "Requests",
@@ -257,9 +257,9 @@ def test_ingest_cur_from_fixture_persists_line_items(session, tmp_path) -> None:
 
     rows = session.query(AWSCurLineItem).all()
     assert len(rows) == 4
-    # Three rows belong to prod-iceberg; the EC2 row is unattributed by bucket.
+    # Three rows belong to lake-bucket; the EC2 row is unattributed by bucket.
     buckets = {row.bucket for row in rows}
-    assert buckets == {"prod-iceberg", None}
+    assert buckets == {"lake-bucket", None}
 
 
 def test_cost_by_bucket_groups_unattributed_into_label(session, tmp_path) -> None:
@@ -271,7 +271,7 @@ def test_cost_by_bucket_groups_unattributed_into_label(session, tmp_path) -> Non
     session.commit()
 
     result = aws_cost_insights.cost_by_bucket(session, src.id)
-    assert result[0]["bucket"] == "prod-iceberg"
+    assert result[0]["bucket"] == "lake-bucket"
     assert result[0]["total_cost_usd"] == pytest.approx(15.05)
     assert result[1]["bucket"] == "(unattributed)"
     assert result[1]["total_cost_usd"] == pytest.approx(1.23)
@@ -300,7 +300,7 @@ def test_size_by_prefix_groups_inventory_rows(session) -> None:
         AWSInventoryObject(
             source_id=src.id,
             inventory_date=date(2026, 7, 1),
-            bucket="prod-iceberg",
+            bucket="lake-bucket",
             key="db/sales/a.parquet",
             size_bytes=1024,
             storage_class="STANDARD",
@@ -311,7 +311,7 @@ def test_size_by_prefix_groups_inventory_rows(session) -> None:
         AWSInventoryObject(
             source_id=src.id,
             inventory_date=date(2026, 7, 1),
-            bucket="prod-iceberg",
+            bucket="lake-bucket",
             key="db/sales/b.parquet",
             size_bytes=2048,
             storage_class="STANDARD",
@@ -322,7 +322,7 @@ def test_size_by_prefix_groups_inventory_rows(session) -> None:
         AWSInventoryObject(
             source_id=src.id,
             inventory_date=date(2026, 7, 1),
-            bucket="prod-iceberg",
+            bucket="lake-bucket",
             key="db/sales/c.parquet",
             size_bytes=512,
             storage_class="STANDARD",
@@ -333,7 +333,7 @@ def test_size_by_prefix_groups_inventory_rows(session) -> None:
         AWSInventoryObject(
             source_id=src.id,
             inventory_date=date(2026, 7, 1),
-            bucket="prod-iceberg",
+            bucket="lake-bucket",
             key="logs/audit/x.parquet",
             size_bytes=256,
             storage_class="STANDARD_IA",
@@ -361,8 +361,8 @@ def test_cost_by_bucket_filters_by_date_range(session, tmp_path) -> None:
     only_july_1 = aws_cost_insights.cost_by_bucket(
         session, src.id, start=date(2026, 7, 1), end=date(2026, 7, 1)
     )
-    # Only the 2 storage rows on July 1 belong to prod-iceberg.
-    assert only_july_1[0]["bucket"] == "prod-iceberg"
+    # Only the 2 storage rows on July 1 belong to lake-bucket.
+    assert only_july_1[0]["bucket"] == "lake-bucket"
     assert only_july_1[0]["total_cost_usd"] == pytest.approx(15.0)
     assert len(only_july_1) == 1
 

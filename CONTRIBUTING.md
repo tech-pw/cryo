@@ -31,7 +31,7 @@ This project follows standard open-source conduct expectations described in the
 
 ```bash
 # Clone the repository
-git clone https://github.com/shelf-project/Cryo.git
+git clone https://github.com/tech-pw/cryo.git
 cd cryo
 
 # Start the local development stack
@@ -110,8 +110,8 @@ We welcome many types of contributions:
 
 ### Finding Issues to Work On
 
-- Look for issues labeled [`good first issue`](https://github.com/iceberg-cryo/cryo/labels/good%20first%20issue)
-- Check [`help wanted`](https://github.com/iceberg-cryo/cryo/labels/help%20wanted) for more complex tasks
+- Look for issues labeled [`good first issue`](https://github.com/tech-pw/cryo/labels/good%20first%20issue)
+- Check [`help wanted`](https://github.com/tech-pw/cryo/labels/help%20wanted) for more complex tasks
 - Comment on an issue to let others know you're working on it
 
 ### Before You Start
@@ -128,7 +128,7 @@ We welcome many types of contributions:
 # Fork on GitHub, then:
 git clone https://github.com/YOUR_USERNAME/cryo.git
 cd cryo
-git remote add upstream https://github.com/shelf-project/Cryo.git
+git remote add upstream https://github.com/tech-pw/cryo.git
 
 # Create a feature branch
 git checkout -b feature/your-feature-name

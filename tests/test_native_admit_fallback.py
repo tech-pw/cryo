@@ -22,7 +22,7 @@ from cryo.worker.worker import DestinationConfig, InMemoryJobStore
 
 def _plan() -> MaintenancePlan:
     return MaintenancePlan(
-        table_ref="cdp.mview.load_test_basefact",
+        table_ref="demo.mart.load_test_events",
         mode=Mode.DEEP,
         operations=(),
     )
@@ -68,7 +68,7 @@ def test_no_fallback_operations_is_a_noop() -> None:
             plan=_plan(),
             destination_config={},
             source_config={},
-            table_ref="cdp.mview.load_test_basefact",
+            table_ref="demo.mart.load_test_events",
             job_id="job-1",
             table_id="table-1",
         )
@@ -85,7 +85,7 @@ def test_missing_fallback_destination_id_logs_and_returns() -> None:
             plan=_plan(),
             destination_config={},
             source_config={},
-            table_ref="cdp.mview.load_test_basefact",
+            table_ref="demo.mart.load_test_events",
             job_id="job-1",
             table_id="table-1",
         )
@@ -101,7 +101,7 @@ def test_unresolvable_fallback_destination_does_not_raise() -> None:
         plan=_plan(),
         destination_config={"sql_fallback_destination_id": "missing-dest"},
         source_config={},
-        table_ref="cdp.mview.load_test_basefact",
+        table_ref="demo.mart.load_test_events",
         job_id="job-1",
         table_id="table-1",
     )  # must not raise
@@ -116,7 +116,7 @@ def test_dispatches_each_fallback_operation_to_the_configured_engine() -> None:
 
     mock_engine = MagicMock()
     mock_engine.type = EngineType.SPARK_EMR
-    mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
+    mock_engine.render.return_value = [MagicMock(sql="CALL demo.system.rewrite_manifests(...)")]
     mock_engine.execute.return_value = MagicMock(ok=True, engine_ref="job-1", duration_ms=100)
 
     with patch("cryo.engines.factory.create_engine", return_value=mock_engine) as create_engine:
@@ -126,7 +126,7 @@ def test_dispatches_each_fallback_operation_to_the_configured_engine() -> None:
             plan=_plan(),
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={},
-            table_ref="cdp.mview.load_test_basefact",
+            table_ref="demo.mart.load_test_events",
             job_id="job-1",
             table_id="table-1",
         )
@@ -146,7 +146,7 @@ def test_source_s3_credentials_are_merged_into_fallback_engine_config() -> None:
     fallback_ops = ((Operation(OperationType.OPTIMIZE_MANIFESTS, {}), "reason"),)
     mock_engine = MagicMock()
     mock_engine.type = EngineType.SPARK_EMR
-    mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
+    mock_engine.render.return_value = [MagicMock(sql="CALL demo.system.rewrite_manifests(...)")]
     mock_engine.execute.return_value = MagicMock(ok=True, engine_ref="job-1", duration_ms=100)
 
     with patch("cryo.engines.factory.create_engine", return_value=mock_engine) as create_engine:
@@ -156,7 +156,7 @@ def test_source_s3_credentials_are_merged_into_fallback_engine_config() -> None:
             plan=_plan(),
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={"s3.access-key-id": "AKIA...", "s3.secret-access-key": "shh"},
-            table_ref="cdp.mview.load_test_basefact",
+            table_ref="demo.mart.load_test_events",
             job_id="job-1",
             table_id="table-1",
         )
@@ -174,8 +174,8 @@ def test_source_catalog_connection_overrides_destination_default() -> None:
     static default -- correct for whichever catalog the destination was originally tuned
     for, wrong for any other. Confirmed live: lms.silver_adminactions (source catalog_name
     "hive", dev metastore/warehouse) fell back to the same destination as
-    cdp.mview.load_test_basefact (static config: catalog "cdp", prod metastore/warehouse).
-    Spark registered its Iceberg catalog plugin under the destination's static "cdp" name
+    demo.mart.load_test_events (static config: catalog "sample", prod metastore/warehouse).
+    Spark registered its Iceberg catalog plugin under the destination's static "sample" name
     while the rendered SQL referenced "hive.system.rewrite_data_files", so the CALL silently
     resolved against the builtin spark_catalog and failed with
     MISSING_CATALOG_ABILITY.PROCEDURES. The source's own connection info must win."""
@@ -185,7 +185,7 @@ def test_source_catalog_connection_overrides_destination_default() -> None:
             id="spark-1",
             engine=EngineType.SPARK_EMR,
             config={
-                "catalog": "cdp",
+                "catalog": "sample",
                 "spark_k8s": {
                     "catalog_impl": "hive",
                     "catalog_uri": "thrift://metastore.example.invalid:9083",
@@ -223,11 +223,11 @@ def test_source_catalog_connection_overrides_destination_default() -> None:
     )
     assert passed_config["spark_k8s"]["catalog_warehouse"] == "s3://example-dev-bucket/"
     # catalog_impl wasn't overridden (source doesn't carry one) -- the destination's default
-    # correctly still applies since both this source and the "cdp" default are
+    # correctly still applies since both this source and the "sample" default are
     # Hive-Metastore-backed.
     assert passed_config["spark_k8s"]["catalog_impl"] == "hive"
     # Original destination config in the store must be untouched (never persisted).
-    assert store.get_destination("spark-1").config["catalog"] == "cdp"
+    assert store.get_destination("spark-1").config["catalog"] == "sample"
 
 
 def test_successful_fallback_dispatch_is_recorded_as_a_queryable_audit() -> None:
@@ -242,7 +242,7 @@ def test_successful_fallback_dispatch_is_recorded_as_a_queryable_audit() -> None
 
     mock_engine = MagicMock()
     mock_engine.type = EngineType.SPARK_EMR
-    mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
+    mock_engine.render.return_value = [MagicMock(sql="CALL demo.system.rewrite_manifests(...)")]
     mock_engine.execute.return_value = MagicMock(
         ok=True,
         engine_ref="spark-job-1",
@@ -259,7 +259,7 @@ def test_successful_fallback_dispatch_is_recorded_as_a_queryable_audit() -> None
             plan=_plan(),
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={},
-            table_ref="cdp.mview.load_test_basefact",
+            table_ref="demo.mart.load_test_events",
             job_id="job-42",
             table_id="table-42",
         )
@@ -284,7 +284,7 @@ def test_failed_fallback_dispatch_is_recorded_not_just_logged() -> None:
 
     mock_engine = MagicMock()
     mock_engine.type = EngineType.SPARK_EMR
-    mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
+    mock_engine.render.return_value = [MagicMock(sql="CALL demo.system.rewrite_manifests(...)")]
     mock_engine.execute.return_value = MagicMock(
         ok=False,
         engine_ref=None,
@@ -301,7 +301,7 @@ def test_failed_fallback_dispatch_is_recorded_not_just_logged() -> None:
             plan=_plan(),
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={},
-            table_ref="cdp.mview.load_test_basefact",
+            table_ref="demo.mart.load_test_events",
             job_id="job-42",
             table_id="table-42",
         )
@@ -317,7 +317,7 @@ def test_failed_dispatch_with_detail_and_error_both_set_prefers_the_real_error()
     detail=stmt.sql (unconditionally, success or failure) and error=<the real exception>.
     `detail or error or reason` therefore always picked the SQL statement and never once
     surfaced the actual cause -- confirmed against real fallback-dispatch audit rows, every
-    single one showed only "CALL cdp.system.rewrite_manifests(...)", never why it failed.
+    single one showed only "CALL demo.system.rewrite_manifests(...)", never why it failed.
     The prior test (test_failed_fallback_dispatch_is_recorded_not_just_logged) sets
     detail=None on its mock, which accidentally never exercised this bug -- this test matches
     the real ExecResult shape a failing engine actually returns."""
@@ -327,14 +327,14 @@ def test_failed_dispatch_with_detail_and_error_both_set_prefers_the_real_error()
 
     mock_engine = MagicMock()
     mock_engine.type = EngineType.SPARK_EMR
-    mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
+    mock_engine.render.return_value = [MagicMock(sql="CALL demo.system.rewrite_manifests(...)")]
     mock_engine.execute.return_value = MagicMock(
         ok=False,
         engine_ref=None,
         duration_ms=1100,
         manifests_rewritten=None,
         error="Caused by: org.apache.iceberg.exceptions.CommitFailedException: real cause",
-        detail="CALL cdp.system.rewrite_manifests(table => 'cdp.lms.silver_useractivitydumps_evolving')",
+        detail="CALL demo.system.rewrite_manifests(table => 'demo.learning.silver_user_activity')",
     )
 
     with patch("cryo.engines.factory.create_engine", return_value=mock_engine):
@@ -344,7 +344,7 @@ def test_failed_dispatch_with_detail_and_error_both_set_prefers_the_real_error()
             plan=_plan(),
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={},
-            table_ref="cdp.lms.silver_useractivitydumps_evolving",
+            table_ref="demo.learning.silver_user_activity",
             job_id="job-42",
             table_id="table-42",
         )
@@ -355,7 +355,7 @@ def test_failed_dispatch_with_detail_and_error_both_set_prefers_the_real_error()
     assert "CommitFailedException: real cause" in record.detail
     assert (
         record.detail
-        != "CALL cdp.system.rewrite_manifests(table => 'cdp.lms.silver_useractivitydumps_evolving')"
+        != "CALL demo.system.rewrite_manifests(table => 'demo.learning.silver_user_activity')"
     )
 
 
@@ -369,14 +369,14 @@ def test_successful_dispatch_with_detail_and_error_both_set_prefers_detail() -> 
 
     mock_engine = MagicMock()
     mock_engine.type = EngineType.SPARK_EMR
-    mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
+    mock_engine.render.return_value = [MagicMock(sql="CALL demo.system.rewrite_manifests(...)")]
     mock_engine.execute.return_value = MagicMock(
         ok=True,
         engine_ref="run-1",
         duration_ms=1100,
         manifests_rewritten=3,
         error=None,
-        detail="CALL cdp.system.rewrite_manifests(table => 'cdp.lms.silver_useractivitydumps_evolving')",
+        detail="CALL demo.system.rewrite_manifests(table => 'demo.learning.silver_user_activity')",
     )
 
     with patch("cryo.engines.factory.create_engine", return_value=mock_engine):
@@ -386,7 +386,7 @@ def test_successful_dispatch_with_detail_and_error_both_set_prefers_detail() -> 
             plan=_plan(),
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={},
-            table_ref="cdp.lms.silver_useractivitydumps_evolving",
+            table_ref="demo.learning.silver_user_activity",
             job_id="job-42",
             table_id="table-42",
         )
@@ -396,7 +396,7 @@ def test_successful_dispatch_with_detail_and_error_both_set_prefers_detail() -> 
     assert record.status == "OK"
     assert (
         record.detail
-        == "CALL cdp.system.rewrite_manifests(table => 'cdp.lms.silver_useractivitydumps_evolving')"
+        == "CALL demo.system.rewrite_manifests(table => 'demo.learning.silver_user_activity')"
     )
 
 
@@ -419,7 +419,7 @@ def test_engine_type_mismatch_is_recorded_as_skipped() -> None:
             plan=_plan(),
             destination_config={"sql_fallback_destination_id": "trino-1"},
             source_config={},
-            table_ref="cdp.mview.load_test_basefact",
+            table_ref="demo.mart.load_test_events",
             job_id="job-42",
             table_id="table-42",
         )
@@ -438,7 +438,7 @@ def test_missing_fallback_destination_id_is_recorded_as_skipped_not_only_logged(
         plan=_plan(),
         destination_config={},
         source_config={},
-        table_ref="cdp.mview.load_test_basefact",
+        table_ref="demo.mart.load_test_events",
         job_id="job-42",
         table_id="table-42",
     )
@@ -455,7 +455,7 @@ def test_unresolvable_destination_is_recorded_as_failed_not_only_logged() -> Non
         plan=_plan(),
         destination_config={"sql_fallback_destination_id": "missing-dest"},
         source_config={},
-        table_ref="cdp.mview.load_test_basefact",
+        table_ref="demo.mart.load_test_events",
         job_id="job-42",
         table_id="table-42",
     )
@@ -473,7 +473,7 @@ def test_audit_write_failure_does_not_break_the_dispatch_itself() -> None:
 
     mock_engine = MagicMock()
     mock_engine.type = EngineType.SPARK_EMR
-    mock_engine.render.return_value = [MagicMock(sql="CALL cdp.system.rewrite_manifests(...)")]
+    mock_engine.render.return_value = [MagicMock(sql="CALL demo.system.rewrite_manifests(...)")]
     mock_engine.execute.return_value = MagicMock(
         ok=True, engine_ref="job-1", duration_ms=100, manifests_rewritten=1, error=None, detail=None
     )
@@ -488,7 +488,7 @@ def test_audit_write_failure_does_not_break_the_dispatch_itself() -> None:
             plan=_plan(),
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={},
-            table_ref="cdp.mview.load_test_basefact",
+            table_ref="demo.mart.load_test_events",
             job_id="job-42",
             table_id="table-42",
         )  # must not raise
@@ -507,7 +507,7 @@ def test_fallback_engine_exception_is_caught_not_raised() -> None:
             plan=_plan(),
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={},
-            table_ref="cdp.mview.load_test_basefact",
+            table_ref="demo.mart.load_test_events",
             job_id="job-1",
             table_id="table-1",
         )  # must not raise -- a fallback failure can't break the native Job dispatch
@@ -649,12 +649,12 @@ def _spark_engine_with_mock_client(monkeypatch) -> tuple[SparkK8sEngine, MagicMo
     tests/test_execute_layout_recommendation.py's _mock_spark_client pattern."""
     mock_client = MagicMock()
     monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "sample"})
     return engine, mock_client
 
 
 def test_spark_fallback_dispatch_submits_without_waiting_for_completion(monkeypatch) -> None:
-    """Regression, 2026-08-11 (PDAE-8352): _dispatch_fallback_operations used to call
+    """Regression, 2026-08-11 (): _dispatch_fallback_operations used to call
     execute() (submit + block on wait_for_completion()) inline for every native-unsupported
     operation -- with the fallback destination's own slot_cap (e.g. 6) and each dispatch
     taking real wall-clock time, this made it the effective ceiling on the whole Governor's
@@ -676,7 +676,7 @@ def test_spark_fallback_dispatch_submits_without_waiting_for_completion(monkeypa
             plan=_plan(),
             destination_config={"sql_fallback_destination_id": "spark-1"},
             source_config={},
-            table_ref="cdp.mview.load_test_basefact",
+            table_ref="demo.mart.load_test_events",
             job_id="job-42",
             table_id="table-42",
         )
@@ -713,7 +713,7 @@ def test_non_spark_fallback_dispatch_still_blocks_synchronously() -> None:
             plan=_plan(),
             destination_config={"sql_fallback_destination_id": "trino-1"},
             source_config={},
-            table_ref="cdp.mview.load_test_basefact",
+            table_ref="demo.mart.load_test_events",
             job_id="job-1",
             table_id="table-1",
         )

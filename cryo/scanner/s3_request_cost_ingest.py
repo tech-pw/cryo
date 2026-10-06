@@ -295,15 +295,15 @@ def _aggregate_log_objects(
         object_key: str, only_bucket: str | None = None
     ) -> tuple[list[tuple[str, str, str | None]], bool]:
         """A single unreadable object must not abort the whole ingestion pass -- live-confirmed
-        2026-09-08: the shared logging bucket transitions objects under s3-access-logs/ to
-        DEEP_ARCHIVE after 7 days (bucket lifecycle rule 'accesss3-access-logs'). Once
+        2026-09-08: the shared logging bucket transitions objects under the access-log prefix to
+        DEEP_ARCHIVE after 7 days (a bucket lifecycle rule). Once
         last_ingested_date fell more than _RECONCILE_WINDOW_DAYS (3) behind -- for whatever
         reason stalled it that far, e.g. a deploy gap -- every subsequent run's window included
         at least one already-archived date. GetObject on a Deep Archive object raises
         InvalidObjectState every time (no automatic restore), which used to propagate all the
         way up through ingest_bucket's try/except and abort the entire pass -- so
         last_ingested_date (only ever advanced on full success, see ingest_bucket) could never
-        move again. Confirmed live: 3 buckets (gold/silver/bronze-layer) stuck at
+        move again. Confirmed live: 3 buckets stuck at
         last_ingested_date=2026-08-19, 3+ weeks of zero request-cost data, identical error every
         single retry. Skipping just the unreadable object (that day's counts become a lower
         bound, same as the existing max_objects_per_day truncation) lets the rest of the window

@@ -219,11 +219,11 @@ def test_hot_needy_table_outranks_cold_one_and_limit_applies() -> None:
 @dataclass(frozen=True)
 class _Destination:
     engine: str = "spark_emr"
-    config: dict[str, Any] = field(default_factory=lambda: {"catalog": "cdp"})
+    config: dict[str, Any] = field(default_factory=lambda: {"catalog": "sample"})
 
 
 _STATS = {
-    "catalog": "cdp",
+    "catalog": "sample",
     "schema_name": "demo",
     "table_name": "events",
     "small_files_count": 500,
@@ -251,7 +251,7 @@ def test_table_work_runs_every_needed_operation_in_canonical_order() -> None:
     assert actions == sorted(actions, key=order.index)
     assert {"optimize", "expire_snapshots", "remove_orphan_files"} <= set(actions)
     assert all(s.sql.startswith(("ALTER", "CALL")) for s in work.statements)
-    assert work.table_ref == "cdp.demo.events"
+    assert work.table_ref == "sample.demo.events"
 
 
 def test_batch_defaults_never_run_a_full_table_ndv_scan() -> None:
@@ -322,7 +322,7 @@ def test_lane_manifest_is_reproducible_gzip_json() -> None:
     first = lane_manifest_bytes(run_id, 0, [work])
     assert first == lane_manifest_bytes(run_id, 0, [work])
     payload = json.loads(gzip.decompress(first))
-    assert payload["tables"][0]["table_ref"] == "cdp.demo.events"
+    assert payload["tables"][0]["table_ref"] == "sample.demo.events"
     assert [s["seq"] for s in payload["tables"][0]["statements"]] == list(
         range(len(work.statements))
     )
@@ -367,7 +367,7 @@ def test_lane_objects_run_local_mode_sized_to_the_lane() -> None:
         run_id,
         _spec(),
         _cfg(),
-        catalog="cdp",
+        catalog="sample",
         deadline_epoch=1_800_000_000,
         active_deadline_seconds=3600,
     )
@@ -389,13 +389,13 @@ def test_lane_objects_run_local_mode_sized_to_the_lane() -> None:
     assert confs["spark.sql.shuffle.partitions"] == "8"
     assert confs["spark.ui.retainedTasks"] == "5000"
     assert confs["spark.sql.ui.retainedExecutions"] == "20"
-    assert confs["spark.sql.catalog.cdp.s3.delete.batch-size"] == "1000"
-    assert confs["spark.sql.catalog.cdp.s3.retry.num-retries"] == "32"
+    assert confs["spark.sql.catalog.sample.s3.delete.batch-size"] == "1000"
+    assert confs["spark.sql.catalog.sample.s3.retry.num-retries"] == "32"
     assert command.index("/opt/cryo/cryo_spark_runner.py") > max(
         i for i, arg in enumerate(command) if arg == "--conf"
     )
     assert {"name": "MALLOC_ARENA_MAX", "value": "4"} in container["env"]
-    assert command[command.index("--catalog") + 1] == "cdp"
+    assert command[command.index("--catalog") + 1] == "sample"
     assert command[command.index("--deadline-epoch") + 1] == "1800000000"
     assert container["resources"]["requests"] == container["resources"]["limits"]
     assert container["resources"]["limits"] == {"cpu": "2000m", "memory": "8192Mi"}
@@ -415,7 +415,7 @@ def test_non_s3_warehouse_gets_no_s3fileio_tuning() -> None:
         uuid.uuid4(),
         _spec(),
         _cfg(catalog_warehouse="file:///warehouse"),
-        catalog="cdp",
+        catalog="sample",
         deadline_epoch=0,
         active_deadline_seconds=600,
     )
@@ -429,7 +429,7 @@ def test_lanes_trade_the_inherited_on_demand_pin_for_spot_with_on_demand_fallbac
         uuid.uuid4(),
         _spec(),
         _cfg(node_selector={"karpenter.sh/capacity-type": "on-demand", "pool": "general"}),
-        catalog="cdp",
+        catalog="sample",
         deadline_epoch=0,
         active_deadline_seconds=600,
         capacity_types=parse_capacity_types(" Spot , on-demand "),
@@ -508,7 +508,7 @@ def test_lane_node_ceiling_rejects_a_node_without_cpu_headroom() -> None:
             uuid.uuid4(),
             _spec(),
             _cfg(),
-            catalog="cdp",
+            catalog="sample",
             deadline_epoch=0,
             active_deadline_seconds=600,
             max_node_cpu=2,
@@ -518,7 +518,7 @@ def test_lane_node_ceiling_rejects_a_node_without_cpu_headroom() -> None:
 def test_lane_runner_passes_the_node_ceiling_to_launched_jobs() -> None:
     batch, core = MagicMock(), MagicMock()
     runner = LaneRunner(
-        uuid.uuid4(), _cfg(), catalog="cdp", batch_api=batch, core_api=core, max_node_cpu=16
+        uuid.uuid4(), _cfg(), catalog="sample", batch_api=batch, core_api=core, max_node_cpu=16
     )
     runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
     pod = batch.create_namespaced_job.call_args.kwargs["body"]["spec"]["template"]["spec"]
@@ -532,7 +532,7 @@ def test_lane_runner_passes_the_node_ceiling_to_launched_jobs() -> None:
 def test_invalid_later_lane_does_not_launch_any_part_of_the_plan() -> None:
     batch, core = MagicMock(), MagicMock()
     runner = LaneRunner(
-        uuid.uuid4(), _cfg(), catalog="cdp", batch_api=batch, core_api=core, max_node_cpu=4
+        uuid.uuid4(), _cfg(), catalog="sample", batch_api=batch, core_api=core, max_node_cpu=4
     )
     oversized = LaneSpec(index=1, cpu_milli=4000, mem_mib=16384, manifest=b"")
 
@@ -548,7 +548,7 @@ def test_s3_keys_reach_the_pod_only_through_secret_refs() -> None:
         uuid.uuid4(),
         _spec(),
         _cfg(s3_access_key="AKIAEXAMPLE", s3_secret_key="shh-example"),
-        catalog="cdp",
+        catalog="sample",
         deadline_epoch=0,
         active_deadline_seconds=600,
     )
@@ -562,7 +562,7 @@ def test_s3_keys_reach_the_pod_only_through_secret_refs() -> None:
 
 def test_no_keys_means_no_aws_env_so_the_service_account_role_applies() -> None:
     _, job = build_lane_objects(
-        uuid.uuid4(), _spec(), _cfg(), catalog="cdp", deadline_epoch=0, active_deadline_seconds=600
+        uuid.uuid4(), _spec(), _cfg(), catalog="sample", deadline_epoch=0, active_deadline_seconds=600
     )
 
     env = job["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -586,7 +586,7 @@ def _pod(name: str, phase: str, *, exit_code: int | None = None) -> SimpleNamesp
 def test_lane_runner_reports_each_result_once_even_after_log_rotation() -> None:
     table_a, table_b = uuid.uuid4(), uuid.uuid4()
     core, batch = MagicMock(), MagicMock()
-    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="cdp", batch_api=batch, core_api=core)
+    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="sample", batch_api=batch, core_api=core)
     runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
     core.list_namespaced_pod.return_value = SimpleNamespace(items=[_pod("p0", "Running")])
     core.read_namespaced_pod_log.return_value = "\n".join(
@@ -606,7 +606,7 @@ def test_lane_runner_reports_each_result_once_even_after_log_rotation() -> None:
 
 def test_lane_runner_records_why_a_lane_pod_died() -> None:
     core = MagicMock()
-    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="cdp", batch_api=MagicMock(), core_api=core)
+    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="sample", batch_api=MagicMock(), core_api=core)
     runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
     core.list_namespaced_pod.return_value = SimpleNamespace(
         items=[_pod("p0", "Failed", exit_code=137)]
@@ -623,7 +623,7 @@ def test_lane_runner_notices_a_pod_the_node_took_away() -> None:
     """Eviction, drain and spot reclaim delete the pod; with backoffLimit 0 the Job then
     fails without a replacement. The lane used to stay "running" until the run's hard stop."""
     core, batch = MagicMock(), MagicMock()
-    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="cdp", batch_api=batch, core_api=core)
+    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="sample", batch_api=batch, core_api=core)
     runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
     core.list_namespaced_pod.return_value = SimpleNamespace(items=[])
     failed = SimpleNamespace(type="Failed", status="True", reason="BackoffLimitExceeded")
@@ -641,7 +641,7 @@ def test_lane_runner_notices_a_pod_the_node_took_away() -> None:
 
 def test_lane_runner_waits_while_the_job_has_not_created_its_pod_yet() -> None:
     core, batch = MagicMock(), MagicMock()
-    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="cdp", batch_api=batch, core_api=core)
+    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="sample", batch_api=batch, core_api=core)
     runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
     core.list_namespaced_pod.return_value = SimpleNamespace(items=[])
     batch.read_namespaced_job.return_value = SimpleNamespace(
@@ -655,7 +655,7 @@ def test_lane_runner_waits_while_the_job_has_not_created_its_pod_yet() -> None:
 
 def test_lane_runner_does_not_call_the_run_deadline_an_infrastructure_loss() -> None:
     core, batch = MagicMock(), MagicMock()
-    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="cdp", batch_api=batch, core_api=core)
+    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="sample", batch_api=batch, core_api=core)
     runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
     core.list_namespaced_pod.return_value = SimpleNamespace(items=[])
     batch.read_namespaced_job.return_value = SimpleNamespace(
@@ -674,7 +674,7 @@ def test_lane_runner_does_not_call_the_run_deadline_an_infrastructure_loss() -> 
 
 def test_an_evicted_lane_pod_counts_as_an_infrastructure_loss() -> None:
     core = MagicMock()
-    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="cdp", batch_api=MagicMock(), core_api=core)
+    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="sample", batch_api=MagicMock(), core_api=core)
     runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
     evicted = SimpleNamespace(
         metadata=SimpleNamespace(name="p0"),
@@ -691,7 +691,7 @@ def test_an_evicted_lane_pod_counts_as_an_infrastructure_loss() -> None:
 def test_teardown_deletes_jobs_secrets_and_leftover_pods_and_tolerates_404() -> None:
     core, batch = MagicMock(), MagicMock()
     run_id = uuid.uuid4()
-    runner = LaneRunner(run_id, _cfg(), catalog="cdp", batch_api=batch, core_api=core)
+    runner = LaneRunner(run_id, _cfg(), catalog="sample", batch_api=batch, core_api=core)
     runner.launch([_spec(0), _spec(1)], deadline_epoch=0, active_deadline_seconds=600)
     missing = Exception("gone")
     missing.status = 404  # type: ignore[attr-defined]
@@ -813,7 +813,7 @@ def test_runner_starts_no_table_after_the_deadline(
     assert result["skipped"] and "deadline" in result["error"]
 
 
-_ORPHAN_SQL = "CALL cdp.system.remove_orphan_files(table => 'cdp.demo.t')"
+_ORPHAN_SQL = "CALL sample.system.remove_orphan_files(table => 'sample.demo.t')"
 
 
 def _orphan_manifest(tmp_path: Any, **extra: Any) -> str:

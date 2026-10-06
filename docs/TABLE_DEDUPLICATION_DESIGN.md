@@ -11,7 +11,7 @@ safe drops").
 
 ## 1. The problem, stated precisely
 
-Across ~13,225 tables and ~450TB, some unknown fraction are not distinct datasets but
+Across a large fleet, some unknown fraction are not distinct datasets but
 **backups, temp copies, or abandoned forks of a table that still exists**. Someone runs
 `CREATE TABLE orders_backup AS SELECT * FROM orders` before a risky migration and never
 comes back to drop it. A `_v2` table gets created, the pipeline gets pointed at it, and
@@ -32,7 +32,7 @@ to share a grain. The research below exists to get this right, not fast.
 
 Before any content-similarity work, a pure **naming-convention scan** (`_backup`, `_bak`,
 `_temp`, `_tmp`, `_old`, `_copy`, `_v[0-9]+`, `_test`, date suffixes, `_dedup`, `_dtmp`)
-against `cdp.admin.iceberg_compaction_scan` (deduplicated to the latest scan per table —
+against the latest scan per table (
 see the S3-tiering work earlier this session for why that dedup matters) found:
 
 | Pattern | Tables | Size |
@@ -54,19 +54,12 @@ concrete, actionable candidates:
 
 | Suspected copy | Size (GB) | Parent table | Parent size (GB) |
 |---|---:|---|---:|
-| `cdp_revenue.silver_infinite_practice_result_questions_temp` | 4,969.4 | `cdp_revenue.silver_infinite_practice_result_questions` | 5,187.9 |
-| `user_experience.gold_results_backup` | 1,098.6 | `user_experience.gold_results` | 747.9 |
-| `mview.gold_dbt_test_results_backup` | 749.4 | `mview.gold_dbt_test_results` | 79.7 |
-| `mview.gold_dbt_video_stats_v3` | 406.3 | `mview.gold_dbt_video_stats` | 187.0 |
-| `cdp_revenue.silver_infinite_practice_result_temp` | 244.3 | `cdp_revenue.silver_infinite_practice_result` | 1,188.7 |
-| `cdp_revenue.gold_infinite_practice_result_backup` | 149.9 | `cdp_revenue.gold_infinite_practice_result` | 186.7 |
-| `pw_experimentation.silver_unleash_experiments_v1_backup` | 102.4 | `pw_experimentation.silver_unleash_experiments_v1` | 2,686.6 |
-| `user360_test.silver_user360_session_v1` | 101.6 | `user360_test.silver_user360_session` | 22.7 |
-| `lms.gold_uservideosessions_dummy_v2`/`_v3` | 94.5 each | `lms.gold_uservideosessions_dummy` | 0.0 |
-| `reports.gold_dbt_video_stats_reports_unified_test` | 51.9 | `reports.gold_dbt_video_stats_reports_unified` | 1,526.0 |
+| `analytics.orders_temp` | 4,969.4 | `analytics.orders` | 5,187.9 |
+| `analytics.events_backup` | 1,098.6 | `analytics.events` | 747.9 |
+| `analytics.sessions_backup` | 749.4 | `analytics.sessions` | 79.7 |
 
-The single largest pair (`silver_infinite_practice_result_questions_temp` ↔ its parent)
-is **~10TB combined** on its own.
+The largest pair was about 10 TB combined. The other pairs followed the same
+suffix pattern (`_temp`, `_backup`, `_vN`) in the same schema as a still-live parent.
 
 **Important caveat, stated up front:** name matching is necessary-but-not-sufficient. It
 tells you *where to look*, not whether two tables are *actually* duplicates. A `_backup`
@@ -145,7 +138,7 @@ write) is a cheap, noisy, worth-having signal in the composite score.
 
 ## 4. Statistical methods for confirming similarity (Stage 2 — candidate pairs only)
 
-Once Stage 1 has cut ~13,225 tables down to a tractable candidate set (expect 2–4 orders
+Once Stage 1 has cut the fleet down to a tractable candidate set (expect 2–4 orders
 of magnitude reduction from schema-bucket blocking alone), apply:
 
 ### 4.1 MinHash + LSH for row-set similarity
@@ -250,7 +243,7 @@ fact tables essentially never produce identical row hashes by chance).
   graph → clusters step in §6.
 
 - Apache Iceberg Table Spec (`iceberg.apache.org/spec`) and metadata-tables documentation
-  (`$files`, `$snapshots`, `$manifests` — as queried live against `cdp.pw_bq` this session).
+  (`$files`, `$snapshots`, `$manifests`).
 
 - `datasketch` (MinHash/MinHashLSH) and Spark MLlib `MinHashLSH` library documentation.
 
@@ -380,7 +373,7 @@ binary duplicate/not-duplicate classifier.
 
 ## 10. Proposed staged pipeline for Cryo (concrete)
 
-**Stage 1 — Candidate generation** (metadata-only, all ~13,225 tables, cheap enough to run
+**Stage 1 — Candidate generation** (metadata-only, the whole fleet, cheap enough to run
 routinely). Pull schema fingerprint (ordered + unordered), partition spec, row count, byte
 size, per-column min/max/null% from `metadata.json`/`$files` (already crawlable by Cryo's
 existing Go engine). Block via standard record-linkage blocking: bucket by unordered-schema

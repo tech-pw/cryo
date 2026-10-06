@@ -1,9 +1,9 @@
-"""Tests for NativeJobWatcher's PDAE-8546 fix: salvaging real per-table outcomes from
+"""Tests for NativeJobWatcher's  fix: salvaging real per-table outcomes from
 run_events when a batched native dispatch dies with no recoverable pod logs.
 
 Root cause this addresses: K8s deletes a Job's pod immediately on activeDeadlineSeconds,
 unlike a normal exit-code failure (where the pod lingers for log collection) -- confirmed
-live, 2026-08-19, against real PDAE-8274 (Wave 1) job history: 98% of 5,553 native_job_failed
+live, 2026-08-19, against real  (Wave 1) job history: 98% of 5,553 native_job_failed
 failures clustered in the same 120-130 minute band as the old 2h deadline, and even
 *successful* batches routinely finished at 114-132 minutes. Every table in a deadline-killed
 batch previously lost its own real outcome -- including ones that had already genuinely

@@ -1007,7 +1007,7 @@ def execute_layout_recommendation(
     # that update path), which would otherwise silently clobber the true pre-apply value before
     # anything gets a chance to measure the real before/after improvement. See
     # measure_layout_recommendation_effectiveness (layout_analyzer.py) for the consumer of this
-    # field and PDAE-8288 for why this replaced the previous baseline_scan_bytes write here (that
+    # field and  for why this replaced the previous baseline_scan_bytes write here (that
     # field stored a dollar figure -- avg TableCost.query_request_savings_usd_month -- multiplied
     # by 1024*1024 into a column named "_bytes"; a real unit-confusion bug, not a
     # pending-but-correct placeholder, and nothing ever wrote its post_apply_scan_bytes

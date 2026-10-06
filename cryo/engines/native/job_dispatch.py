@@ -39,8 +39,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_CPU_MILLI = MAX_POD_CPU_MILLI
 _MAX_MEM_MIB = MAX_POD_MEM_MIB
-# Raised 7200 -> 14400 (2h -> 4h), PDAE-8546, 2026-08-19: this was not a generous ceiling with
-# a rare tail miss -- it was routinely marginal. Live query against Wave 1's (PDAE-8274) real
+# Raised 7200 -> 14400 (2h -> 4h), , 2026-08-19: this was not a generous ceiling with
+# a rare tail miss -- it was routinely marginal. Live query against Wave 1's () real
 # job history: even *successful* 32-table batches (max_tables_per_pod) commonly finished at
 # 114-132 minutes, right up against the old 120-minute deadline (421 succeeded at exactly 120
 # min alone). 98% of the 5,553 native_job_failed failures in that same cohort clustered in the

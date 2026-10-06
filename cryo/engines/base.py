@@ -10,7 +10,7 @@ from cryo.domain.enums import EngineType, OperationType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan
 
 # Regression, 2026-07-27: a Trino GENERIC_INTERNAL_ERROR on
-# reports.gold_dbt_video_stats_reports_unified
+# schema.example_large_table
 # (a 1.5 TB, 44k-file table) serialized its full DataFileWithDeleteFiles split list into the
 # exception message -- str(exc) alone landed a 2,962,267-character error in MaintenanceJob.error.
 # Every engine's except-block must cap this before it reaches ExecResult.error, or one adversarial
@@ -21,7 +21,7 @@ ERROR_MESSAGE_TRUNCATE = 4000
 
 _CAUSED_BY_RE = re.compile(r"Caused by:[^\n]*")
 
-# PDAE-8346, confirmed live 2026-08-18: `Caused by:` alone still misses a real class of
+# , confirmed live 2026-08-18: `Caused by:` alone still misses a real class of
 # failures. Not every JVM exception chain uses that literal marker -- Py4J wraps a Java
 # exception as `py4j.protocol.Py4JJavaError: An error occurred while calling ...\n: <the
 # real exception class>: <message>` (note the leading bare `: `, not `Caused by: `), and a

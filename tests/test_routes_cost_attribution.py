@@ -59,7 +59,7 @@ class TestGetCostAttribution:
             source,
             day=today,
             client="Metabase v0.60.0",
-            schema_name="pw_bq",
+            schema_name="analytics",
             query_count=10,
             failed_query_count=2,
             physical_bytes_scanned=5 * 1024**3,
@@ -70,7 +70,7 @@ class TestGetCostAttribution:
         assert len(result.rows) == 1
         row = result.rows[0]
         assert row.client == "Metabase v0.60.0"
-        assert row.schema_name == "pw_bq"
+        assert row.schema_name == "analytics"
         assert row.query_count == 10
         assert row.failed_query_count == 2
         assert row.physical_gb_scanned == 5.0
@@ -84,7 +84,7 @@ class TestGetCostAttribution:
             source,
             day=today,
             client="Metabase",
-            schema_name="pw_bq",
+            schema_name="analytics",
             query_count=5,
             physical_bytes_scanned=1024**3,
         )
@@ -93,7 +93,7 @@ class TestGetCostAttribution:
             source,
             day=yesterday,
             client="Metabase",
-            schema_name="pw_bq",
+            schema_name="analytics",
             query_count=3,
             physical_bytes_scanned=2 * 1024**3,
         )
@@ -116,7 +116,7 @@ class TestGetCostAttribution:
         assert client_row.query_count == 9
         assert client_row.physical_gb_scanned == 3.0 + (1024**2 / 1024**3)
 
-        # rows (per client+schema) keeps pw_bq and offline separate.
+        # rows (per client+schema) keeps analytics and offline separate.
         assert len(result.rows) == 2
 
     def test_multiple_clients_ranked_by_bytes_descending(self, session: Session) -> None:

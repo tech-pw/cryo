@@ -13,7 +13,7 @@ table_similarity_pairs holds one row per Stage-1 candidate pair (never the full 
 cross product -- Stage 1 blocking on schema+size keeps this small) with the full
 scoring evidence trail, so every recommendation shown to an operator can explain
 itself (design doc SS7/SS9: no bare numeric score for something that can end in a
-DROP TABLE, given the gold_gst_slabs incident earlier this session).
+DROP TABLE, given a false-positive incident earlier this session).
 
 table_similarity_clusters holds the connected-components grouping computed from
 pairs above threshold, replaced wholesale each pipeline run (generation-numbered)

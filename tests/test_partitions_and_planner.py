@@ -9,7 +9,7 @@ from cryo.planner.planner import _small_files, build_plan
 def test_excluded_optimize_does_not_suppress_delete_maintenance_or_emit_statistics() -> None:
     plan = build_plan(
         {
-            "catalog": "cdp",
+            "catalog": "sample",
             "schema_name": "s",
             "table_name": "t",
             "total_size_gb": 1,
@@ -233,7 +233,7 @@ def test_thin_spread_partitions_skipped_by_default_min_small_files_gate() -> Non
 
 
 def test_min_partition_small_files_override_packs_thin_spread_partitions() -> None:
-    """Live-verified, 2026-09-10: gold_dbt_pw_bq has ~5,954 small files (clears the
+    """Live-verified, 2026-09-10: gold_events has ~5,954 small files (clears the
     table-level gate) spread across ~63k partitions at a median of 4/partition -- with
     min_small_files=128 applied per-partition, only the rare partition that happens to
     concentrate 128+ small files ever qualifies, so the table's total file count never
@@ -616,7 +616,7 @@ def test_convert_deletes_forwards_max_commits_and_concurrency_params() -> None:
     delete_file_threshold/partial_progress_enabled -- a preset's convert_deletes_max_commits
     and convert_deletes_max_concurrent_rewrites were silently dropped before reaching
     _render_convert_deletes, which has its own hardcoded defaults (max_commits=50). Confirmed
-    on cdp.cdp_revenue.gold_batches_pw: one real run at the 50-commit default cleared only 15
+    on demo.revenue.gold_batches: one real run at the 50-commit default cleared only 15
     of 522 position-delete files (removed-delete-files: 15 in the resulting Iceberg snapshot
     summary) -- there was no way to ask for a bigger pass via preset params alone."""
     plan = build_plan(
@@ -820,7 +820,7 @@ def test_convert_deletes_scopes_to_skewed_partitions() -> None:
     ]
     plan = build_plan(
         {
-            "schema_name": "cdp",
+            "schema_name": "sample",
             "table_name": "load_test_basefact",
             "small_files_count": 12710,
             "total_delete_files": 12710,
@@ -888,7 +888,7 @@ def test_convert_deletes_scopes_to_delete_skew_when_data_files_already_compacted
     ]
     plan = build_plan(
         {
-            "schema_name": "cdp",
+            "schema_name": "sample",
             "table_name": "load_test_basefact",
             "small_files_count": 1000,
             "total_delete_files": 6000,
@@ -1053,7 +1053,7 @@ def test_planner_routes_pathological_delete_skew_to_minor_rewrite() -> None:
     ]
     plan = build_plan(
         {
-            "schema_name": "cdp",
+            "schema_name": "sample",
             "table_name": "gold_dbt_video_stats_reports_unified",
             "small_files_count": 2,
             "total_delete_files": 34176,
@@ -1131,7 +1131,7 @@ def test_planner_routes_delete_skew_to_minor_rewrite_even_when_data_also_fragmen
     on the theory that optimize would incidentally help with deletes too. Confirmed false via
     Trino's own docs (OPTIMIZE does not remove position-delete files as a designed side effect,
     github.com/trinodb/trino/discussions/25211) and via this exact ratio on
-    cdp_revenue.gold_batches_pw's real Sep 11 run, where convert_deletes made delete_files
+    revenue.gold_batches_pw's real Sep 11 run, where convert_deletes made delete_files
     WORSE. rewrite_position_deletes now runs whenever the ratio itself is pathological,
     regardless of small-file fragmentation -- optimize_ops still runs alongside it either way."""
     partitions = [
@@ -1174,7 +1174,7 @@ def test_planner_routes_delete_skew_to_minor_rewrite_even_when_data_also_fragmen
 
 
 def test_planner_routes_small_table_with_extreme_deletes_to_minor_rewrite_not_convert() -> None:
-    """Live incident, confirmed 2026-09-14: cdp_revenue.gold_batches_pw is a tiny table (40
+    """Live incident, confirmed 2026-09-14: revenue.gold_batches_pw is a tiny table (40
     files, 105MB total) with 692 position-delete files (delete_file_pct=100%, ratio 692/40=17.3
     -- above the unreachable_ratio default of 7.0). Every one of its 40 files individually
     counts as "small" (small_files_in_partition_count=40), so the pre-fix guard deferred to
@@ -1193,7 +1193,7 @@ def test_planner_routes_small_table_with_extreme_deletes_to_minor_rewrite_not_co
     ]
     plan = build_plan(
         {
-            "schema_name": "cdp_revenue",
+            "schema_name": "revenue",
             "table_name": "gold_batches_pw",
             "small_files_count": 40,
             "total_files": 40,

@@ -1,0 +1,14 @@
+Cryo
+Copyright 2026 tech-pw
+
+This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+
+The Go compaction engine vendors a patched copy of Apache Iceberg Go
+(apache/iceberg-go v0.6.0, Apache License 2.0). Its LICENSE and NOTICE
+are retained at:
+
+  engine-go/third_party/iceberg-go-v0.6.0-patched/LICENSE
+  engine-go/third_party/iceberg-go-v0.6.0-patched/NOTICE
+
+Copyright 2023-2026 The Apache Software Foundation

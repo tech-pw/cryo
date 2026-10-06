@@ -35,7 +35,7 @@ from cryo.engines.spark.worker_guard import (
 
 logger = logging.getLogger(__name__)
 
-# PDAE-8347 Pattern 2: Spark-on-K8s gold-table failures that used to look like a truncated
+#  Pattern 2: Spark-on-K8s gold-table failures that used to look like a truncated
 # `BaseMetastoreTableOperations.current` stack are, after deepest_caused_by, NoSuchKey on
 # the catalog's current metadata pointer -- typically a stale HMS/REST location after a
 # concurrent expire, not a dropped table. A short retry with backoff covers that race.
@@ -208,7 +208,7 @@ class SparkK8sEngine:
         the job runs -- only a caller who eventually reaches the job's terminal state should
         clean it up, see get_job_run()/cleanup_credentials_secret()).
 
-        Built for PDAE-8352: run_wave()'s fallback dispatch used to call execute() (submit +
+        Built for : run_wave()'s fallback dispatch used to call execute() (submit +
         block on wait_for_completion()) inline for every native-unsupported operation --
         confirmed live, 2026-08-11, this made the fallback destination's own slot_cap (e.g. 6)
         the effective ceiling on the whole Governor's per-wave throughput, independent of the
@@ -265,10 +265,10 @@ class SparkK8sEngine:
 
         # A destination's `catalog` is a static default -- correct only for tables whose own
         # catalog_name matches it. A shared SQL-fallback destination routes tables from
-        # different catalogs (e.g. a REST-catalog "cdp" table and a Hive-Metastore "hive"
+        # different catalogs (e.g. a REST-catalog "rest_catalog" table and a Hive-Metastore "hive"
         # table both falling back to the same Spark destination), so the statement's own
         # catalog (set at render time from the table's real table_ref) must win when present
-        # -- confirmed live, 2026-07-24: submitting with the destination's default "cdp" while
+        # -- confirmed live, 2026-07-24: submitting with the destination's default "rest_catalog" while
         # the SQL referenced "hive.system.rewrite_data_files" left no "hive" catalog plugin
         # registered in the Spark session, and Spark silently tried to resolve it against the
         # builtin spark_catalog instead, which doesn't support procedures at all.

@@ -54,7 +54,7 @@ pins this; reintroducing `| default 3` fails it (verified).
 
 ## Evidence it is safe
 
-Measured on `data-platform-cluster` before changing anything:
+Measured on the production cluster before changing anything:
 
 - `ScaledObject` `ACTIVE=False`, HPA showing target `0/1` — KEDA already saw no demand.
 - The single pod at **1m CPU / 117Mi** against requests of **500m / 256Mi**.

@@ -962,7 +962,7 @@ at the Python e2e level by interleaving Trino/PyIceberg writes with the native r
   `scan_concurrency=1` (default `max_bytes_per_group` follows `target_file_size_bytes`; sub-
   `min_input_files` groups are skipped, not rewritten 1→1). Docker validation:
   `scripts/validate_dense_compaction_memory.sh` (`--memory=1g`). Exemplar failure: run
-  `858ad9eb` on `geoip.silver_geoip_locations`.
+  one dense Parquet run.
 - **P5 No write amplification:** the idempotence run (§8.4.18) writes ~0 new bytes and removes ~0 files.
 
 ### 8.7 Differential testing vs Trino/Spark (ground truth)

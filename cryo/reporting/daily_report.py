@@ -406,8 +406,8 @@ def _classify_status(
 def _fleet_table_ids() -> Select[tuple[uuid.UUID]]:
     """Active tables on enabled sources: the fleet every Fleet number in the digest describes.
 
-    A disabled source's tables keep is_active=True and their last stats rows (cdp_dev: 1,164
-    tables), so filtering on is_active alone overstated the fleet by ~10%.
+    A disabled source's tables keep is_active=True and their last stats rows, so filtering
+    on is_active alone overstated the fleet.
     """
     return (
         select(Table.id)

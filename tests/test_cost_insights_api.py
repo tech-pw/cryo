@@ -64,7 +64,7 @@ def _write_cur_csv(path: Path) -> None:
                 "2026-07-01T00:00:00Z",
                 "AmazonS3",
                 "TimedStorage-ByteHrs",
-                "arn:aws:s3:::prod-iceberg/db/sales/x",
+                "arn:aws:s3:::lake-bucket/db/sales/x",
                 "10.0",
             ]
         )
@@ -73,7 +73,7 @@ def _write_cur_csv(path: Path) -> None:
                 "2026-07-02T00:00:00Z",
                 "AmazonS3",
                 "Requests-Tier1",
-                "arn:aws:s3:::prod-iceberg/db/sales/x",
+                "arn:aws:s3:::lake-bucket/db/sales/x",
                 "0.05",
             ]
         )
@@ -169,7 +169,7 @@ def test_by_bucket_route_reads_aggregated_cost(session, tmp_path) -> None:
     assert response.source_id == src.id
     assert response.total_cost_usd == 10.05
     assert len(response.items) == 1
-    assert response.items[0].bucket == "prod-iceberg"
+    assert response.items[0].bucket == "lake-bucket"
 
 
 def test_daily_route_returns_series(session, tmp_path) -> None:
@@ -195,7 +195,7 @@ def test_inventory_route_reads_prefix_aggregation(session) -> None:
         AWSInventoryObject(
             source_id=src.id,
             inventory_date=date(2026, 7, 1),
-            bucket="prod-iceberg",
+            bucket="lake-bucket",
             key="db/sales/a.parquet",
             size_bytes=1024,
             storage_class="STANDARD",

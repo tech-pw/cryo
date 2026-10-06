@@ -148,7 +148,7 @@ For versioned buckets, deleting an object can leave a delete marker and billable
 
 1. Reproduce correctness and restart behavior on disposable fixture tables, including versioned storage and delete files.
 2. Select a small native/Spark mixed cohort plus matched controls. Include a metadata-only case, mergeable small-file partitions, a delete-heavy table, and singleton-heavy partitions.
-3. Inspect `cdp.unified_bq.gold_dbt_pw_bq` as a diagnostic target because of prior recovery problems. Verify current schema/name and partition evidence for other proposed large-table targets before enrolling them. Large problem tables should not be the first destructive canaries.
+3. Inspect one known large table as a diagnostic target because of prior recovery problems. Verify current schema/name and partition evidence for other proposed large-table targets before enrolling them. Large problem tables should not be the first destructive canaries.
 4. Record the effective presets and assignment precedence. Existing native-deep, Spark-medium/large, cold-fleet, and dedicated-table schedules can overlap; measure actual ownership before tuning thresholds or frequency.
 5. Roll out P0 independently, then operation correctness, then bounded reclamation and compaction cohorts. Expand only when each gate passes. Pause new dispatch on correctness/SLO regressions, reconcile already running work, and preserve audit receipts.
 

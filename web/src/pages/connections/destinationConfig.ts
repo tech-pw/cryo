@@ -230,7 +230,7 @@ export const queryLogFormFields = (
         ? retentionDays
         : typeof ql?.retention_days === "number"
           ? ql.retention_days
-          : null
+          : undefined
   };
 };
 

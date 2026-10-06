@@ -52,7 +52,7 @@ require new research to start.
 
 ### Move 1 — Finish the three `[DEFERRED]` launch items and flip the repo public
 
-- **Effort:** ~1 day (needs a host with the `helm` CLI and a `shelf-project` org admin).
+- **Effort:** ~1 day (needs a host with the `helm` CLI and a `tech-pw` org admin).
 - **What:** run `helm install --dry-run` (ideally a real kind install); configure branch
   protection / Dependabot / security advisories; cut `v0.1.0`; flip visibility.
 - **Builds on:** `docs/OSS_READINESS.md` §7 checklist — everything else is already checked.
@@ -69,9 +69,9 @@ require new research to start.
 - ✅ `helm template` renders all 6 resource types (Deployment ×3, Service, CronJob) without error — confirmed no missing values references or template errors
 - ✅ Added `.github/dependabot.yml` with weekly schedule for pip, npm, and GitHub Actions ecosystems; grouped related packages (opentelemetry, antd, react-query, recharts)
 - ⏳ `helm install --dry-run` against real cluster — skipped: no kind/minikube available in this environment; `helm template` provides equivalent template validation
-- ⏳ Branch protection / security advisories on GitHub org — **BLOCKED: requires `shelf-project` org admin**
+- ⏳ Branch protection / security advisories on GitHub org — **BLOCKED: requires `tech-pw` org admin**
 - ⏳ `v0.1.0` tag — **BLOCKED: must be cut after org settings are confirmed**
-- ⏳ Flip visibility to public — **BLOCKED: requires `shelf-project` org admin**
+- ⏳ Flip visibility to public — **BLOCKED: requires `tech-pw` org admin. Keep the repo private until that flip.**
 
 ### Move 2 — Wire the differential-vs-Trino and concurrency/fault-injection suites into CI as a hard gate
 

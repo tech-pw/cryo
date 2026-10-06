@@ -181,13 +181,13 @@ def test_spark_renders_optimize_persists_target_file_size_and_distribution_mode(
 
 def test_spark_renders_linear_sort_as_write_ordered_by_before_rewrite() -> None:
     """Regression, 2026-08-11: rewrite_data_files(strategy => 'sort') does NOT read a linear
-    sort order from its options map -- confirmed live on lsq_pw.silver_prospect_activity_base,
+    sort order from its options map -- confirmed live on a production table,
     which failed with "Cannot sort data without a valid sort order, table ... is unsorted and
     no sort order is provided" even with 'sort-order' set in options. Iceberg's rewrite
     procedure only honors a linear sort against the table's own persisted sort-order metadata,
     so ALTER TABLE ... WRITE ORDERED BY must run first, in the same dispatched statement."""
     plan = MaintenancePlan(
-        table_ref="cdp.lsq_pw.silver_prospect_activity_base",
+        table_ref="demo.crm.silver_prospect_activity",
         mode=Mode.STANDARD,
         operations=(
             Operation(
@@ -207,13 +207,13 @@ def test_spark_renders_linear_sort_as_write_ordered_by_before_rewrite() -> None:
     # runs, so their relative order doesn't matter -- what matters is that WRITE ORDERED BY
     # lands before the rewrite_data_files call, which the last assertion below confirms.
     assert statements[0].startswith(
-        "ALTER TABLE cdp.lsq_pw.silver_prospect_activity_base SET TBLPROPERTIES ("
+        "ALTER TABLE demo.crm.silver_prospect_activity SET TBLPROPERTIES ("
     )
     assert statements[1] == (
-        "ALTER TABLE cdp.lsq_pw.silver_prospect_activity_base WRITE ORDERED BY "
+        "ALTER TABLE demo.crm.silver_prospect_activity WRITE ORDERED BY "
         "`ProspectActivityAutoId` ASC, `activityevent` ASC"
     )
-    assert statements[2].startswith("CALL cdp.system.rewrite_data_files(")
+    assert statements[2].startswith("CALL demo.system.rewrite_data_files(")
     assert "strategy => 'sort'" in statements[2]
     # The bogus inline 'sort-order' options-map entry is gone -- Iceberg never read it for the
     # linear-sort strategy, only for zorder (see the zorder test below).
@@ -281,7 +281,7 @@ def test_spark_renders_expire_snapshots_default_retention_as_literal_timestamp()
     fallback used to render `current_timestamp() - INTERVAL 7 DAYS` -- a SQL expression, not
     a literal. Spark 4.1.2's stricter CALL-argument binder rejects that form outright with
     IllegalArgumentException: number of args and params must match after binding (confirmed
-    live against cdp.mview.load_test_basefact). A literal TIMESTAMP computed at render time
+    live against demo.mart.load_test_events). A literal TIMESTAMP computed at render time
     sidesteps it."""
     plan = MaintenancePlan(
         table_ref="iceberg.demo.events",

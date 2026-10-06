@@ -390,7 +390,7 @@ class TestAnalyzeTableLayoutSelfFetch:
 
 
 class TestMeasureLayoutRecommendationEffectiveness:
-    """PDAE-8288: observed_prune_improvement existed as a column, read into every API response,
+    """: observed_prune_improvement existed as a column, read into every API response,
     but nothing ever computed or wrote it -- a real applied sort/z-order rewrite's actual effect
     was never confirmed. These tests cover measure_layout_recommendation_effectiveness, the
     function that closes that gap."""

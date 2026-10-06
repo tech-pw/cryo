@@ -100,14 +100,14 @@ func collectDeadEqualityDeletes(
 
 // isRetryableCommitError classifies a commit failure as a retryable optimistic-concurrency
 // conflict. REST 409s wrap table.ErrCommitFailed. Hive/Glue requirement validation often
-// returns a raw "branch \"main\" has changed: expected id" string (PDAE-8353); that is
+// returns a raw "branch \"main\" has changed: expected id" string; that is
 // retryable on every catalog type. Other non-REST commit errors are assumed retryable
 // because those catalogs give no reliable sentinel.
 func isRetryableCommitError(err error, isREST bool) bool {
 	if err == nil {
 		return false
 	}
-	// Unwrapped "branch \"main\" has changed: expected id" (PDAE-8353) is retryable
+	// Unwrapped "branch \"main\" has changed: expected id" is retryable
 	// on REST and non-REST catalogs. REST 409s wrap ErrCommitFailed; Hive requirement
 	// validation historically did not.
 	if table.IsRetryableCommitConflict(err) {

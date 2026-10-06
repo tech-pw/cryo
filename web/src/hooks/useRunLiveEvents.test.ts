@@ -105,12 +105,12 @@ describe("useRunLiveEvents", () => {
         type: "scan_progress",
         ts: "2026-07-06T00:00:00Z",
         event: "table_result",
-        message: "Scanned cdp.central.silver_bookmarks"
+        message: "Scanned demo.events.silver_bookmarks"
       });
       MockWebSocket.instances[0]?.emit({
         type: "log_line",
         ts: "2026-07-06T00:00:00Z",
-        message: "Scanned cdp.central.silver_bookmarks"
+        message: "Scanned demo.events.silver_bookmarks"
       });
     });
 

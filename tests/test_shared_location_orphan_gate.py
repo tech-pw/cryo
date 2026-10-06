@@ -3,7 +3,7 @@
 The procedure deletes everything under the table root that this table's metadata does not
 reference -- which is exactly what a co-located table's live data files look like. Overlap
 detection already existed (cryo/anomalies/paths.py) but only produced a report; nothing
-consulted it before deleting. See docs/incidents/rca-cdp-catalog-evolving-shared-s3-drop.md.
+consulted it before deleting. See a shared-location incident.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ _ALL_FOUR = (
 
 def _plan_with(*operation_types: OperationType) -> MaintenancePlan:
     return MaintenancePlan(
-        table_ref="cdp.demo.events",
+        table_ref="sample.demo.events",
         mode=Mode.DEEP,
         operations=tuple(Operation(operation_type, {}) for operation_type in operation_types),
         notes=(),

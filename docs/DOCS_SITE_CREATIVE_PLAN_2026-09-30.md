@@ -170,8 +170,8 @@ actually reads as credible.
   more specific and intentional than a generic docs-platform default;
   following it is the right call, not a limitation to work around.
 - Any new real production numbers, competitor disparagement, or claims
-  outside `docs/COMPETITIVE_STRATEGY_AMORO_LAKEOPS_2026-09-28.md`'s
-  rules — same constraint as before.
+  outside the published claim rules — no modelled savings as money, no competitor
+  disparagement, no "Cryo is better" claims.
 
 ---
 
@@ -736,17 +736,14 @@ New (from the survey):
 
 - `docs/brand/CRYO_BRAND_GUIDE.md` — palette, type, illustration
   system, diagram grammar, banned assets.
-- `docs/COMPETITIVE_STRATEGY_AMORO_LAKEOPS_2026-09-28.md` — claim rules
-  (no modelled savings as money, no competitor disparagement, no
-  "Cryo is better" claims).
+- Claim rules: no modelled savings as money, no competitor disparagement, no
+  "Cryo is better" claims.
 - `~/.hermes/skills/web-development/oss-docs-site/references/design-research.md`
   — distilled dev-tool/OSS site survey notes (Stripe / Linear /
   Vercel / Tigris / Inngest / Cal.com / Sentry / etc.).
-- Subagent research transcripts (broader survey):
-  - `/Users/aamir/.hermes/cache/delegation/live/deleg_94p04106/task-0.log`
-  - `/Users/aamir/.hermes/cache/delegation/live/deleg_c67c58bf/task-0.log`
+- Subagent research transcripts (broader survey) live in a local cache and are not part of this repository.
 - Subagent full briefs:
-  - `deleg_94p04106` summary: `/Users/aamir/.hermes/cache/delegation/subagent-summary-0-20260930_201746_474799.txt`
+  - One summary is a local cache file, not published.
     (28 KB) — broader survey, hero archetypes, section archetypes,
     diagram systems, trust, demos, search, motion, mobile.
   - `deleg_c67c58bf` output: `docs/research/CRYO_DOCS_SITE_RESEARCH_BRIEF_2026-09-30.md`

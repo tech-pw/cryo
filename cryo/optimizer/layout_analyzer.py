@@ -745,7 +745,7 @@ def measure_layout_recommendation_effectiveness(
     recommendation: LayoutRecommendation,
 ) -> float | None:
     """Re-analyze the table's current file layout and write the real observed prune-efficiency
-    improvement onto ``recommendation.observed_prune_improvement`` -- PDAE-8288's actual gap:
+    improvement onto ``recommendation.observed_prune_improvement`` -- 's actual gap:
     ``observed_prune_improvement`` existed as a column and was read into every API response, but
     nothing ever computed or wrote it, so a table's real before/after result was never confirmed,
     only the rewrite's own "did it run" status.

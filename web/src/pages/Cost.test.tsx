@@ -241,7 +241,7 @@ describe("Consolidated Cost page", () => {
     mockDefaultOverview();
     const source = {
       id: "src-multi",
-      name: "cdp",
+name: "sample-lakehouse",
       type: "hive",
       enabled: true,
       config: {},
@@ -252,7 +252,7 @@ describe("Consolidated Cost page", () => {
     vi.mocked(listSources).mockResolvedValue([source]);
     vi.mocked(listSourceS3LogConfigs).mockResolvedValue([
       {
-        bucket: "prod-silver-layer",
+        bucket: "lake-bucket-a",
         region: "ap-south-1",
         logging_status: "enabled",
         manual_override: false,
@@ -262,7 +262,7 @@ describe("Consolidated Cost page", () => {
         log_target_prefix: null
       },
       {
-        bucket: "prod-gold-layer",
+        bucket: "lake-bucket-b",
         region: "ap-south-1",
         logging_status: "enabled",
         manual_override: false,
@@ -273,9 +273,9 @@ describe("Consolidated Cost page", () => {
       }
     ]);
     vi.mocked(getSourceS3RequestCostRollup).mockResolvedValue({
-      bucket: "prod-silver-layer",
+      bucket: "lake-bucket-a",
       source_id: "src-multi",
-      source_name: "cdp",
+      source_name: "sample-lakehouse",
       region: "ap-south-1",
       enabled: true,
       logging_status: "enabled",
@@ -286,7 +286,7 @@ describe("Consolidated Cost page", () => {
       by_day: [],
       by_bucket: [
         {
-          bucket: "prod-silver-layer",
+          bucket: "lake-bucket-a",
           region: "ap-south-1",
           enabled: true,
           logging_status: "enabled",
@@ -296,7 +296,7 @@ describe("Consolidated Cost page", () => {
           by_tier: { tier1_count: 10_000, tier2_count: 990_000, tier1_cost_usd: 25, tier2_cost_usd: 425 }
         },
         {
-          bucket: "prod-gold-layer",
+          bucket: "lake-bucket-b",
           region: "ap-south-1",
           enabled: true,
           logging_status: "enabled",
@@ -310,14 +310,14 @@ describe("Consolidated Cost page", () => {
     });
     renderPage("/cost?tab=s3-requests");
 
-    expect(await screen.findByText("prod-silver-layer")).toBeInTheDocument();
-    expect(await screen.findByText("prod-gold-layer")).toBeInTheDocument();
+    expect(await screen.findByText("lake-bucket-a")).toBeInTheDocument();
+    expect(await screen.findByText("lake-bucket-b")).toBeInTheDocument();
     // "$450"/"$80" render twice each: once in the per-bucket status table and once in the
     // chart-equivalent data table paired with the "Top buckets" bar chart.
     expect(screen.getAllByText("$450").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("$80").length).toBeGreaterThanOrEqual(1);
     // The two source labels (one per bucket row) both render, not deduped into one row.
-    expect(screen.getAllByText("cdp")).toHaveLength(2);
+    expect(screen.getAllByText("sample-lakehouse")).toHaveLength(2);
   });
 
   it("surfaces the approximate-pricing warning when one or more rollups fell back to defaults", async () => {

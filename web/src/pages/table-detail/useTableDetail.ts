@@ -49,7 +49,12 @@ import { buildDiagnosisVerdict } from "../../components/TableDiagnosisPanel";
 import { useAuth } from "../../lib/auth";
 import { formatCurrency } from "../../lib/format";
 import { formatPartitionColumnLabel } from "../../components/table-detail/helpers";
-import { TABLE_DETAIL_TABS, TABLE_TAB_ALIASES, translateTableDetailLocation } from "./tabAliases";
+import {
+  TABLE_DETAIL_TABS,
+  TABLE_HASH_ALIASES,
+  TABLE_TAB_ALIASES,
+  translateTableDetailLocation
+} from "./tabAliases";
 import { tableKeys } from "./tableKeys";
 
 export { TABLE_TAB_ALIASES };

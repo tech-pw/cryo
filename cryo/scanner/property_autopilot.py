@@ -2,7 +2,7 @@
 
 Closes a real gap found live, 2026-08-10: `compute_property_recommendations()` and
 `layout_analyzer.py`'s scheduled generation of them are both real and running -- confirmed
-against a live production table (`cdp_revenue.gold_batch_subject_schedules_pw`) returning
+against a live production table returning
 specific, well-reasoned recommendations with `"action": "apply"`. `apply_table_properties()`
 (the function that actually executes the change) is also real and already used by the
 `/tables/{id}/properties/apply` API route. But grepping the whole codebase for any consumer

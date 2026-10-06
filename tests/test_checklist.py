@@ -142,7 +142,7 @@ def test_partition_match_unknown_with_insufficient_query_volume(session) -> None
 
 
 def test_cadence_match_red_when_idle_hours_too_tight_for_commit_velocity() -> None:
-    """Regression coverage: gold_unleash_experiments_v1 committed roughly every ~6h
+    """Regression coverage: gold_feature_flags_v1 committed roughly every ~6h
     (confirmed live from its snapshot history, 2026-09-11) while its preset's
     partition_write_idle_hours was set to 24 -- only 4x the gap, not the 3x+ margin this check
     requires with room to spare, and every re-optimize wave re-selected the same

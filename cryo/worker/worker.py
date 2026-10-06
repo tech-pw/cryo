@@ -121,7 +121,7 @@ class AuditRecord:
     snapshots_expired: int | None = None
     manifests_rewritten: int | None = None
     actor: str | None = None
-    # Async fallback-dispatch tracking (PDAE-8352) -- see AuditLog.engine_ref's docstring.
+    # Async fallback-dispatch tracking. See AuditLog.engine_ref's docstring.
     engine_ref: str | None = None
 
 
@@ -552,7 +552,7 @@ class Worker:
 
                 # Real incident, 2026-09-16: the native (iceberg-go) engine's trust boundary
                 # with Cryo has no independent verification of its own self-reported success
-                # (gold_dbt_poll_dashboard_view ran 25min, reported success, committed zero
+                # (a table ran 25min, reported success, committed zero
                 # snapshots). cryo.engines.native.routing.resolve_native_routing already
                 # reroutes every operation to the destination's sql_fallback_destination_id
                 # when native_engine_enabled=False (see that function's docstring), but it can
@@ -1199,8 +1199,7 @@ class Worker:
         """Best-effort: never let reconciliation bookkeeping fail the job it's reacting to.
 
         Critical vitals action plan, 2026-09-20: this call's own failures were previously
-        swallowed with zero logging -- confirmed live, a table (nurture_service.silver_next_
-        day_question_summary_evolving) hit this exact code path on 2026-09-19 with
+        swallowed with zero logging -- confirmed live, a table hit this exact code path with
         is_table_not_found_error(error) returning True, yet stayed is_active=True and kept
         getting re-admitted/re-failing (consecutive_scan_failures=60) with no trace of why
         deactivation didn't take. Logging the exception here is the difference between "this

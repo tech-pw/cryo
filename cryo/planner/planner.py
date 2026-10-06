@@ -17,7 +17,7 @@ from cryo.planner.partitions import (
 )
 
 # Tables just under detect_streaming_from_history's 24 commits/day cutoff still
-# take concurrent writes during rewrite_data_files (PDAE-8353). Treat that band
+# take concurrent writes during rewrite_data_files. Treat that band
 # as extra-care: smaller OPTIMIZE chunks and a shorter expire window.
 _EXTRA_CARE_COMMITS_PER_DAY = 5.0
 
@@ -137,8 +137,7 @@ def build_plan(
     if resolved_mode is Mode.DEEP:
         operations.append(Operation(OperationType.OPTIMIZE_MANIFESTS, dict(params)))
     elif resolved_mode in {Mode.LIGHT, Mode.STANDARD}:
-        # Regression, 2026-07-27: a standard-mode run on
-        # reports.gold_dbt_video_stats_reports_unified only ran expire_snapshots + optimize,
+        # Regression, 2026-07-27: a standard-mode run only ran expire_snapshots + optimize,
         # silently dropping remove_orphan_files and
         # optimize_manifests with zero explanation in plan.notes -- an operator (or an agent)
         # reading the run afterward had no way to tell "skipped by design for this mode" apart
@@ -232,9 +231,9 @@ def _optimize_operations(
     # `detect_streaming_from_history` (cryo/scanner/signals.py) from snapshot-count
     # deltas across consecutive `table_stats_history` rows.
     #
-    # Extra-care band (PDAE-8353): tables just under the 24 commits/day is_streaming
+    # Extra-care band: tables just under the 24 commits/day is_streaming
     # cutoff still lose rewrite_data_files to concurrent writers (live:
-    # lsq_pw.gold_prospect_activity_extension_base, 14 commits/day, is_streaming False).
+    # a table at 14 commits/day, is_streaming False).
     # Apply the same smaller chunks / fewer partitions per chunk without flipping the
     # streaming flag used elsewhere.
     is_streaming = bool(stats.get("is_streaming"))
@@ -291,7 +290,7 @@ def _optimize_operations(
 
     # min_partition_small_files: opt-in override for _candidate_partitions' per-partition
     # gate, separate from the table-level min_small_files check above (line ~249).
-    # Live-verified, 2026-09-10: gold_dbt_pw_bq has ~5,954 small files total (comfortably
+    # Live-verified, 2026-09-10: one wide table has ~5,954 small files total (comfortably
     # over the table-level gate) spread across ~63k partitions at a median of 4/partition
     # -- with the same min_small_files=128 applied per-partition here, only ~63 partitions
     # (the rare ones that happen to concentrate 128+ small files) ever qualify per sweep,
@@ -501,7 +500,7 @@ def _has_pathological_delete_skew(
     _delete_compaction_policy's "minor" branch already runs optimize_ops unconditionally
     alongside rewrite_position_deletes (see build_plan), so there's no data-compaction benefit
     lost by also planning the delete-specific rewrite here. Confirmed live on
-    cdp_revenue.gold_batches_pw, 2026-09-14: a prior version of this guard skipped the minor
+    one production table, 2026-09-14: a prior version of this guard skipped the minor
     rewrite whenever any file was individually small, deferring to convert_deletes/optimize --
     which on this exact table's Sep 11 run made delete_files WORSE (310 -> 507)."""
     min_ratio = float(params.get("delete_per_file_pathological_ratio", 20.0))
@@ -525,7 +524,7 @@ def _has_unreachable_delete_skew(
     size-driven candidate selection is unlikely to form a rewrite group -- a milder version of
     _has_pathological_delete_skew's "provably zero rewrite groups" case.
 
-    Regression, confirmed live 2026-08-11: mview.gold_dbt_test_results (delete_file_pct=100%,
+    Regression, confirmed live 2026-08-11: one hot table (delete_file_pct=100%,
     a genuinely hot table at 483 queries/30d) has 8 partitions each carrying 150-315
     position-delete files against 20-44 well-sized data files -- ratios of ~2.6 to ~8.0,
     well under _has_pathological_delete_skew's default 20.0 "provably unreachable" bar, but
@@ -540,12 +539,12 @@ def _has_unreachable_delete_skew(
 
     Deliberately does NOT defer to optimize/convert_deletes just because the partition's data
     files are also individually small -- see _has_pathological_delete_skew's matching comment
-    (2026-09-14 fix, cdp_revenue.gold_batches_pw) for why: OPTIMIZE does not remove
+    (the 2026-09-14 fix) for why: OPTIMIZE does not remove
     position-delete files as a designed side effect, and the "minor" policy branch already runs
     optimize_ops unconditionally alongside rewrite_position_deletes regardless.
     """
     # 7.0 sits with real margin on both sides: the live incident this codifies
-    # (mview.gold_dbt_test_results) has its highest per-partition ratio at ~8.0 (295/37), and
+    # (the incident table) has its highest per-partition ratio at ~8.0 (295/37), and
     # test_convert_deletes_scopes_to_delete_skew_when_data_files_already_compacted (a separate,
     # deliberately-milder fixture for _has_pathological_delete_skew, ratio 20.0) sits at 18.0 --
     # this threshold must never drift close enough to either to make those tests ambiguous.
@@ -607,7 +606,7 @@ def _convert_deletes_operation(
         # convert_deletes_max_concurrent_rewrites were silently dropped here -- only the two
         # keys above ever reached _render_convert_deletes, so every convert_deletes call was
         # stuck on that function's own hardcoded defaults (max_commits=50) regardless of what
-        # a preset configured. Confirmed live on cdp.cdp_revenue.gold_batches_pw: one pass at
+        # a preset configured. Confirmed live on one production table: one pass at
         # the 50-commit default cleared only 15 of 522 position-delete files
         # (removed-delete-files: 15 in the resulting snapshot summary) even with
         # force_convert_deletes set -- there was no way to ask for a larger pass via preset
@@ -632,7 +631,7 @@ def _convert_deletes_operation(
 def _delete_files(row: Mapping[str, Any]) -> int:
     """Read a partition row's delete-file count.
 
-    Bug found live 2026-08-18 while verifying PDAE-8355's deployed fix against real data:
+    Bug found live 2026-08-18 while verifying a deployed fix against real data:
     this read `delete_files_in_partition_count`, a key that has never existed in production.
     Both scanner producers write the count as `delete_files` (`cryo/scanner/analyze.py`'s
     `raw={"partition_values": ..., "delete_files": accum.delete_files}` and
@@ -640,7 +639,7 @@ def _delete_files(row: Mapping[str, Any]) -> int:
     made both `_has_pathological_delete_skew` and `_has_unreachable_delete_skew` dead code in
     prod despite passing every test, because the test fixtures used the same wrong key this
     function read rather than the real one the scanners actually produce. Confirmed live on
-    the exact PDAE-8355 incident table (`mview.gold_dbt_test_results`): before this fix,
+    the incident table: before this fix,
     `_has_unreachable_delete_skew` returned False against its own real partition data (every
     row's `delete_files` present, non-zero, up to 431 in a single partition) because this
     function couldn't see it under the wrong key.
@@ -767,7 +766,7 @@ def _expire_params(
 
     # Streaming-aware retention: a table this actively written accumulates new snapshots
     # faster than a long retention window ever clears them, no matter how compaction-heavy
-    # the rest of the run is -- confirmed live, 2026-08-03: unified_bq.gold_dbt_pw_bq went
+    # the rest of the run is -- confirmed live, 2026-08-03: one high-velocity table went
     # from 666 to 2,137 snapshots *during* a single 2.5-day maintenance run, since
     # expire_snapshots can only remove snapshots older than the window, not ones created
     # while the job itself was still running. Tightening the window at least bounds how far
@@ -801,7 +800,7 @@ def _expire_params(
 
     # Backlog-aware retention: is_streaming/commits_per_day only reacts to *current* write
     # velocity, so a table that was bursty in the past (or commits just under the streaming
-    # detection cutoff -- confirmed live, 2026-08-10: admin.iceberg_maintenance_log sits at
+    # detection cutoff -- confirmed live, 2026-08-10: one table sits at
     # 22.15 commits/day against a 24.0 threshold, never flagged, sitting on 499 snapshots) or
     # that has simply never had expire_snapshots reach it before never gets tightened, no
     # matter how large the accumulated backlog already is. This reacts to the backlog itself

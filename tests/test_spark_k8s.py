@@ -103,9 +103,9 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
 
     with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
         job_id =         client.submit_spark_sql(
-            "CALL cdp.system.rewrite_manifests(table => 'ns.tbl')",
+            "CALL sample.system.rewrite_manifests(table => 'ns.tbl')",
             job_name="cryo-optimize-manifests",
-            catalog="cdp",
+            catalog="sample",
             destination_id="b377ac3f-7d7f-47f7-985d-7543cd4cd82c",
             operation="optimize_manifests",
         )
@@ -138,7 +138,7 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     assert "--sql" in command
     assert (
         command[command.index("--sql") + 1]
-        == "CALL cdp.system.rewrite_manifests(table => 'ns.tbl')"
+        == "CALL sample.system.rewrite_manifests(table => 'ns.tbl')"
     )
     assert "--catalog-uri" in command
     assert command[command.index("--catalog-uri") + 1] == "http://iceberg-rest:8181"
@@ -162,8 +162,8 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     # S3FileIO tuning for the catalog the SQL runs against, as spark-submit confs that must
     # precede the script path to reach Spark rather than the runner's argv.
     for conf in (
-        "spark.sql.catalog.cdp.s3.delete.batch-size=1000",
-        "spark.sql.catalog.cdp.s3.retry.num-retries=32",
+        "spark.sql.catalog.sample.s3.delete.batch-size=1000",
+        "spark.sql.catalog.sample.s3.retry.num-retries=32",
     ):
         assert command.index(conf) < script_idx
         assert command[command.index(conf) - 1] == "--conf"
@@ -175,7 +175,7 @@ def test_submit_spark_sql_labels_default_destination_when_none_given() -> None:
     client = SparkK8sClient(cfg)
 
     with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
-        client.submit_spark_sql("SELECT 1", catalog="cdp")
+        client.submit_spark_sql("SELECT 1", catalog="sample")
 
     manifest = batch_api.create_namespaced_job.call_args.kwargs["body"]
     assert manifest["metadata"]["labels"]["cryo/destination"] == "default"
@@ -187,18 +187,18 @@ def test_submit_repair_missing_files_defaults_to_dry_run() -> None:
     client = SparkK8sClient(cfg)
 
     with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
-        client.submit_repair_missing_files("cdp.mview.load_test_basefact")
+        client.submit_repair_missing_files("demo.mart.load_test_events")
 
     manifest = batch_api.create_namespaced_job.call_args.kwargs["body"]
     command = manifest["spec"]["template"]["spec"]["containers"][0]["command"]
     assert "--repair-missing-files" in command
     assert "--table" in command
-    assert command[command.index("--table") + 1] == "cdp.mview.load_test_basefact"
+    assert command[command.index("--table") + 1] == "demo.mart.load_test_events"
     # Must match table_ref's catalog segment, or Spark can't resolve the reference at
     # all -- regression: omitting this left the runner's "glue_catalog" default
-    # registered, and querying "cdp...." against it threw REQUIRES_SINGLE_PART_NAMESPACE.
+    # registered, and querying "sample...." against it threw REQUIRES_SINGLE_PART_NAMESPACE.
     assert "--catalog" in command
-    assert command[command.index("--catalog") + 1] == "cdp"
+    assert command[command.index("--catalog") + 1] == "sample"
     assert "--commit" not in command
 
 
@@ -208,7 +208,7 @@ def test_submit_repair_missing_files_with_commit() -> None:
     client = SparkK8sClient(cfg)
 
     with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
-        client.submit_repair_missing_files("cdp.mview.load_test_basefact", commit=True)
+        client.submit_repair_missing_files("demo.mart.load_test_events", commit=True)
 
     manifest = batch_api.create_namespaced_job.call_args.kwargs["body"]
     command = manifest["spec"]["template"]["spec"]["containers"][0]["command"]
@@ -234,7 +234,7 @@ def test_submit_spark_sql_creates_credentials_secret_when_configured() -> None:
         patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api),
     ):
         client.submit_spark_sql(
-            "CALL cdp.system.rewrite_manifests(table => 'ns.tbl')", catalog="cdp"
+            "CALL sample.system.rewrite_manifests(table => 'ns.tbl')", catalog="sample"
         )
 
     secret_body = core_api.create_namespaced_secret.call_args.kwargs["body"]
@@ -368,7 +368,7 @@ def test_submit_spark_sql_adopts_credentials_secret_to_job() -> None:
         patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api),
     ):
         job_id = client.submit_spark_sql(
-            "CALL cdp.system.rewrite_manifests(table => 'ns.tbl')", catalog="cdp"
+            "CALL sample.system.rewrite_manifests(table => 'ns.tbl')", catalog="sample"
         )
 
     core_api.patch_namespaced_secret.assert_called_once()
@@ -388,7 +388,7 @@ def test_read_pod_log_tail_requests_tail_lines_not_a_byte_prefix() -> None:
     "Decommissioning not enabled" spam did. tail_lines is the correct API parameter for
     "last N lines".
 
-    Regression, PDAE-8346, confirmed live 2026-08-18: 200 lines still wasn't enough -- a real
+    Regression, , confirmed live 2026-08-18: 200 lines still wasn't enough -- a real
     sample of 19/47 truncated MaintenanceJob.error rows over 14 days captured only shutdown
     chatter or bare stack frames, no exception identity at all, because the real header line
     was further back than 200 lines from the end. Widened to 2000; this is only the capture
@@ -746,8 +746,8 @@ def test_separate_client_instances_share_the_same_underlying_k8s_api_client() ->
     batch_api = MagicMock()
 
     with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api) as new_batch:
-        first.submit_spark_sql("SELECT 1", catalog="cdp")
-        second.submit_spark_sql("SELECT 1", catalog="cdp")
+        first.submit_spark_sql("SELECT 1", catalog="sample")
+        second.submit_spark_sql("SELECT 1", catalog="sample")
 
     # Both instances' calls resolve through the same (mocked, in this test) client
     # factory, and each instance's own cache means the factory itself is only invoked

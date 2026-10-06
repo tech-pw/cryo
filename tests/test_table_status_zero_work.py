@@ -1,6 +1,6 @@
 """table_status()'s zero-work guard for the Spark coordinator path.
 
-Confirmed live 2026-09-30 on pw_bq.silver_dbt_test_explore_click: an OPTIMIZE statement can
+Confirmed live 2026-09-30 on analytics.silver_explore_click: an OPTIMIZE statement can
 return ok=True (the Iceberg rewrite_data_files CALL didn't throw) while its own returned
 metrics show rewritten_data_files_count=0 -- the native engine already guards this exact
 pattern (native_job_reported_success_with_zero_work); this is that guard for Spark.

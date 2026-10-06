@@ -26,7 +26,7 @@ prerequisites for production claims. A public source release does not close thos
 
 Helm installs a working platform with documented dependencies and secure access. The operator
 still supplies catalog/engine endpoints, credentials or workload identities, network access,
-and an explicit retention policy. Cryo must not need PW networking, private artifacts,
+and an explicit retention policy. Cryo must not need a private network, private artifacts,
 Karpenter, Grafana, Slack, an AI provider, or a particular catalog/schema name to work.
 
 The intended journey is:
@@ -43,7 +43,7 @@ Proposed command shape below; the OCI location and complete artifact set are **n
 published**. This is a delivery target, not today's quickstart:
 
 ```sh
-helm upgrade --install cryo oci://ghcr.io/shelf-project/charts/cryo \
+helm upgrade --install cryo oci://ghcr.io/tech-pw/charts/cryo \
   --namespace cryo --create-namespace \
   --version <chart-version> --values cryo-values.yaml \
   --wait --wait-for-jobs --timeout 10m
@@ -96,7 +96,7 @@ permission requirements; keep optional extensions optional.
 Public defaults must fit a small evaluation. Current static application requests/replica
 floors total roughly 3.45 CPU and 6.125 GiB before scheduled scan jobs; this is a manifest
 estimate, not measured usage. Benchmark small/medium/large profiles and show idle and active
-footprint. Avoid installing PW-sized capacity for every adopter.
+footprint. Avoid installing one tenant's capacity for every adopter.
 
 ### Compatibility and maintenance scope
 
@@ -155,7 +155,7 @@ artifact attribution is reviewed; the private reporting path works.
   historical incident comments, and sensitive publication material. A string scrub alone is
   not a portability fix.
 - Default Spark placement to no cloud-specific selector. Make node selectors, affinity,
-  tolerations, identities and registry locations configurable. Preserve PW behavior in its
+  tolerations, identities and registry locations configurable. Preserve the current install's behavior in its
   explicit private values overlay.
 - Add an organization/destination IANA timezone. New installations default to UTC; migrate
   existing implicit IST settings to explicit `Asia/Kolkata`. Define precedence and DST policy.
@@ -170,7 +170,7 @@ artifact attribution is reviewed; the private reporting path works.
 - Keep metadata bounds and query-log contents under the same redaction/access rules as other
   potentially sensitive customer data. External telemetry and AI remain explicitly opt-in.
 
-**Done when:** the reference stack operates without PW accounts, names, labels, network access,
+**Done when:** the reference stack operates without one tenant's accounts, names, labels, network access,
 query-log tables or billing services; the existing deployment retains its explicit settings
 and passes behavior/parity tests. Unsupported combinations fail before scheduling work.
 
@@ -317,7 +317,7 @@ OSS-0; the workstream estimates total 26–43 engineer-days before external obse
 | Baseline | OSS-0; start policy/claims cleanup in OSS-5 | Candidate scope, owners, publication inventory and actual CI blockers recorded. |
 | Portable installation | OSS-1 and OSS-2 in parallel; OSS-3 develops against agreed config/auth contracts | Independent cluster gets a working authenticated platform and scoped read-only scan. |
 | Public alpha | Complete publication hygiene and release tooling; OSS-4 validates the profiles exposed in alpha | Public source/chart/images/docs, required install CI, safe defaults, explicit experimental boundaries. Unsupported write paths remain disabled/labeled; no blanket production claim. |
-| External beta | Two non-PW organizations or genuinely independent environments, including vanilla Kubernetes without AWS/Karpenter assumptions | Operators install without code edits or maintainer shell access, complete verified maintenance, and recover an induced failure from public docs. |
+| External beta | Two independent organizations or environments, including vanilla Kubernetes without AWS/Karpenter assumptions | Operators install without code edits or maintainer shell access, complete verified maintenance, and recover an induced failure from public docs. |
 | Production-supported release | Close applicable recovery/conformance/cost and upgrade gates | Defined supported combinations, sustained operational evidence, documented restore path, measured net-value case studies, named patch/triage ownership. |
 
 An alpha can ship with a smaller verified write surface, or read-only if write safety is not
@@ -357,6 +357,6 @@ cloud/auth support, arbitrary dynamic plugin loading, a managed SaaS, multi-tena
 foundation membership, or a large governance organization. Use the existing versioned
 [connector contract](ECOSYSTEM_CONNECTORS.md) when expanding integrations.
 
-**Definition of success:** a team outside PW installs a pinned public release, safely maintains
+**Definition of success:** an outside team installs a pinned public release, safely maintains
 its own supported Iceberg tables, understands whether the measured benefit exceeds the cost,
 and can operate, upgrade and contribute using public resources alone.

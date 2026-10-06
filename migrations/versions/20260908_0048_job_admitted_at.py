@@ -9,8 +9,8 @@ the Worker's admit handoff (RedisMaintenanceQueue.admit -> rpush cryo:admitted, 
 dies before reaching mark_running() drops it from the Redis list forever -- the DB row stays
 ADMITTED, with no engine_ref and no owner, invisible to every existing reconciliation pass
 (reconcile_queued_jobs/reconcile_deferred_jobs/reconcile_stale_running_jobs all key off
-QUEUED/DEFERRED/RUNNING, never ADMITTED). Live-confirmed: 165 jobs fleet-wide stuck exactly
-this way, all on one destination (spark-k8s-fallback), ages spanning 26.6h down to 1.4h --
+QUEUED/DEFERRED/RUNNING, never ADMITTED). Live-confirmed: jobs stuck exactly
+this way, all on one Spark destination, spanning many hours --
 correlated with governor/worker pod restarts across the day's deploys.
 
 Neither started_at (set only on RUNNING) nor finished_at (cleared, not set, on ADMITTED) can

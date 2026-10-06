@@ -141,7 +141,7 @@ Same shape of problem, found while building the report's failure-rate signal
 (2026-08-19): `QueryCostAttributionDaily` already tracks `failed_query_count`, so DoD/WoW
 failure-*rate* comparison shipped in the report without a schema change. But the table has no
 `error_code`/`error_type` column at all, so "top failure reasons" (which error is actually
-firing) is NOT in this report yet, unlike the `pw-data-connectors` Airflow version of this
+firing) is NOT in this report yet, unlike the previous Airflow version of this
 report which has it (queries `error_code`/`error_type`/`failure_message` directly off
 `trino_logs.trino_queries` — no rollup table involved there, so no schema constraint).
 

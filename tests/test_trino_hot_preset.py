@@ -119,7 +119,7 @@ def test_repin_leaves_manually_pinned_tables_alone(session):
     manual = _seed_table(session, source, name="manual")
     session.add(
         TableAssignment(
-            table_id=manual.id, preset_id=preset.id, assigned_by="operator:aamir", pinned=True
+            table_id=manual.id, preset_id=preset.id, assigned_by="operator:example", pinned=True
         )
     )
     hot = _seed_table(session, source, name="hot")
@@ -131,7 +131,7 @@ def test_repin_leaves_manually_pinned_tables_alone(session):
     assert result.unpinned == 0
     assignment = session.get(TableAssignment, manual.id)
     assert assignment is not None
-    assert assignment.assigned_by == "operator:aamir"
+    assert assignment.assigned_by == "operator:example"
 
 
 def test_repin_never_touches_assignments_belonging_to_other_presets(session):
@@ -193,7 +193,7 @@ def test_repin_reclaims_a_pin_on_a_disabled_preset(session):
     hot = _seed_table(session, source, name="stranded")
     session.add(
         TableAssignment(
-            table_id=hot.id, preset_id=disabled.id, assigned_by="operator:aamir", pinned=True
+            table_id=hot.id, preset_id=disabled.id, assigned_by="operator:example", pinned=True
         )
     )
     _log_query(session, source=source, table=hot, when=NOW - timedelta(days=1))
@@ -218,7 +218,7 @@ def test_repin_leaves_an_operator_pin_on_another_preset_in_place(session):
     hot = _seed_table(session, source, name="hot")
     session.add(
         TableAssignment(
-            table_id=hot.id, preset_id=other_preset.id, assigned_by="operator:aamir", pinned=True
+            table_id=hot.id, preset_id=other_preset.id, assigned_by="operator:example", pinned=True
         )
     )
     _log_query(session, source=source, table=hot, when=NOW - timedelta(days=1))

@@ -7,7 +7,7 @@ assignees: ""
 ---
 
 > **Please do not file public security vulnerabilities here.**
-> Use [GitHub Security Advisories](https://github.com/shelf-project/Cryo/security/advisories/new)
+> Use [GitHub Security Advisories](https://github.com/tech-pw/cryo/security/advisories/new)
 > (private to the maintainer team) or the email in `SECURITY.md`. This template is provided so
 > the option is discoverable from the issue picker; once submitted, the maintainer team will
 > triage and move the conversation to the appropriate private channel.

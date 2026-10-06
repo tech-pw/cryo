@@ -995,7 +995,7 @@ class Settings(BaseSettings):
         ge=1,
         description=(
             "Cap on how many applied-but-unmeasured LayoutRecommendation rows get a fresh "
-            "observed_prune_improvement reading per telemetry tick (PDAE-8288). Always runs "
+            "observed_prune_improvement reading per telemetry tick. Always runs "
             "(not gated behind an enabled flag like layout_autopilot_enabled) -- unlike "
             "actually rewriting a table, measuring an already-applied rewrite's real effect "
             "is read-only analysis, no data mutation, safe fleet-wide by construction. See "
@@ -1013,7 +1013,7 @@ class Settings(BaseSettings):
             "pool-6 threads all throwing OutOfMemoryError) with 322 jobs started in the "
             "surrounding 15 minutes and ~70 concurrently failing with literal 'failed to "
             "connect to metastore' -- a direct, foreseeable consequence of raising the "
-            "Governor's per-wave admission throughput (PDAE-8352's async fallback-dispatch "
+            "Governor's per-wave admission throughput (the async fallback-dispatch "
             "fix) without checking whether the downstream metastore had headroom for the "
             "resulting concurrency. native_datafusion's own slot_cap (e.g. 80) has no "
             "relationship to the shared metastore's real connection capacity -- this is a "
@@ -1104,6 +1104,13 @@ class Settings(BaseSettings):
             "checking much more often than this doesn't reveal new information -- this "
             "mainly controls how quickly a pause gets lifted once yesterday's lagged data "
             "catches up to show spend back under the ceiling."
+        ),
+    )
+    grafana_athena_datasource_uid: str = Field(
+        default="",
+        description=(
+            "Grafana datasource uid for the Athena CUR connection used by the cost ceiling. "
+            "Required when cost_ceiling_enabled or Trino scan-cost pricing is on."
         ),
     )
     grafana_base_url: str = Field(

@@ -107,7 +107,7 @@ def _rows_to_arrow_table(rows: Sequence[dict[str, Any]]) -> pa.Table:
     """Convert cleaned row dicts into the PyArrow table PyIceberg's ``Table.append`` needs.
 
     ``Table.append`` requires a ``pyarrow.Table`` -- passing a raw list of dicts fails with
-    ``Expected PyArrow table, got: [...]`` (confirmed live, PDAE-8277: this was the fourth
+    ``Expected PyArrow table, got: [...]`` (confirmed live, : this was the fourth
     bug in the chain, only surfaced once the first three were fixed and a real batch of 518
     rows finally reached this call). Building from the Iceberg schema's own ``as_arrow()``
     keeps the Arrow field types/nullability in lockstep with ``build_query_log_schema`` --
@@ -499,7 +499,7 @@ def _catalog_for(source: Source | None, destination: Destination) -> Any:
     (``list_tables``, ``list_namespaces``, ``load_table``) meant for the scanner/discovery
     paths. ``QueryLogIcebergWriter`` needs the full PyIceberg ``Catalog`` write interface
     (``create_namespace_if_not_exists``, ``create_table_if_not_exists``) which that wrapper
-    doesn't expose -- confirmed live (PDAE-8277): every curator tick reached the append step
+    doesn't expose -- confirmed live (): every curator tick reached the append step
     and crashed with ``AttributeError: 'HiveSourceCatalog' object has no attribute
     'create_table_if_not_exists'``, after the fetch itself was already fixed. Unwrap to the
     underlying PyIceberg catalog every ``PyIcebergSourceCatalog`` subclass stores on

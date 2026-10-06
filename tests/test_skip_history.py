@@ -69,7 +69,7 @@ def _table(source_id: uuid.UUID, name: str, schema_name: str = "demo") -> Table:
 def test_fixture_night_records_one_row_per_table_with_the_right_reason(session) -> None:
     source = Source(
         id=uuid.uuid4(),
-        name="cdp",
+        name="sample",
         type="hive",
         config={},
         enabled=True,
@@ -80,7 +80,7 @@ def test_fixture_night_records_one_row_per_table_with_the_right_reason(session) 
         name="spark",
         engine="spark_emr",
         enabled=True,
-        config={"catalog": "cdp"},
+        config={"catalog": "sample"},
     )
     session.add_all([source, destination])
     session.flush()
@@ -188,7 +188,7 @@ def test_funnel_does_not_invent_needs_work_without_history() -> None:
 
 
 def test_list_is_paginated_and_does_not_prune(session) -> None:
-    source = Source(id=uuid.uuid4(), name="cdp", type="hive", config={}, enabled=True)
+    source = Source(id=uuid.uuid4(), name="sample", type="hive", config={}, enabled=True)
     table = _table(source.id, "kept")
     run = MaintenanceRun(
         id=uuid.uuid4(),
@@ -258,7 +258,7 @@ def test_bulk_insert_is_one_statement_for_a_chunk() -> None:
 
 def test_batch_select_records_when_the_run_row_is_inserted(session_factory) -> None:
     with session_factory() as session:
-        source = Source(id=uuid.uuid4(), name="cdp", type="hive", config={}, enabled=True)
+        source = Source(id=uuid.uuid4(), name="sample", type="hive", config={}, enabled=True)
         table = _table(source.id, "only")
         session.add_all([source, table])
         session.flush()

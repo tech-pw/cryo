@@ -3,7 +3,7 @@
 Mirrors cryo/engines/spark/sql.py's _render_optimize(), which prepends an
 ``ALTER TABLE ... SET TBLPROPERTIES`` statement so future writers inherit the target file
 size Cryo just optimized toward. The native (Go engine) dispatch path had no equivalent --
-confirmed live, 2026-07-27: pw_bq.silver_dbt_pw_launch kept failing the "Suboptimal
+confirmed live, 2026-07-27: schema.example_table kept failing the "Suboptimal
 properties" health check after every native OPTIMIZE run, because nothing ever persisted
 the property Cryo itself was already targeting during the rewrite.
 

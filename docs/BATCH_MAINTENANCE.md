@@ -167,9 +167,9 @@ JSONB, and OOMKilled the api pod on 2026-09-24. The Helm values live under `main
   and pod start.
 - 2026-09-24: first full manual run (`ea135ba6`, 499 tables, 4 lanes × 4 vCPU / 16 GiB).
   Lanes used 3.8–4 CPU and 7–12.7 GiB; about one table per minute. One planning failure,
-  `mview.gold_dbt_test_data_temp`, from the `"<nil>"` partition bug above. About 30 min in,
-  lane 0 was OOM-killed on `offline.gold_dbt_offline_solutions_mapped_all` (27 GB, 578M
-  rows) and lane 1 hit the GCLocker heap OOM on `cdp_revenue.gold_doubts_ops_new` (30 GB).
+  a temp table, from the `"<nil>"` partition bug above. About 30 min in,
+  lane 0 was OOM-killed on a 27 GB table (578M
+  rows) and lane 1 hit the GCLocker heap OOM on a 30 GB table.
   Both lanes' remaining tables were stranded, which led to the replacement-lane and JVM
   memory changes above. Final tally after 2h 18m: 117 succeeded, 3 partial, 3 failed, 376
   skipped (mostly the stranded lanes); 11,183 files rewritten into 791 (27,723 → 18,374

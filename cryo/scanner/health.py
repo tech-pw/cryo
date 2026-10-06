@@ -11,7 +11,7 @@ from cryo.scanner.property_recommendations import count_suboptimal_property_issu
 # table critical for small-file fragmentation while the planner will never schedule a fix for
 # it produces a permanent, unfixable grade: a 3-file table where all 3 are "small" is 100%
 # small-file-by-percentage, but merging 3 files isn't worth a compaction job. Found via a real
-# fleet-wide before/after (2026-08-05, PDAE-8274): 76% of D-graded tables had fewer total files
+# fleet-wide before/after (2026-08-05, ): 76% of D-graded tables had fewer total files
 # than this floor, and clearing this one deduction alone moved 99.6% of the whole D bucket to
 # C or better -- confirming the deduction, not the table, was the actual problem for most of
 # them.
