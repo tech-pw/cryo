@@ -1,0 +1,12 @@
+<svg class="plate-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100" aria-hidden="true">
+  <line class="plate-ground" x1="8" y1="88" x2="152" y2="88"/>
+  <rect class="plate-gate" x="72" y="28" width="16" height="52" rx="2"/>
+  <rect class="plate-seg" x="18" y="52" width="44" height="18" rx="9"/>
+  <rect class="plate-seg plate-wait" x="98" y="52" width="44" height="18" rx="9"/>
+  <circle class="plate-gauge" cx="80" cy="22" r="10"/>
+  <path class="plate-gauge-needle" d="M80 22 L86 18"/>
+  <g class="plate-marker">
+    <line x1="80" y1="28" x2="80" y2="8"/>
+    <path class="plate-marker-flag" d="M80 8h14l-4 5 4 5h-14z"/>
+  </g>
+</svg>

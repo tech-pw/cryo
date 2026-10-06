@@ -1,0 +1,119 @@
+---
+title: Maintenance
+lede: A maintenance run compacts first, then cleans up, in one fixed order. The order is defined in code and no preset can change it.
+description: Why Iceberg tables need maintenance, the seven operations Cryo runs in a fixed order, how the planner chunks work, how admission works, and the guardrails that stay on.
+updated: 2026-10-06
+---
+<h2 id="canonical-order">Canonical order</h2>
+<p>Seven operations, skipping the ones a table does not need. Expiry comes after compaction so one run reclaims the space its own compaction freed.</p>
+<div class="ops">
+  <div class="ops-group">
+    <p class="ops-phase">Compact</p>
+    <ol>
+      <li><div><a href="#convert-deletes"><code>convert_deletes</code></a><p>Rewrites data files so delete files are applied and no longer re-merged on every read.</p></div></li>
+      <li><div><a href="#rewrite-position-deletes"><code>rewrite_position_deletes</code></a><p>Consolidates position-delete files without rewriting data. Spark only.</p></div></li>
+      <li class="is-focus"><div><a href="#optimize"><code>optimize</code></a><p>Partition-aware compaction of small files, planned from stored scan data.</p></div></li>
+    </ol>
+  </div>
+  <div class="ops-group">
+    <p class="ops-phase">Measure</p>
+    <ol>
+      <li><div><a href="#compute-statistics"><code>compute_statistics</code></a><p>Refreshes table statistics straight after compaction, while the new layout is fresh.</p></div></li>
+    </ol>
+  </div>
+  <div class="ops-group">
+    <p class="ops-phase">Clean up</p>
+    <ol>
+      <li><div><a href="#optimize-manifests"><code>optimize_manifests</code></a><p>Consolidates manifests. Trino calls it <code>optimize_manifests</code> and Spark calls it <code>rewrite_manifests</code>.</p></div></li>
+      <li><div><a href="#expire-snapshots"><code>expire_snapshots</code></a><p>Drops snapshots the retention policy would not keep, and the files only they referenced.</p></div></li>
+      <li><div><a href="#remove-orphan-files"><code>remove_orphan_files</code></a><p>Deletes files in storage that no snapshot references.</p></div></li>
+    </ol>
+  </div>
+</div>
+<p>A finished run shows that order table by table. Each bar is one table's job; a failed job stays on its table and the rest of the run carries on.</p>
+<screenshot name="run-detail" url="cryo.local/runs/7f3c9a21" alt="A completed maintenance run on the seeded demo lake: 9 jobs, 8 completed, 1 failed, 1 skipped, 38.4 GB freed in 83 minutes. A timeline shows when each of the nine tables ran." caption="Seeded demo lake, not a production fleet. The failed job is isolated to its table." />
+
+<h2 id="why-it-matters">Why maintenance matters</h2>
+<p>Apache Iceberg gives you hidden partitioning, snapshot isolation, schema evolution and engine-agnostic metadata. It does not promise that tables stay fast. Left alone, four things pile up, and each one compounds independently, so fixing one does not fix the others.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>What piles up</th><th>What it costs</th><th>What fixes it</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Small files</strong></td><td>Every write adds a file, and every file adds open, seek and planning cost.</td><td><a href="#optimize"><code>optimize</code></a></td></tr>
+    <tr><td><strong>Delete files</strong></td><td>Every scan has to merge them back into the data it reads.</td><td><a href="#convert-deletes"><code>convert_deletes</code></a>, <a href="#rewrite-position-deletes"><code>rewrite_position_deletes</code></a></td></tr>
+    <tr><td><strong>Snapshot history</strong></td><td>Planning slows as metadata grows, and old files stay referenced.</td><td><a href="#optimize-manifests"><code>optimize_manifests</code></a>, <a href="#expire-snapshots"><code>expire_snapshots</code></a></td></tr>
+    <tr><td><strong>Layout drift</strong></td><td>Scans read more than the query needs, because the layout no longer matches the filters.</td><td><a href="#optimize"><code>optimize</code></a> with a sort or z-order strategy</td></tr>
+  </tbody>
+</table>
+</div>
+<callout type="note" title="A table left alone does not fail loudly">
+  <p>It becomes a slow, compounding tax that shows up as someone else's incident: a timed-out connection pool, or a scan that reads far more than it should.</p>
+</callout>
+
+<h3 id="strategies">Compaction is not one operation</h3>
+<p>Teams pick a strategy from their write pattern and query filters. The same primitive, <code>optimize</code>, does very different work depending on which one runs.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Strategy</th><th>Use it for</th><th>Compute cost</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Binpack</strong></td><td>Streaming tables and tight windows. Merges small files and reconciles deletes.</td><td>Lowest</td></tr>
+    <tr><td><strong>Sort</strong></td><td>Predictable filters on one or two columns.</td><td>Higher</td></tr>
+    <tr><td><strong>Z-order</strong></td><td>Several common filter dimensions at once.</td><td>Highest</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="operations">What each operation does</h2>
+<h3 id="convert-deletes">convert_deletes</h3>
+<p>Rewrites data files so delete files are applied and no longer re-merged on every read. On Spark it passes a delete-file threshold. On Trino it runs as an <code>OPTIMIZE</code>.</p>
+<h3 id="rewrite-position-deletes">rewrite_position_deletes</h3>
+<p>Consolidates position-delete files without rewriting data. Spark only, because Trino does not support it.</p>
+<h3 id="optimize">optimize</h3>
+<p>Partition-aware compaction of small files, planned from stored scan data. This is the step the chunking rules below exist to protect.</p>
+<h3 id="compute-statistics">compute_statistics</h3>
+<p>Refreshes table statistics straight after compaction, while the new layout is fresh.</p>
+<h3 id="optimize-manifests">optimize_manifests</h3>
+<p>Consolidates manifests. Trino calls it <code>optimize_manifests</code> and Spark calls it <code>rewrite_manifests</code>.</p>
+<h3 id="expire-snapshots">expire_snapshots</h3>
+<p>Drops snapshots the retention policy would not keep, and the files only they referenced. Guarded, and forcing it is audited.</p>
+<h3 id="remove-orphan-files">remove_orphan_files</h3>
+<p>Deletes files in storage that no snapshot references. Guarded, and forcing it is audited.</p>
+
+<h2 id="chunking">Planner chunking</h2>
+<p>A large table is never compacted in one statement. The planner ranks partitions by small-file count, highest first, skips those under the <code>min_small_files</code> threshold, and then picks one of three paths.</p>
+<diagram name="chunking" caption="The planner picks one path per run." />
+<ul>
+  <li><strong>Chunk under a GB budget.</strong> Ranked partitions are grouped until the budget is full, and a cap on partitions per chunk keeps Trino's filter planning tractable.</li>
+  <li><strong>Oversize partition alone.</strong> A partition larger than the budget runs by itself.</li>
+  <li><strong>Small-table bypass.</strong> A small table skips chunking and gets a single full-table <code>OPTIMIZE</code>.</li>
+</ul>
+
+<h2 id="admission">Admission: load-aware, never eager</h2>
+<p>A worker asks the governor for permission before it runs anything. The governor probes live load, from <code>system.runtime.queries</code> on Trino and from slots on Spark on EMR, and either admits the job or defers it. It also applies per-replica caps and round-robins across replicas.</p>
+<diagram name="admission" caption="Scaling workers does not raise the number of parallel rewrites. The governor does." />
+<p>You can watch admission in the Runs view. Engine load shows the slots the governor is using against the cap for each destination.</p>
+<screenshot name="runs" url="cryo.local/runs" alt="Runs page. Engine load shows demo-trino at 2 of 6 slots, admitting. Fleet health shows the scanner idle with 14 of 14 tables measured, and the run history lists last night's maintenance run as succeeded with 38.4 GB freed." caption="Runs: engine load at the top, the run history below. demo-trino is using 2 of its 6 slots, so the governor is still admitting." />
+<callout type="important" title="Workers are not concurrency">
+  <p>A worker runs one job at a time, so the fleet drains at roughly replicas divided by job duration. Engine headroom decides how much work is admitted, and worker count decides how fast it is picked up.</p>
+</callout>
+
+<h2 id="guardrails">Three guardrails, always on</h2>
+<dl>
+  <dt>Cooldown</dt>
+  <dd>Skip tables maintained within the last N hours, read from the audit log and engine history.</dd>
+  <dt>Per-table lock</dt>
+  <dd>A Redis lock held for the job's lifetime, so a table is never maintained twice at once.</dd>
+  <dt>Failure isolation</dt>
+  <dd>One job's failure is recorded against that table. The run continues with the next one.</dd>
+</dl>
+<callout type="caution" title="Destructive operations are guarded">
+  <p><code>expire_snapshots</code> and <code>remove_orphan_files</code> require the relevant tier in the scanner, and forcing them is audited. Cryo never touches snapshots the retention policy would keep.</p>
+</callout>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/engines/" title="Engines">How this same order renders as Trino SQL and Spark SQL.</linkcard>
+  <linkcard href="@/health/" title="Health and cost">How a table's grade improves after a run.</linkcard>
+  <linkcard href="@/architecture/" title="Architecture">Scheduler, governor and worker as running components.</linkcard>
+  <linkcard href="@/concepts/" title="How Cryo fits">Why a preset binds tables to a destination, not to raw SQL.</linkcard>
+</linkcards>
