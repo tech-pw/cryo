@@ -11,7 +11,8 @@ import {
   formatSearchDisplayName,
   formatSearchSubtitle,
   getSearchResultHref,
-  SEARCH_GROUP_LABELS
+  SEARCH_GROUP_LABELS,
+  searchResultsHref
 } from "../components/shell/search-utils";
 import { PageHeader } from "../components/common";
 import { AsyncBoundary } from "../components/AsyncBoundary";
@@ -356,7 +357,7 @@ const SearchResults = () => {
                 {!isPaginated && group.total > group.items.length ? (
                   <Link
                     className="cryo-shell__search-see-all"
-                    to={`/search?q=${encodeURIComponent(q)}&group=${group.type}`}
+                    to={searchResultsHref(q, group.type)}
                   >
                     Showing {group.items.length} of {group.total} — view all {label.toLowerCase()}
                   </Link>

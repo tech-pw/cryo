@@ -93,6 +93,37 @@ describe("SearchResults page", () => {
     expect(searchCatalog).not.toHaveBeenCalled();
   });
 
+  it("links overflow results to the tables search route, not a dropped kind param", async () => {
+    searchCatalog.mockResolvedValue(
+      buildResponse({
+        total: 3,
+        groups: [
+          {
+            type: "tables",
+            label: "Tables",
+            total: 3,
+            items: [
+              {
+                id: "t1",
+                type: "tables",
+                name: "orders",
+                qualified_name: "prod.sales.orders",
+                catalog: "prod",
+                schema_name: "sales",
+                table_id: "t1",
+                match_reason: "name"
+              }
+            ]
+          }
+        ]
+      })
+    );
+    renderAt("/tables?q=orders&notice=search");
+
+    const seeAll = await screen.findByRole("link", { name: /view all tables/i });
+    expect(seeAll).toHaveAttribute("href", "/tables?q=orders&notice=search&group=tables");
+  });
+
   it("shows results, group counts, and a polite result-count announcement", async () => {
     searchCatalog.mockResolvedValue(buildResponse());
     renderAt("/search?q=orders");

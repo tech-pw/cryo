@@ -16,7 +16,8 @@ import {
   formatSearchDisplayName,
   formatSearchSubtitle,
   getSearchResultHref,
-  SEARCH_GROUP_LABELS
+  SEARCH_GROUP_LABELS,
+  searchResultsHref
 } from "./search-utils";
 
 const PREVIEW_LIMIT = 5;
@@ -69,10 +70,11 @@ export const CatalogSearch = () => {
                 if (debouncedQuery.length >= 2) setOpen(true);
               }}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && debouncedQuery.length > 0) {
+                const submitted = query.trim();
+                if (event.key === "Enter" && submitted.length > 0) {
                   event.preventDefault();
                   setOpen(false);
-                  navigate(`/tables?q=${encodeURIComponent(debouncedQuery)}`);
+                  navigate(searchResultsHref(submitted));
                 }
                 if (event.key === "Escape") {
                   setOpen(false);
@@ -90,7 +92,14 @@ export const CatalogSearch = () => {
         </div>
       </PopoverAnchor>
 
-      <PopoverContent id="catalog-search-preview" align="center" sideOffset={6}>
+      <PopoverContent
+        id="catalog-search-preview"
+        align="center"
+        sideOffset={6}
+        className="w-[min(32rem,calc(100vw-2rem))] p-2"
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+      >
         {searchQuery.isLoading ? (
           <div className="cryo-shell__search-loading">Searching…</div>
         ) : searchQuery.isError ? (
@@ -128,7 +137,7 @@ export const CatalogSearch = () => {
                 {group.total > group.items.length ? (
                   <Link
                     className="cryo-shell__search-see-all"
-                    to={`/tables?q=${encodeURIComponent(debouncedQuery)}&kind=${group.type}`}
+                    to={searchResultsHref(debouncedQuery, group.type)}
                     onClick={() => setOpen(false)}
                   >
                     See all {group.total} results →
@@ -141,7 +150,7 @@ export const CatalogSearch = () => {
         {hasResults ? (
           <Link
             className="cryo-shell__search-see-all"
-            to={`/tables?q=${encodeURIComponent(debouncedQuery)}`}
+            to={searchResultsHref(debouncedQuery)}
             onClick={() => setOpen(false)}
           >
             See all {searchQuery.data?.total ?? 0} results →
