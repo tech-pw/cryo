@@ -190,6 +190,7 @@ export const ArchiveSection = ({ tableId }: { tableId: string }) => {
               : undefined
           }
         />
+        )}
         {plan.data ? (
           <div className="td-usage-caption">
             <Badge variant="outline">Dry run</Badge>
