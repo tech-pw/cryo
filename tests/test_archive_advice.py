@@ -42,7 +42,7 @@ def _facts(**overrides: object) -> PartitionFacts:
 
 def _policy(storage_class: str = "GLACIER_IR", **predicate: object):
     return policy_from_record(
-        name="cdp-default",
+        name="sample-default",
         storage_class=storage_class,
         min_age_days=90,
         predicate={"min_quiet_days": 7, "min_idle_days": 35, **predicate},

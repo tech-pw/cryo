@@ -4,8 +4,8 @@
   "status": "current",
   "command": "deliver",
   "type": "dataflow",
-  "input": "/Users/aamir/Projects/Cryo/site/diagrams/scan.dataflow.json",
-  "output": "/Users/aamir/Projects/Cryo/site/diagrams/scan.dataflow.html",
+  "input": "site/diagrams/scan.dataflow.json",
+  "output": "site/diagrams/scan.dataflow.html",
   "specification": {
     "sha256": "ac33bee86db0b6abd80438e11e582971e05928ac7135fdd714f8340f6e7a288c",
     "bytes": 2159

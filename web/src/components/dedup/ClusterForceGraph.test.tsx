@@ -38,9 +38,9 @@ const PAIRS: SimilarityPairRead[] = [
   {
     id: "pair-1",
     table_a_id: "t1",
-    table_a_name: "cdp.store.orders",
+    table_a_name: "demo.shop.orders",
     table_b_id: "t2",
-    table_b_name: "cdp.store.orders_backup",
+    table_b_name: "demo.shop.orders_backup",
     stage: "scored",
     similarity_score: 0.91,
     schema_similarity: 1.0,

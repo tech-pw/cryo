@@ -1,9 +1,10 @@
 # Cryo — Open Source Governance (pre-v1)
 
-Cryo is open source under the [Apache License 2.0](../LICENSE) at
-[github.com/shelf-project/Cryo](https://github.com/shelf-project/Cryo).
+Cryo is licensed under the [Apache License 2.0](../LICENSE). The canonical
+repository is [github.com/tech-pw/cryo](https://github.com/tech-pw/cryo). That
+repository is private until the public flip.
 
-This document describes **current** governance. It intentionally does **not** establish a
+This document describes the intended governance once the repository is public. It does **not** establish a
 full Apache-style PMC, CLA, or foundation structure — that overhead is deferred until external
 contributor volume justifies it (see [`research-and-roadmap.md`](./research-and-roadmap.md) Part 5).
 
@@ -24,7 +25,7 @@ Read [CONTRIBUTING.md](../CONTRIBUTING.md) for setup, commit conventions, and PR
 
 - Keep `main` deployable (CI: lint, typecheck, tests).
 - Review PRs within a reasonable window; prefer small, focused changes.
-- Update `docs/current-state.md` when behavior or contracts change.
+- Update `docs/CAPABILITIES.md` when behavior or contracts change.
 - Do not merge breaking API/schema changes without a migration and doc update.
 
 ## When to formalize further
@@ -35,7 +36,7 @@ Consider Apache-style governance (PMC, CLA, trademark policy) when **all** of th
 - Multiple organizations depending on Cryo in production.
 - Need for neutral trademark / release authority beyond a single org.
 
-Until then, GitHub-first governance under `shelf-project` is sufficient.
+Until then, GitHub-first governance under `tech-pw` is sufficient.
 
 ## License
 

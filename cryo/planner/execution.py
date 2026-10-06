@@ -171,8 +171,8 @@ def gate_orphan_removal_on_shared_location(
     remove_orphan_files lists everything under the table root and deletes whatever is not
     referenced by *this* table's metadata. When two catalog entries share a warehouse path --
     exact same prefix, or one nested under the other -- the other table's live data files look
-    exactly like orphans, and the procedure deletes them. This is not hypothetical: see
-    docs/incidents/rca-cdp-catalog-evolving-shared-s3-drop.md.
+    exactly like orphans, and the procedure deletes them. This is not hypothetical:
+    two catalog entries shared a warehouse prefix and orphan removal deleted the other table's files.
 
     Neither Trino's nor Spark's procedure takes a narrower prefix argument, and iceberg-go
     scans metadata.Location() (the whole table root, not just data/), so there is no way to

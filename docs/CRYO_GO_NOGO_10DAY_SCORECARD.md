@@ -254,7 +254,7 @@ waiting on deploy.
 **Deploy status**: still confirmed NOT deployed via git — identical commit (`c63fddef`),
 identical 43 uncommitted files as every prior check today.
 
-**Vitals**: unavailable this cycle. The `infra` credential bridge (`infra.penpencil.co`) that
+**Vitals**: unavailable this cycle. The cluster credential bridge that
 issues cluster auth tokens is timing out (`Client.Timeout exceeded while awaiting headers`,
 both on the token POST and on the resulting `kubectl` API calls) — this is the known,
 documented browser-session-bridge-expiry condition (see memory: it "expires often"), not
@@ -274,7 +274,7 @@ identical 43 uncommitted files as every prior check.
 
 **Vitals**: still unavailable. Both the direct `kubectl` API call (timed out after 30s, exit
 124) and the scorecard script's port-forward (`curl: (7) Failed to connect to 127.0.0.1 port
-18000`) failed the same way as the prior cycle — the `infra.penpencil.co` auth-bridge token
+18000`) failed the same way as the prior cycle — the `the cluster credential bridge` auth-bridge token
 issuance is still not responding. No numbers fabricated; skipping this cycle's reading again.
 
 **Read**: Second consecutive cycle with no live signal. Deploy still hasn't landed per git
@@ -292,7 +292,7 @@ identical 43 uncommitted files as every prior check.
 
 **Vitals**: still unavailable. Both the direct `kubectl` API call (timed out, exit 124) and
 the scorecard script (also timed out/failed) failed again — third consecutive cycle with the
-`infra.penpencil.co` auth bridge unresponsive. No numbers fabricated.
+`the cluster credential bridge` auth bridge unresponsive. No numbers fabricated.
 
 **Read**: Three straight hours with no live signal is longer than the bridge's normal
 "expires often" pattern — flagging to the user directly this cycle rather than silently
@@ -410,7 +410,7 @@ this reading makes the case for shipping them more urgent, not less.
   ReplicaSet at `DESIRED: 0` — deleted as stale garbage, not a rollout failure).
 - [ ] Confirm `orphaned_deferred` failure rate drops within 1-2 governor waves
 - [ ] Confirm watcher tick failures (if any) now show up as `cryo_native_watcher_tick_failures_total` in Prometheus, not silently
-- [ ] Confirm a known-no-op case (re-run `gold_dbt_poll_dashboard_view` or similar) now correctly fails instead of silently succeeding
+- [ ] Confirm a known-no-op case (re-run a table that previously reported success with zero commits) now correctly fails instead of silently succeeding
 - [ ] Let burn in 24-48h before starting the clean 10-day count
 
 ---
@@ -553,7 +553,7 @@ Queried `cryo.jobs` directly (via `kubectl exec` into the API pod) for the most 
 **254 of ~408 failures (~62%) are `native_job_reported_success_with_zero_work`** — the exact
 error string today's zero-work-detection fix (item 3) introduces. **This is not a regression
 from today's changes — it's that fix working correctly**, catching real native-engine no-ops
-that used to silently report `SUCCEEDED` and vanish (exactly the `gold_dbt_poll_dashboard_view`
+that used to silently report `SUCCEEDED` and vanish (exactly the silent-no-op
 incident pattern from earlier in this investigation). The detection is doing its job.
 
 **However**, this also surfaced a real gap: item 1 (disable the native engine fleet-wide,

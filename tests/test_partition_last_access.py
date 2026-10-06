@@ -9,8 +9,8 @@ from cryo.scanner.s3_request_cost_ingest import _advance_last_access
 
 
 def test_bucket_accepts_s3a_locations() -> None:
-    assert _bucket("s3a://pw-data/gold/x/y") == "pw-data"
-    assert _bucket("s3://pw-data/gold") == "pw-data"
+    assert _bucket("s3a://lake-bucket/gold/x/y") == "lake-bucket"
+    assert _bucket("s3://lake-bucket/gold") == "lake-bucket"
     assert _bucket("hdfs://nn/x") is None
     assert _bucket(None) is None
 

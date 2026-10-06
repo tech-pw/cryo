@@ -118,7 +118,7 @@ class NativeAdmitResult:
     # Native-unsupported ops (typically optimize_manifests) collected during this
     # admit. The caller (Governor.run_wave) must dispatch them with a *wave-level*
     # cap -- see split_fallback_dispatch_wave -- so a large cohort cannot hold the
-    # admission loop for many slot_cap batches (PDAE-8352).
+    # admission loop for many slot_cap batches.
     pending_fallback_dispatches: tuple[Callable[[], None], ...] = ()
 
 
@@ -269,12 +269,8 @@ def _fallback_engine_config(
     A single SQL-fallback destination is shared across every table routed to it regardless
     of which catalog that table actually lives in, so its spark_k8s.catalog_uri/catalog_warehouse
     and top-level `catalog` are just a static default -- correct only for tables whose source
-    happens to match it. Confirmed live, 2026-07-24: lms.silver_adminactions (source catalog_name
-    "hive", metastore thrift://metastore-dev.example.invalid:9083, warehouse
-    s3://example-dev-bucket/) fell back to this same destination as
-    cdp.mview.load_test_basefact, whose static config points at a completely different
-    metastore/warehouse (thrift://metastore.example.invalid:9083,
-    s3://example-prod-bucket/) under catalog name "cdp". Spark registered its Iceberg
+    happens to match it. Two tables from different catalogs fell back to the same destination,
+    whose static config pointed at only one of those metastores. Spark registered its Iceberg
     catalog plugin under the wrong name entirely, so `CALL hive.system.rewrite_data_files(...)`
     silently resolved against the builtin spark_catalog instead and failed with
     MISSING_CATALOG_ABILITY.PROCEDURES. The source's own uri/warehouse/catalog_name -- always
@@ -465,7 +461,7 @@ def _dispatch_fallback_operations(
                 fallback_engine.type,
                 reason,
             )
-            # PDAE-8352: submit() (fire-and-forget, no wait_for_completion()) exists only
+            # submit() (fire-and-forget, no wait_for_completion()) exists only
             # on SparkK8sEngine -- that's the destination this actually matters for (Spark
             # fallback dispatches are the ones with real wall-clock submit+run time that
             # were capping the whole wave's throughput at the fallback destination's
@@ -505,7 +501,7 @@ def _dispatch_fallback_operations(
                 # even in its except-blocks, alongside the real error= text) -- `detail or
                 # error or reason` therefore always picked the SQL statement and never once
                 # reached the actual exception. Every fallback-dispatch failure's audit row
-                # showed only "CALL cdp.system.rewrite_manifests(...)", never why it failed.
+                # showed only "CALL <catalog>.system.rewrite_manifests(...)", never why it failed.
                 # On failure, prefer the real error text; only fall back to detail/reason when
                 # the engine genuinely didn't produce one.
                 audit_detail = (
@@ -593,7 +589,7 @@ def _run_fallback_dispatches_concurrently(
     workers). The wave-level cap -- "at most one slot_cap-sized batch, then yield
     so run_wave can admit the regular async queue" -- lives one level up in
     ``split_fallback_dispatch_wave`` / ``Governor._run_one_fallback_dispatch_wave``
-    (PDAE-8352, 2026-08-18: 49 dispatches, 0 "Wave complete" in 10 min, ~9.5 min
+    (2026-08-18: 49 dispatches, 0 "Wave complete" in 10 min, ~9.5 min
     per wave when this ran the full cohort before returning).
     """
     concurrency = min(
@@ -657,7 +653,7 @@ def split_fallback_dispatch_wave(
     ``_run_fallback_dispatches_concurrently`` already bounds *in-flight* dispatches
     to slot_cap. This is the next level up: a wave that collected dozens of
     fallbacks must not wait for every batch of that pool before ``run_wave()``
-    returns. Live evidence (PDAE-8352, 2026-08-18): 49 dispatches, slot_cap=6,
+    returns. Live evidence (2026-08-18): 49 dispatches, slot_cap=6,
     40–80s each, ~9.5 min per wave, 0 "Wave complete" in 10 min -- regular
     async-queue admission starved for the whole cohort.
 
@@ -746,7 +742,7 @@ def admit_native_k8s_jobs(
     Native-unsupported operations (typically ``optimize_manifests``) are returned
     on ``pending_fallback_dispatches`` and are **not** executed here. The Governor
     caps them to one slot_cap concurrent batch per ``run_wave`` so the regular
-    async queue is not starved (PDAE-8352).
+    async queue is not starved.
     """
     if not jobs:
         return NativeAdmitResult()

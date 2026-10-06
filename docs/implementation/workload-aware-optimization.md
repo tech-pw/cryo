@@ -519,13 +519,12 @@ bounded set of current-snapshot file paths with decoded column bounds, independe
 completion order. Telemetry extracts only concrete two-sided SQL ranges and persists the top 100
 frequency-ranked ranges per table. Planner/engine execution remains open.
 
-**Collection turned off, then rebuilt scoped (2026-09-24).** The original samples held every
-column's bounds, including student IDs, question text and emails, and every scan copied them
-into `table_stats_history` (most of its 48 GB). They were purged, and history rows no longer
+**Collection turned off, then rebuilt scoped (2026-09-24).** The original samples held unbounded
+column bounds and copied them into `table_stats_history`. They were purged, and history rows no longer
 carry `wair_*` keys. The rebuilt pipeline is what the paper actually needs:
 
-- **Query ranges** come from the Trino query log in both telemetry modes. Prod's `cdp` source is
-  `iceberg_table` mode, which never extracted ranges before, which is why only one table had any.
+- **Query ranges** come from the Trino query log in both telemetry modes. A source in
+  `iceberg_table` mode did not extract ranges, so most tables had none.
   Each range keeps per-day query counts plus the queries' own `cpu_time_millis` and
   `physical_input_bytes` over a 7-day window (`cryo/optimizer/wair/ranges.py`). One-sided ranges
   are kept, and only numeric/temporal literals are stored.

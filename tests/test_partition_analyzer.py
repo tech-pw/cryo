@@ -224,7 +224,7 @@ def test_returns_none_below_min_query_threshold(session) -> None:
 
 
 def test_scan_ratio_trigger_when_filter_pct_below_eighty(session) -> None:
-    """PDAE-8357-shaped: scans are large even though no column dominates at >=80%."""
+    """-shaped: scans are large even though no column dominates at >=80%."""
     table = _seed_table(session, table_name="pdae_events")
     total_size_gb = 10.0
     _seed_stats(

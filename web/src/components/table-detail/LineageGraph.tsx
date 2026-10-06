@@ -11,9 +11,6 @@ import {
   SheetTitle
 } from "../ui/sheet";
 
-const LINEAGE_DOCS_URL =
-  "https://github.com/shelf-project/Cryo/blob/main/docs/architecture.md#26-gnn-based-joinlineage-discovery-omnimatchautogjointdeepjoin";
-
 const NODE_WIDTH = 148;
 const NODE_HEIGHT = 44;
 const COLUMN_GAP = 120;
@@ -165,13 +162,6 @@ export const LineageGraph = ({ data, isLoading, error }: LineageGraphProps) => {
       <EmptyState
         title="Lineage unavailable"
         description="Lineage is built from query-log ingestion. Connect telemetry and run workloads to populate edges."
-        action={
-          <Button variant="outline" asChild>
-            <a href={LINEAGE_DOCS_URL} target="_blank" rel="noreferrer">
-              Read lineage docs
-            </a>
-          </Button>
-        }
       />
     );
   }
@@ -183,13 +173,6 @@ export const LineageGraph = ({ data, isLoading, error }: LineageGraphProps) => {
       <EmptyState
         title="No lineage edges yet"
         description={`No upstream or downstream tables are linked to ${data.root_table_name}. Cryo records lineage from Trino and Spark query logs.`}
-        action={
-          <Button variant="outline" asChild>
-            <a href={LINEAGE_DOCS_URL} target="_blank" rel="noreferrer">
-              How lineage is collected
-            </a>
-          </Button>
-        }
       />
     );
   }

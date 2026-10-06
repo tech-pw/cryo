@@ -1,12 +1,12 @@
 # Research & Roadmap
 
 > Last reconciled: 2026-07-05. Sources (merged into this doc):
-> [`research-and-roadmap.md`](https://github.com/shelf-project/Cryo/blob/main/docs/research-and-roadmap.md) (what to build next),
-> [`research-and-roadmap.md`](https://github.com/shelf-project/Cryo/blob/main/docs/research-and-roadmap.md) (performance + OSS strategy),
-> [`research-and-roadmap.md`](https://github.com/shelf-project/Cryo/blob/main/docs/research-and-roadmap.md) (competitors + research papers),
-> [`research-and-roadmap.md`](https://github.com/shelf-project/Cryo/blob/main/docs/research-and-roadmap.md) (FORMATS '26 triage),
-> [`research-and-roadmap.md`](https://github.com/shelf-project/Cryo/blob/main/docs/research-and-roadmap.md) (UI/UX spec),
-> [`research-and-roadmap.md`](https://github.com/shelf-project/Cryo/blob/main/docs/research-and-roadmap.md) (cost-savings UI spec).
+> [`research-and-roadmap.md`](https://github.com/tech-pw/cryo/blob/main/docs/research-and-roadmap.md) (what to build next),
+> [`research-and-roadmap.md`](https://github.com/tech-pw/cryo/blob/main/docs/research-and-roadmap.md) (performance + OSS strategy),
+> [`research-and-roadmap.md`](https://github.com/tech-pw/cryo/blob/main/docs/research-and-roadmap.md) (competitors + research papers),
+> [`research-and-roadmap.md`](https://github.com/tech-pw/cryo/blob/main/docs/research-and-roadmap.md) (FORMATS '26 triage),
+> [`research-and-roadmap.md`](https://github.com/tech-pw/cryo/blob/main/docs/research-and-roadmap.md) (UI/UX spec),
+> [`research-and-roadmap.md`](https://github.com/tech-pw/cryo/blob/main/docs/research-and-roadmap.md) (cost-savings UI spec).
 > The architecture decisions are in [`architecture.md`](./architecture.md); the executor /
 > engine-layer plan is in [`execution-plan.md`](./execution-plan.md).
 

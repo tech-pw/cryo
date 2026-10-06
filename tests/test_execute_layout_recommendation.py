@@ -65,7 +65,7 @@ def _seed(
         id=uuid4(),
         name=f"fallback-{uuid4()}",
         engine="spark_emr",
-        config={"catalog": "cdp", "spark_k8s": {"namespace": "cryo"}},
+        config={"catalog": "sample", "spark_k8s": {"namespace": "cryo"}},
     )
     table = Table(
         id=uuid4(),
@@ -135,7 +135,7 @@ def _seed_with_spark_primary_destination(
     -> spark-k8s-fallback), with no sql_fallback_destination_id of its own -- Spark isn't a
     fallback here, it IS the primary engine. Regression, 2026-08-11: the fallback-id-only check
     in execute_layout_recommendation rejected every such table with a 422 even though nothing
-    else was missing (found live on lsq_pw.silver_prospect_activity_base, effective preset
+    else was missing (found live on crm.silver_prospect_activity_base, effective preset
     spark-medium -> destination spark-k8s-fallback, engine=spark_emr, config has no
     sql_fallback_destination_id since it's not acting as anyone's fallback).
     """
@@ -144,7 +144,7 @@ def _seed_with_spark_primary_destination(
         name=f"source-{uuid4()}",
         type="rest",
         config={
-            "catalog_name": "lsq_pw",
+            "catalog_name": "crm",
             "uri": "thrift://metastore.example.invalid:9083",
             "warehouse": "s3://example-prod-bucket/",
         },
@@ -153,12 +153,12 @@ def _seed_with_spark_primary_destination(
         id=uuid4(),
         name="spark-k8s-fallback",
         engine="spark_emr",
-        config={"catalog": "cdp", "spark_k8s": {"namespace": "cryo"}},
+        config={"catalog": "sample", "spark_k8s": {"namespace": "cryo"}},
     )
     table = Table(
         id=uuid4(),
         source_id=source.id,
-        schema_name="lsq_pw",
+        schema_name="crm",
         table_name="silver_prospect_activity_base",
         is_active=True,
     )
@@ -294,7 +294,7 @@ def test_execute_uses_destination_directly_when_it_is_already_spark(session, mon
 def test_execute_rejects_columns_not_present_on_real_schema(session, monkeypatch) -> None:
     """Regression, 2026-08-11: recommended_columns comes straight from QueryPattern.column_name
     telemetry, never validated against the table's real Iceberg schema -- confirmed live on
-    lsq_pw.silver_prospect_activity_base, whose recommendation included 'mx_customobject_1'
+    crm.silver_prospect_activity_base, whose recommendation included 'mx_customobject_1'
     (not a real column, a query alias) and dispatched a real Spark job that failed deep in a
     Java stack trace only after the rewrite had already started. Must fail fast instead."""
     rec_id = _seed(

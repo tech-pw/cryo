@@ -95,8 +95,8 @@ it):
 focused change per iteration, on the dedicated `ux-improvement-loop` branch only (never
 push to main, never open a PR unless asked).
 
-Ground every decision in /Users/aamir/Projects/Cryo/PRODUCT.md and
-/Users/aamir/Projects/Cryo/DESIGN.md — read them fresh each iteration if unsure. Cryo is
+Ground every decision in PRODUCT.md and
+DESIGN.md — read them fresh each iteration if unsure. Cryo is
 a calm, exact, operational infrastructure tool for data platform engineers/SREs (Iceberg
 table maintenance) — the brand personality is explicitly "no decorative noise," and
 DESIGN.md has an explicit bans list (no gradients, no glassmorphism, no decorative

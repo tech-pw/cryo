@@ -173,9 +173,9 @@ export const useRunLiveEvents = (runId: UUID, token: string) => {
       }
     };
     socket.onerror = () => setWsOpen(false);
-    socket.onclose = () => {
+    socket.onclose = (closeEvent) => {
       setWsOpen(false);
-      if (socketRef.current === socket && !runTerminalRef.current && messageEvent.code !== 1008) {
+      if (socketRef.current === socket && !runTerminalRef.current && closeEvent.code !== 1008) {
         scheduleReconnect();
       }
     };

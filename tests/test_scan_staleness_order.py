@@ -24,7 +24,7 @@ class _FakeCatalog:
         raise NotImplementedError
 
 
-def _seed_source(session, *, name: str = "cdp") -> Source:
+def _seed_source(session, *, name: str = "sample") -> Source:
     source = Source(id=uuid4(), name=name, type="rest", config={}, enabled=True)
     session.add(source)
     session.flush()

@@ -35,8 +35,8 @@ import (
 // connection (packets silently dropped, no RST -- the common case for a stale/rotated metastore
 // IP behind an internal DNS record, as opposed to an actively-refused port) can run for minutes.
 //
-// Found live, 2026-08-20: a batched native dispatch stuck at the (then-already-raised, per
-// PDAE-8546) 4h activeDeadlineSeconds killed the whole pod, wiping every member's outcome the
+// Found live: a batched native dispatch stuck at a raised 4h activeDeadlineSeconds killed the
+// whole pod, wiping every member's outcome the
 // deadline-kill path can't recover logs for. Root cause traced to individual catalog.Load
 // attempts each taking ~1,664s (27.7 min) against a metastore hostname whose DNS had rotated to
 // a since-recycled pod IP (confirmed live: the failing IPs in the pod's own logs matched no

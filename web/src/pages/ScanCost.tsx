@@ -38,7 +38,18 @@ export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
       {embedded ? (
         <div className="mb-3 flex items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">Bytes scanned, from the query log. This is not a dollar cost.</p>
-          <Select className="w-40" value={days} onChange={(value) => setDays(value ?? "7")} options={DAY_OPTIONS} />
+          <Select
+            className="w-40"
+            value={days}
+            onChange={(value) =>
+              setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                next.set("range", value ?? "7");
+                return next;
+              })
+            }
+            options={DAY_OPTIONS}
+          />
         </div>
       ) : (
         <PageHeader

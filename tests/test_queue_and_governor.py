@@ -557,7 +557,7 @@ def _enqueue_job(
 
 
 def test_run_wave_caps_fallback_dispatches_to_one_slot_cap_batch(monkeypatch) -> None:
-    """PDAE-8352: a cohort of optimize_manifests fallbacks must not hold run_wave()
+    """: a cohort of optimize_manifests fallbacks must not hold run_wave()
     until every table is dispatched. slot_cap still bounds in-flight concurrency;
     the wave itself yields after one batch so the next tick can admit the async queue.
     """

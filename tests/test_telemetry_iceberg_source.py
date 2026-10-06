@@ -22,8 +22,8 @@ class TestSelectivityForQuery:
         inputs_json = json.dumps(
             [
                 {
-                    "schema": "pw_experimentation",
-                    "table": "gold_unleash_experiments_v1",
+                    "schema": "analytics_experiments",
+                    "table": "gold_feature_flags_v1",
                     "physicalInputRows": 181547999,
                     "connectorInfo": {"totalRecords": "76524592123"},
                 }
@@ -31,8 +31,8 @@ class TestSelectivityForQuery:
         )
         result = _selectivity_for_query(
             inputs_json,
-            schema_name="pw_experimentation",
-            table_name="gold_unleash_experiments_v1",
+            schema_name="analytics_experiments",
+            table_name="gold_feature_flags_v1",
         )
         assert result == 181547999 / 76524592123
 
@@ -47,7 +47,7 @@ class TestSelectivityForQuery:
                     "connectorInfo": {"totalRecords": "19"},
                 },
                 {
-                    "schema": "pw_bq",
+                    "schema": "analytics",
                     "table": "silver_dbt_enter_name",
                     "physicalInputRows": 500,
                     "connectorInfo": {"totalRecords": "5000"},
@@ -55,7 +55,7 @@ class TestSelectivityForQuery:
             ]
         )
         result = _selectivity_for_query(
-            inputs_json, schema_name="pw_bq", table_name="silver_dbt_enter_name"
+            inputs_json, schema_name="analytics", table_name="silver_dbt_enter_name"
         )
         assert result == 0.1
 
@@ -71,7 +71,7 @@ class TestSelectivityForQuery:
             ]
         )
         result = _selectivity_for_query(
-            inputs_json, schema_name="pw_bq", table_name="silver_dbt_enter_name"
+            inputs_json, schema_name="analytics", table_name="silver_dbt_enter_name"
         )
         assert result is None
 

@@ -547,7 +547,7 @@ def test_maintenance_run_detail_job_detail_and_cancel(api_db: ApiDb) -> None:
 def test_maintenance_run_applies_adaptive_routing_around_failing_destination(
     api_db: ApiDb,
 ) -> None:
-    """Regression, confirmed live 2026-08-11: unified_bq.gold_dbt_pw_bq failed on
+    """Regression, confirmed live 2026-08-11: warehouse.gold_events failed on
     native-datafusion 4 times in a row, and consecutive_engine_failures() correctly detected
     that streak -- but every retry actually hit this table through POST /maintenance/run
     (trigger="api"/"claude-retry-failed-*"), which always dispatched to the single

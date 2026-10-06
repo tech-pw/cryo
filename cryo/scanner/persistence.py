@@ -314,8 +314,8 @@ def _maintenance_job_ran_between(
     so a completed run inflates the table's own snapshot count independent of any external
     write activity. Without this check, the commit-velocity ("High velocity streaming")
     signal in ``detect_streaming_from_history`` misattributes a run's own commits to
-    streaming writes -- confirmed live, 2026-07-27: a single deep run on
-    pw_bq.silver_dbt_pw_launch took total_snapshots 8 -> 36, which the unadjusted heuristic
+    streaming writes -- confirmed live, 2026-07-27: a single deep run took
+    total_snapshots 8 -> 36, which the unadjusted heuristic
     read as 80 commits/day of streaming ingestion.
     """
     return (

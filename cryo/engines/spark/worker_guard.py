@@ -1,6 +1,6 @@
 """Observe Spark-on-K8s plan footprints without widening rewrite scope.
 
-PDAE-8348: all cryo-worker pods OOMKilled in one ~90min window (limit 4Gi, steady-state
+: all cryo-worker pods OOMKilled in one ~90min window (limit 4Gi, steady-state
 ~150-220Mi). The Helm bump in 1253fe3 (4Gi→6Gi) is a safety margin only. The lead table
 was ~2TB / ~30k files — partition-aware plans plus `table_data.partitions` on the worker
 are the in-process blow-up, not Spark itself (compute already runs in a Job).
@@ -24,7 +24,7 @@ from cryo.planner.serialization import plan_to_dict
 
 logger = logging.getLogger(__name__)
 
-# Conservative vs the PDAE-8348 lead (1.97TB / 30,547 files). Below these, keep
+# Conservative vs the  lead (1.97TB / 30,547 files). Below these, keep
 # partition filters so Spark still scopes the rewrite.
 OUTLIER_SIZE_GB = 500.0
 OUTLIER_FILE_COUNT = 10_000

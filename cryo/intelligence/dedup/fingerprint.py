@@ -27,14 +27,12 @@ from sqlalchemy.orm import Session
 
 from cryo.db.models import Table, TableColumn, TableStats
 
-# Tightened from an original 0.02 after a real production run, 2026-08-13: this fleet has
-# a single schema bucket of 1,667 tables (spanning many unrelated source products --
-# pw_bq, curiousjr_bq, xylem_bq, ...) that share a generic BigQuery-ingestion schema shape
-# by coincidence, not because they're related. At 0.02 that one bucket alone produced
-# 1.39M of 1.41M total candidate pairs -- schema-identical does not mean related when
-# hundreds of genuinely unrelated tables share a common ingestion format, which the design
+# Tightened from an original 0.02 after a production run: one schema bucket of unrelated
+# tables shared a generic ingestion shape by coincidence, not because they were related.
+# At 0.02 that one bucket produced almost every candidate pair. Schema-identical does not
+# mean related when many unrelated tables share a common ingestion format, which the design
 # doc's SS9 false-positive section names directly ("coincidental schema similarity,
-# unrelated data") but the original threshold badly underestimated for this fleet's shape.
+# unrelated data") but the original threshold underestimated.
 # 0.9 still leaves 51,511 candidates from that one bucket alone (verified by direct
 # simulation against real fleet data) -- tables clustered near similar small sizes still
 # pass a strict ratio -- so this alone doesn't fully solve the problem; naming_pattern_hint

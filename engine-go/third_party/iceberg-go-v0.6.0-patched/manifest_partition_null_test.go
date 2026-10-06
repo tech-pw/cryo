@@ -25,11 +25,11 @@ import (
 	"github.com/twmb/avro/atype"
 )
 
-// Regression for PDAE-8279: a manifest entry whose Avro-encoded partition data has a nil
+// Regression: a manifest entry whose Avro-encoded partition data has a nil
 // value for a logical-typed field (e.g. a row whose partition-source column was itself
 // null) previously panicked with "interface conversion: interface {} is nil, not int32"
 // instead of decoding to "no value". Crashed the whole native maintenance subprocess in
-// production (table hive.icesheet.silver_offline_drip_read_status_2, 2026-08-14) and took
+// production and took
 // down every other job packed into the same batch dispatch pod with it.
 func TestConvertAvroValueToIcebergType_NilValueDoesNotPanic(t *testing.T) {
 	cases := []struct {

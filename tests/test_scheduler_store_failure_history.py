@@ -1,6 +1,6 @@
 """Tests for SQLSchedulerStore.consecutive_engine_failures().
 
-Regression context, 2026-08-10: unified_bq.gold_dbt_pw_bq failed on the native engine 4
+Regression context, 2026-08-10: warehouse.gold_events failed on the native engine 4
 times in a row across 8 days, 4 different error messages -- and adaptive routing's scoring
 had no memory of that history at all, so a repeatedly-failing destination scored identically
 to one never tried. This is the query that gives routing that memory.

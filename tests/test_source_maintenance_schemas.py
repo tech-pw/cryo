@@ -18,9 +18,9 @@ from tests.test_presets_api_db import ApiDb
 
 
 def test_normalize_maintenance_schema_names_dedupes_and_strips() -> None:
-    assert normalize_maintenance_schema_names([" analytics ", "analytics", "", "cdp"]) == [
+    assert normalize_maintenance_schema_names([" analytics ", "analytics", "", "sample"]) == [
         "analytics",
-        "cdp",
+        "sample",
     ]
 
 
@@ -75,8 +75,8 @@ def test_deactivate_orphaned_evolving_catalog_entries_deactivates_only_confirmed
 ) -> None:
     """Direct regression test for the live incident: 1,371 active tables named ``*_evolving``
     with location=None, each confirmed to have a same-schema sibling under the suffix-stripped
-    name that DOES have a real location -- e.g. ezpay.gold_notifications_evolving (orphaned)
-    alongside ezpay.gold_notifications (the real, currently-scanned table)."""
+    name that DOES have a real location -- e.g. payments.gold_notifications_evolving (orphaned)
+    alongside payments.gold_notifications (the real, currently-scanned table)."""
     source = Source(id=uuid4(), name="src", type="rest", config={}, maintenance_schema_names=[])
     session.add(source)
     session.flush()
@@ -84,7 +84,7 @@ def test_deactivate_orphaned_evolving_catalog_entries_deactivates_only_confirmed
     orphan = Table(
         id=uuid4(),
         source_id=source.id,
-        schema_name="ezpay",
+        schema_name="payments",
         table_name="gold_notifications_evolving",
         location=None,
         is_active=True,
@@ -92,9 +92,9 @@ def test_deactivate_orphaned_evolving_catalog_entries_deactivates_only_confirmed
     real_sibling = Table(
         id=uuid4(),
         source_id=source.id,
-        schema_name="ezpay",
+        schema_name="payments",
         table_name="gold_notifications",
-        location="s3a://example-prod-bucket/silver/ezpay/notifications_evolving",
+        location="s3a://example-prod-bucket/silver/payments/notifications_evolving",
         is_active=True,
     )
     session.add_all([orphan, real_sibling])
@@ -180,7 +180,7 @@ def test_deactivate_orphaned_evolving_catalog_entries_ignores_already_inactive_o
     already_deactivated = Table(
         id=uuid4(),
         source_id=source.id,
-        schema_name="curiousjr",
+        schema_name="regions",
         table_name="keystores_evolving",
         location=None,
         is_active=False,
@@ -188,9 +188,9 @@ def test_deactivate_orphaned_evolving_catalog_entries_ignores_already_inactive_o
     real_sibling = Table(
         id=uuid4(),
         source_id=source.id,
-        schema_name="curiousjr",
+        schema_name="regions",
         table_name="keystores",
-        location="s3a://example-prod-bucket/bronze/curiousjr/keystores_evolving",
+        location="s3a://example-prod-bucket/bronze/regions/keystores_evolving",
         is_active=True,
     )
     session.add_all([already_deactivated, real_sibling])
@@ -311,26 +311,26 @@ def test_source_crud_maintenance_schema_names(api_db: ApiDb) -> None:
             "name": f"lake-{uuid4()}",
             "type": "rest",
             "config": {"uri": "http://localhost:8181"},
-            "maintenance_schema_names": ["analytics", "analytics", " cdp "],
+            "maintenance_schema_names": ["analytics", "analytics", " sample "],
         },
     )
     assert create.status_code == 201
     body = create.json()
-    assert body["maintenance_schema_names"] == ["analytics", "cdp"]
+    assert body["maintenance_schema_names"] == ["analytics", "sample"]
     source_id = body["id"]
 
     patch = client.patch(
         f"/api/v1/sources/{source_id}",
         headers=ADMIN_HEADERS,
-        json={"maintenance_schema_names": ["cdp"]},
+        json={"maintenance_schema_names": ["sample"]},
     )
     assert patch.status_code == 200
-    assert patch.json()["maintenance_schema_names"] == ["cdp"]
+    assert patch.json()["maintenance_schema_names"] == ["sample"]
 
     listed = client.get("/api/v1/sources", headers=OPERATOR_HEADERS)
     assert listed.status_code == 200
     match = next(item for item in listed.json() if item["id"] == source_id)
-    assert match["maintenance_schema_names"] == ["cdp"]
+    assert match["maintenance_schema_names"] == ["sample"]
 
 
 def test_resolve_selection_excludes_out_of_scope_tables(api_db: ApiDb) -> None:

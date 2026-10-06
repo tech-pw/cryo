@@ -79,6 +79,7 @@ def test_fetch_todays_cost_parses_used_and_unused() -> None:
         check = fetch_todays_namespace_cost(
             grafana_url="https://grafana.example.com",
             grafana_token="tok",
+            datasource_uid="example-ds",
             cluster_name="example-eks",
             namespace="cryo",
             ceiling_usd=100.0,
@@ -97,6 +98,7 @@ def test_fetch_todays_cost_under_ceiling_is_not_over() -> None:
         check = fetch_todays_namespace_cost(
             grafana_url="https://grafana.example.com",
             grafana_token="tok",
+            datasource_uid="example-ds",
             cluster_name="example-eks",
             namespace="cryo",
             ceiling_usd=100.0,
@@ -113,6 +115,7 @@ def test_fetch_todays_cost_handles_empty_frame_as_zero() -> None:
         check = fetch_todays_namespace_cost(
             grafana_url="https://grafana.example.com",
             grafana_token="tok",
+            datasource_uid="example-ds",
             cluster_name="example-eks",
             namespace="cryo",
             ceiling_usd=100.0,
@@ -129,6 +132,7 @@ def test_fetch_todays_cost_raises_on_grafana_query_error() -> None:
             fetch_todays_namespace_cost(
                 grafana_url="https://grafana.example.com",
                 grafana_token="tok",
+                datasource_uid="example-ds",
                 cluster_name="example-eks",
                 namespace="cryo",
                 ceiling_usd=100.0,
@@ -147,6 +151,7 @@ def test_fetch_namespace_cost_range_parses_multiple_days() -> None:
         days = fetch_namespace_cost_range(
             grafana_url="https://grafana.example.com",
             grafana_token="tok",
+            datasource_uid="example-ds",
             cluster_name="example-eks",
             namespace="trino-db",
             since=date(2026, 8, 14),
@@ -170,6 +175,7 @@ def test_fetch_namespace_cost_range_empty_frame_returns_empty_list() -> None:
         days = fetch_namespace_cost_range(
             grafana_url="https://grafana.example.com",
             grafana_token="tok",
+            datasource_uid="example-ds",
             cluster_name="example-eks",
             namespace="trino-db",
             since=date(2026, 8, 14),
@@ -185,6 +191,7 @@ def test_fetch_namespace_cost_range_raises_on_grafana_query_error() -> None:
             fetch_namespace_cost_range(
                 grafana_url="https://grafana.example.com",
                 grafana_token="tok",
+                datasource_uid="example-ds",
                 cluster_name="example-eks",
                 namespace="trino-db",
                 since=date(2026, 8, 14),
@@ -192,7 +199,7 @@ def test_fetch_namespace_cost_range_raises_on_grafana_query_error() -> None:
 
 
 def test_fetch_latest_billed_cost_returns_most_recent_day_with_rows() -> None:
-    """PDAE-8541: the whole point of this function is picking the latest day that actually
+    """The whole point of this function is picking the latest day that actually
     has CUR rows, not literally today (which structurally never has rows yet -- see
     fetch_todays_namespace_cost's docstring)."""
     payload = _grafana_range_response(
@@ -205,6 +212,7 @@ def test_fetch_latest_billed_cost_returns_most_recent_day_with_rows() -> None:
         check = fetch_latest_billed_namespace_cost(
             grafana_url="https://grafana.example.com",
             grafana_token="tok",
+            datasource_uid="example-ds",
             cluster_name="example-eks",
             namespace="cryo",
             ceiling_usd=100.0,
@@ -226,6 +234,7 @@ def test_fetch_latest_billed_cost_returns_none_when_window_fully_lagging() -> No
         check = fetch_latest_billed_namespace_cost(
             grafana_url="https://grafana.example.com",
             grafana_token="tok",
+            datasource_uid="example-ds",
             cluster_name="example-eks",
             namespace="cryo",
             ceiling_usd=100.0,
@@ -240,6 +249,7 @@ class _FakeSettings:
     cost_ceiling_cluster_name = "example-eks"
     cost_ceiling_namespace = "cryo"
     cost_ceiling_tolerance_pct = 0.15
+    grafana_athena_datasource_uid = "example-ds"
 
 
 class _DisabledSettings(_FakeSettings):

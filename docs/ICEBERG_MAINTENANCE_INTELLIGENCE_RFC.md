@@ -2,7 +2,7 @@
 
 **Status:** Implemented 2026-08-19 (extend existing analyzers; no one-click partition apply;
 fast-path detects only — does not compact). See §7 for code map, tests, and leftover gaps.
-**Owner:** Aamir
+**Owner:** Cryo maintainers
 **Last updated:** 2026-08-19
 **Scope:** Full-stack (backend scanner/analyzer changes, new API surface, UI in Table Detail / Catalogs / Health)
 
@@ -40,7 +40,7 @@ fast-path detects only — does not compact). See §7 for code map, tests, and l
 > **Recommended next step before building anything:** re-read `partition_analyzer.py` and
 > `analyze_partition_evolution` in full, and re-scope §3/§6 (and the build-order in §7) around
 > "extend the existing partition-evolution recommender" rather than "build a new Partition-Fit
-> Detector from scratch." The evidence in §1 (PDAE-8357, the small-file case study) and the
+> Detector from scratch." The evidence in §1 (, the small-file case study) and the
 > external research in §2 are still valid and worth keeping — only the "what already exists in
 > Cryo vs. what's net-new" framing in §3/§5/§6 needed correcting.
 
@@ -48,13 +48,13 @@ fast-path detects only — does not compact). See §7 for code map, tests, and l
 
 ## 0. Executive summary
 
-This RFC proposes four new Cryo capabilities, each grounded in (a) published research and industry practice on Iceberg/data-lake maintenance, and (b) two pieces of real, measured evidence gathered in production this session: the **PDAE-8357** investigation (a query pattern scanning ~2.4B rows / ~133GB per call, 11,610 times/week, because its partition key didn't match its access pattern) and a **live, freshly-observed small-file pathology** on a table built during that same investigation (129,375 files averaging 301KB each, for only 37.2GB of data — see §1.2).
+This RFC proposes four new Cryo capabilities, each grounded in (a) published research and industry practice on Iceberg/data-lake maintenance, and (b) two pieces of real, measured evidence gathered in production this session: the **** investigation (a query pattern scanning ~2.4B rows / ~133GB per call, 11,610 times/week, because its partition key didn't match its access pattern) and a **live, freshly-observed small-file pathology** on a table built during that same investigation (129,375 files averaging 301KB each, for only 37.2GB of data — see §1.2).
 
 The four capabilities:
 
 | # | Capability | Closes the gap that... | Build status (shipped 2026-08-19) |
 |---|---|---|---|
-| 1 | **Partition-Fit Detector** | ...meant PDAE-8357 took hours of manual `EXPLAIN`/log analysis to diagnose, instead of an automated flag | **Shipped as an extension** of `analyze_partition_evolution`: Algoscale scan-ratio (`avg(QueryLog.bytes_read) / table_bytes > 10%`) plus existing `filter_pct >= 80`. See §3. |
+| 1 | **Partition-Fit Detector** | ...meant  took hours of manual `EXPLAIN`/log analysis to diagnose, instead of an automated flag | **Shipped as an extension** of `analyze_partition_evolution`: Algoscale scan-ratio (`avg(QueryLog.bytes_read) / table_bytes > 10%`) plus existing `filter_pct >= 80`. See §3. |
 | 2 | **Fast-Path Health Check for New Tables** | ...let a brand-new table fragment into 129K files before any scan ever looked at it | **Shipped** — `cryo/scanner/fast_path_check.py`, scheduler sweep, Health + table-detail UI. Detect-only (no auto-compact). See §4. |
 | 3 | **Day-0 `write.target-file-size-bytes` Check** | ...meant that same table's writer never had a target file size to aim for in the first place | **Shipped as scheduling** — existing `compute_property_recommendations` (works with no `TableStats`); fast-path + optional property autopilot now call it for new tables. See §5. |
 | 4 | **Bucket/Partition Cardinality Sizing Validator** | ...meant an educated-guess bucket count (`bucket(id, 64)`) went unverified against real row-volume growth | **Shipped** — `analyze_bucket_sizing` / public `bucket_count_for` re-checks existing `bucket(N)` vs volume. Coarse estimate (`total_size_gb / N`), not live `$partitions`. See §6. |
@@ -67,9 +67,9 @@ None of these replace existing Cryo capabilities (compaction, `expire_snapshots`
 
 ## 1. Motivating evidence
 
-### 1.1 Case study: PDAE-8357
+### 1.1 Case study: 
 
-**Ticket:** PDAE-8357, "backend_user_admin: single-ID phone lookup full-scans 2B-row silver_prospect_activity_base — ~364TB/week" (parent: PDAE-4337, S3 and Trino Cost Reduction Initiative).
+**Ticket:** , "backend_user_admin: single-ID phone lookup full-scans 2B-row silver_prospect_activity_base — ~364TB/week" (parent: , S3 and Trino Cost Reduction Initiative).
 
 A backend service ran this query pattern 11,610 times over 7 days, averaging **31.3GB scanned and 131 seconds per execution** — **~364TB/week** from one query pattern alone:
 
@@ -102,7 +102,7 @@ This is precisely the pattern Iceberg's own partitioning guidance recommends for
 
 ### 1.2 Live measurement: the small-file pathology, caught in real time
 
-While verifying the PDAE-8357 fix's own effectiveness (via a newly-available `mcp-trino` connection, 2026-08-19), the following was measured directly against the real, already-built table:
+While verifying the  fix's own effectiveness (via a newly-available `mcp-trino` connection, 2026-08-19), the following was measured directly against the real, already-built table:
 
 ```sql
 SELECT count(*) FROM cdp.lsq_pw.gold_dbt_lsq_pw_prospect_activity_phone_lookup;
@@ -139,11 +139,11 @@ This single, freshly-observed data point is direct evidence for three of the fou
 
 ### 2.1 Industry practice and tooling
 
-- **[Algoscale — Data Lake Cost Optimization](https://algoscale.com/go/blog/data-lake-cost-optimization/)** — the practice that seeded this RFC. Key claims used here: (a) *"validate pruning effectiveness: measure average bytes-scanned-per-query against total table size; if exceeding ~10%, the partition key misaligns with the workload"* (→ Feature 1); (b) *"trigger compaction when small files exceed 30% of total file count rather than fixed time schedules"*; (c) *"partitioning fixes first, then compaction, then lifecycle — earlier work amplifies later work"* — directly matches the PDAE-8357 sequencing (partition-key fix is the real fix; compacting the source tables was flagged in the ticket as "real but smaller, unrelated to the core problem").
+- **[Algoscale — Data Lake Cost Optimization](https://algoscale.com/go/blog/data-lake-cost-optimization/)** — the practice that seeded this RFC. Key claims used here: (a) *"validate pruning effectiveness: measure average bytes-scanned-per-query against total table size; if exceeding ~10%, the partition key misaligns with the workload"* (→ Feature 1); (b) *"trigger compaction when small files exceed 30% of total file count rather than fixed time schedules"*; (c) *"partitioning fixes first, then compaction, then lifecycle — earlier work amplifies later work"* — directly matches the  sequencing (partition-key fix is the real fix; compacting the source tables was flagged in the ticket as "real but smaller, unrelated to the core problem").
 - **[Dremio — Apache Iceberg Small Files Problem: Causes, Fixes, and Prevention](https://www.dremio.com/blog/apache-iceberg-small-files-problem-causes-fixes-and-prevention/)** — target file size guidance (256–512MB Parquet), and the causes taxonomy (streaming writers with small checkpoint intervals, over-partitioning, `delete+insert`/merge patterns without target-size tuning) — matches the mechanism behind §1.2's finding almost exactly.
 - **[LakeOps — Automating Apache Iceberg Table Maintenance](https://lakeops.dev/blog/automating-iceberg-table-maintenance)** — the central architectural framing this RFC borrows: *"treating small file management as infrastructure, not a cron job... measure your tables today, compact the worst offenders, tune your writers to prevent recurrence, automate so it runs continuously without human intervention."* Also: *"detection comes first using `table_files()` to establish a baseline"* — i.e. detection should be cheap and can run independent of a full statistical scan (→ Feature 3's "no-scan-required" design).
 - **[LakeOps — 9 Iceberg Table Compaction Tools Compared](https://lakeops.dev/blog/iceberg-compaction-tools-compared)** and **[olake.io — Apache Amoro](https://olake.io/blog/olake-amoro-iceberg-lakehouse/)** — competitive landscape. Apache Amoro's positioning — *"self-optimizing capabilities that continuously monitor Iceberg tables, automatically trigger compaction when needed... without manual intervention"* — is the direct contrast to Cryo's current scheduled/preset-driven model, motivating Feature 2. AWS S3 Tables and Dremio's Open Catalog auto-optimization are cited as the "fully managed, zero-config" end of the spectrum Cryo is not trying to match exactly (Cryo is intentionally an operator-facing console, not a fully opaque managed service — see `DESIGN.md`'s "engineered calm, operator-first" doctrine) but whose *detection* cadence (continuous, not periodic) is worth adopting.
-- **[Starburst — Iceberg Partitioning Guide](https://starburst.io/blog/iceberg-partitioning)** — source for the bucket-transform recommendation applied in PDAE-8357 and generalized in Feature 1/4.
+- **[Starburst — Iceberg Partitioning Guide](https://starburst.io/blog/iceberg-partitioning)** — source for the bucket-transform recommendation applied in  and generalized in Feature 1/4.
 
 ### 2.2 Research literature: AutoComp (LinkedIn, 2025)
 
@@ -201,13 +201,13 @@ Confirmed present in Cryo as of this session (do not duplicate):
 
 ### Problem
 
-A table's partition spec can be structurally wrong for its actual query workload — as PDAE-8357 was. Cryo's existing `analyze_partition_evolution` catches this class of problem already for the "dominant filter column, >=80% of queries" case, but has gaps worth closing: it triggers on filter-column *frequency* alone, not on Algoscale's more precise *scan-ratio* signal (§2.1's `avg(bytes_scanned_per_query) / total_table_size_bytes > 10%` rule), and its cardinality check is a **column-name heuristic** (`cardinality_hint`, matching keywords like "id"/"date") rather than a real distinct-value count — both are real gaps, but they're refinements to an existing detector, not evidence one needs to be built.
+A table's partition spec can be structurally wrong for its actual query workload — as  was. Cryo's existing `analyze_partition_evolution` catches this class of problem already for the "dominant filter column, >=80% of queries" case, but has gaps worth closing: it triggers on filter-column *frequency* alone, not on Algoscale's more precise *scan-ratio* signal (§2.1's `avg(bytes_scanned_per_query) / total_table_size_bytes > 10%` rule), and its cardinality check is a **column-name heuristic** (`cardinality_hint`, matching keywords like "id"/"date") rather than a real distinct-value count — both are real gaps, but they're refinements to an existing detector, not evidence one needs to be built.
 
 ### Design
 
 **What to add to the existing detector, not a new one:**
 
-1. **Scan-ratio signal, alongside the existing filter-frequency signal.** `QueryPattern.avg_selectivity` (rows matched / table's total rows, already computed per column — see `cryo/telemetry/patterns.py`'s `ColumnPatternStats` docstring) is a usable proxy for Algoscale's bytes-scanned ratio without needing new ingestion. Add a check: flag even below the current 80%-of-queries threshold if `avg_selectivity` for the dominant filter column is poor (i.e., pruning isn't actually working) — this catches PDAE-8357-shaped cases where a *minority* of expensive queries dominate cost even if they're not the majority of query *count*.
+1. **Scan-ratio signal, alongside the existing filter-frequency signal.** `QueryPattern.avg_selectivity` (rows matched / table's total rows, already computed per column — see `cryo/telemetry/patterns.py`'s `ColumnPatternStats` docstring) is a usable proxy for Algoscale's bytes-scanned ratio without needing new ingestion. Add a check: flag even below the current 80%-of-queries threshold if `avg_selectivity` for the dominant filter column is poor (i.e., pruning isn't actually working) — this catches -shaped cases where a *minority* of expensive queries dominate cost even if they're not the majority of query *count*.
 2. **Real cardinality instead of the name heuristic.** `cardinality_hint()` currently guesses "high"/"low" from column-name keywords (`_LOW_CARDINALITY_HINTS`/`_HIGH_CARDINALITY_HINTS`). The module's own docstring already flags this as a known gap ("no real NDV stats are available yet — Puffin NDV reading is still a stub"). If/when Puffin NDV stats land, wire them in here first — this directly improves both Feature 1 and Feature 4's bucket-sizing accuracy.
 3. **Confidence/frequency numbers surfaced in the UI**, not just a verdict — this part of the original design is still correct and worth keeping regardless of where the detection logic lives.
 
@@ -394,6 +394,6 @@ Build order was executed as planned (3 → 1 → 4 → 2). Shared infrastructure
 - [AWS Builder Center — Amazon S3 Tables vs Self-Managed Apache Iceberg on S3](https://builder.aws.com/content/39n7WU54TBsV3OlKwtJsnL54PVL/amazon-s3-tables-vs-self-managed-apache-iceberg-on-s3-a-technical-deep-dive-for-startups)
 - [Starburst — Iceberg Partitioning Guide](https://starburst.io/blog/iceberg-partitioning)
 - **[AutoComp: Automated Data Compaction Framework (arXiv:2504.04186)](https://arxiv.org/html/2504.04186v1)** — LinkedIn production research paper; the direct lineage source for Cryo's existing AutoComp-named compaction-candidate ranking.
-- Internal: `pw-data-connectors/airflow/pw_dbt_trino/DBT_ICEBERG_BEST_PRACTICES.md` — the mandatory house standards this session's PDAE-8357 fix and this RFC's targets (100MB–1GB partitions, 128MB–1GB files, delete+insert-over-merge guidance) are both drawn from.
-- Internal: Jira PDAE-8357 (parent PDAE-4337, "S3 and Trino Cost Reduction Initiative") — full ticket, root-cause writeup, and the original query pattern.
+- Internal: `pw-data-connectors/airflow/pw_dbt_trino/DBT_ICEBERG_BEST_PRACTICES.md` — the mandatory house standards this session's  fix and this RFC's targets (100MB–1GB partitions, 128MB–1GB files, delete+insert-over-merge guidance) are both drawn from.
+- Internal: Jira  (parent , "S3 and Trino Cost Reduction Initiative") — full ticket, root-cause writeup, and the original query pattern.
 - Internal: live measurements against `cdp.lsq_pw.gold_dbt_lsq_pw_prospect_activity_phone_lookup`, taken 2026-08-19 via the `mcp-trino` connection (§1.2) — row count, wall-clock timing, and `$files` metadata, all directly queried, not estimated.

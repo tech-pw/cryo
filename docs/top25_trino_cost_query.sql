@@ -1,7 +1,6 @@
 -- Top 25 tables by Trino compute cost, last 7 days.
--- Run against cdp.trino_logs.trino_queries (Iceberg-backed, partitioned by day(query_date),
--- full history since Oct 2025 -- NOT trino_logs.trino.trino_queries, which is a same-day-only
--- MySQL sink). Scoped to a 7-day window and SELECT-only to keep the scan bounded; the query
+-- Point this at your Iceberg-backed query log (partitioned by day(query_date)).
+-- Scoped to a 7-day window and SELECT-only to keep the scan bounded; the query
 -- log itself is large enough that unscoped aggregations time out.
 --
 -- "Trino cost" here = cpu_time_millis, the resource Trino itself bills against (CPU-seconds is
@@ -16,7 +15,7 @@ WITH per_query_tables AS (
         physical_input_bytes,
         json_extract_scalar(t, '$.schema') AS schema_name,
         json_extract_scalar(t, '$.table') AS table_name
-    FROM cdp.trino_logs.trino_queries
+    FROM example.trino_logs.trino_queries
     CROSS JOIN UNNEST(CAST(json_parse(inputs_json) AS ARRAY(json))) AS u(t)
     WHERE query_date >= current_date - interval '7' day
       AND query_type = 'SELECT'

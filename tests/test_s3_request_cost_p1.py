@@ -280,7 +280,7 @@ def test_parse_log_line_handles_multi_word_quoted_user_agent() -> None:
     line (values scrubbed) that reproduced the bug."""
     line = (
         "09de0c77906a1cbd51835983b81c08a5f3250ebe2c378c46d3d2d1ef3b992c21 acme-lake-temp "
-        "[09/Jul/2026:21:47:39 +0000] 172.30.145.127 arn:aws:iam::123456789012:user/etl-user "
+        "[09/Jul/2026:21:47:39 +0000] 192.0.2.1 arn:aws:iam::123456789012:user/etl-user "
         "W6KMHGY9G70R8BXD REST.GET.OBJECT warehouse/db1/table_a/data/file1.parquet "
         '"GET /warehouse/db1/table_a/data/file1.parquet HTTP/1.1" 200 - - 12370 14 - '
         '"https://audit.example.org/hadoop/1/op_is_file" '

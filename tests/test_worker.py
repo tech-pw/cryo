@@ -277,7 +277,7 @@ def test_worker_uses_destination_catalog_in_plan_table_ref() -> None:
     locks = InMemoryLockStore()
     store = InMemoryJobStore()
     store.add_destination(
-        DestinationConfig("dest", config={"catalog": "cdp", "host": "trino.example"})
+        DestinationConfig("dest", config={"catalog": "sample", "host": "trino.example"})
     )
     store.add_table_data(
         "table-1",
@@ -310,7 +310,7 @@ def test_worker_uses_destination_catalog_in_plan_table_ref() -> None:
 
     assert result is not None
     assert result.plan is not None
-    assert result.plan["table_ref"] == "cdp.admin.orphan_files_removal_audit_log"
+    assert result.plan["table_ref"] == "demo.ops.orphan_files_audit"
 
 
 def test_worker_uses_catalog_binding_override_in_plan_table_ref() -> None:

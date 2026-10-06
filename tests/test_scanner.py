@@ -79,7 +79,7 @@ def test_health_score_uses_warn_and_critical_deductions() -> None:
     # health_small_file_count=25 is below MIN_SMALL_FILES_FOR_COMPACTION (128) -- the planner
     # would never schedule OPTIMIZE for this table (see planner.py's min_small_files gate), so
     # the health score must not deduct for small-file percentage here either. Real-fleet
-    # evidence for this behavior: PDAE-8274/2026-08-05 found 76% of D-graded tables had fewer
+    # evidence for this behavior: /2026-08-05 found 76% of D-graded tables had fewer
     # total files than this floor, and this exact deduction alone accounted for 99.6% of the
     # bucket's unfixable-critical grades.
     score, grade, deductions = compute_health_score(stats, health_small_file_count=25, now=now)
@@ -797,7 +797,7 @@ def test_upsert_table_survives_concurrent_insert_race() -> None:
     uncaught IntegrityError on (source_id, schema_name, table_name), which aborted the whole
     session's transaction and killed the *entire* scan chunk (thousands of assigned tables
     abandoned, 0 scanned) instead of just skipping this one already-discovered table. Confirmed
-    live: chunk 2 of a fleet scan died this way on cdp.pw_bq.bronze_store_iframe_initialised."""
+    live: chunk 2 of a fleet scan died this way on demo.analytics.bronze_store_events."""
     from cryo.scanner.persistence import upsert_table
 
     _patch_sqlite_incompatible_defaults()
@@ -816,7 +816,7 @@ def test_upsert_table_survives_concurrent_insert_race() -> None:
     # Simulate the "winning" concurrent chunk: its insert is already committed by the time
     # ours runs.
     with session_factory() as session:
-        session.add(Table(source_id=source_id, schema_name="pw_bq", table_name="bronze_x"))
+        session.add(Table(source_id=source_id, schema_name="analytics", table_name="bronze_x"))
         session.commit()
 
     # Our chunk raced ahead of that commit: its own initial SELECT (faked here) found nothing,
@@ -834,10 +834,10 @@ def test_upsert_table_survives_concurrent_insert_race() -> None:
         session.scalar = _select_misses_once  # type: ignore[method-assign]
 
         table = upsert_table(
-            session, source_id=source_id, schema_name="pw_bq", table_name="bronze_x"
+            session, source_id=source_id, schema_name="analytics", table_name="bronze_x"
         )
         assert table is not None
-        assert table.schema_name == "pw_bq"
+        assert table.schema_name == "analytics"
         assert table.table_name == "bronze_x"
         # The session's transaction must still be usable afterward -- not aborted.
         session.commit()

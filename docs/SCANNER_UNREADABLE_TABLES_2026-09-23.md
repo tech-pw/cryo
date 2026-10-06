@@ -2,7 +2,7 @@
 
 ## What prompted this
 
-A scan of the `cdp.central` schema (387 requested tables, 585 discovered, 4 chunks) came back
+A scan of one schema (387 requested tables, 585 discovered, 4 chunks) came back
 `partial_failed`: **384 scanned, 201 failed**. The failures were uniform across all four chunks
 — roughly 146 assigned / 96 scanned / 50 failed each — which is the shape of a systematic data
 problem, not a flaky scanner.
@@ -25,9 +25,9 @@ Cross-checked against Trino, reading the same Hive metastore:
 
 | Table | Cryo | Trino |
 |---|---|---|
-| `central.gold_polls_evolving` | missing `snap-2836956739…d2373dc1….avro` | `Metadata not found in metadata location` |
-| `central.gold_banners_evolving` | missing manifest | `Error accessing metadata file` |
-| `temp.abhisek_duration` (control) | scanned OK | 7,661,016 rows |
+| `analytics.events_evolving` | missing manifest avro | `Metadata not found in metadata location` |
+| `analytics.banners_evolving` | missing manifest | `Error accessing metadata file` |
+| a control table | scanned OK | rows returned |
 
 Trino names the *same* missing file. These tables are unreadable for every consumer. Their
 metastore `metadata_location` points at `00000-*.metadata.json` — the very first metadata file
@@ -52,7 +52,7 @@ went there:
   alone also covers a data file vanishing mid-scan, which is a different and often transient
   problem.
 - `metadata_not_found` extended to the same two-part shape for a missing `.metadata.json`.
-  This was the gap in the first cut: the `cdp.central` sample above is the *manifest* flavour,
+  This was the gap in the first cut: the sample above is the *manifest* flavour,
   but fleet-wide it is the minority. Replaying a full chunk's error text from the 2026-09-23
   00:00 UTC run through the classifier gives **265 `metadata_not_found`, 74 `manifest_missing`,
   1 `permission_denied`, 1 `other`** — so keying only on manifests caught 74 of 341, and the
@@ -94,14 +94,12 @@ Per-run, the offenders are in the run summary's `unreadable_tables`.
 
 ## Related, same day
 
-- **`cdp_dev` source disabled.** Its metastore (`trino-metastore-v2.penpencil.co` →
-  `10.1.148.96`, `10.1.161.70`, `10.1.216.161`) times out on all three IPs from the `cryo`
-  namespace. `cryo-api` can't reach it either, so this predates any recent change. 1,164 active
-  tables (9.1% of the fleet) are now a deliberate blind spot until DevOps restores networking.
+- **An unreachable secondary source was disabled.** Its metastore timed out from the Cryo
+  namespace. The API could not reach it either, so this predates any recent change. Those tables
+  are a deliberate blind spot until networking is restored.
 - **Source-scoping fix.** `_discover_candidates` used to connect to every enabled source even
-  when all requested tables lived in one of them, so `cdp_dev`'s dead metastore stalled scans of
-  healthy `cdp` tables. A five-table scan went from stalling past ten minutes to finishing in
-  13.1 seconds.
+  when all requested tables lived in one of them, so the dead metastore stalled scans of
+  healthy tables. A small scan went from stalling past ten minutes to finishing in seconds.
 
 ## What this does not claim
 
@@ -145,13 +143,12 @@ had long streaks go straight to the 30-day rung; on prod data the next scheduled
 1,353 guaranteed-to-fail retries.
 
 **Classifier.** A catalog `metadata_location` with no bucket (Go error `failed to load table:
-open /youtube/videos/metadata/….metadata.json: invalid argument`) is now `metadata_not_found`.
-The four `cdp.youtube` tables that fail this way (`silver_videos`, `silver_channels`,
-`silver_comments`, `silver_video_metrics`) have NULL locations and a working `*_fixed` copy
+open /warehouse/table/metadata/….metadata.json: invalid argument`) is now `metadata_not_found`.
+Tables that fail this way have NULL locations and a working replacement copy
 rebuilt by the owning team, so they are dead entries, not a scanner bug.
 
 **Daily digest "Scan Health" block** (`cryo/reporting/scan_health.py`). It covers every table
 row on an enabled source, active or not: tables in catalog, passed (last attempt succeeded),
 corrupt (metadata or manifest gone from S3), failed (permissions or other, fixable), not yet
 scanned, and how many failing tables sit on each retry rung. First numbers on prod,
-2026-09-24: **12,970 in catalog: 11,435 passed, 1,489 corrupt, 46 failed**.
+2026-09-24: most of the catalog passed; a minority were corrupt or failed.

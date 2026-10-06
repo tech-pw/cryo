@@ -4,8 +4,8 @@
   "status": "current",
   "command": "deliver",
   "type": "sequence",
-  "input": "/Users/aamir/Projects/Cryo/site/diagrams/maintenance.sequence.json",
-  "output": "/Users/aamir/Projects/Cryo/site/diagrams/maintenance.sequence.html",
+  "input": "site/diagrams/maintenance.sequence.json",
+  "output": "site/diagrams/maintenance.sequence.html",
   "specification": {
     "sha256": "447d80aa6d40650caea3eabb5330ce9912d0c307dc52a4ce58a684748e3d6b75",
     "bytes": 3905

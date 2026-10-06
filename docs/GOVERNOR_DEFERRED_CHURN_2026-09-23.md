@@ -127,4 +127,4 @@ sessions holding transactions for 4–5 minutes, each still pinning a `backend_x
   key it reads; that blob load was most of its measured 540 s.
 
 The digest's Fleet numbers were also counting every stats row, including 1,164 active tables
-on the disabled `cdp_dev` source; they're now limited to active tables on enabled sources.
+on a disabled source; they're now limited to active tables on enabled sources.

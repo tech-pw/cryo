@@ -26,7 +26,7 @@ import (
 func TestIsRetryableCommitConflictUnwrappedBranchChange(t *testing.T) {
 	t.Parallel()
 
-	// PDAE-8353 / live Hive rewrite_data_files: requirement validation fails
+	// Live Hive rewrite_data_files: requirement validation fails
 	// with this exact shape, no ErrCommitFailed wrap.
 	err := errors.New(`requirement failed: branch "main" has changed: expected id 5740756594462960238, found 7046114876609983580`)
 	if !IsRetryableCommitConflict(err) {

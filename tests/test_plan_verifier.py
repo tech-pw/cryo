@@ -237,15 +237,15 @@ class TestResolveTableDisambiguation:
     ) -> None:
         from cryo.planner import verifier as verifier_mod
 
-        cdp = MagicMock()
-        cdp_dev = MagicMock()
+        sample = MagicMock()
+        sample_dev = MagicMock()
         session = MagicMock()
-        session.execute.return_value.scalars.return_value.all.return_value = [cdp, cdp_dev]
+        session.execute.return_value.scalars.return_value.all.return_value = [sample, sample_dev]
 
         def _catalog_for(table: object) -> str:
-            if table is cdp:
-                return "cdp"
-            if table is cdp_dev:
+            if table is sample:
+                return "sample"
+            if table is sample_dev:
                 return "hive"
             return "unknown"
 
@@ -265,10 +265,10 @@ class TestResolveTableDisambiguation:
 
         monkeypatch.setattr(model_utils, "catalog_name_for_table", _catalog_for)
 
-        hive_ref = "hive.user_experience.gold_test_student_mappings"
-        cdp_ref = "cdp.user_experience.gold_test_student_mappings"
-        assert verifier_mod._resolve_table(session, hive_ref) is cdp_dev
-        assert verifier_mod._resolve_table(session, cdp_ref) is cdp
+        hive_ref = "hive.ux.gold_student_mappings"
+        sample_ref = "sample.ux.gold_student_mappings"
+        assert verifier_mod._resolve_table(session, hive_ref) is sample_dev
+        assert verifier_mod._resolve_table(session, sample_ref) is sample
 
     def test_load_catalog_context_exception_does_not_raise(self) -> None:
         verifier = PlanVerifier(

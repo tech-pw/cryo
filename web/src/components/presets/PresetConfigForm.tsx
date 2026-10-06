@@ -77,7 +77,7 @@ export const PresetConfigForm = ({
   useEffect(() => {
     const id = form.getValues("destination_id");
     const destination = (destinations.data ?? []).find((item) => item.id === id);
-    if (!isNativeDestination(destination)) return;
+    if (!destination || !isNativeDestination(destination)) return;
     const impl = resolveNativeEngineImpl(destination.config);
     const currentOps = form.getValues("operations");
     const nextOps = (currentOps ?? []).filter((op) => nativeSupportsOperation(op, impl ?? "go"));

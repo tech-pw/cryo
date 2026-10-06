@@ -57,7 +57,7 @@ _HOT_COLUMN_LIMIT = 50
 _HOT_COLUMN_VALUE_COUNT_THRESHOLD = 1_000_000
 # ThetaSketch is a 4096-register HLL; feeding more than a few× register-count synthetic
 # values does not improve the estimate and turns billion-row tables into multi-minute
-# hangs (seen on geoip.silver_geoip_locations: ~116M updates/column × 29 hot columns).
+# hangs (seen on a billion-row table: ~116M updates/column × 29 hot columns).
 _MAX_SYNTHETIC_NDV = 8_192
 
 

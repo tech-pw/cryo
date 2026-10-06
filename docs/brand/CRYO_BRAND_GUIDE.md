@@ -496,9 +496,7 @@ Core lives on the website, social posts and the blog.
 
 ## 11. Words that go on images
 
-Claims come from the strategy's sell sheet
-(`docs/COMPETITIVE_STRATEGY_AMORO_LAKEOPS_2026-09-28.md`, sections 8 and 10.5). Do not
-paraphrase them into something stronger.
+Claims come from the published sell sheet. Do not paraphrase them into something stronger.
 
 - **Fact line** (allowed today): "Cryo is an Apache-2.0, self-hosted Iceberg maintenance
   platform."
@@ -753,7 +751,7 @@ Then add the `--no` list from section 1.3.
   <https://www.linkedin.com/help/linkedin/answer/a563309>
 - In this repository: `PRODUCT.md`, `DESIGN.md`, `web/src/styles/tokens.css`,
   `cryo/planner/guardrails.py`, `README.md` (architecture) and
-  `docs/COMPETITIVE_STRATEGY_AMORO_LAKEOPS_2026-09-28.md` (claim rules).
+  and the published claim rules.
 
 ## 17. Decisions for the owner
 

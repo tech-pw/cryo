@@ -27,7 +27,7 @@ MONTH_FIELD = {
 
 def _stats(**overrides):
     stats = {
-        "schema_name": "cdp",
+        "schema_name": "sample",
         "table_name": "users",
         "small_files_count": 900,
         "total_size_gb": 300,

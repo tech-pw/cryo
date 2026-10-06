@@ -14,19 +14,14 @@ fleet was busy. This is what changed, and what deliberately did not.
 `deterministic_chunk(items, chunk_id, num_chunks)` keeps `index % num_chunks == chunk_id`.
 The CLI defaults to `--chunk-id 0`, and `Settings.scan_num_chunks` defaults to `4`. The
 CronJob ran **one** pod with **no arguments and no chunk environment variables**, so every run
-took chunk 0 and dropped the rest. Straight from the last run's own log line:
-
-```
-ScanSummary(discovered=12584, assigned=3146, scanned=871, skipped=1937, failed=338)
-```
-
-`discovered=12584, assigned=3146` is the bug in one line.
+took chunk 0 and dropped the rest. The last run's summary showed `assigned` at about a
+quarter of `discovered`.
 
 Second, subtler problem: candidates came back in catalog order
-(`source.name, schema_name, table_name`). Since a run cannot finish 12.6k tables, catalog
-order meant *which* tables got scanned was decided by the alphabet. Live evidence: 686 tables
-were scanned all 7 days of the week while 687 were scanned on exactly one, and 10.7% of the
-fleet had drifted past 30 days without a scan.
+(`source.name, schema_name, table_name`). Since a run cannot finish the fleet, catalog
+order meant *which* tables got scanned was decided by the alphabet. Some tables were scanned
+every day while others were scanned once a week, and a slice of the fleet drifted past 30
+days without a scan.
 
 ### What changed
 
@@ -47,7 +42,7 @@ four pods rather than piling it into one — pinned by
 
 ### Still open
 
-The ~10.7% per-run failure rate (`failed=338` of 3,146) is unexplained and untouched here, as
+The per-run failure rate is unexplained and untouched here, as
 is the unexplained drop in daily coverage after Sep 7.
 
 ---
@@ -63,9 +58,8 @@ owner, invisible to every reconciliation pass.
 
 The repair for that was `reconcile_stuck_admitted_jobs`, which had to *infer* loss from age
 plus a missing `engine_ref`. That inference is wrong, because the same description fits a job
-merely queued behind more work than the fleet can drain. Live 2026-09-21: **5,952 of one
-run's 6,117 jobs** were failed as `stuck_admitted_no_dispatch` while workers were healthy and
-still working through the same list.
+merely queued behind more work than the fleet can drain. One run failed most of its jobs as
+`stuck_admitted_no_dispatch` while workers were healthy and still working through the same list.
 
 ### What changed
 
@@ -206,8 +200,8 @@ Each is a decision to take deliberately rather than fold into this change.
 
 ### What to watch after deploy
 
-1. Scanner: `assigned` should be ~12.6k across the four pods per run, not 3,146. Scan
-   freshness >30 days should fall from 10.7%.
+1. Scanner: `assigned` across the four pods should approach `discovered`, not one chunk of it.
+   Scan freshness past 30 days should fall.
 2. Queue: `stuck_admitted_no_dispatch` should disappear entirely as an error string — it no
    longer exists. Reclaim events log as "Reclaimed admitted job … its previous worker never
    started it" and should be rare.

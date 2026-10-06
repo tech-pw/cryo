@@ -1505,7 +1505,7 @@ class AuditLog(Base):
     origin: Mapped[str | None] = mapped_column(Text)
     proposal_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     committed_snapshot_id: Mapped[str | None] = mapped_column(Text)
-    # Async fallback-dispatch tracking (PDAE-8352): engine_ref is the dispatched Spark
+    # Async fallback-dispatch tracking (): engine_ref is the dispatched Spark
     # job's K8s Job name, set when status="SUBMITTED" so a later sweep can look up its
     # real outcome without run_wave() blocking on it. resolved_at marks when that sweep
     # last updated the row, distinguishing "still pending" from "already resolved."

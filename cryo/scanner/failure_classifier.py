@@ -81,10 +81,9 @@ def classify_scan_failure(error: str | None) -> FailureCategory | None:
     return "other"
 
 
-# Real text from a cdp.central scan on 2026-09-23, which returned this for 201 of 585 tables:
+# A missing manifest looks like:
 #   RuntimeError: load manifests: could not open manifest file: blob (key
-#   "silver/central/<table>/metadata/snap-<id>-1-<uuid>.avro") (code=NotFound): ... NoSuchKey
-# Checked against Trino on the same metastore: it names the same missing file and fails too.
+#   ".../metadata/snap-<id>.avro") (code=NotFound): ... NoSuchKey
 _MISSING_OBJECT_MARKERS = ("nosuchkey", "code=notfound", "status code: 404", "statuscode: 404")
 
 
@@ -104,13 +103,10 @@ def _is_manifest_missing(error: str) -> bool:
     return "manifest" in lowered and any(marker in lowered for marker in _MISSING_OBJECT_MARKERS)
 
 
-# The metadata.json case is the *larger* half and was missed when this module first shipped,
-# because it matches none of the patterns above -- it names no manifest, and the Go engine
-# words it as a 404 rather than "Path does not exist". Real text from the 2026-09-23 00:00 UTC
-# fleet run, where it was 267 of one chunk's 339 missing-object failures (the manifest case
-# above was the other 74):
+# The metadata.json case was missed when this module first shipped, because it names no
+# manifest and the Go engine words it as a 404 rather than "Path does not exist":
 #   RuntimeError: failed to load table: blob (key
-#   "bronze/ai_ncert/chapters_evolving/metadata/00000-248835ae-....metadata.json")
+#   ".../metadata/00000-....metadata.json")
 #   (code=NotFound): operation error S3: GetObject, https response error StatusCode: 404
 def _is_metadata_file_missing(error: str) -> bool:
     """A missing-object error naming the table's own ``.metadata.json``.
@@ -127,9 +123,8 @@ def _is_metadata_file_missing(error: str) -> bool:
 
 
 # The catalog's metadata_location has no bucket or scheme, so the Go engine opens it as a local
-# path. Real text, 2026-09-24, cdp youtube.silver_videos (location NULL; the owning team rebuilt
-# it as silver_videos_fixed at the real S3 path):
-#   failed to load table: open /youtube/videos/metadata/00009-7022....metadata.json:
+# path:
+#   failed to load table: open /warehouse/table/metadata/00009-....metadata.json:
 #   invalid argument
 def _is_schemeless_metadata_pointer(error: str) -> bool:
     lowered = error.lower()

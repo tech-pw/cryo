@@ -4,7 +4,7 @@ Found live while running maintenance across the top-25 cost/checklist tables ton
 deploying the `_has_pathological_delete_skew`/`_has_unreachable_delete_skew` fix (commits
 `1b40163e`, `ac606872`) that stopped deferring to `convert_deletes` just because a partition's
 data files were also individually small. That fix is correct and already proved itself on
-`gold_batches_pw` (692→0 delete files) and `gold_dbt_video_data_temp` (31,510→267 delete files).
+one table (692→0 delete files) and another (31,510→267 delete files).
 
 But two more tables hit real, distinct gaps in the same skew-detection logic tonight. Neither is
 fixed yet -- documenting both here as a paired follow-up rather than a third round of live
@@ -12,7 +12,7 @@ threshold tuning.
 
 ## Gap 1: uniform per-partition deletes never trip skew detection
 
-**Table:** `mview.gold_dbt_orders_base_fact`
+**Table:** a wide fact table
 
 Both skew functions loop partitions and check `deletes >= min_deletes` (a per-partition floor)
 before ever computing a ratio. This table has 33 partitions, each carrying **exactly 1** delete
@@ -40,7 +40,7 @@ runaway growth pattern like the other tables tonight.
 
 ## Gap 2: high ratio but low absolute count also never trips skew detection
 
-**Table:** `cdp_revenue.gold_batch_subject_schedules_pw`
+**Table:** a small schedule table
 
 Opposite shape from Gap 1: deletes ARE concentrated here (up to 31 delete files against a single
 1-file partition, ratio ~28-31 -- well past the 7.0 "unreachable" threshold and close to the 20.0
@@ -49,9 +49,9 @@ gates the ratio check entirely: `28 < 100`, `31 < 100`, so the function returns 
 every partition despite ratios that would clearly qualify if the floor were lower.
 
 The `min_deletes=100`/`min_ratio=7.0` (unreachable) and `min_deletes=200`/`min_ratio=20.0`
-(pathological) defaults were calibrated against `mview.gold_dbt_test_results`'s real incident
+(pathological) defaults were calibrated against one incident table's real incident
 (150-315 deletes per partition, ratio ~2.6-8.0) -- a table with a *high absolute count and a
-moderate ratio*. `gold_batch_subject_schedules_pw` is the inverse: *low absolute count, high
+moderate ratio*. The schedule table is the inverse: *low absolute count, high
 ratio*. The two thresholds were tuned as a pair for one shape and don't generalize to the other.
 
 Confirmed impact: a `deep`-mode run (15:44-15:50Z) built and ran `convert_deletes` +
@@ -71,7 +71,7 @@ Confirmed impact: a `deep`-mode run (15:44-15:50Z) built and ran `convert_delete
 
 ## Gap 3 (confirmed 2026-09-15, top-200 batch): optimize can make deletes worse when it merges small files
 
-**Table:** `lsq_pw.gold_dbt_lsq_pw_prospect_activity_phone_lookup`
+**Table:** a high-query lookup table
 
 A third, related failure mode surfaced running the top-200-by-query-frequency batch: this table
 had `small_files_count=2408` (genuinely fragmented, `optimize` correctly fires) and
@@ -86,14 +86,14 @@ referenced *any* of the old files must now be rewritten to point at the new file
 doesn't necessarily consolidate multiple old delete files into one during this process, so a
 partition with N old small files and M delete files can end up with the same M delete files
 (or more, if the rewrite splits references) now spread thinner. This is the same live incident
-this whole planner-gap investigation started from tonight (`gold_dbt_orders_base_fact`'s Sep 12
+this whole planner-gap investigation started from tonight (the fact table's Sep 12
 cron run: 549->756 deletes after an `optimize`+full-lifecycle pass), now confirmed a third time
 on a different table.
 
 Same live per-partition shape as Gap 1: `_has_unreachable_delete_skew` returns `False` (`policy:
 None`) even with per-partition delete counts of 116, because the ratio-to-data-files math doesn't
 trip at this table's shape either -- consistent with Gap 1/2's finding that the two-threshold
-design doesn't generalize past the one incident (`gold_dbt_test_results`) it was calibrated
+design doesn't generalize past the one incident it was calibrated
 against. Not re-dispatched with a forced preset tonight for the same reason as Gaps 1/2: needs
 the calibration work, not another one-off workaround.
 
@@ -101,7 +101,7 @@ the calibration work, not another one-off workaround.
 
 Both are real, narrow gaps in the skew-detection heuristics, not urgent regressions -- the
 tables affected have small (33-357 file) delete counts, not the tens-of-thousands seen on
-`gold_dbt_video_data_temp` before its fix. Given the two gaps pull the calibration in opposite
+a temp table before its fix. Given the two gaps pull the calibration in opposite
 directions (Gap 1 wants "detect uniform low counts", Gap 2 wants "detect concentrated-but-low
 counts"), a rushed threshold change risks re-breaking the existing tests' margins documented in
 `_has_unreachable_delete_skew`'s own comments. Worth a dedicated pass with fresh test fixtures

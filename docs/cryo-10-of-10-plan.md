@@ -96,7 +96,7 @@ destination's `slot_cap` was raised from 1 to 80 under urgent business pressure 
 concurrent pod count stayed well below even that cap, meaning `slot_cap` itself was empirically
 **not** the throughput bottleneck — the real ceiling is still open (candidates: the 30s Governor tick
 interval, dispatch-packing/`chunk_gb` batch sizing, or pod scheduling/startup overhead). This is
-tracked as its own investigation (Jira PDAE-8275) and lines up directly with A6's admission-latency
+tracked as its own investigation (Jira ) and lines up directly with A6's admission-latency
 SLO (§10.1: "Eligible intent admission latency, p95 <=60s when capacity exists") — pull that
 investigation's findings into A6 rather than re-deriving them from scratch.
 
@@ -113,12 +113,12 @@ three engineers, and the project has so far operated with fewer than that.
 
 ### 0.5 Work already tracked — check before re-proposing
 
-Jira project PDAE, epic PDAE-2572, has active tickets covering some of §0.1's fixes and adjacent
-work: PDAE-8267 (critical bug fixes), PDAE-8272 (Governor OOM specifically), PDAE-8273 (dead-table
-classifier), PDAE-8274 (fleet-wide cold-table cleanup, in progress), PDAE-8275 (admission-tick
-throughput ceiling — see §0.3), PDAE-8276 (extending maintenance to actively-queried tables, i.e.
-this plan's territory beyond the current zero-query-only cohort), PDAE-8277 (Trino query-log
-ingestion gap feeding `query_count_30d`), PDAE-8278 (verifying a Spark cost-regression fix in
+Jira project PDAE, epic , has active tickets covering some of §0.1's fixes and adjacent
+work:  (critical bug fixes),  (Governor OOM specifically),  (dead-table
+classifier),  (fleet-wide cold-table cleanup, in progress),  (admission-tick
+throughput ceiling — see §0.3),  (extending maintenance to actively-queried tables, i.e.
+this plan's territory beyond the current zero-query-only cohort),  (Trino query-log
+ingestion gap feeding `query_count_30d`),  (verifying a Spark cost-regression fix in
 Grafana). Check current ticket state before treating any of this as unstarted work.
 
 A separate real-dollar cost investigation exists at

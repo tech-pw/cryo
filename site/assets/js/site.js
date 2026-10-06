@@ -45,7 +45,7 @@
         <a href="${new URL("quickstart/index.html", root)}">Quickstart</a>
         <a href="${new URL("architecture/index.html", root)}">Architecture</a>
         <a href="${new URL("reference/index.html", root)}">Reference</a>
-        <a class="gh-badge" href="https://github.com/shelf-project/Cryo" aria-label="Cryo on GitHub">
+        <a class="gh-badge" href="https://github.com/tech-pw/cryo" aria-label="Cryo on GitHub">
           <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
           GitHub
         </a>
@@ -264,7 +264,7 @@
         <div>
           <h4>Project</h4>
           <ul>
-            <li><a href="https://github.com/shelf-project/Cryo">GitHub repository</a></li>
+            <li><a href="https://github.com/tech-pw/cryo">GitHub repository</a></li>
             <li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 license</a></li>
             <li><a href="https://github.com/tt-a1i/archify">Architecture diagrams: Archify</a></li>
           </ul>
@@ -272,7 +272,7 @@
       </div>
       <div class="foot-meta">
         <p>Apache, Apache Iceberg, Iceberg and Apache Spark are either registered trademarks or trademarks of The Apache Software Foundation in the United States and/or other countries. Other names may be trademarks of their respective owners.</p>
-        <p><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0</a> · <a href="https://github.com/shelf-project/Cryo">github.com/shelf-project/Cryo</a> · Last updated 2026-09-30</p>
+        <p><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0</a> · <a href="https://github.com/tech-pw/cryo">github.com/tech-pw/cryo</a> · Last updated 2026-09-30</p>
       </div>`;
   }
 

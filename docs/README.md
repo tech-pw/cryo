@@ -42,8 +42,7 @@ The authoritative architecture / contract docs live at the repo root:
   checklist (July 2026, superseded by the plan above).
 - [`OSS_P0_REVERIFY_2026_07_07.md`](./OSS_P0_REVERIFY_2026_07_07.md) —
   P0 reverification log.
-- [`current-state.md`](./current-state.md) — snapshot of what works /
-  what doesn't today.
+- [`current-state.md`](./current-state.md) — public pointer to capabilities and the pre-1.0 floor.
 - [`WAVE_0_BASELINE.md`](./WAVE_0_BASELINE.md) — reproducible baseline,
   hotspot map, migration support, evidence registry, interview plan, and
   stop-ship policy.

@@ -17,7 +17,7 @@ from cryo.scanner.failure_classifier import (
     scan_failure_is_permanent,
 )
 
-# Verbatim from a cdp.central scan on 2026-09-23, which produced this for 201 of 585 tables.
+# Verbatim from a demo.events scan on 2026-09-23, which produced this for 201 of 585 tables.
 MANIFEST_MISSING_ERROR = (
     "RuntimeError: load manifests: could not open manifest file: blob (key "
     '"silver/central/gold_polls_evolving/metadata/'
@@ -103,7 +103,7 @@ def test_classifies_a_missing_metadata_json_as_metadata_not_found() -> None:
 
 def test_a_metadata_pointer_with_no_bucket_is_metadata_not_found() -> None:
     """The catalog's metadata_location has no scheme, so the Go engine opens it as a local
-    file. Verbatim from cdp youtube.silver_videos, 2026-09-24 (location NULL, superseded by
+    file. Verbatim from sample youtube.silver_videos, 2026-09-24 (location NULL, superseded by
     silver_videos_fixed)."""
     error = (
         "failed to load table: open /youtube/videos/metadata/"

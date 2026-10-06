@@ -24,7 +24,7 @@ def _running_job(**overrides) -> MaintenanceJobRecord:
         mode=Mode.STANDARD,
         status=JobStatus.RUNNING,
         started_at=datetime(2026, 7, 27, 11, 0, tzinfo=UTC),
-        plan={"table_ref": "cdp.reports.t"},
+        plan={"table_ref": "sample.reports.t"},
     )
     data.update(overrides)
     return MaintenanceJobRecord(**data)
@@ -102,13 +102,13 @@ def test_probe_engine_op_state_is_quiet_not_uncertain_with_no_prior_dispatch() -
         id="dest-spark", engine="spark_emr", config={"submit_mode": "k8s"}
     )
     assert (
-        probe_engine_op_state(spark_dest, table_ref="cdp.reports.t", engine_ref=None)
+        probe_engine_op_state(spark_dest, table_ref="sample.reports.t", engine_ref=None)
         is EngineOpState.SUCCEEDED
     )
 
     native_dest = DestinationConfig(id="dest-native", engine=EngineType.NATIVE)
     assert (
-        probe_engine_op_state(native_dest, table_ref="cdp.reports.t", engine_ref=None, job=None)
+        probe_engine_op_state(native_dest, table_ref="sample.reports.t", engine_ref=None, job=None)
         is EngineOpState.SUCCEEDED
     )
 
@@ -136,7 +136,7 @@ def test_spark_k8s_job_state_detects_success_not_just_failure(monkeypatch) -> No
     )
     dest = DestinationConfig(id="dest-spark", engine="spark_emr", config={"submit_mode": "k8s"})
     assert (
-        probe_engine_op_state(dest, table_ref="cdp.reports.t", engine_ref="cryo-spark-abc123")
+        probe_engine_op_state(dest, table_ref="sample.reports.t", engine_ref="cryo-spark-abc123")
         is EngineOpState.SUCCEEDED
     )
 
@@ -146,7 +146,7 @@ def test_spark_k8s_job_state_detects_success_not_just_failure(monkeypatch) -> No
         lambda self, job_id: _FakeResult(spark_k8s.JobRunState.FAILED),
     )
     assert (
-        probe_engine_op_state(dest, table_ref="cdp.reports.t", engine_ref="cryo-spark-abc123")
+        probe_engine_op_state(dest, table_ref="sample.reports.t", engine_ref="cryo-spark-abc123")
         is EngineOpState.FAILED
     )
 
@@ -156,7 +156,7 @@ def test_spark_k8s_job_state_detects_success_not_just_failure(monkeypatch) -> No
         lambda self, job_id: _FakeResult(spark_k8s.JobRunState.RUNNING),
     )
     assert (
-        probe_engine_op_state(dest, table_ref="cdp.reports.t", engine_ref="cryo-spark-abc123")
+        probe_engine_op_state(dest, table_ref="sample.reports.t", engine_ref="cryo-spark-abc123")
         is EngineOpState.RUNNING
     )
 
@@ -187,7 +187,7 @@ def test_spark_k8s_job_state_resolves_unknown_as_failed_not_running(monkeypatch)
     )
     dest = DestinationConfig(id="dest-spark", engine="spark_emr", config={"submit_mode": "k8s"})
     assert (
-        probe_engine_op_state(dest, table_ref="cdp.reports.t", engine_ref="cryo-spark-abc123")
+        probe_engine_op_state(dest, table_ref="sample.reports.t", engine_ref="cryo-spark-abc123")
         is EngineOpState.FAILED
     )
 

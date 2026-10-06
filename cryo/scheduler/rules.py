@@ -8,7 +8,7 @@ from typing import Any
 from cryo.domain.enums import Mode
 from cryo.domain.predicates import evaluate_predicate
 
-# PDAE-8347 Pattern 1: Spark-on-K8s burned driver slots on ephemeral temp/test tables
+#  Pattern 1: Spark-on-K8s burned driver slots on ephemeral temp/test tables
 # that a broad preset rule had matched. Live fix on 2026-08-11 was preset predicates;
 # this default skip keeps *new* presets from reintroducing the same tables. Pinned
 # assignments still win (operator intent). `testpress` is a real product schema/prefix,
@@ -82,7 +82,7 @@ class EffectivePreset:
 
 
 def is_ephemeral_maintenance_table(schema_name: str, table_name: str) -> bool:
-    """True when this table should not be auto-matched by preset rules (PDAE-8347)."""
+    """True when this table should not be auto-matched by preset rules ()."""
     schema = (schema_name or "").strip()
     name = (table_name or "").strip()
     combined = f"{schema}.{name}".lower()

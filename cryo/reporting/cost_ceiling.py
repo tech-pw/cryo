@@ -19,10 +19,8 @@ the scanner-worker autoscaler (deploy/helm/cryo values) are the prevention half 
 module is the backstop for whatever those don't catch, checked against the real bill
 instead of a proxy for it.
 
-Uses the exact query shape reverse-engineered from Grafana dashboard uid
-de05f8e7cjpj4ea's "${namespace} Namespace Total Cost" / "Unused Cost" panels (Athena CUR
-datasource fe0bimj2kv9xca) -- see [[grafana-cost-query-patterns]] memory note for the
-general pattern this was derived from.
+Queries Grafana's Athena CUR datasource. The datasource uid is
+CRYO_GRAFANA_ATHENA_DATASOURCE_UID, not a built-in default.
 """
 
 from __future__ import annotations
@@ -42,7 +40,6 @@ from cryo.db.repositories.intents import set_pause_state
 logger = logging.getLogger(__name__)
 
 _GRAFANA_QUERY_PATH = "/api/ds/query"
-_ATHENA_DATASOURCE_UID = "fe0bimj2kv9xca"
 _CUR_CONNECTION_ARGS = {
     "catalog": "__default",
     "database": "__default",
@@ -107,6 +104,16 @@ class NamespaceCostCheck:
         return self.total_cost_usd > self.ceiling_usd * (1 + self.tolerance_pct)
 
 
+def _athena_datasource_uid(explicit: str | None) -> str:
+    uid = (explicit or get_settings().grafana_athena_datasource_uid or "").strip()
+    if not uid:
+        raise RuntimeError(
+            "Grafana Athena datasource uid is not configured. "
+            "Set CRYO_GRAFANA_ATHENA_DATASOURCE_UID."
+        )
+    return uid
+
+
 def fetch_todays_namespace_cost(
     *,
     grafana_url: str,
@@ -116,6 +123,7 @@ def fetch_todays_namespace_cost(
     ceiling_usd: float,
     day: date | None = None,
     timeout_seconds: float = 15.0,
+    datasource_uid: str | None = None,
 ) -> NamespaceCostCheck:
     """Query Grafana's Athena CUR datasource for today's real used+unused cost.
 
@@ -132,7 +140,10 @@ def fetch_todays_namespace_cost(
         "queries": [
             {
                 "refId": "A",
-                "datasource": {"uid": _ATHENA_DATASOURCE_UID, "type": "grafana-athena-datasource"},
+                "datasource": {
+                    "uid": _athena_datasource_uid(datasource_uid),
+                    "type": "grafana-athena-datasource",
+                },
                 "format": 1,
                 "table": "cur",
                 "connectionArgs": _CUR_CONNECTION_ARGS,
@@ -195,6 +206,7 @@ def fetch_namespace_cost_range(
     since: date,
     until: date | None = None,
     timeout_seconds: float = 15.0,
+    datasource_uid: str | None = None,
 ) -> list[NamespaceDayCost]:
     """Same Athena CUR datasource/query shape as fetch_todays_namespace_cost, grouped by day
     over [since, until] instead of pinned to one date -- for callers that need a trailing
@@ -215,7 +227,10 @@ def fetch_namespace_cost_range(
         "queries": [
             {
                 "refId": "A",
-                "datasource": {"uid": _ATHENA_DATASOURCE_UID, "type": "grafana-athena-datasource"},
+                "datasource": {
+                    "uid": _athena_datasource_uid(datasource_uid),
+                    "type": "grafana-athena-datasource",
+                },
                 "format": 1,
                 "table": "cur",
                 "connectionArgs": _CUR_CONNECTION_ARGS,
@@ -275,8 +290,9 @@ def fetch_latest_billed_namespace_cost(
     lookback_days: int = 4,
     timeout_seconds: float = 15.0,
     tolerance_pct: float = 0.0,
+    datasource_uid: str | None = None,
 ) -> NamespaceCostCheck | None:
-    """The real fix for PDAE-8541: return the most recent day with committed CUR rows,
+    """Return the most recent day with committed CUR rows,
     not literally "today".
 
     fetch_todays_namespace_cost() (kept below, unchanged, for callers that genuinely want
@@ -303,6 +319,7 @@ def fetch_latest_billed_namespace_cost(
         since=since,
         until=until,
         timeout_seconds=timeout_seconds,
+        datasource_uid=datasource_uid,
     )
     if not days:
         return None
@@ -333,7 +350,7 @@ def enforce_cost_ceiling(
     cost_ceiling_breach:) -- never resumes a pause an operator set manually for an
     unrelated reason, and never overwrites an operator's manual pause with its own state.
 
-    PDAE-8541: uses fetch_latest_billed_namespace_cost (trailing window, most recent day
+    : uses fetch_latest_billed_namespace_cost (trailing window, most recent day
     with real data), not fetch_todays_namespace_cost -- the latter compares against
     `current_date`, which structurally has zero committed CUR rows for essentially its
     entire duration (AWS bills 24-48h late), so the ceiling could never actually breach.

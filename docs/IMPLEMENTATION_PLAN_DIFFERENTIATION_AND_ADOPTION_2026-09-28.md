@@ -30,7 +30,7 @@ the detailed plans below or create duplicate implementations of their tasks:
 |---|---|
 | [Cost/reliability plan](CRYO_COST_REDUCTION_PLAN.md) and [recovery plan](CRYO_PERMANENT_RECOVERY_PLAN_2026-09-20.md) | Unresolved execution, correctness, and recovery issues precede feature rollout. |
 | [OSS launch plan](oss-launch-plan-2026-09-25.md), OSS-0–5 | Owns portability, artifacts, Helm, support, and independent installation. |
-| [Competitive strategy](COMPETITIVE_STRATEGY_AMORO_LAKEOPS_2026-09-28.md), C1–C6 and CS tasks | Owns competitor research, evaluation protocol, migration, and claim gates. Its W1–W4 repair work feeds this plan; recheck progress before touching those files. |
+| Competitive strategy, C1–C6 and CS tasks | Owns competitor research, evaluation protocol, migration, and claim gates. Its W1–W4 repair work feeds this plan; recheck progress before touching those files. The source note is not published. |
 | [Paper implementation audit](PAPER_IMPLEMENTATION_AUDIT_2026-09-24.md) | Defines implemented versus experimental research behavior. |
 | [Workload optimization spec](implementation/workload-aware-optimization.md) | Supplies detailed algorithm/API designs; reconcile older status statements against current code. |
 | [AGENTS.md](../AGENTS.md), [HLD](../hld.md), [LLD](../lld.md) | Own architectural boundaries, parity requirements, migrations, and verification conventions. |
@@ -44,10 +44,10 @@ opening a second implementation. Do not commit unless the user asks.
 | Package | Landed | Still open |
 |---|---|---|
 | DP-00 | Nightly selection is `BatchMaintenance._select` via `selection.py`. It does not call `pack_fleet_budget` or `ROIGate.decide`. Initial public profile remains REST + S3-compatible storage + Spark. | Candidate commit record, CI failure list, tuned baseline capture, named owners. |
-| DP-01 | W1/W3/W4 are on `gitlab-main`. `AuditLogRead` now includes file counts. The table Activity tab shows files in → out and "Bytes unknown" instead of zero. | Versioned evidence payload, seven-day coverage measurement, retry reconciliation. |
-| DP-02 | Not started here. OSS-0–5 still own the chart. | Two non-PW installs. |
+| DP-01 | W1/W3/W4 are on the maintenance branch. `AuditLogRead` now includes file counts. The table Activity tab shows files in → out and "Bytes unknown" instead of zero. | Versioned evidence payload, seven-day coverage measurement, retry reconciliation. |
+| DP-02 | Not started here. OSS-0–5 still own the chart. | Two independent installs. |
 | DP-03 | `maintenance_writes_enabled` defaults true. When false, queue enqueue, a non-dry-run batch, worker claims, and native SQL fallback dispatch refuse writes. | Quality onboarding UI and the read-only pilot. |
-| DP-04 | W2 is on `gitlab-main`: shadow mode does not turn itself off. | Durable reservation on the nightly path. |
+| DP-04 | W2 is on the maintenance branch: shadow mode does not turn itself off. | Durable reservation on the nightly path. |
 | DP-05 | A disabled native destination may fall back only to `spark_emr`, not Trino. | Full delete and concurrency certification. |
 | DP-06, DP-07 | Not started. Layout stays behind G4. Comparisons stay behind G3. | External evaluations. |
 
@@ -93,7 +93,7 @@ Do not let layout research delay a working installation or reliable daily mainte
 
 - [x] Record the candidate commit, relevant uncommitted changes, current CI failures, and the
   owners of overlapping W/OSS/CS tasks. Treat an in-progress patch as unverified until its gate passes.
-  Candidate for the in-repo slice is `4b88aba` on `gitlab-main`. `make lint` and `make typecheck`
+  Candidate for the in-repo slice is `4b88aba`. `make lint` and `make typecheck`
   still fail on pre-existing errors outside that slice. W1–W5 are owned by the competitive
   strategy runbook and are committed. OSS-0–5 still own DP-02.
 - [x] Inventory actual dispatch paths: scheduled batch lanes, worker/governor, manual execution,
@@ -176,7 +176,7 @@ Execute OSS-0–5 under their existing owners; do not build an alternative chart
 - [ ] Run fresh-cluster install, restart/recovery, backup/restore, and supported upgrade checks.
   Publish a capability matrix tied to tested versions, not just adapter names.
 
-**Done:** two non-PW operators complete install → authenticate → connect → scoped scan → preview
+**Done:** two independent operators complete install → authenticate → connect → scoped scan → preview
 → explicitly enabled maintenance → verified result using the published artifacts and docs.
 Target first scoped scan within 30 minutes after documented prerequisites are met; record active
 operator time, wall-clock time, prerequisites, and dataset size separately. Publish actual results.

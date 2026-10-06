@@ -194,23 +194,18 @@ def _combined_priority_weight(table: TableCandidate) -> float:
     Before this, apply_priority_order ranked strictly by reclaimable_weight first and only used
     query_weight to break exact ties -- so a table's query hotness had literally zero pull
     against reclaimable size unless two tables tied to several decimal places, which real data
-    essentially never does. Confirmed live: lsq_pw.gold_dbt_lsq_pw_prospect_activity_phone_lookup
-    (2,610 queries/30d, HIGH priority, actively used by real dashboards) sat behind 146 other
-    HIGH-tier tables purely because its 9.06GB reclaimable was smaller than theirs -- meanwhile
-    its own small-file count climbed monotonically every single day (1,431 -> 17,879 files,
-    Aug 13-24) because the fix that would have controlled it never got a turn. A second table,
-    mview.gold_pw_store_orders (3,519 queries/30d, only 25.9MB reclaimable), was effectively
-    unreachable under pure reclaimable-bytes ranking -- it would rank behind nearly every other
-    HIGH-tier table with any meaningful backlog at all, regardless of how often it's queried.
-    Both were flagged externally (#cost-alerts, 2026-08-23) as S3 GET-cost drivers from
-    fragmentation Cryo's own scheduling was structurally unable to prioritize. A broader scan
-    found 54 HIGH-tier tables sharing this shape (>1,000 queries/30d) -- not just these two.
+    essentially never does. A hot, high-priority table sat behind many colder HIGH-tier tables
+    purely because its reclaimable bytes were smaller, while its small-file count kept climbing
+    because the fix never got a turn. A second heavily queried table with almost no reclaimable
+    bytes was effectively unreachable under pure reclaimable-bytes ranking. Both were S3 GET-cost
+    drivers from fragmentation Cryo's own scheduling was structurally unable to prioritize.
+    Other HIGH-tier tables shared this shape -- not just these two.
 
     Sums the two signals (both already log1p-scaled to the same GB/count-derived magnitude, see
     each function's own docstring for why) rather than keeping them lexicographically separate,
     so a table that's extremely hot can now outrank one with a somewhat larger backlog, while a
-    table holding a genuinely enormous backlog (the original 57%-of-58TB-in-20-tables finding
-    _reclaimable_weight was built for) still wins over a merely-warm one -- neither signal can
+    table holding a genuinely enormous backlog (the case _reclaimable_weight was built for)
+    still wins over a merely-warm one -- neither signal can
     silently zero out the other's influence the way strict lexicographic ordering did.
     """
     return _reclaimable_weight(table) + _query_weight(table)

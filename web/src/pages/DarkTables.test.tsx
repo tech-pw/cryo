@@ -39,8 +39,8 @@ const POPULATED: DarkTableCandidatesResponse = {
     {
       id: "c1",
       table_id: "t1",
-      schema_name: "pw_bq",
-      table_name: "bronze_view_offer",
+      schema_name: "sample",
+      table_name: "bronze_offers",
       consecutive_zero_query_windows: 5,
       first_zero_query_at: "2026-08-10T00:00:00Z",
       last_checked_at: "2026-08-14T00:00:00Z",
@@ -84,7 +84,7 @@ describe("DarkTables page", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText(/pw_bq\.bronze_view_offer/i)).toBeInTheDocument();
+      expect(screen.getByText(/sample\.bronze_offers/i)).toBeInTheDocument();
     });
     expect(screen.getByText(/5 consecutive daily checks/i)).toBeInTheDocument();
   });
@@ -102,7 +102,7 @@ describe("DarkTables page", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText(/pw_bq\.bronze_view_offer/i)).toBeInTheDocument();
+      expect(screen.getByText(/sample\.bronze_offers/i)).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: /not dark — dismiss/i }));
@@ -125,7 +125,7 @@ describe("DarkTables page", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText(/pw_bq\.bronze_view_offer/i)).toBeInTheDocument();
+      expect(screen.getByText(/sample\.bronze_offers/i)).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: /not dark — dismiss/i }));

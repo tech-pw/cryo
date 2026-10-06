@@ -4,8 +4,8 @@
   "status": "current",
   "command": "deliver",
   "type": "architecture",
-  "input": "/Users/aamir/Projects/Cryo/site/diagrams/system.architecture.json",
-  "output": "/Users/aamir/Projects/Cryo/site/diagrams/system.architecture.html",
+  "input": "site/diagrams/system.architecture.json",
+  "output": "site/diagrams/system.architecture.html",
   "specification": {
     "sha256": "7b2f0adb77b61c952fb0f47036caccdfd7ed2f16cceb012c3b0a5d60eb6cecb7",
     "bytes": 5567

@@ -1,6 +1,6 @@
 """Regression, 2026-07-27: the native (Go engine) OPTIMIZE dispatch never persisted
 write.target-file-size-bytes / write.distribution-mode the way cryo/engines/spark/sql.py's
-_render_optimize() does for Spark -- confirmed live, pw_bq.silver_dbt_pw_launch kept failing
+_render_optimize() does for Spark -- confirmed live, analytics.silver_launch_events kept failing
 the "Suboptimal properties" health check after every native OPTIMIZE run. These tests cover
 the target-bytes extraction and the best-effort persistence call, mocked at the
 PyIcebergSourceCatalog boundary since no real Iceberg catalog is available in unit tests.
@@ -59,7 +59,7 @@ def test_target_bytes_none_for_malformed_plan() -> None:
 
 def test_persists_properties_via_transaction_on_optimize_success(session, monkeypatch) -> None:
     table = Table(
-        id=uuid4(), source_id=uuid4(), schema_name="pw_bq", table_name="silver_dbt_pw_launch"
+        id=uuid4(), source_id=uuid4(), schema_name="analytics", table_name="silver_launch_events"
     )
     source = Source(id=table.source_id, name="s", type="rest", config={"uri": "http://x"})
     session.add_all([table, source])
@@ -82,7 +82,7 @@ def test_persists_properties_via_transaction_on_optimize_success(session, monkey
     result = maybe_persist_optimize_properties(session, job)
 
     assert result is True
-    mock_catalog.load_table.assert_called_once_with("pw_bq", "silver_dbt_pw_launch")
+    mock_catalog.load_table.assert_called_once_with("analytics", "silver_launch_events")
     mock_txn.set_properties.assert_called_once_with(
         **{
             "write.target-file-size-bytes": str(256 * 1024 * 1024),
@@ -106,7 +106,7 @@ def test_returns_none_without_attempting_catalog_connection_when_no_optimize(
 def test_catalog_failure_is_swallowed_and_returns_false(session, monkeypatch) -> None:
     """A property-persist failure is best-effort -- the rewrite already succeeded, so this
     must never raise or block job finalization."""
-    table = Table(id=uuid4(), source_id=uuid4(), schema_name="pw_bq", table_name="t")
+    table = Table(id=uuid4(), source_id=uuid4(), schema_name="analytics", table_name="t")
     source = Source(id=table.source_id, name="s", type="rest", config={"uri": "http://x"})
     session.add_all([table, source])
     session.commit()

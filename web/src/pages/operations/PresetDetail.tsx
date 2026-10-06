@@ -14,7 +14,7 @@ import { DataTable } from "../../components/ui/data-table";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useAuth } from "../../lib/auth";
 import { formatGb, formatNumber, formatTime } from "../../lib/format";
-import { MAINTENANCE_OPERATION_ORDER } from "../../lib/operationOrder";
+import { MAINTENANCE_OPERATION_ORDER, type MaintenanceOperation } from "../../lib/operationOrder";
 import { formatPresetSummary } from "../../lib/presetForm";
 import { shortRunId, targetLabel } from "../../lib/operations";
 import { WorkflowDetailShell, type WorkflowTabKey } from "./WorkflowDetailShell";
@@ -103,7 +103,7 @@ const PresetOverviewTab = ({ presetId, presetName }: { presetId: string; presetN
     const ops = preset?.operations ?? [];
     if (ops.length === 0) return [];
     const known = MAINTENANCE_OPERATION_ORDER.filter((op) => ops.includes(op));
-    const unknown = ops.filter((op) => !MAINTENANCE_OPERATION_ORDER.includes(op));
+    const unknown = ops.filter((op) => !MAINTENANCE_OPERATION_ORDER.includes(op as MaintenanceOperation));
     return [...known, ...unknown];
   }, [preset?.operations]);
 

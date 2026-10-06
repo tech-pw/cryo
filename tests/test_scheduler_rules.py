@@ -65,7 +65,7 @@ def test_effective_preset_returns_none_when_no_default_and_unconfigured() -> Non
 
 def test_effective_preset_skips_default_for_ephemeral_tables() -> None:
     # The default-preset fallback must not sweep up temp/scratch tables, same exclusion the
-    # rule-match path already applies (PDAE-8347).
+    # rule-match path already applies ().
     default_native = PresetConfig(
         "default-native", "default-native-deep", "native", priority=0, is_default=True
     )
@@ -255,13 +255,13 @@ def test_tables_for_preset_treats_a_naive_retry_after_as_utc() -> None:
 
 
 def test_ephemeral_temp_tables_are_not_rule_matched_but_pins_still_win() -> None:
-    # PDAE-8347: a fleet-wide rule used to pick up `_temp` / schema `temp` scratch tables
+    # : a fleet-wide rule used to pick up `_temp` / schema `temp` scratch tables
     # and burn Spark-on-K8s drivers. Code-level skip so new presets cannot reintroduce them.
     standard = PresetConfig("standard", "standard", "spark", priority=100)
     catch_all = PresetRule("all", "standard", {"field": "total_size_gb", "op": ">=", "value": 0})
     temp_table = TableCandidate(
         "t-temp",
-        "cdp_revenue",
+        "revenue",
         "silver_infinite_practice_result_questions_temp",
         {"total_size_gb": 4000},
     )

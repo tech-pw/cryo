@@ -43,8 +43,8 @@ silently replacing historical evidence.
 | Frontend test files | 29 | A | Dated baseline JSON; collection is not a pass claim |
 | Alembic graph | 50 revisions, one head (`20260731_0035`) | A | AST-parsed migration graph |
 | Ant Design runtime use | 0 imports; no dependency | A | Dated baseline JSON and frontend build |
-| Governor unbounded native scan | Incident observed and bounded fix shipped | B | Master plan §0.1 and Jira PDAE-8272 |
-| Native throughput ceiling | Unknown; slot cap was not the observed bottleneck | B | Master plan §0.3 and Jira PDAE-8275 |
+| Governor unbounded native scan | Incident observed and bounded fix shipped | B | Master plan §0.1 and Jira  |
+| Native throughput ceiling | Unknown; slot cap was not the observed bottleneck | B | Master plan §0.3 and Jira  |
 | 100,000-table target | Not demonstrated | D | Roadmap target only |
 | 30-day representative soak | Not completed | D | External/time-based gate remains open |
 | Design-partner evidence | No completed interviews recorded here | D | External gate remains open |

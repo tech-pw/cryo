@@ -57,7 +57,7 @@ def _seed_table(
 
 
 def test_group_by_grade_counts_and_sums_per_group(session) -> None:
-    source = _seed_source(session, name="cdp")
+    source = _seed_source(session, name="sample")
     _seed_table(session, source, name="a", grade="A", total_size_gb=10, savings=0)
     _seed_table(session, source, name="b", grade="A", total_size_gb=20, savings=0)
     _seed_table(session, source, name="c", grade="D", total_size_gb=5, savings=50)
@@ -72,7 +72,7 @@ def test_group_by_grade_counts_and_sums_per_group(session) -> None:
 
 
 def test_group_by_catalog_groups_across_sources(session) -> None:
-    source_a = _seed_source(session, name="cdp")
+    source_a = _seed_source(session, name="sample")
     source_b = _seed_source(session, name="analytics")
     _seed_table(session, source_a, name="a", grade="A")
     _seed_table(session, source_a, name="b", grade="B")
@@ -81,11 +81,11 @@ def test_group_by_catalog_groups_across_sources(session) -> None:
     result = group_tables(session, field="catalog")
 
     by_catalog = {row.group_value: row.count for row in result.rows}
-    assert by_catalog == {"cdp": 2, "analytics": 1}
+    assert by_catalog == {"sample": 2, "analytics": 1}
 
 
 def test_group_by_needs_compaction_splits_true_false(session) -> None:
-    source = _seed_source(session, name="cdp")
+    source = _seed_source(session, name="sample")
     _seed_table(session, source, name="a", grade="A", needs_compaction=True)
     _seed_table(session, source, name="b", grade="A", needs_compaction=False)
 
@@ -95,7 +95,7 @@ def test_group_by_needs_compaction_splits_true_false(session) -> None:
 
 
 def test_group_by_size_bucket_buckets_correctly(session) -> None:
-    source = _seed_source(session, name="cdp")
+    source = _seed_source(session, name="sample")
     _seed_table(session, source, name="tiny", grade="A", total_size_gb=0.5)
     _seed_table(session, source, name="mid", grade="A", total_size_gb=50)
     _seed_table(session, source, name="huge", grade="A", total_size_gb=2000)
@@ -109,7 +109,7 @@ def test_group_by_size_bucket_buckets_correctly(session) -> None:
 
 
 def test_group_by_includes_tables_with_no_stats_yet(session) -> None:
-    source = _seed_source(session, name="cdp")
+    source = _seed_source(session, name="sample")
     unscanned = Table(
         source_id=source.id, schema_name="finance", table_name="fresh", is_active=True
     )
@@ -124,7 +124,7 @@ def test_group_by_includes_tables_with_no_stats_yet(session) -> None:
 
 
 def test_group_by_respects_filter_predicate(session) -> None:
-    source = _seed_source(session, name="cdp")
+    source = _seed_source(session, name="sample")
     _seed_table(session, source, name="a", grade="A")
     _seed_table(session, source, name="b", grade="D")
 

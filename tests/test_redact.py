@@ -16,7 +16,7 @@ def test_unredact_merge_preserves_keys_absent_from_partial_payload():
     stored = {
         "uri": "thrift://host:9083",
         "s3.region": "ap-south-1",
-        "catalog_name": "cdp",
+        "catalog_name": "sample",
         "s3.access-key-id": "AKIA...",
         "s3.secret-access-key": "real-secret",
     }
@@ -27,7 +27,7 @@ def test_unredact_merge_preserves_keys_absent_from_partial_payload():
     assert merged == {
         "uri": "thrift://host:9083",
         "s3.region": "ap-south-1",
-        "catalog_name": "cdp",
+        "catalog_name": "sample",
         "s3.access-key-id": "AKIA...",
         "s3.secret-access-key": "real-secret",
         "warehouse": "s3://bucket/",

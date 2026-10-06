@@ -11,6 +11,7 @@ import {
   BATCH_RECIPES,
   loadDraft,
   MAINTENANCE_BATCH_CHANGE_EVENT,
+  type MaintenanceBatchDraft,
   setBatchDestination,
   setBatchPreset
 } from "../../lib/maintenanceBatch";

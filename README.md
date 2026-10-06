@@ -7,7 +7,7 @@ and save, and lets you run that maintenance — on Trino or Spark, from a UI or 
 writing another Airflow DAG or dbt macro. One system for compaction, snapshot expiry, orphan-file
 cleanup, cost tracking, and data-quality monitoring, deployable to Kubernetes.
 
-[![CI](https://github.com/shelf-project/Cryo/actions/workflows/ci.yml/badge.svg)](https://github.com/shelf-project/Cryo/actions/workflows/ci.yml)
+[![CI](https://github.com/tech-pw/cryo/actions/workflows/ci.yml/badge.svg)](https://github.com/tech-pw/cryo/actions/workflows/ci.yml)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
 ![Backend](https://img.shields.io/badge/backend-FastAPI%20%2B%20PostgreSQL-informational)
 ![Frontend](https://img.shields.io/badge/frontend-React%2019%20%2B%20TypeScript-informational)
@@ -167,24 +167,24 @@ console, JWT/OIDC auth — is real and tested (379 backend + 58 frontend tests).
 depend on opt-in query-log ingestion to populate; see `docs/OSS_READINESS.md` §2.4 for
 which surfaces are launch-tier versus behind-flags.
 
-For an honest accounting of what's solid, what's partial, and what isn't shipped yet, see
-[`docs/current-state.md`](./docs/current-state.md). For the production-readiness reasoning
-backing this `v0.x` floor, see [`docs/premortem.md`](./docs/premortem.md).
+For what is shipped, see [`docs/CAPABILITIES.md`](./docs/CAPABILITIES.md). For the
+production-readiness reasoning backing this `v0.x` floor, see
+[`docs/premortem.md`](./docs/premortem.md).
 
 ## Quick start
 
 Requires Docker, Python 3.12+, and Node 22+.
 
 ```bash
-git clone https://github.com/shelf-project/Cryo.git
-cd Cryo
+git clone https://github.com/tech-pw/cryo.git
+cd cryo
 
 make up      # Postgres, Redis, MinIO, Iceberg REST/HMS catalogs, Trino, Cryo API + web
 make seed    # create demo Iceberg tables with intentional maintenance issues
 ```
 
 Open **http://localhost:5173**, sign in with any username (dev auth issues a JWT locally; real
-deployments wire up OIDC — see [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)), and you'll land on
+deployments wire up OIDC — see [`docs/operator-guide.md`](./docs/operator-guide.md)), and you'll land on
 the datalake health dashboard for the tables `make seed` just created.
 
 From there: **Tables** to explore the fleet and filter/assign presets, **Scanner** to trigger a
@@ -307,7 +307,7 @@ and an Alembic migration for every schema change.
 
 ## License
 
-[Apache License 2.0](./LICENSE). Copyright 2026 shelf-project.
+[Apache License 2.0](./LICENSE). Copyright 2026 tech-pw.
 
 By contributing, you agree your contributions are licensed under the same Apache-2.0 terms.
 See [CONTRIBUTING.md](./CONTRIBUTING.md) and [docs/GOVERNANCE.md](./docs/GOVERNANCE.md).

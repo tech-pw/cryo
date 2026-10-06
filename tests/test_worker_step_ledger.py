@@ -79,7 +79,7 @@ def test_begin_step_before_execute() -> None:
         "table-1",
         TableMaintenanceData(
             stats={
-                "catalog_name": "cdp",
+                "catalog_name": "sample",
                 "schema_name": "s",
                 "table_name": "t",
                 "total_files": 1,
@@ -134,7 +134,7 @@ def test_skip_already_succeeded_steps() -> None:
         "table-1",
         TableMaintenanceData(
             stats={
-                "catalog_name": "cdp",
+                "catalog_name": "sample",
                 "schema_name": "s",
                 "table_name": "t",
                 "total_files": 1,
@@ -183,7 +183,7 @@ def test_active_table_blocks_dangerous_begin() -> None:
         "table-1",
         TableMaintenanceData(
             stats={
-                "catalog_name": "cdp",
+                "catalog_name": "sample",
                 "schema_name": "s",
                 "table_name": "t",
                 "total_files": 1,

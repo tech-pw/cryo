@@ -6,7 +6,7 @@ labels: question
 assignees: ""
 ---
 
-> For quick questions, prefer [GitHub Discussions](https://github.com/shelf-project/Cryo/discussions)
+> For quick questions, prefer [GitHub Discussions](https://github.com/tech-pw/cryo/discussions)
 > — it stays indexed and searchable. Use Issues for actionable work that needs tracking.
 
 ### What I'm trying to do

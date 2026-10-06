@@ -177,7 +177,7 @@ def test_apply_priority_order_reclaimable_bytes_outranks_mildly_hot_table_within
 def test_apply_priority_order_extreme_hotness_can_outrank_a_large_backlog_within_tier() -> None:
     """Direct regression test for the combined-weight fix (2026-08-25): before this, a table's
     query hotness had literally zero pull against reclaimable size (query_weight was only a
-    tie-breaker) -- confirmed live, lsq_pw.gold_dbt_lsq_pw_prospect_activity_phone_lookup
+    tie-breaker) -- confirmed live, crm.gold_dbt_crm_prospect_activity_phone_lookup
     (2,610 queries/30d, HIGH priority, real Metabase traffic) sat behind 146 other HIGH-tier
     tables purely on reclaimable-bytes size while its own small-file count climbed monotonically
     every day (1,431 -> 17,879 files, Aug 13-24) because the fix that would have controlled it
@@ -211,8 +211,8 @@ def test_apply_priority_order_hot_small_table_now_outranks_146x_bigger_cold_back
     hot_small = _table(
         "hot_small",
         compaction_priority="HIGH",
-        reclaimable_bytes=9_063_196_314,  # ~8.4GB, real lsq_pw value
-        query_count_30d=2610,  # real lsq_pw value
+        reclaimable_bytes=9_063_196_314,  # ~8.4GB, real crm value
+        query_count_30d=2610,  # real crm value
     )
     cold_medium_tables = [
         _table(f"cold_{i}", compaction_priority="HIGH", reclaimable_bytes=15 * 1024**3, query_count_30d=0)

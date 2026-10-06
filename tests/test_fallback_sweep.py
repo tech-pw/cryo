@@ -1,4 +1,4 @@
-"""Tests for cryo.governor.fallback_sweep (PDAE-8352's async fallback-dispatch resolver).
+"""Tests for cryo.governor.fallback_sweep ('s async fallback-dispatch resolver).
 
 _dispatch_fallback_operations submits Spark fallback jobs and records status="SUBMITTED"
 without waiting -- these tests cover the sweep that resolves those rows to their real
@@ -56,7 +56,7 @@ def _seed_spark_destination(session) -> Destination:
         id=uuid4(),
         name="spark-k8s-fallback",
         engine="spark_emr",
-        config={"catalog": "cdp"},
+        config={"catalog": "sample"},
         enabled=True,
     )
     session.add(destination)

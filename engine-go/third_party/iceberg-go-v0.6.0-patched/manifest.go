@@ -1871,8 +1871,7 @@ func (d *dataFile) convertAvroValueToIcebergType(v any, fieldID int) any {
 	// itself null) but previously unhandled here: every branch below went straight to a type
 	// assertion (v.(int32), v.(int64), etc.) with no nil check first, so a null value panicked
 	// with "interface conversion: interface {} is nil, not int32" instead of decoding to "no
-	// value" -- crashed the whole native maintenance subprocess (PDAE-8279, table
-	// hive.icesheet.silver_offline_drip_read_status_2, 2026-08-14). nil is the correct decoded
+	// value" -- crashed the whole native maintenance subprocess. nil is the correct decoded
 	// value for a null partition field: newPartitionRecord (table/scanner.go) already treats an
 	// absent map entry as nil via a plain Go map lookup, and Iceberg's own expression evaluator
 	// is built to handle a nil/absent partition value as part of normal null semantics -- this

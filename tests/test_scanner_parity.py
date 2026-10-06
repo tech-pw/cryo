@@ -74,7 +74,7 @@ def test_analyze_catalog_table_wires_a_working_table_obj_loader_for_go_engine() 
             "demo",
             "events",
             settings=Settings(scan_engine="go"),
-            source_config={"catalog": "cdp"},
+            source_config={"catalog": "sample"},
         )
 
     assert "table_obj_loader" in captured
@@ -187,8 +187,8 @@ def test_go_payload_gets_cost_accounting_for_a_large_but_valuable_table() -> Non
     )
     analysis = table_analysis_from_go_payload(
         _go_payload_fixture(total_files=250_000, manifest_count=9),
-        schema_name="unified_bq",
-        table_name="gold_dbt_pw_bq",
+        schema_name="warehouse",
+        table_name="gold_events",
         scan_at=scan_at,
         settings=Settings(cost_scan_tier="metadata"),
         table_obj_loader=lambda: table,
@@ -211,8 +211,8 @@ def test_go_payload_degrades_to_heuristic_not_nothing_when_snapshot_count_is_hig
     )
     analysis = table_analysis_from_go_payload(
         _go_payload_fixture(total_files=250_000, manifest_count=9),
-        schema_name="unified_bq",
-        table_name="gold_dbt_pw_bq",
+        schema_name="warehouse",
+        table_name="gold_events",
         scan_at=scan_at,
         settings=Settings(cost_scan_tier="metadata", cost_scan_max_snapshots=200),
         table_obj_loader=lambda: table,

@@ -264,8 +264,7 @@ falls back to Trino/Spark at much higher cost than the "fast native engine" pitc
 sized from Planner-known `total_size_gb`.
 
 **Related (row density, not just chunk GB):** even a planner-sized ~1–3 GB chunk can OOM when
-Parquet is extremely dense (GeoIP exemplar run `858ad9eb` —
-`geoip.silver_geoip_locations` / `ingest_date=2025-02-13`: ~2.7 GB / 47 files / 3.7B rows).
+Parquet is extremely dense (one exemplar run: ~2.7 GB / 47 files / 3.7B rows).
 Bin-pack's ~256 MB groups still expand far past Arrow RAM. Engine-side mitigation (landed):
 `scan_concurrency=1` + `partial_progress` + optional `max_bytes_per_group` (defaults to
 `target_file_size_bytes` so memory splits do not force Spark-illegal 1→1 rewrites; after split,

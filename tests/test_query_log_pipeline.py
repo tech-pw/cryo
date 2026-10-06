@@ -184,10 +184,10 @@ def test_query_log_schema_has_expected_fields() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Row -> PyArrow conversion (PDAE-8277)
+# Row -> PyArrow conversion ()
 #
 # PyIceberg's Table.append() requires a pyarrow.Table -- passing a raw list of dicts fails
-# with "Expected PyArrow table, got: [...]". This was the fourth bug in the PDAE-8277 chain,
+# with "Expected PyArrow table, got: [...]". This was the fourth bug in the  chain,
 # only surfaced once auth + the SQL column mismatch + the catalog-wrapper mismatch were all
 # fixed and a real batch of rows finally reached this call.
 # ---------------------------------------------------------------------------
@@ -335,15 +335,15 @@ def test_rows_from_trino_queries_truncates_huge_text() -> None:
 
 def test_enrich_fills_bytes_rows_files_from_real_query_detail_shape() -> None:
     row = {"query_id": "q1", "bytes_read": None, "rows_read": None, "files_read": None}
-    # Real response shape confirmed live against trino-prod-replica-3.
+    # Real response shape confirmed live against coordinator-1.
     detail = {
         "queryStats": {
             "physicalInputDataSize": "4536702B",
             "physicalInputPositions": 5568,
         },
         "inputs": [
-            {"catalogName": "cdp", "schema": "pw_bq", "table": "silver_dbt_orders$files"},
-            {"catalogName": "cdp", "schema": "pw_bq", "table": "silver_dbt_users$files"},
+            {"catalogName": "sample", "schema": "analytics", "table": "silver_dbt_orders$files"},
+            {"catalogName": "sample", "schema": "analytics", "table": "silver_dbt_users$files"},
         ],
     }
     enriched = enrich_row_with_query_stats(row, detail)
@@ -436,7 +436,7 @@ def test_stream_key_uses_source_id() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Catalog unwrapping (PDAE-8277): writer_for_destination must hand the writer a raw
+# Catalog unwrapping (): writer_for_destination must hand the writer a raw
 # PyIceberg catalog, not the read-oriented SourceCatalog wrapper (HiveSourceCatalog etc)
 # that source_catalog_for() returns for every other caller. The wrapper doesn't expose
 # create_table_if_not_exists/create_namespace_if_not_exists, so passing it through
@@ -535,7 +535,7 @@ class _FakeTable:
 
     def append(self, arrow_table) -> None:  # type: ignore[no-untyped-def]
         # The real PyIceberg Table.append() takes a pyarrow.Table, not a list of dicts
-        # (PDAE-8277) -- convert back to plain dicts so existing assertions on
+        # () -- convert back to plain dicts so existing assertions on
         # last_appended stay simple.
         self._catalog.last_appended.extend(arrow_table.to_pylist())
 
@@ -675,7 +675,7 @@ def test_curator_runs_without_source_still_archives_to_iceberg() -> None:
 
     destination = SimpleNamespace(
         id=uuid4(),
-        name="trino-prod",
+        name="trino-a",
         query_log_config={"enabled": True, "mode": "trino_system_runtime"},
         query_log_retention_days=30,
     )
@@ -729,7 +729,7 @@ def test_curator_surfaces_failure_instead_of_silent_drop() -> None:
 
     destination = SimpleNamespace(
         id=uuid4(),
-        name="trino-prod",
+        name="trino-a",
         query_log_config={"enabled": True},
         query_log_retention_days=30,
     )
@@ -782,12 +782,12 @@ def test_curator_enrichment_calls_fetch_query_stats_when_opted_in() -> None:
             self.stats_calls.append(query_id)
             return {
                 "queryStats": {"physicalInputDataSize": "1000B", "physicalInputPositions": 10},
-                "inputs": [{"catalogName": "cdp", "schema": "s", "table": "t"}],
+                "inputs": [{"catalogName": "sample", "schema": "s", "table": "t"}],
             }
 
     destination = SimpleNamespace(
         id=uuid4(),
-        name="trino-prod",
+        name="trino-a",
         query_log_config={"enabled": True, "fetch_stats_for_curated": True},
         query_log_retention_days=30,
     )
@@ -827,7 +827,7 @@ def test_curator_enrichment_is_a_noop_when_ingester_lacks_fetch_query_stats() ->
 
     destination = SimpleNamespace(
         id=uuid4(),
-        name="trino-prod",
+        name="trino-a",
         query_log_config={"enabled": True, "fetch_stats_for_curated": True},
         query_log_retention_days=30,
     )
@@ -869,7 +869,7 @@ def test_curator_enrichment_respects_the_per_tick_cap() -> None:
 
     destination = SimpleNamespace(
         id=uuid4(),
-        name="trino-prod",
+        name="trino-a",
         query_log_config={
             "enabled": True,
             "fetch_stats_for_curated": True,
@@ -908,7 +908,7 @@ def test_curator_dedupe_across_multi_coordinator_poll() -> None:
 
     destination = SimpleNamespace(
         id=uuid4(),
-        name="trino-prod",
+        name="trino-a",
         query_log_config={
             "enabled": True,
             "telemetry_coordinators": ["http://c1:8080", "http://c2:8080"],
@@ -1017,7 +1017,7 @@ def test_resolve_table_prefers_trino_inputs_over_query_text_regex(session) -> No
     session.add(source)
     session.flush()
     real_table = TableModel(
-        id=uuid4(), source_id=source.id, schema_name="pw_bq", table_name="silver_dbt_orders",
+        id=uuid4(), source_id=source.id, schema_name="analytics", table_name="silver_dbt_orders",
         is_active=True,
     )
     session.add(real_table)
@@ -1040,10 +1040,10 @@ def test_resolve_table_prefers_trino_inputs_over_query_text_regex(session) -> No
     row = {
         # A join-shaped query text the regex would resolve to the WRONG table (the first
         # one named), while _trino_inputs correctly names the real one queried.
-        "query_text": "SELECT * FROM wrong_schema.wrong_table JOIN pw_bq.silver_dbt_orders ON 1=1",
+        "query_text": "SELECT * FROM wrong_schema.wrong_table JOIN analytics.silver_dbt_orders ON 1=1",
         "_trino_inputs": [
-            {"catalog": "cdp", "schema": "pw_bq", "table": "silver_dbt_orders$files"},
-            {"catalog": "cdp", "schema": "pw_bq", "table": "silver_dbt_orders"},
+            {"catalog": "sample", "schema": "analytics", "table": "silver_dbt_orders$files"},
+            {"catalog": "sample", "schema": "analytics", "table": "silver_dbt_orders"},
         ],
     }
     resolved = curator._resolve_table(session, row)
@@ -1079,7 +1079,7 @@ def test_resolve_table_skips_metadata_table_entries_in_trino_inputs(session) -> 
 
     row = {
         "query_text": "",
-        "_trino_inputs": [{"catalog": "cdp", "schema": "s", "table": "t$files"}],
+        "_trino_inputs": [{"catalog": "sample", "schema": "s", "table": "t$files"}],
     }
     assert curator._resolve_table(session, row) is None
 
@@ -1123,7 +1123,7 @@ def test_resolve_table_falls_back_to_query_text_when_no_trino_inputs(session) ->
 
 
 # ---------------------------------------------------------------------------
-# Auth plumbing (PDAE-8277): the curator must authenticate its fetch against
+# Auth plumbing (): the curator must authenticate its fetch against
 # system.runtime.queries the same way every other Trino query against this destination
 # does, or a coordinator with basic/LDAP auth silently 401s on every tick.
 # ---------------------------------------------------------------------------

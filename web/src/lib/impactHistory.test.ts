@@ -52,7 +52,7 @@ describe("impact history states", () => {
     expect(engineBytesLabel({ bytes_freed_by_engine: {} })).toBe("Unknown");
     expect(
       engineBytesLabel({
-        bytes_freed_by_engine: { native: { bytes: 5 * 1024 ** 3, actions_measured: 1 } }
+        bytes_freed_by_engine: { native: { bytes: 5 * 1024 ** 3 } }
       })
     ).toBe("native 5.00 GB");
   });

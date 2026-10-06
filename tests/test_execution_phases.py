@@ -138,7 +138,7 @@ def test_streaming_detection_from_history() -> None:
 
 def test_streaming_detection_skips_deltas_explained_by_maintenance_jobs() -> None:
     """Regression, 2026-07-27: a deep run's own expire_snapshots/optimize/optimize_manifests
-    commits inflated pw_bq.silver_dbt_pw_launch's snapshot count 8 -> 36 in minutes, which the
+    commits inflated analytics.silver_launch_events's snapshot count 8 -> 36 in minutes, which the
     unadjusted heuristic read as 80 commits/day of streaming writes. stats_history_for_signals
     marks the latest row when a Cryo job explains the delta; detect_streaming_from_history must
     then report no streaming rather than a false positive."""
@@ -249,13 +249,13 @@ def test_streaming_aware_cadence_opt_out() -> None:
 
 
 def test_extra_care_cadence_tightens_chunks_just_under_streaming_threshold() -> None:
-    """PDAE-8353: lsq_pw.gold_prospect_activity_extension_base writes ~14 commits/day
+    """: crm.gold_prospect_activity_extension_base writes ~14 commits/day
     (is_streaming False, cutoff 24) and loses rewrite_data_files to
     branch "main" has changed. Extra-care band (5-24) uses smaller chunks so each
     commit races a shorter rewrite window.
     """
     stats = {
-        "schema_name": "lsq_pw",
+        "schema_name": "crm",
         "table_name": "gold_prospect_activity_extension_base",
         "small_files_count": 200,
         "total_size_gb": 80,
@@ -305,7 +305,7 @@ def test_extra_care_cadence_tightens_chunks_just_under_streaming_threshold() -> 
 
 
 def test_streaming_aware_retention_tightens_expire_snapshots_window() -> None:
-    """Regression, 2026-08-03: unified_bq.gold_dbt_pw_bq went from 666 to 2,137 snapshots
+    """Regression, 2026-08-03: warehouse.gold_events went from 666 to 2,137 snapshots
     *during* a single 2.5-day maintenance run -- expire_snapshots can only remove snapshots
     older than its retention window, not ones created while the job itself is still running.
     A high-velocity table should get a tighter window than the 7-day default so repeated

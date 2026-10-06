@@ -212,7 +212,7 @@ def test_sla_status_reports_schema_name_and_preset_coverage(postgres_session) ->
 
     covered = _seed_table(session, source, scan_at=now - timedelta(hours=1), schema_name="lms")
     uncovered = _seed_table(
-        session, source, scan_at=now - timedelta(hours=1), schema_name="cdp_revenue"
+        session, source, scan_at=now - timedelta(hours=1), schema_name="revenue"
     )
 
     destination = Destination(
@@ -240,5 +240,5 @@ def test_sla_status_reports_schema_name_and_preset_coverage(postgres_session) ->
     assert covered_row.has_preset is True
 
     uncovered_row = by_table[uncovered.id]
-    assert uncovered_row.schema_name == "cdp_revenue"
+    assert uncovered_row.schema_name == "revenue"
     assert uncovered_row.has_preset is False

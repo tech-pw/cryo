@@ -148,7 +148,7 @@ def test_discover_candidates_reports_errors_instead_of_swallowing_them(session) 
 def test_run_scan_raises_when_source_scoped_discovery_fails(session) -> None:
     """A source-scoped scan chunk (every queued scan chunk is) that hits a total catalog
     connection failure must surface as a failure, not silently report "0 tables, succeeded" --
-    this is the exact bug that let a broken cdp source config look like a clean scan."""
+    this is the exact bug that let a broken sample source config look like a clean scan."""
     source = _seed_source(session)
 
     with pytest.raises(RuntimeError, match="uri"):
@@ -163,8 +163,8 @@ def test_run_scan_raises_when_source_scoped_discovery_fails(session) -> None:
 
 def test_table_scoped_discovery_never_touches_a_source_it_did_not_ask_for(session) -> None:
     """A scan scoped to specific table_ids must only connect to the sources owning those
-    tables. Prod, 2026-09-23: a five-table scan of `cdp` tables sat at scanned=0 for over five
-    minutes because discovery also walked cdp_dev, whose metastore is unreachable and whose
+    tables. Prod, 2026-09-23: a five-table scan of `sample` tables sat at scanned=0 for over five
+    minutes because discovery also walked sample_dev, whose metastore is unreachable and whose
     three A records each burned a full TCP connect timeout in turn."""
     wanted = _seed_source(session)
     unrelated = _seed_source(session)
@@ -220,7 +220,7 @@ def test_an_unreachable_unrelated_source_does_not_fail_a_table_scoped_scan(sessi
 
 
 def test_a_table_with_a_missing_manifest_is_unreadable_not_failed(session) -> None:
-    """201 of cdp.central's 585 tables reference a snap-*.avro that S3 returns NoSuchKey for,
+    """201 of demo.events's 585 tables reference a snap-*.avro that S3 returns NoSuchKey for,
     and Trino fails on them identically. Retrying cannot change the outcome, so they must not
     inflate the scan failure rate -- they're reported as their own thing to hand to the team
     that owns the lakehouse."""

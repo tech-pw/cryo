@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Build, pin, and roll out a new Cryo image to data-platform-cluster prod.
+# Build, pin, and roll out a new Cryo image.
 #
-# Written 2026-08-10 after a real incident: manually updating values-prod.yaml's three
+# Required for a cluster rollout: CRYO_KUBE_CONTEXT.
+# Optional: CRYO_IMAGE_REGISTRY (default ghcr.io/tech-pw/cryo),
+# CRYO_VALUES_FILE, CRYO_GIT_REMOTE, CRYO_GIT_BRANCH.
+#
+# Written 2026-08-10 after a real incident: manually updating the overlay's three
 # digest fields (image, migration.image, native.image) by hand missed one of them, which
 # would have left api/worker/governor/scheduler running one commit behind the native engine
 # binary shipped in the exact same image build. This script exists to make that class of
@@ -23,8 +27,10 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 REPO_ROOT="$(pwd)"
-IMAGE="registry.gitlab.com/penpencil-services/data/data-engineering/cryo"
-VALUES_FILE="deploy/helm/cryo/values-prod.yaml"
+IMAGE="${CRYO_IMAGE_REGISTRY:-ghcr.io/tech-pw/cryo}"
+VALUES_FILE="${CRYO_VALUES_FILE:-deploy/helm/cryo/values.yaml}"
+GIT_REMOTE="${CRYO_GIT_REMOTE:-origin}"
+GIT_BRANCH="${CRYO_GIT_BRANCH:-main}"
 
 BUILD_ONLY=false
 SKIP_TESTS=false
@@ -56,11 +62,11 @@ if [[ "$SKIP_TESTS" == false ]]; then
 fi
 
 log "Checking for a dirty working tree"
-if [[ -n "$(git status --porcelain -- ':!deploy/helm/cryo/values-prod.yaml')" ]]; then
-  echo "error: working tree has uncommitted changes outside values-prod.yaml." >&2
-  echo "Commit or stash them first -- this script commits values-prod.yaml on your behalf" >&2
+if [[ -n "$(git status --porcelain -- ":!$VALUES_FILE")" ]]; then
+  echo "error: working tree has uncommitted changes outside $VALUES_FILE." >&2
+  echo "Commit or stash them first -- this script commits $VALUES_FILE on your behalf" >&2
   echo "and a dirty tree elsewhere makes that commit's diff misleading." >&2
-  git status --short -- ':!deploy/helm/cryo/values-prod.yaml' >&2
+  git status --short -- ":!$VALUES_FILE" >&2
   exit 1
 fi
 
@@ -102,11 +108,11 @@ if [[ "$NO_COMMIT" == false ]]; then
   git add "$VALUES_FILE"
   git commit -m "deploy: pin image digest $DIGEST
 
-Built + pushed via deploy/deploy.sh from gitlab-main commit $(git rev-parse --short HEAD~1 2>/dev/null || echo unknown).
+Built + pushed via deploy/deploy.sh from commit $(git rev-parse --short HEAD~1 2>/dev/null || echo unknown).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
-  log "Pushing to gitlab"
-  git push gitlab gitlab-main
+  log "Pushing to ${GIT_REMOTE} ${GIT_BRANCH}"
+  git push "$GIT_REMOTE" "$GIT_BRANCH"
 fi
 
 if [[ "$BUILD_ONLY" == true ]]; then
@@ -115,8 +121,12 @@ if [[ "$BUILD_ONLY" == true ]]; then
   exit 0
 fi
 
-log "Switching kube context to data-platform-cluster"
-infra use data-platform-cluster
+if [[ -z "${CRYO_KUBE_CONTEXT:-}" ]]; then
+  log "CRYO_KUBE_CONTEXT is not set. Stopping before the cluster."
+  exit 1
+fi
+log "Switching kube context to ${CRYO_KUBE_CONTEXT}"
+infra use "$CRYO_KUBE_CONTEXT"
 
 log "Running helm upgrade"
 helm upgrade --install cryo deploy/helm/cryo -n cryo \

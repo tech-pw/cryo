@@ -8,23 +8,23 @@ from typing import Any
 import pytest
 
 _BIG = "9223372036854775807"
-_TABLE = "cdp.demo.events"
+_TABLE = "sample.demo.events"
 _PREFIX = "[cryo-result] "
 
 _SQL = {
     "optimize": (
-        "CALL cdp.system.rewrite_data_files(table => 'cdp.demo.events', strategy => 'binpack')"
+        "CALL sample.system.rewrite_data_files(table => 'sample.demo.events', strategy => 'binpack')"
     ),
     "rewrite_position_deletes": (
-        "CALL cdp.system.rewrite_position_delete_files(table => 'cdp.demo.events')"
+        "CALL sample.system.rewrite_position_delete_files(table => 'sample.demo.events')"
     ),
     "expire_snapshots": (
-        "ALTER TABLE cdp.demo.events CREATE OR REPLACE TAG `cryo-protect-1` "
+        "ALTER TABLE sample.demo.events CREATE OR REPLACE TAG `cryo-protect-1` "
         "AS OF VERSION 1;\n"
-        "CALL cdp.system.expire_snapshots(table => 'cdp.demo.events', retain_last => 1)"
+        "CALL sample.system.expire_snapshots(table => 'sample.demo.events', retain_last => 1)"
     ),
-    "rewrite_manifests": "CALL cdp.system.rewrite_manifests(table => 'cdp.demo.events')",
-    "optimize_manifests": "CALL cdp.system.rewrite_manifests(table => 'cdp.demo.events')",
+    "rewrite_manifests": "CALL sample.system.rewrite_manifests(table => 'sample.demo.events')",
+    "optimize_manifests": "CALL sample.system.rewrite_manifests(table => 'sample.demo.events')",
 }
 
 
@@ -210,17 +210,17 @@ def test_non_committing_statements_are_not_probed(
             {
                 "seq": 0,
                 "action": "remove_orphan_files",
-                "sql": "CALL cdp.system.remove_orphan_files(table => 'cdp.demo.events')",
+                "sql": "CALL sample.system.remove_orphan_files(table => 'sample.demo.events')",
             },
             {
                 "seq": 1,
                 "action": "convert_deletes",
-                "sql": "CALL cdp.system.rewrite_data_files(table => 'cdp.demo.events')",
+                "sql": "CALL sample.system.rewrite_data_files(table => 'sample.demo.events')",
             },
             {
                 "seq": 2,
                 "action": "compute_statistics",
-                "sql": "CALL cdp.system.compute_table_stats(table => 'cdp.demo.events')",
+                "sql": "CALL sample.system.compute_table_stats(table => 'sample.demo.events')",
             },
         ],
     )
@@ -239,7 +239,7 @@ def test_manifest_table_ref_is_used_when_sql_has_no_table_argument(
     spark = _Spark(_Table([4, int(_BIG)]))
     path = _manifest(
         tmp_path,
-        [{"seq": 0, "action": "optimize", "sql": "CALL cdp.system.rewrite_data_files(t)"}],
+        [{"seq": 0, "action": "optimize", "sql": "CALL sample.system.rewrite_data_files(t)"}],
         table_ref=_TABLE,
     )
 

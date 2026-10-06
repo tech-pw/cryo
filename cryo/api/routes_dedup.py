@@ -17,7 +17,7 @@ Endpoints (all under ``/api/v1``):
 
 Every response includes the full evidence trail behind a score -- design doc SS7/SS9: no
 bare numeric score for something that can end in a DROP TABLE, especially given this
-session's own gold_gst_slabs incident. Nothing under this router deletes or modifies a
+session's own false-positive incident. Nothing under this router deletes or modifies a
 table; role="drop_candidate" is a recommendation label only.
 """
 

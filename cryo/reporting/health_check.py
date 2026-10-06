@@ -6,7 +6,7 @@ showing up as a job failure."
 Built 2026-08-19 after a single investigation session found three real, independent,
 long-running production bugs that no existing report or alert had ever surfaced:
 
-1. PDAE-8546's batch-deadline fix (docs of that fix, cryo/engines/native/watcher.py) --
+1. 's batch-deadline fix (docs of that fix, cryo/engines/native/watcher.py) --
    batched native dispatches blanket-failing every member on a deadline kill.
 2. 1,210 distinct active tables repeatedly failing with NoSuchKey / "table does not exist"
    (stale catalog entries pointing at deleted S3 objects) -- ~326-737 failures/day for at
@@ -274,7 +274,7 @@ def _hours_between(later: datetime, earlier: datetime) -> float:
 
 
 def _check_stuck_runs(session: Session, *, now: datetime) -> CheckResult:
-    """Catches PDAE-8546-shaped incidents: a MaintenanceRun open in status='running' with
+    """Catches -shaped incidents: a MaintenanceRun open in status='running' with
     nothing happening underneath it -- not just "open a long time".
 
     Live-verified 2026-09-01: raw age alone (the original check) false-positived on the
@@ -346,7 +346,7 @@ def _check_stuck_runs(session: Session, *, now: datetime) -> CheckResult:
 
 def _check_stale_jobs(session: Session, *, now: datetime) -> CheckResult:
     """Jobs stuck in running/admitted far past any real operation's duration -- the generic
-    shape PDAE-8546's specific failure took (a batch dying with no terminal status update) and
+    shape 's specific failure took (a batch dying with no terminal status update) and
     the shape a native-job-watcher regression would take again if it recurs."""
     cutoff = now - timedelta(hours=_STUCK_JOB_HOURS)
     rows = session.execute(

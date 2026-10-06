@@ -33,8 +33,8 @@ Findings, each confirmed against the audit rows and table stats:
    `CALL system.compute_table_stats(table)`. In Iceberg 1.11 that is
    `loadTable(snapshot).select(thetaSketch(col) for every column).first()`
    (`NDVSketchUtil.computeNDVSketches`): a full scan of the whole table. It took 64 min on
-   `mview.gold_dbt_lsq_leads_online` (267 GB) and 28 min on
-   `curiousjr_bq.bronze_events_intraday` (241 GB), whose optimize had rewritten only 21 GB. A
+   one 267 GB table and 28 min on
+   a 241 GB table, whose optimize had rewritten only 21 GB. A
    bin-pack rewrite doesn't change the data, and Trino, which runs this fleet's queries, walks
    back through parent snapshots to the latest stats file (`TableStatisticsReader`) and also
    collects NDV on its own writes. Spark's reader only uses a stats file for the exact snapshot
@@ -43,7 +43,7 @@ Findings, each confirmed against the audit rows and table stats:
    partitions by files under the scanner's small-file threshold (89.6 MB); Spark's
    `rewrite_data_files` treats every file under 75% of the target (192 MB at 256 MB) as a
    candidate, and the planner sends any table up to `chunk_size_gb` (50 GB) as one full-table
-   rewrite. `mview.gold_dbt_product_funnel_user_daily` had **11** small files and got
+   rewrite. One table had **11** small files and got
    **206 files / 23 GB** rewritten in 40 minutes (206 → 115 files); several other tables show
    the same pattern (≈1.5 lane-hours). Readers split Iceberg files at the table's
    `read.split.target-size` (128 MB default), so turning 120 MB files into 220 MB files barely
@@ -135,7 +135,7 @@ Deliberately **not** changed:
 - `partial-progress.max-commits` stays 50 for optimize and convert_deletes. The old comments
   claimed Iceberg stops after 10 commits; the source says otherwise, and the comments now say
   what the value actually trades (commit granularity and conflict blast radius vs snapshots).
-  On `cdp_revenue.gold_doubts_ops_new` 25 commits spread over a 32-minute rewrite, so commit
+  On one table, 25 commits spread over a 32-minute rewrite, so commit
   overhead is not the bottleneck.
 - `remove_orphan_files` keeps Hadoop directory listing (one LIST per directory, spread over
   tasks) instead of `prefix_listing` (flat `ListObjectsV2` on the driver; 1.11's
@@ -193,7 +193,7 @@ Watch for any statement failing with `Cannot use options` (an option Iceberg rej
 
 1. **Stop compacting tables their writers rebuild every day.** Several tables compacted on
    2026-09-24 were back to their old file counts within hours: `store.gold_users` 100 → 9 → 100,
-   `central.gold_test_student_latest_mappings` 500 → 10 → 500, `cdp_revenue.gold_doubts_ops_new`
+   one table 500 → 10 → 500, another
    894 → 103 → 892 (a Trino write at 03:32 UTC). Nightly compaction only helps those tables
    during the night. Detecting it needs the scanner to record the last data commit's
    added/deleted/total file counts (the Go scanner reads snapshot summaries already); selection
@@ -270,9 +270,9 @@ Pre-run `table_stats_history` joined to `cryo.jobs.engine_ref` for run `25e8a39c
 | Lane | Was | Largest rewrite | Table | Tonight under `ac0545a` |
 |---|---|---:|---|---|
 | 0 | 4 vCPU / 16 GiB | 109.4 GB | `user_experience.gold_test_student_mappings` (140 GB) | 2 vCPU / 8 GiB |
-| 1 | 4 vCPU / 16 GiB | 69.9 GB | `mview.gold_dbt_test_results` (160 GB) | 2 vCPU / 8 GiB |
+| 1 | 4 vCPU / 16 GiB | 69.9 GB | a 160 GB table | 2 vCPU / 8 GiB |
 | 2 | 2 vCPU / 8 GiB | 30.5 GB | already under the old 50 GB bar | unchanged |
-| 3 | 4 vCPU / 16 GiB | 62.7 GB | `curiousjr_bq.bronze_events_intraday` (234 GB) | 2 vCPU / 8 GiB |
+| 3 | 4 vCPU / 16 GiB | 62.7 GB | a 234 GB table | 2 vCPU / 8 GiB |
 
 §1's 241 GB / 21 GB rewrite for that table is the optimize statement's audit (what Spark rewrote). The 234 GB / 62.7 GB here is the pre-run scanner estimate that sized the lane (`total_size_gb` × small-file ratio), not the same number.
 

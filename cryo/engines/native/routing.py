@@ -296,7 +296,7 @@ def resolve_native_routing(
     fallback_ops: list[tuple[Operation, str]] = []
     skipped_ops: list[tuple[Operation, str]] = []
 
-    # Real incident, 2026-09-16: gold_dbt_poll_dashboard_view's native-engine job reported
+    # Real incident, 2026-09-16: example_table's native-engine job reported
     # success=true with zero actual Iceberg mutation -- the trust boundary between Cryo and the
     # Go binary has no independent verification (see _reported_zero_work_operations in
     # cryo/engines/native/watcher.py for the narrower per-operation guard). Until that binary can

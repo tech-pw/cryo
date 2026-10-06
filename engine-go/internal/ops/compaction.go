@@ -128,7 +128,7 @@ func RewriteDataFiles(ctx context.Context, req *protocol.ExecuteRequest, op *pro
 	}
 
 	// Single all-or-nothing commit. Reload + re-run on a lost optimistic-concurrency
-	// race (PDAE-8353): Hive/Glue often surface "branch \"main\" has changed" without
+	// race: Hive/Glue often surface "branch \"main\" has changed" without
 	// wrapping ErrCommitFailed, and COW tables hit the same race as MOR. iceberg-go
 	// also retries inside doCommit; this outer loop re-plans from the current snapshot
 	// after a concurrent writer lands.
