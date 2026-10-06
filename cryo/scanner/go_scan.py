@@ -20,6 +20,7 @@ from cryo.scanner.analyze import (
     TableAnalysis,
     _needs_compaction,
     _priority,
+    raw_partition_preview,
 )
 from cryo.scanner.commit_signals import commit_signals, commits_from_payload
 from cryo.scanner.cost import (
@@ -356,7 +357,7 @@ def table_analysis_from_go_payload(
     primary = clean_fields[0] if clean_fields else {}
     raw: dict[str, Any] = {
         "partition_fields": clean_fields,
-        "partitions_to_rewrite": [p.__dict__ for p in partition_rows],
+        "partitions_to_rewrite": raw_partition_preview(partition_rows),
         "file_formats": file_formats,
         "snapshot_overhead_gb": cost.snapshot_overhead_gb,
         "health_deductions": health_deductions,

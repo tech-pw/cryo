@@ -43,7 +43,7 @@ spec:
         - name: api
           image: {{ include "cryo.imageRef" .Values.image | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["uvicorn", "cryo.api.app:app", "--host", "0.0.0.0", "--port", "{{ .Values.api.port }}"]
+          command: ["uvicorn", "cryo.api.app:app", "--host", "0.0.0.0", "--port", "{{ .Values.api.port }}", "--workers", "{{ .Values.api.workers | default 1 }}"]
           ports:
             - name: http
               containerPort: {{ .Values.api.port }}

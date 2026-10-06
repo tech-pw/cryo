@@ -256,7 +256,9 @@ api:
       # usage; limit is untouched (6Gi) so a real spike still has room before OOM.
       memory: 256Mi
     limits:
-      cpu: "1"
+      # Raised 1 -> 2 on 2026-10-05 with api.workers=2: a single 40 MB /tables response
+      # pinned the one CPU and every page queued behind it. Limits aren't billed; requests are.
+      cpu: "2"
       memory: 6Gi
 
 worker:

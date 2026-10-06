@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from time import perf_counter
 
@@ -12,6 +13,10 @@ from starlette.types import ASGIApp
 
 from cryo.observability.correlation import correlation_scope, normalize_correlation_id
 from cryo.observability.metrics import api_request_duration_seconds, api_requests_total
+
+logger = logging.getLogger(__name__)
+
+SLOW_REQUEST_SECONDS = 2.0
 
 
 class CorrelationMiddleware(BaseHTTPMiddleware):
@@ -51,7 +56,16 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
                     method=method,
                     status_class=f"{status_code // 100}xx",
                 ).inc()
+                elapsed = perf_counter() - started_at
                 api_request_duration_seconds.labels(
                     route=route_template,
                     method=method,
-                ).observe(perf_counter() - started_at)
+                ).observe(elapsed)
+                if elapsed >= SLOW_REQUEST_SECONDS:
+                    logger.warning(
+                        "slow request %s %s status=%s duration_s=%.2f",
+                        method,
+                        route_template,
+                        status_code,
+                        elapsed,
+                    )

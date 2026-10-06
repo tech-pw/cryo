@@ -134,7 +134,6 @@ from cryo.db.models import (
 )
 from cryo.db.repositories import datalake, presets
 from cryo.db.repositories import scanner as scanner_repo
-from cryo.db.repositories.run_finalizer import finalize_open_runs
 from cryo.db.repositories.sources import (
     deactivate_out_of_scope_tables,
     deactivate_tables_by_id,
@@ -894,8 +893,8 @@ def list_tables(
         .outerjoin(TableAssignment)
         .options(
             selectinload(Table.source),
-            selectinload(Table.stats),
-            selectinload(Table.cost),
+            selectinload(Table.stats).defer(TableStats.raw),
+            selectinload(Table.cost).defer(TableCost.raw),
         )
     )
     count_stmt = (
@@ -961,7 +960,7 @@ def list_tables(
 
     view_fields = view.response_fields(view_metrics)
     return PaginatedTables(
-        items=[table_to_read(item) for item in items],
+        items=[table_to_read(item, include_raw=False) for item in items],
         total=total,
         limit=limit,
         offset=actual_offset,
@@ -1907,10 +1906,8 @@ def list_runs(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[RunRead]:
-    finalize_open_runs(SessionLocal)
     stmt = (
         select(MaintenanceRun)
-        .options(selectinload(MaintenanceRun.jobs).selectinload(MaintenanceJob.table))
         .order_by(MaintenanceRun.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -1921,8 +1918,11 @@ def list_runs(
         # Only scan runs record source_id in their summary (source/schemas/tables scope) --
         # fleet-wide "all" scans aren't tied to one lakehouse, so they're excluded here by design.
         stmt = stmt.where(MaintenanceRun.summary["source_id"].astext == str(source_id))
-    runs = session.scalars(stmt)
-    return [RunRead.model_validate(presets.run_summary(run)) for run in runs]
+    runs = list(session.scalars(stmt))
+    targets = presets.run_target_summaries(session, runs)
+    return [
+        RunRead.model_validate(presets.run_summary(run, target=targets[run.id])) for run in runs
+    ]
 
 
 @router.get(
@@ -1932,15 +1932,11 @@ def list_runs(
     tags=["runs"],
 )
 def get_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
-    finalize_open_runs(SessionLocal)
-    run = session.scalar(
-        select(MaintenanceRun)
-        .where(MaintenanceRun.id == run_id)
-        .options(selectinload(MaintenanceRun.jobs).selectinload(MaintenanceJob.table))
-    )
+    run = session.scalar(select(MaintenanceRun).where(MaintenanceRun.id == run_id))
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    payload = presets.run_summary(run)
+    targets = presets.run_target_summaries(session, [run])
+    payload = presets.run_summary(run, target=targets[run.id], detail=True)
     payload.update(datalake.realized_savings_for_run(session, run.id))
     return RunRead.model_validate(payload)
 
@@ -1952,7 +1948,6 @@ def get_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
     tags=["runs"],
 )
 def get_run_jobs(run_id: uuid.UUID, session: SessionDep) -> dict[str, object]:
-    finalize_open_runs(SessionLocal)
     snapshot = datalake.run_jobs_snapshot(session, run_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -2164,7 +2159,7 @@ def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
             scanner_repo.request_scan_cancel(session, run)
             session.commit()
             session.refresh(run)
-        return RunRead.model_validate(presets.run_summary(run))
+        return RunRead.model_validate(presets.run_summary(run, detail=True))
     now = datetime.now(UTC)
     if not run_finished:
         run.status = "cancelled"
@@ -2251,7 +2246,7 @@ def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
                 "Failed to release Redis queue/lock state while cancelling run %s", run_id
             )
     session.refresh(run)
-    return RunRead.model_validate(presets.run_summary(run))
+    return RunRead.model_validate(presets.run_summary(run, detail=True))
 
 
 @router.get(
@@ -2337,7 +2332,7 @@ def _websocket_viewer_principal(websocket: WebSocket, token: str | None) -> Prin
 def _run_read_or_none(run: object | None) -> RunRead | None:
     if not isinstance(run, MaintenanceRun):
         return None
-    return RunRead.model_validate(presets.run_summary(run))
+    return RunRead.model_validate(presets.run_summary(run, detail=True))
 
 
 def _parse_filter(raw: str | None) -> ColumnElement[bool] | None:

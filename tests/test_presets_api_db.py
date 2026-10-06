@@ -1433,3 +1433,48 @@ def test_mode_for_operations_picks_the_lightest_mode_that_plans_them() -> None:
     assert (
         mode_for_operations({OperationType.OPTIMIZE, OperationType.OPTIMIZE_MANIFESTS}) is Mode.DEEP
     )
+
+
+def test_runs_list_target_labels_match_single_run_summary(api_db: ApiDb) -> None:
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    hot_table_id, cold_table_id = _seed_tables(api_db.session_factory, source_id)
+    multi_run_id, single_run_id, empty_run_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    with api_db.session_factory() as session:
+        for run_id in (multi_run_id, single_run_id, empty_run_id):
+            session.add(MaintenanceRun(id=run_id, kind="adhoc", status="succeeded"))
+        session.flush()
+        for run_id, table_id in (
+            (multi_run_id, hot_table_id),
+            (multi_run_id, cold_table_id),
+            (single_run_id, hot_table_id),
+        ):
+            session.add(
+                MaintenanceJob(
+                    id=uuid.uuid4(),
+                    run_id=run_id,
+                    table_id=table_id,
+                    destination_id=destination_id,
+                    mode="standard",
+                    status="succeeded",
+                )
+            )
+        session.commit()
+
+    response = api_db.client.get("/api/v1/runs", headers=VIEWER_HEADERS)
+    assert response.status_code == 200
+    summaries = {run["id"]: run["summary"] for run in response.json()}
+
+    multi = summaries[str(multi_run_id)]
+    assert multi["target_label"].endswith("analytics.cold_events +1 tables")
+    assert multi["target_kind"] == "tables"
+    assert multi["target_table_id"] == str(cold_table_id)
+    assert multi["job_count"] == 2
+    single = summaries[str(single_run_id)]
+    assert single["target_label"].endswith("analytics.hot_events")
+    assert single["target_kind"] == "table"
+    assert single["job_count"] == 1
+    assert summaries[str(empty_run_id)]["target_label"] == "No jobs"
+    assert summaries[str(empty_run_id)]["target_kind"] == "adhoc"
+
+    detail = api_db.client.get(f"/api/v1/runs/{multi_run_id}", headers=VIEWER_HEADERS)
+    assert detail.json()["summary"]["target_label"] == multi["target_label"]

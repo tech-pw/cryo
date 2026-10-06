@@ -132,7 +132,7 @@ def _evaluate_table(session: Session, table: Table, now: datetime) -> list[FastP
             )
         )
 
-    recs = compute_property_recommendations(session, table.id)
+    recs = compute_property_recommendations(session, table.id, include_bloom_filters=False)
     missing = next(
         (
             item
@@ -227,14 +227,19 @@ def list_fast_path_findings_from_audit(
         )
         .order_by(AuditLog.ts.desc())
     )
-    out: list[FastPathFinding] = []
-    for row in rows:
-        if row.table_id is None:
-            continue
-        table = session.get(Table, row.table_id)
-        table_name = (
-            f"{table.schema_name}.{table.table_name}" if table is not None else str(row.table_id)
+    audit_rows = [row for row in rows if row.table_id is not None]
+    names = {
+        table_id: f"{schema_name}.{table_name}"
+        for table_id, schema_name, table_name in session.execute(
+            select(Table.id, Table.schema_name, Table.table_name).where(
+                Table.id.in_({row.table_id for row in audit_rows})
+            )
         )
+    }
+    out: list[FastPathFinding] = []
+    for row in audit_rows:
+        assert row.table_id is not None
+        table_name = names.get(row.table_id, str(row.table_id))
         finding_type = (row.action or "").removeprefix("fast_path.")
         out.append(
             FastPathFinding(
