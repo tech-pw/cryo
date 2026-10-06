@@ -36,7 +36,7 @@ export const AiProvidersTab = () => {
           const value = String(getValue());
           return (
             <Badge variant={value === "anthropic" ? "warning" : "success"}>
-              {value === "anthropic" ? "Anthropic" : "OpenAI"}
+              {value === "anthropic" ? "Anthropic" : value === "azure_openai" ? "Azure OpenAI" : value === "openai" ? "OpenAI" : value}
             </Badge>
           );
         }

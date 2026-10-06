@@ -44,6 +44,11 @@ describe("buildDestinationConfig (trino auth)", () => {
     expect((config.auth as Record<string, unknown>).password).toBe("");
   });
 
+  it("clears stored basic auth when the switch is turned off", () => {
+    const config = buildDestinationConfig({ ...base, use_basic_auth: false });
+    expect(config.auth).toBeNull();
+  });
+
   it("sends the new value verbatim when the user types a replacement password", () => {
     const config = buildDestinationConfig({
       ...base,

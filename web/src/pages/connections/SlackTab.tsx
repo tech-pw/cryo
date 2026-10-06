@@ -44,7 +44,7 @@ export const SlackTab = () => {
         header: "Channel",
         cell: ({ getValue }) => {
           const value = getValue() as string | null;
-          return value ? <code className="text-xs">{value}</code> : <span className="text-muted-foreground">Default</span>;
+          return value ? <code className="text-xs">{value}</code> : <span className="text-muted-foreground">Webhook channel</span>;
         }
       },
       {

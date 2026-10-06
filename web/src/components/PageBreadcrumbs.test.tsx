@@ -43,6 +43,13 @@ describe("PageBreadcrumbs", () => {
     expect(screen.queryByText("Tables")).toBeNull();
   });
 
+  it("does not treat the workflows crumb as a run id", () => {
+    renderAt("/runs/workflows/preset-1");
+    const workflow = screen.getByRole("link", { name: "Workflows" });
+    expect(workflow).toHaveAttribute("href", "/runs?tab=workflows");
+    expect(screen.queryByRole("link", { name: /Run workflow/i })).toBeNull();
+  });
+
   it("labels nested table-detail routes with the route map", () => {
     renderAt("/tables/abc-123");
     const nav = document.querySelector('[aria-label="Breadcrumb"]') as HTMLElement;

@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.ai.embedding_cache import get_or_compute_embedding
@@ -174,46 +174,80 @@ def _count_rows(session: Session, stmt: Select[Any]) -> int:
     return int(session.scalar(counted) or 0)
 
 
+def _tenant_sources(session: Session, tenant_id: UUID) -> list[Source]:
+    stmt = scope_by_tenant(select(Source).order_by(Source.name), Source, tenant_id)
+    return list(session.scalars(stmt).all())
+
+
+def _display_catalog(source: Source) -> str:
+    return catalog_name_for_source(source)
+
+
+def _source_ids_for_catalog(sources: list[Source], catalog: str) -> list[UUID]:
+    needle = catalog.lower()
+    return [
+        source.id
+        for source in sources
+        if _display_catalog(source).lower() == needle or source.name.lower() == needle
+    ]
+
+
 def _literal_catalog_hits(
-    session: Session,
-    pattern: str,
-    tenant_id: UUID,
+    sources: list[Source],
+    query: str,
     *,
     offset: int,
     limit: int,
 ) -> tuple[list[SearchMatchRead], int]:
-    stmt = scope_by_tenant(
-        select(Source).where(Source.name.ilike(pattern, escape="\\")).order_by(Source.name),
-        Source,
-        tenant_id,
-    )
-    total = _count_rows(session, stmt)
-    sources = session.scalars(stmt.offset(offset).limit(limit)).all()
+    needle = query.lower()
+    matched = [
+        source
+        for source in sources
+        if needle in _display_catalog(source).lower() or needle in source.name.lower()
+    ]
     hits = [
         SearchMatchRead(
             asset_type="catalog",
-            name=source.name,
+            name=_display_catalog(source),
             catalog_id=source.id,
-            catalog_name=source.name,
+            catalog_name=_display_catalog(source),
             match_reason="name",
         )
-        for source in sources
+        for source in matched[offset : offset + limit]
     ]
-    return hits, total
+    return hits, len(matched)
+
+
+def _schema_match(query: str, pattern: str, sources: list[Source]):
+    clauses = [Table.schema_name.ilike(pattern, escape="\\")]
+    parts = [part for part in query.split(".") if part]
+    if len(parts) >= 2:
+        ids = _source_ids_for_catalog(sources, parts[-2])
+        if ids:
+            clauses.append(
+                and_(
+                    Table.source_id.in_(ids),
+                    func.lower(Table.schema_name) == parts[-1].lower(),
+                )
+            )
+    return or_(*clauses)
 
 
 def _literal_schema_hits(
     session: Session,
+    query: str,
     pattern: str,
     tenant_id: UUID,
+    sources: list[Source],
     *,
     offset: int,
     limit: int,
 ) -> tuple[list[SearchMatchRead], int]:
+    by_id = {source.id: source for source in sources}
     stmt: Select[tuple[UUID, str, str]] = (
         select(Table.source_id, Table.schema_name, Source.name)
         .join(Source, Table.source_id == Source.id)
-        .where(Table.schema_name.ilike(pattern, escape="\\"))
+        .where(_schema_match(query, pattern, sources))
         .distinct()
         .order_by(Source.name, Table.schema_name)
     )
@@ -230,9 +264,30 @@ def _literal_schema_hits(
             schema_name=schema_name,
             match_reason="schema",
         )
-        for source_id, schema_name, catalog_name in rows
+        for source_id, schema_name, catalog_name in (
+            (
+                source_id,
+                schema_name,
+                _display_catalog(by_id[source_id]) if source_id in by_id else catalog_name,
+            )
+            for source_id, schema_name, catalog_name in rows
+        )
     ]
     return hits, total
+
+
+def _qualified_table_match(query: str, sources: list[Source]):
+    parts = [part for part in query.split(".") if part]
+    if len(parts) < 3:
+        return None
+    ids = _source_ids_for_catalog(sources, parts[-3])
+    if not ids:
+        return None
+    return and_(
+        Table.source_id.in_(ids),
+        func.lower(Table.schema_name) == parts[-2].lower(),
+        func.lower(Table.table_name) == parts[-1].lower(),
+    )
 
 
 def _literal_table_hits(
@@ -241,21 +296,24 @@ def _literal_table_hits(
     query: str,
     pattern: str,
     tenant_id: UUID,
+    sources: list[Source],
     offset: int,
     limit: int,
 ) -> tuple[list[SearchMatchRead], int]:
+    clauses = [
+        Table.table_name.ilike(pattern, escape="\\"),
+        Table.schema_name.ilike(pattern, escape="\\"),
+        func.concat(Source.name, ".", Table.schema_name, ".", Table.table_name).ilike(
+            pattern, escape="\\"
+        ),
+    ]
+    qualified = _qualified_table_match(query, sources)
+    if qualified is not None:
+        clauses.append(qualified)
     stmt = (
         select(Table)
         .join(Source, Table.source_id == Source.id)
-        .where(
-            or_(
-                Table.table_name.ilike(pattern, escape="\\"),
-                Table.schema_name.ilike(pattern, escape="\\"),
-                func.concat(Source.name, ".", Table.schema_name, ".", Table.table_name).ilike(
-                    pattern, escape="\\"
-                ),
-            )
-        )
+        .where(or_(*clauses))
         .order_by(Source.name, Table.schema_name, Table.table_name)
     )
     stmt = scope_by_tenant(stmt, Table, tenant_id)
@@ -395,17 +453,24 @@ def search_assets(
     tenant_id = require_tenant(session)
     pattern = ilike_pattern(query)
     page_offset = offset if group is not None else 0
+    sources = (
+        _tenant_sources(session, tenant_id)
+        if group in {None, "catalogs", "schemas", "tables"}
+        else []
+    )
 
     def empty() -> tuple[list[SearchMatchRead], int]:
         return [], 0
 
     catalog_hits, catalog_total = (
-        _literal_catalog_hits(session, pattern, tenant_id, offset=page_offset, limit=limit)
+        _literal_catalog_hits(sources, query, offset=page_offset, limit=limit)
         if group in {None, "catalogs"}
         else empty()
     )
     schema_hits, schema_total = (
-        _literal_schema_hits(session, pattern, tenant_id, offset=page_offset, limit=limit)
+        _literal_schema_hits(
+            session, query, pattern, tenant_id, sources, offset=page_offset, limit=limit
+        )
         if group in {None, "schemas"}
         else empty()
     )
@@ -415,6 +480,7 @@ def search_assets(
             query=query,
             pattern=pattern,
             tenant_id=tenant_id,
+            sources=sources,
             offset=page_offset,
             limit=limit,
         )

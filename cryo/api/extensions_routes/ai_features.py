@@ -108,13 +108,12 @@ def get_latest_run_diagnosis(
     run_id: uuid.UUID,
     session: SessionDep,
     _principal: Annotated[Principal, Depends(require_viewer)],
+    job_id: Annotated[uuid.UUID | None, Query()] = None,
 ) -> RunFailureDiagnosisRead | None:
-    row = session.scalar(
-        select(RunFailureDiagnosis)
-        .where(RunFailureDiagnosis.run_id == run_id)
-        .order_by(desc(RunFailureDiagnosis.diagnosed_at))
-        .limit(1)
-    )
+    stmt = select(RunFailureDiagnosis).where(RunFailureDiagnosis.run_id == run_id)
+    if job_id is not None:
+        stmt = stmt.where(RunFailureDiagnosis.job_id == job_id)
+    row = session.scalar(stmt.order_by(desc(RunFailureDiagnosis.diagnosed_at)).limit(1))
     if row is None:
         return None
     return _to_diagnosis_read(row)
@@ -128,8 +127,9 @@ def get_latest_run_diagnosis(
 async def diagnose_run_failure(
     run_id: uuid.UUID,
     session: SessionDep,
-    _principal: Annotated[Principal, Depends(require_viewer)],
-    force: bool = Query(False, description="Re-run diagnosis even when a cached one exists."),
+    _principal: Annotated[Principal, Depends(require_editor)],
+    force: bool = Query(default=False),
+    job_id: Annotated[uuid.UUID | None, Query()] = None,
 ) -> RunFailureDiagnosisRead:
     settings = get_settings()
     if not settings.ai_feature_diagnosis_enabled:
@@ -138,16 +138,6 @@ async def diagnose_run_failure(
     run = session.get(MaintenanceRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    if not force:
-        existing = session.scalar(
-            select(RunFailureDiagnosis)
-            .where(RunFailureDiagnosis.run_id == run_id)
-            .order_by(desc(RunFailureDiagnosis.diagnosed_at))
-            .limit(1)
-        )
-        if existing is not None:
-            return _to_diagnosis_read(existing)
-
     jobs = list(
         session.scalars(
             select(MaintenanceJob)
@@ -155,13 +145,25 @@ async def diagnose_run_failure(
             .order_by(desc(MaintenanceJob.started_at))
         )
     )
+    if job_id is not None:
+        selected = next((item for item in jobs if item.id == job_id), None)
+        if selected is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        jobs = [selected]
     if not jobs:
         raise HTTPException(status_code=404, detail="No jobs found for run")
 
-    failed_jobs = [
-        job for job in jobs if (job.status or "").lower() in {"failed", "partial_failed"}
-    ]
+    failed_jobs = [item for item in jobs if (item.status or "").lower() in {"failed", "partial"}]
     job = failed_jobs[0] if failed_jobs else jobs[0]
+    if not force:
+        existing_stmt = select(RunFailureDiagnosis).where(RunFailureDiagnosis.run_id == run_id)
+        if job_id is not None:
+            existing_stmt = existing_stmt.where(RunFailureDiagnosis.job_id == job_id)
+        existing = session.scalar(
+            existing_stmt.order_by(desc(RunFailureDiagnosis.diagnosed_at)).limit(1)
+        )
+        if existing is not None:
+            return _to_diagnosis_read(existing)
 
     evidence: list[str] = []
     if run.summary:

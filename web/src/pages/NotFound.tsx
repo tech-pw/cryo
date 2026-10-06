@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { PageHeader } from "../components/common";
+import { searchResultsHref } from "../components/shell/search-utils";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -12,7 +13,7 @@ const RELATED_DESTINATIONS: Array<{ to: string; label: string }> = [
   { to: "/catalogs", label: "Catalogs" },
   { to: "/operations", label: "Operations" },
   { to: "/cost", label: "Cost" },
-  { to: "/governance", label: "Governance" },
+  { to: "/decisions?tab=approvals", label: "Approvals" },
   { to: "/anomalies", label: "Anomalies" },
   { to: "/connections", label: "Connections" }
 ];
@@ -26,7 +27,7 @@ export const NotFound = () => {
   const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = query.trim();
-    navigate(trimmed ? `/tables?q=${encodeURIComponent(trimmed)}` : "/tables");
+    navigate(trimmed ? searchResultsHref(trimmed) : "/tables");
   };
 
   const handleGoBack = () => {

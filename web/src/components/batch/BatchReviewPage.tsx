@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -10,9 +10,9 @@ import { useAuth } from "../../lib/auth";
 import {
   BATCH_RECIPES,
   loadDraft,
+  MAINTENANCE_BATCH_CHANGE_EVENT,
   setBatchDestination,
-  setBatchPreset,
-  type MaintenanceBatchDraft
+  setBatchPreset
 } from "../../lib/maintenanceBatch";
 import { BatchPanel } from "./BatchPanel";
 
@@ -38,7 +38,12 @@ export const BatchReviewPage = () => {
     queryFn: () => listPresets(api)
   });
 
-  const draft = loadDraft(identity);
+  const [draft, setDraft] = useState(() => loadDraft(identity));
+  useEffect(() => {
+    const reload = () => setDraft(loadDraft(identity));
+    window.addEventListener(MAINTENANCE_BATCH_CHANGE_EVENT, reload);
+    return () => window.removeEventListener(MAINTENANCE_BATCH_CHANGE_EVENT, reload);
+  }, [identity]);
   const presetOptions = (presets.data ?? [])
     .filter((preset) => !draft.destinationId || preset.destination_id === draft.destinationId)
     .map((preset) => ({ label: preset.name, value: preset.id }));
@@ -85,7 +90,15 @@ export const BatchReviewPage = () => {
             placeholder="Select destination"
             value={draft.destinationId ?? undefined}
             disabled={destinations.isLoading}
-            onChange={(destinationId) => setBatchDestination(identity, destinationId ?? null)}
+            onChange={(destinationId) => {
+              const next = setBatchDestination(identity, destinationId ?? null);
+              const preset = presets.data?.find((item) => item.id === next.presetId);
+              if (preset && destinationId && preset.destination_id !== destinationId) {
+                setDraft(setBatchPreset(identity, null));
+                return;
+              }
+              setDraft(next);
+            }}
             options={(destinations.data ?? []).map((destination) => ({
               label: destination.name,
               value: destination.id
@@ -101,7 +114,7 @@ export const BatchReviewPage = () => {
             placeholder="Select preset"
             value={draft.presetId ?? undefined}
             disabled={presets.isLoading}
-            onChange={(presetId) => setBatchPreset(identity, presetId ?? null)}
+            onChange={(presetId) => setDraft(setBatchPreset(identity, presetId ?? null))}
             options={presetOptions}
           />
         </div>
@@ -113,6 +126,8 @@ export const BatchReviewPage = () => {
       </div>
       <BatchPanel
         identity={identity}
+        draft={draft}
+        readyCount={draft.tables.length}
         destinationLabel={selectedDestination?.name}
         presetLabel={selectedPreset?.name}
         onRun={(batch) => run.mutate(batch)}

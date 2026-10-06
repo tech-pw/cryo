@@ -113,7 +113,7 @@ describe("legacy redirects", () => {
     ["/control-room?scope=all", "/runs?tab=holds&scope=all"],
     ["/smart-maintenance", "/decisions?tab=recommendations"],
     ["/smart-maintenance?inspect=table-1", "/decisions?tab=recommendations&inspect=table-1"],
-    ["/smart-maintenance?tab=tiers&inspect=table-1", "/decisions?tab=recommendations&panel=tiers&inspect=table-1"],
+    ["/smart-maintenance?tab=tiers&inspect=table-1", "/decisions?tab=recommendations&inspect=table-1"],
     ["/optimize", "/decisions?tab=recommendations"],
     ["/impact", "/cost?tab=impact"],
     ["/impact?range=7", "/cost?tab=impact&range=7"],

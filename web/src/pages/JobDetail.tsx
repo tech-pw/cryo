@@ -219,12 +219,12 @@ export const JobDetail = () => {
   });
   const latestDiagnosis = useQuery({
     queryKey: ["run-diagnosis-latest", data?.run_id],
-    queryFn: () => getLatestRunDiagnosis(api, data!.run_id),
+    queryFn: () => getLatestRunDiagnosis(api, data!.run_id, data!.job_id),
     enabled: Boolean(data?.run_id),
     retry: false
   });
   const diagnose = useMutation({
-    mutationFn: () => diagnoseRunFailure(api, data!.run_id, { force: true }),
+    mutationFn: () => diagnoseRunFailure(api, data!.run_id, { force: true, jobId: data!.job_id }),
     onSuccess: () => {
       void latestDiagnosis.refetch();
     },
@@ -243,7 +243,7 @@ export const JobDetail = () => {
   const forceAdmit = useMutation({
     mutationFn: () => forceAdmitJob(api, jobId!),
     onSuccess: () => {
-      toast.success("Bypassed scheduling gates; job re-queued for the next admission wave.");
+      toast.success("Scheduling gates bypassed. The job still waits for a free slot.");
       void queryClient.invalidateQueries({ queryKey: ["job-detail", api.token, jobId] });
       void queryClient.invalidateQueries({ queryKey: ["job-raw", api.token, jobId] });
     },
@@ -353,22 +353,22 @@ export const JobDetail = () => {
                 description={
                   <div className="space-y-3">
                     <p>{data.error_message}</p>
-                    {STUCK_STATUSES.has(data.status) && !data.force_admit ? (
-                      <ConfirmAction
-                        title="Bypass scheduling gates?"
-                        description={`Re-queues ${data.table_name} on ${formatEngineLabel(data.engine)} while bypassing cooldown, benefit/MOOP score, and off-peak checks. Table locks and PII/ABAC safety gates still apply. Current engine load is not available in this view, so forcing admission may add contention.`}
-                        okText="Force run"
-                        okButtonProps={{ danger: false }}
-                        onConfirm={() => forceAdmit.mutate()}
-                      >
-                        <Button size="sm" variant="secondary" loading={forceAdmit.isPending}>
-                          Force run
-                        </Button>
-                      </ConfirmAction>
-                    ) : null}
                   </div>
                 }
               />
+            ) : null}
+            {STUCK_STATUSES.has(data.status) && !data.force_admit ? (
+              <ConfirmAction
+                title="Bypass scheduling gates?"
+                description={`Skips cooldown, benefit, and off-peak for ${data.table_name} on ${formatEngineLabel(data.engine)}. It does not start the job. Pause, table locks, PII, and a free worker slot still apply.`}
+                okText="Bypass gates"
+                okButtonProps={{ danger: false }}
+                onConfirm={() => forceAdmit.mutate()}
+              >
+                <Button size="sm" variant="secondary" loading={forceAdmit.isPending}>
+                  Bypass gates
+                </Button>
+              </ConfirmAction>
             ) : null}
 
             {data.status === "failed" ? (
@@ -383,7 +383,8 @@ export const JobDetail = () => {
                   </Button>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {diagnosisRecord ? (
+                  {diagnosisRecord &&
+                  (!diagnosisRecord.job_id || diagnosisRecord.job_id === data.job_id) ? (
                     <>
                       <p className="font-semibold">
                         {diagnosisRecord.diagnosis_class.replaceAll("_", " ")} (

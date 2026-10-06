@@ -47,29 +47,39 @@ export const buildSourceConfig = (values: SourceFormValues): Record<string, unkn
     extra = JSON.parse(values.advanced_json) as Record<string, unknown>;
   }
   const config: Record<string, unknown> = { ...extra };
-  if (values.uri) config.uri = values.uri;
-  if (values.warehouse) config.warehouse = values.warehouse;
-  if (values.catalog_name) config.catalog_name = values.catalog_name;
-
-  if (values.s3_endpoint) config["s3.endpoint"] = values.s3_endpoint;
-  if (values.s3_region) config["s3.region"] = values.s3_region;
-  if (values.s3_path_style_access) config["s3.path-style-access"] = "true";
+  // Always send known keys. Omitted keys survive unredact_merge, so clearing a field
+  // or switching auth methods would otherwise snap back to the stored value.
+  config.uri = values.uri || null;
+  config.warehouse = values.warehouse || null;
+  config.catalog_name = values.catalog_name || null;
+  config["s3.endpoint"] = values.s3_endpoint || null;
+  config["s3.region"] = values.s3_region || null;
+  config["s3.path-style-access"] = values.s3_path_style_access ? "true" : null;
 
   if (values.s3_auth_method === "access_key") {
-    if (values.s3_access_key_id) config["s3.access-key-id"] = values.s3_access_key_id;
+    config["s3.access-key-id"] = values.s3_access_key_id || null;
     if (values.s3_secret_access_key) {
       config["s3.secret-access-key"] = values.s3_secret_access_key;
     } else if (values.s3_has_secret_access_key) {
-      // Left blank on an edit that already has a secret saved -- omitting the key entirely would
-      // also be preserved server-side (see patch_source's unredact_merge), but resubmitting the
-      // sentinel makes the "keep the existing secret" intent explicit and matches how the
-      // Destination auth password is handled, where omission is not an option.
       config["s3.secret-access-key"] = REDACTED_PLACEHOLDER;
+    } else {
+      config["s3.secret-access-key"] = null;
     }
+    config["s3.role-arn"] = null;
+    config["s3.external-id"] = null;
+    config["s3.role-session-name"] = null;
   } else if (values.s3_auth_method === "assume_role") {
-    if (values.s3_role_arn) config["s3.role-arn"] = values.s3_role_arn;
-    if (values.s3_external_id) config["s3.external-id"] = values.s3_external_id;
-    if (values.s3_role_session_name) config["s3.role-session-name"] = values.s3_role_session_name;
+    config["s3.role-arn"] = values.s3_role_arn || null;
+    config["s3.external-id"] = values.s3_external_id || null;
+    config["s3.role-session-name"] = values.s3_role_session_name || null;
+    config["s3.access-key-id"] = null;
+    config["s3.secret-access-key"] = null;
+  } else {
+    config["s3.access-key-id"] = null;
+    config["s3.secret-access-key"] = null;
+    config["s3.role-arn"] = null;
+    config["s3.external-id"] = null;
+    config["s3.role-session-name"] = null;
   }
 
   return config;

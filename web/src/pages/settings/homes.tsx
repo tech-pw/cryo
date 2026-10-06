@@ -1,5 +1,5 @@
 import { lazy } from "react";
-import { Navigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../lib/auth";
 import { SettingsLayout } from "./SettingsLayout";
@@ -33,7 +33,10 @@ export const SettingsAiHome = () => {
     <SettingsLayout>
       <AiAccessTable />
       <p className="mt-3 text-sm text-muted-foreground">
-        Experimental models are labelled experimental and are not configurable here.
+        <Link to="/settings/ai/models" className="text-primary underline-offset-2 hover:underline">
+          AI model settings
+        </Link>{" "}
+        control Ask Cryo, tiers, and API keys. Experimental models are labelled experimental.
       </p>
     </SettingsLayout>
   );

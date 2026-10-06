@@ -28,7 +28,7 @@ import { Select } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
 import { Textarea } from "../../components/ui/textarea";
 
-const TIERS = [0, 1, 2, 3];
+const TIERS = [0, 1, 2];
 
 export const AiModelsSettings = () => {
   const { api, token, role } = useAuth();

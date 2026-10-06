@@ -175,7 +175,7 @@ export const CompactionAnalysis = ({ tableId }: { tableId: string }) => {
         ) : null}
       </div>
 
-      <div className="space-y-2">
+      <div id="maintenance-compaction-horizon" className="space-y-2">
         <h4 className="text-sm font-medium text-foreground">Horizon query-frequency candidates</h4>
         <p className="text-xs text-muted-foreground">{HORIZON_SCORE_BASIS}</p>
         {horizon.isLoading ? <p className="text-sm text-muted-foreground">Loading horizon ranking</p> : null}

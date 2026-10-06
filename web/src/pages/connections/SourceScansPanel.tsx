@@ -8,6 +8,7 @@ import { StatusTag } from "../../components/status";
 import { Button } from "../../components/ui/button";
 import { useAuth } from "../../lib/auth";
 import { formatTime } from "../../lib/format";
+import { toastScanResult } from "../../lib/operations";
 import { SCAN_ACTIVE_STATUSES } from "./constants";
 
 interface SourceScansPanelProps {
@@ -39,7 +40,7 @@ export const SourceScansPanel = ({ sourceId }: SourceScansPanelProps) => {
         trigger: "web-connections"
       }),
     onSuccess: (result) => {
-      toast.success(result.message || `Scan queued: ${result.run_id}`);
+      toastScanResult(result);
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
     },
     onError: (error) => toast.error((error as Error).message)

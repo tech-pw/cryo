@@ -114,6 +114,20 @@ def test_timezone_conversion_still_applies_before_scanning() -> None:
     assert not cron_is_due("0 10 * * *", now=utc_ten_as_ist, last_run_at=ist_fire_as_utc, tz=ist)
 
 
+def test_weekday_field_uses_standard_cron_sunday_zero() -> None:
+    monday = datetime(2026, 8, 17, 9, 0, tzinfo=UTC)
+    saturday = datetime(2026, 8, 22, 9, 0, tzinfo=UTC)
+    sunday = datetime(2026, 8, 16, 9, 0, tzinfo=UTC)
+    assert monday.weekday() == 0
+    assert saturday.weekday() == 5
+    assert sunday.weekday() == 6
+    friday = datetime(2026, 8, 21, 9, 0, tzinfo=UTC)
+    assert cron_is_due("0 9 * * 1-5", now=monday)
+    assert not cron_is_due("0 9 * * 1-5", now=saturday, last_run_at=friday)
+    assert cron_is_due("0 9 * * 0", now=sunday)
+    assert next_cron_tick("0 9 * * 1-5", now=saturday) == datetime(2026, 8, 24, 9, 0, tzinfo=UTC)
+
+
 class TestNextCronTick:
     """next_cron_tick is a distinct forward-walking helper (informational "when will this next
     fire" display, e.g. scanner.py's config summary) -- it must keep exact-minute semantics for

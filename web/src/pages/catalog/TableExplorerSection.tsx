@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
+import { toastScanResult } from "../../lib/operations";
 import {
   assignTables,
   exportTablesCsv as requestTablesCsv,
@@ -27,6 +28,7 @@ import { HintLabel } from "../../components/common";
 import { CostPrecisionBadge } from "../../components/CostPrecisionBadge";
 import { PlanPreview } from "../../components/PlanPreview";
 import { CompactionTag, GradePill, PriorityTag } from "../../components/status";
+import { QueryErrorAlert } from "../../components/common";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { ColumnVisibilityMenu, DataTable, type ColumnVisibilityOption } from "../../components/ui/data-table";
@@ -692,7 +694,7 @@ export const TableExplorerSection = () => {
       });
     },
     onSuccess: (result) => {
-      toast.success(result.message || `Scan queued: ${result.run_id}`);
+      toastScanResult(result);
       clearSelection();
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
       void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
@@ -749,7 +751,14 @@ export const TableExplorerSection = () => {
   const exportMatchingTablesCsv = async () => {
     setExportingCsv(true);
     try {
-      const csv = await requestTablesCsv(api, { predicate, sort });
+      const csv = await requestTablesCsv(api, {
+        predicate,
+        sort,
+        freshness_breach: viewSpec?.freshness_breach,
+        maintenance_overdue: viewSpec?.maintenance_overdue,
+        p95_breach: viewSpec?.p95_breach,
+        no_reads_days: viewSpec?.no_reads_days
+      });
       const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
       const anchor = document.createElement("a");
       const suffix = filters.freshnessBucket ?? "filtered";
@@ -1038,7 +1047,8 @@ export const TableExplorerSection = () => {
               aria-label="Catalog view"
               value=""
               placeholder="Load a view..."
-              onChange={(next) => {
+        onReset={clearFilters}
+        onChange={(next) => {
                 const saved = allViews.find((candidate) => candidate.name === next);
                 if (saved) applyView(saved);
               }}
@@ -1114,6 +1124,14 @@ export const TableExplorerSection = () => {
           description="Tables with repeated scan failures. Filtered on the server."
         />
       ) : null}
+      {view === "unused" ? (
+        <Alert
+          className="mb-3"
+          variant="info"
+          title={`No reads in the last ${viewSpec?.no_reads_days ?? 30} days`}
+          description="This is the unused-tables view, not the full catalog. Coverage gaps are excluded. Export uses the same filter."
+        />
+      ) : null}
       {viewSpec ? (
         <div className="mb-3 flex flex-wrap items-center gap-3" data-testid="view-filter-bar">
           {view === "unused" ? (
@@ -1161,7 +1179,9 @@ export const TableExplorerSection = () => {
           resetSelectionForFilterChange();
         }}
       />
-      {groupByField ? (
+      {tables.isError || grouped.isError ? (
+        <QueryErrorAlert error={tables.error ?? grouped.error} title="Failed to load tables" />
+      ) : groupByField ? (
         <DataTable
           className="datalake-table"
           columns={groupColumns}

@@ -65,6 +65,21 @@ export const JsonHelpButton = ({ value }: { value: unknown }) => (
   </Button>
 );
 
+const formatErrorDetail = (error: unknown): string => {
+  if (error instanceof ApiError) {
+    const detail = error.detail ?? error.message;
+    if (typeof detail === "string") return detail;
+    if (detail == null) return error.message;
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return error.message;
+    }
+  }
+  if (error instanceof Error) return error.message;
+  return "Unknown error";
+};
+
 export const QueryErrorAlert = ({
   error,
   title = "Failed to load data",
@@ -75,12 +90,7 @@ export const QueryErrorAlert = ({
   className?: string;
 }) => {
   if (!error) return null;
-  const detail =
-    error instanceof ApiError
-      ? String(error.detail ?? error.message)
-      : error instanceof Error
-        ? error.message
-        : "Unknown error";
+  const detail = formatErrorDetail(error);
   const isAuth = error instanceof ApiError && (error.status === 401 || error.status === 403);
   return (
     <Alert

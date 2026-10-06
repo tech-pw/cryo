@@ -8,7 +8,8 @@ type CronInputProps = {
   allowEmpty?: boolean;
 };
 
-export const CRON_HELP_TEXT = "Five fields: minute hour day-of-month month day-of-week. Times are UTC.";
+export const CRON_HELP_TEXT =
+  "Five fields: minute hour day-of-month month day-of-week. Times are UTC. Sunday is 0, Monday is 1. 7 and MON are rejected. A missed weekday slot is not caught up the next day.";
 
 export const CronInput = ({
   value,

@@ -200,9 +200,13 @@ export function createEmptyDraft(identity: BatchIdentity, at = new Date().toISOS
 
 export function membershipSummary(draft: MaintenanceBatchDraft): string {
   const known = draft.tables.length;
-  const noun = known === 1 ? "table" : "tables";
-  if (draft.receipts.length === 0) return `${known} ${noun}`;
-  return `${known} ${noun} · Resolving…`;
+  const unresolved = draft.receipts.some((receipt) => receipt.declaredCount == null);
+  const declared = draft.receipts.reduce((sum, receipt) => sum + (receipt.declaredCount ?? 0), 0);
+  const total = known + declared;
+  const noun = total === 1 ? "table" : "tables";
+  if (draft.receipts.length === 0) return `${known} ${known === 1 ? "table" : "tables"}`;
+  if (unresolved) return `${known} ${known === 1 ? "table" : "tables"} · Resolving…`;
+  return `${total} ${noun}`;
 }
 
 export function addTablesToDraft(

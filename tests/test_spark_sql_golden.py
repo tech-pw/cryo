@@ -481,7 +481,9 @@ def test_spark_expire_snapshots_streams_results_after_setting_the_protected_ref(
         ),
     )
     assert render(plan)[0].sql == (
-        "ALTER TABLE iceberg.demo.events CREATE OR REPLACE TAG `cryo-protected-latest` "
+        "ALTER TABLE iceberg.demo.events CREATE OR REPLACE TAG `cryo-protect-7` "
+        "AS OF VERSION 7;\n"
+        "ALTER TABLE iceberg.demo.events CREATE OR REPLACE TAG `cryo-protect-11` "
         "AS OF VERSION 11;\n"
         "CALL iceberg.system.expire_snapshots(table => 'iceberg.demo.events', "
         "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 2, "

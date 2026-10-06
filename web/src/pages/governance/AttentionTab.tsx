@@ -176,7 +176,7 @@ export const AttentionTab = () => {
             <div className="flex items-center gap-1">
               <ConfirmAction
                 title="Approve this maintenance request?"
-                description="The approved operation will proceed when scheduled."
+                description="Releases the waiting job on the next governor wave and authorizes later runs of this operation until the grant expires."
                 okText="Approve"
                 okButtonProps={{ danger: false }}
                 onConfirm={() => handleApprovalAction(row.original.id, true)}

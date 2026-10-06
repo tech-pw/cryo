@@ -6,10 +6,10 @@ export const DevTokenProdBanner = () => {
   if (!devTokenEnabledInProd) return null;
   return (
     <Alert
-      className="mb-4"
+      className="sticky top-12 z-20 mb-4"
       variant="warning"
-      title="Development sign-in is enabled on this production install"
-      description="Anyone who can reach the API can sign in as any role, including admin, until development tokens are turned off."
+      title="Anyone who can open this page can choose admin"
+      description="There is no in-app switch. CRYO_ALLOW_DEV_TOKEN_IN_PROD is on. Do not turn it off until organization sign-in is working, or nobody can sign in."
     />
   );
 };

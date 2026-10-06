@@ -39,7 +39,7 @@ export const OPERATION_CATALOG: Record<RunnableOperation, OperationInfo> = {
     summary: "Drops snapshots older than retention and deletes files only they reference.",
     destructive: true,
     consequence:
-      "Time travel to expired snapshots stops working. Protected snapshots and the retain-last floor are kept."
+      "Time travel to expired snapshots stops working. The retain-last floor is kept. Spark also keeps ids recorded on the Snapshots tab; Trino cannot skip one id."
   },
   remove_orphan_files: {
     op: "remove_orphan_files",

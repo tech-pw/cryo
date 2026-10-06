@@ -17,7 +17,16 @@ const numberOrNull = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 const money = (value: unknown) => {
   const amount = numberOrNull(value);
-  return amount == null ? "Not measured" : formatCurrency(amount);
+  if (amount == null) return "Not measured";
+  if (amount > 0 && amount < 1) {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(amount);
+  }
+  return formatCurrency(amount);
 };
 const bytes = (value: unknown) => {
   const amount = numberOrNull(value);
@@ -57,13 +66,17 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
   });
 
   const cost = costQuery.isSuccess ? costQuery.data : undefined;
-  const raw = tableQuery.isSuccess ? tableQuery.data?.stats?.raw : undefined;
+  const heuristic = cost?.precision === "heuristic";
   const parts = [
     { name: "Live data bytes", detail: "Data files referenced by the table", value: numberOrNull(cost?.live_bytes), tone: "live" },
-    { name: "Dead bytes", detail: "Historical files retained by snapshots", value: numberOrNull(cost?.dead_bytes), tone: "dead" },
+    {
+      name: "Dead bytes",
+      detail: "Historical files retained by snapshots",
+      value: heuristic ? null : numberOrNull(cost?.dead_bytes),
+      tone: "dead"
+    },
     { name: "Metadata bytes", detail: "Table metadata and manifests", value: numberOrNull(cost?.metadata_bytes), tone: "metadata" },
-    { name: "Orphan bytes", detail: "Storage files outside table metadata", value: numberOrNull(cost?.orphan_bytes), tone: "orphan" },
-    { name: "Delete-file bytes", detail: "From the latest table scan", value: numberOrNull(raw?.delete_bytes) ?? numberOrNull(raw?.total_delete_bytes), tone: "delete" }
+    { name: "Orphan bytes", detail: "Storage files outside table metadata", value: numberOrNull(cost?.orphan_bytes), tone: "orphan" }
   ];
   const maxBytes = Math.max(0, ...parts.map((part) => part.value ?? 0));
   const operations = [...(cost?.by_operation ?? [])].sort((a, b) => (b.savings_usd_month ?? 0) - (a.savings_usd_month ?? 0));
@@ -74,6 +87,11 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
     ? candidateValues.reduce<number>((sum, value) => sum + (value ?? 0), 0) : null;
   const requestPricingApproximate = cost?.request_cost_pricing_source &&
     !["live", "aws_price_list_api"].includes(cost.request_cost_pricing_source);
+  const requestCaption = cost?.request_cost_usd_month == null
+    ? "Request logs have not been recorded"
+    : requestPricingApproximate
+      ? "Recorded requests × default pricing"
+      : "Recorded requests × applicable pricing";
 
   return (
     <div className="td-tab-content td-cost-workspace">
@@ -86,7 +104,7 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
           <>
             <dl className="td-cost-kpis">
               <div><dt><Database size={15} aria-hidden /> Estimated storage / month</dt><dd>{money(cost?.current_monthly_cost_usd)}</dd><p>At the configured storage rate</p></div>
-              <div><dt>S3 request cost · 30 days</dt><dd>{money(cost?.request_cost_usd_month)}</dd><p>{requestPricingApproximate ? "Recorded requests × default pricing" : "Recorded requests × applicable pricing"}</p></div>
+              <div><dt>S3 request cost · 30 days</dt><dd>{money(cost?.request_cost_usd_month)}</dd><p>{requestCaption}</p></div>
               <div className="td-cost-opportunity"><dt><TrendingDown size={15} aria-hidden /> Modelled savings / month</dt><dd>{money(cost?.projected_savings_usd_month)}</dd><p>Potential reduction, before execution costs</p></div>
             </dl>
             <div className="td-cost-evidence">
@@ -95,18 +113,21 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
               <span>Cost scan {cost?.scan_at ? formatTime(cost.scan_at) : "not recorded"}</span>
             </div>
             <dl className="td-cost-request-counts" aria-label="Recorded S3 requests in the last 30 days">
-              {[["GET", cost?.get_requests_30d], ["PUT", cost?.put_requests_30d], ["LIST", cost?.list_requests_30d]].map(([name, count]) => (
+              {[["GET/SELECT", cost?.get_requests_30d], ["PUT/COPY/POST", cost?.put_requests_30d], ["LIST", cost?.list_requests_30d], ["HEAD", cost?.head_requests_30d], ["DELETE", cost?.delete_requests_30d]].map(([name, count]) => (
                 <div key={String(name)}><dt>{name}</dt><dd>{numberOrNull(count) == null ? "Not measured" : formatNumber(count as number)}</dd></div>
               ))}
             </dl>
+            <p className="td-cost-footnote">The dollar total can include other operations that are not listed.</p>
           </>
         ) : null}
       </CostCard>
 
       <CostCard id="cost-storage" title="Where storage accumulates"
-        description="Compare recorded byte counts. The delete-file measure comes from a separate scan; these bars are not shares of a total.">
+        description={cost?.orphan_bytes == null
+          ? "Byte counts from the cost payload. Orphans are excluded until a listing scan records them. These bars are not shares of a total."
+          : "Byte counts from the cost payload. These bars are not shares of a total."}>
         {costQuery.isLoading || tableQuery.isLoading ? <p className="td-cost-muted">Loading storage parts…</p> : null}
-        <QueryErrorAlert error={tableQuery.error} title="Couldn't load delete-file storage" />
+        <QueryErrorAlert error={tableQuery.error} title="Couldn't load table stats" />
         <dl className="td-cost-bars">
           {parts.map((part) => (
             <div key={part.name} data-tone={part.tone}>
@@ -139,18 +160,20 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
         <Link className="td-cost-link" to={`/tables/${tableId}?tab=maintenance`}>Review maintenance <ArrowRight size={15} aria-hidden /></Link>
       </CostCard>
 
-      <CostCard id="cost-tiering" title="Storage tiering" description="Read-only summary. Archive advice is on the Usage tab.">
+      <CostCard id="cost-tiering" title="Storage tiering" description="Intelligent-Tiering estimate for this table. The Usage archive section is a separate estimate and does not repeat this figure.">
         <QueryErrorAlert error={tiering.error} title="Failed to load S3 tiering" />
         {tiering.isLoading ? <p className="td-cost-muted">Loading tiering…</p> : null}
         {tiering.isSuccess ? <>
           <p className="td-cost-recommendation">{tiering.data.recommendation}</p>
           <p className="td-cost-muted">{tiering.data.reason}</p>
           <p className="td-cost-secondary-value">
-            {numberOrNull(tiering.data.estimated_annual_savings_usd) == null ? "Not estimated" : money(tiering.data.estimated_annual_savings_usd)}
+            {tiering.data.recommendation === "unknown" || numberOrNull(tiering.data.estimated_annual_savings_usd) == null
+              ? "Not estimated"
+              : money(tiering.data.estimated_annual_savings_usd)}
             <span>estimated savings / year</span>
           </p>
         </> : null}
-        <Link className="td-cost-link" to={`/tables/${tableId}?tab=usage#archive`}>Open archive advice <ArrowRight size={15} aria-hidden /></Link>
+        <Link className="td-cost-link" to={`/tables/${tableId}?tab=usage#archive`}>Usage archive is a separate estimate <ArrowRight size={15} aria-hidden /></Link>
       </CostCard>
 
       <CostCard id="cost-compaction" title="Compaction economics" description="The 30-day model for up to 10 ranked partition candidates.">
@@ -161,7 +184,7 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
             : <p className="td-cost-empty">No compaction candidates returned for this horizon.</p>}
           <p className="td-cost-footnote">This model has a different scope from storage savings. Do not add the estimates together.</p>
         </> : null}
-        <Link to={`/tables/${tableId}?tab=maintenance#maintenance-compaction`} className="td-cost-link">Open compaction ranking <ArrowRight size={15} aria-hidden /></Link>
+        <Link to={`/tables/${tableId}?tab=maintenance#maintenance-compaction-horizon`} className="td-cost-link">Open compaction ranking <ArrowRight size={15} aria-hidden /></Link>
       </CostCard>
     </div>
   );

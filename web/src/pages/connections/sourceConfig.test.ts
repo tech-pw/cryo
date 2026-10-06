@@ -41,7 +41,7 @@ describe("buildSourceConfig", () => {
 
   it("does not invent a secret key when none was ever saved and the field is left blank", () => {
     const config = buildSourceConfig({ ...base, s3_secret_access_key: "", s3_has_secret_access_key: false });
-    expect(config["s3.secret-access-key"]).toBeUndefined();
+    expect(config["s3.secret-access-key"]).toBeNull();
   });
 
   it("sends the new value verbatim when the user types a replacement secret", () => {
@@ -51,5 +51,17 @@ describe("buildSourceConfig", () => {
       s3_has_secret_access_key: true
     });
     expect(config["s3.secret-access-key"]).toBe("brand-new-secret");
+  });
+
+  it("nulls stored access keys when switching to IAM role credentials", () => {
+    const config = buildSourceConfig({
+      ...base,
+      s3_auth_method: "default",
+      s3_access_key_id: "AKIAEXAMPLE",
+      s3_role_arn: "arn:aws:iam::1:role/old"
+    });
+    expect(config["s3.access-key-id"]).toBeNull();
+    expect(config["s3.secret-access-key"]).toBeNull();
+    expect(config["s3.role-arn"]).toBeNull();
   });
 });

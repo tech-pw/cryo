@@ -17,6 +17,8 @@ const run = (overrides: Partial<TableRunRead>): TableRunRead => ({
 
 describe("runModel", () => {
   it("maps statuses to tones without calling waiting work running", () => {
+    expect(toneFor("partial")).toBe("attention");
+    expect(toneFor("partial_failed")).toBe("attention");
     expect(toneFor("succeeded")).toBe("success");
     expect(toneFor("OK")).toBe("success");
     expect(toneFor("failed")).toBe("failed");

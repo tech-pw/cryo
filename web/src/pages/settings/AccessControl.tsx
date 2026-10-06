@@ -47,8 +47,11 @@ const authFetch = async <T,>(token: string, path: string, init?: RequestInit): P
     }
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail ?? `Request failed (${response.status})`);
+    const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+    const detail = body?.detail;
+    const message =
+      typeof detail === "string" ? detail : detail != null ? JSON.stringify(detail) : `Request failed (${response.status})`;
+    throw new Error(message);
   }
   return (await response.json()) as T;
 };
@@ -86,8 +89,8 @@ export const AccessControl = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [userRole, setUserRole] = useState("viewer");
-  const [clientId, setClientId] = useState("");
-  const [domain, setDomain] = useState("");
+  const [clientId, setClientId] = useState<string | null>(null);
+  const [domain, setDomain] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<GoogleTestResult | null>(null);
   const [testPassed, setTestPassed] = useState(false);
@@ -110,8 +113,8 @@ export const AccessControl = () => {
     enabled: role === "admin"
   });
 
-  const effectiveClientId = clientId || settings.data?.google_client_id || "";
-  const effectiveDomain = domain || settings.data?.google_hosted_domain || "";
+  const effectiveClientId = clientId ?? settings.data?.google_client_id ?? "";
+  const effectiveDomain = domain ?? settings.data?.google_hosted_domain ?? "";
 
   const createUser = useMutation({
     mutationFn: () =>
@@ -319,7 +322,7 @@ export const AccessControl = () => {
               <Label htmlFor="google-client-id">2. Client ID</Label>
               <Input
                 id="google-client-id"
-                value={clientId || settings.data?.google_client_id || ""}
+                value={effectiveClientId}
                 onChange={(event) => {
                   setClientId(event.target.value);
                   setTestResult(null);
@@ -330,7 +333,7 @@ export const AccessControl = () => {
               <Label htmlFor="google-domain">Restrict to domain (optional)</Label>
               <Input
                 id="google-domain"
-                value={domain || settings.data?.google_hosted_domain || ""}
+                value={effectiveDomain}
                 onChange={(event) => {
                   setDomain(event.target.value);
                   setTestResult(null);

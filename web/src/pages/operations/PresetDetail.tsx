@@ -14,19 +14,19 @@ import { DataTable } from "../../components/ui/data-table";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useAuth } from "../../lib/auth";
 import { formatGb, formatNumber, formatTime } from "../../lib/format";
+import { MAINTENANCE_OPERATION_ORDER } from "../../lib/operationOrder";
 import { formatPresetSummary } from "../../lib/presetForm";
 import { shortRunId, targetLabel } from "../../lib/operations";
 import { WorkflowDetailShell, type WorkflowTabKey } from "./WorkflowDetailShell";
 import { PresetConfigTab } from "./preset/PresetConfigTab";
 
-const MAINTENANCE_OP_ORDER = ["expire_snapshots", "remove_orphan_files", "optimize", "optimize_manifests"];
 const opLabel = (op: string) => op.replaceAll("_", " ");
 
 const PresetRunsTab = ({ presetId }: { presetId: string }) => {
   const { api, token } = useAuth();
   const runs = useQuery({
     queryKey: ["preset-runs", presetId, token],
-    queryFn: () => listRuns(api, { limit: 100 }).then((items) => items.filter((r) => r.preset_id === presetId))
+    queryFn: () => listRuns(api, { limit: 100, preset_id: presetId })
   });
 
   const columns = useMemo<ColumnDef<RunRead, unknown>[]>(
@@ -83,7 +83,7 @@ const PresetOverviewTab = ({ presetId, presetName }: { presetId: string; presetN
   const preset = presets.data?.find((item) => item.id === presetId);
   const runs = useQuery({
     queryKey: ["preset-runs-overview", presetId, token],
-    queryFn: () => listRuns(api, { limit: 50 }).then((items) => items.filter((r) => r.preset_id === presetId))
+    queryFn: () => listRuns(api, { limit: 50, preset_id: presetId })
   });
   const simulation = useQuery({
     queryKey: ["preset-simulation", presetId, token],
@@ -102,8 +102,8 @@ const PresetOverviewTab = ({ presetId, presetName }: { presetId: string; presetN
   const orderedOps = useMemo(() => {
     const ops = preset?.operations ?? [];
     if (ops.length === 0) return [];
-    const known = MAINTENANCE_OP_ORDER.filter((op) => ops.includes(op));
-    const unknown = ops.filter((op) => !MAINTENANCE_OP_ORDER.includes(op));
+    const known = MAINTENANCE_OPERATION_ORDER.filter((op) => ops.includes(op));
+    const unknown = ops.filter((op) => !MAINTENANCE_OPERATION_ORDER.includes(op));
     return [...known, ...unknown];
   }, [preset?.operations]);
 
@@ -201,7 +201,7 @@ const PresetGridTab = ({ presetId }: { presetId: string }) => {
   const preset = presets.data?.find((item) => item.id === presetId);
   const runs = useQuery({
     queryKey: ["preset-grid-runs", presetId, token],
-    queryFn: () => listRuns(api, { limit: 10 }).then((items) => items.filter((r) => r.preset_id === presetId))
+    queryFn: () => listRuns(api, { limit: 10, preset_id: presetId })
   });
   const ops = preset?.operations ?? [];
 

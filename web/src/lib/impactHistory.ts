@@ -13,7 +13,9 @@ export interface ImpactDay {
   jobs_succeeded: number;
   jobs_failed: number;
   infra_cost_usd?: number | null;
-  raw?: { bytes_freed_by_engine?: Record<string, number> | null } | null;
+  raw?: {
+    bytes_freed_by_engine?: Record<string, number | { bytes?: number | null }> | null;
+  } | null;
 }
 
 export const impactBytesLabel = (day: ImpactDay): string => {
@@ -44,6 +46,10 @@ export const engineBytesLabel = (raw: ImpactDay["raw"]): string => {
   const byEngine = raw?.bytes_freed_by_engine;
   if (!byEngine || Object.keys(byEngine).length === 0) return "Unknown";
   return Object.entries(byEngine)
-    .map(([engine, bytes]) => `${engine} ${(bytes / 1024 ** 3).toFixed(2)} GB`)
+    .map(([engine, entry]) => {
+      const bytes = typeof entry === "number" ? entry : Number(entry?.bytes);
+      if (!Number.isFinite(bytes)) return `${engine} Unknown`;
+      return `${engine} ${(bytes / 1024 ** 3).toFixed(2)} GB`;
+    })
     .join(", ");
 };

@@ -30,7 +30,8 @@ export type WriteAction =
   | "patchTable"
   | "editCompliance"
   | "dismissDarkTable"
-  | "refreshAnomalies";
+  | "refreshAnomalies"
+  | "runDedup";
 
 type MinRole = "operator" | "admin";
 
@@ -65,7 +66,8 @@ export const WRITE_MIN_ROLE: Record<WriteAction, MinRole> = {
   patchTable: "operator",
   editCompliance: "operator",
   dismissDarkTable: "operator",
-  refreshAnomalies: "operator"
+  refreshAnomalies: "operator",
+  runDedup: "operator"
 };
 
 const DESTRUCTIVE_ADMIN: ReadonlySet<WriteAction> = new Set([

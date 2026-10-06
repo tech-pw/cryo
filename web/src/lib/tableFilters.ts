@@ -194,6 +194,7 @@ export const clearFilterParams = (params: URLSearchParams): URLSearchParams => {
   const next = new URLSearchParams(params);
   stripFilterParams(next);
   next.delete("view");
+  next.delete("window");
   next.delete("page");
   return next;
 };

@@ -50,5 +50,10 @@ describe("impact history states", () => {
     expect(fullyMeasuredSummary([unmeasured, partial, complete, none])).toBe("1 of 4 days fully measured");
     expect(engineBytesLabel(null)).toBe("Unknown");
     expect(engineBytesLabel({ bytes_freed_by_engine: {} })).toBe("Unknown");
+    expect(
+      engineBytesLabel({
+        bytes_freed_by_engine: { native: { bytes: 5 * 1024 ** 3, actions_measured: 1 } }
+      })
+    ).toBe("native 5.00 GB");
   });
 });

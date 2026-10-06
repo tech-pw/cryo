@@ -30,8 +30,8 @@ export const ExcludedFromExpiry = ({ tableId }: { tableId: string }) => {
   });
   const unprotect = useMutation({
     mutationFn: (snapshotId: string) => unprotectTableSnapshot(api, tableId, snapshotId),
-    onSuccess: () => {
-      toast.success("Removed from Cryo expiry exclusion");
+    onSuccess: (_result, snapshotId) => {
+      toast.success(`Removed snapshot ${snapshotId} from Cryo expiry exclusion`);
       void queryClient.invalidateQueries({ queryKey: tableKeys.protectedSnapshots(tableId, token) });
       void queryClient.invalidateQueries({ queryKey: ["table-snapshots", tableId] });
     },
@@ -46,11 +46,16 @@ export const ExcludedFromExpiry = ({ tableId }: { tableId: string }) => {
         Excluded from Cryo expiry
       </h3>
       <p className="mb-2 text-xs text-muted-foreground">
-        These snapshots are skipped by Cryo expiry only. This is not an Iceberg ref and does not protect them
-        everywhere.
+        Spark expire keeps each id with a tag named cryo-protect-{"{id}"}. Trino expire cannot skip one id.
+        Removing a row does not drop a tag already created.
       </p>
       {excluded.isError ? (
-        <p className="text-xs text-destructive">Couldn't load the exclusion list.</p>
+        <p className="text-xs text-destructive">
+          Couldn't load the exclusion list.{" "}
+          <button type="button" className="underline" onClick={() => void excluded.refetch()}>
+            Retry
+          </button>
+        </p>
       ) : excluded.isLoading ? (
         <p className="text-xs text-muted-foreground">Loading expiry exclusions…</p>
       ) : rows.length === 0 ? (
@@ -71,8 +76,8 @@ export const ExcludedFromExpiry = ({ tableId }: { tableId: string }) => {
                   Copy ID
                 </Button>
                 <ConfirmAction
-                  title="Remove this snapshot from Cryo expiry exclusion?"
-                  description="Cryo may expire it on the next run if no ref or retention rule keeps it. This does not restore or delete data."
+                  title={`Remove snapshot ${row.snapshot_id} from Cryo expiry exclusion?`}
+                  description="Cryo may expire it on the next Spark run if no tag or retention rule keeps it. A tag already created is not dropped here. This does not restore or delete data."
                   okText="Remove exclusion"
                   onConfirm={() => {
                     setPendingId(row.snapshot_id);
@@ -84,11 +89,13 @@ export const ExcludedFromExpiry = ({ tableId }: { tableId: string }) => {
                     size="sm"
                     variant="ghost"
                     disabled={!unprotectAccess.allowed || pendingId === row.snapshot_id}
-                    title={unprotectAccess.reason ?? undefined}
                   >
-                    Unprotect
+                    Remove exclusion
                   </Button>
                 </ConfirmAction>
+                {unprotectAccess.reason ? (
+                  <p className="text-xs text-muted-foreground">{unprotectAccess.reason}</p>
+                ) : null}
               </div>
             </li>
           ))}

@@ -143,6 +143,7 @@ class AIProviderCreate(BaseModel):
 
 class AIProviderUpdate(BaseModel):
     name: str | None = None
+    provider_type: str | None = None
     api_key: str | None = None  # only update if provided
     model: str | None = None
     config: JsonDict | None = None
@@ -1456,6 +1457,8 @@ def update_ai_provider(
 
     if payload.name is not None:
         provider.name = payload.name
+    if payload.provider_type is not None:
+        provider.provider_type = payload.provider_type
     if payload.api_key is not None:
         provider.api_key_encrypted = encrypt_secret(payload.api_key)
     if payload.model is not None:
@@ -1509,6 +1512,49 @@ def delete_ai_provider(provider_id: uuid.UUID, session: SessionDep) -> None:
 
 
 @router.post(
+    "/ai/providers/test",
+    response_model=AIProviderTestResponse,
+    dependencies=[Depends(require_operator)],
+    tags=["ai"],
+)
+async def test_ai_provider_config(
+    payload: AIProviderTestConfigRequest,
+    session: SessionDep,
+) -> AIProviderTestResponse:
+    """Test a not-yet-saved AI provider config with the form's current values, so a user can
+    verify the API key/model actually work before creating or updating the provider.
+
+    Registered before ``/{provider_id}/test`` so ``provider_id="test"`` is not captured.
+    """
+    api_key = payload.api_key
+    if not api_key and payload.provider_id is not None:
+        provider = session.get(AIProvider, payload.provider_id)
+        if provider is None:
+            raise HTTPException(status_code=404, detail="AI provider not found")
+        api_key = _provider_api_key(provider.api_key_encrypted) or ""
+
+    try:
+        client = create_llm_client(
+            payload.provider_type,
+            api_key,
+            payload.model,
+            config=payload.config,
+        )
+        response = await client.complete(payload.prompt, max_tokens=100)
+        return AIProviderTestResponse(
+            success=True,
+            response=response.content,
+            model=response.model,
+            tokens_used=response.input_tokens + response.output_tokens,
+        )
+    except Exception as e:
+        return AIProviderTestResponse(
+            success=False,
+            error=str(e),
+        )
+
+
+@router.post(
     "/ai/providers/{provider_id}/test",
     response_model=AIProviderTestResponse,
     dependencies=[Depends(require_operator)],
@@ -1532,46 +1578,6 @@ async def test_ai_provider(
             _provider_api_key(provider.api_key_encrypted) or "",
             provider.model,
             config=provider.config,
-        )
-        response = await client.complete(payload.prompt, max_tokens=100)
-        return AIProviderTestResponse(
-            success=True,
-            response=response.content,
-            model=response.model,
-            tokens_used=response.input_tokens + response.output_tokens,
-        )
-    except Exception as e:
-        return AIProviderTestResponse(
-            success=False,
-            error=str(e),
-        )
-
-
-@router.post(
-    "/ai/providers/test",
-    response_model=AIProviderTestResponse,
-    dependencies=[Depends(require_operator)],
-    tags=["ai"],
-)
-async def test_ai_provider_config(
-    payload: AIProviderTestConfigRequest,
-    session: SessionDep,
-) -> AIProviderTestResponse:
-    """Test a not-yet-saved AI provider config with the form's current values, so a user can
-    verify the API key/model actually work before creating or updating the provider."""
-    api_key = payload.api_key
-    if not api_key and payload.provider_id is not None:
-        provider = session.get(AIProvider, payload.provider_id)
-        if provider is None:
-            raise HTTPException(status_code=404, detail="AI provider not found")
-        api_key = _provider_api_key(provider.api_key_encrypted) or ""
-
-    try:
-        client = create_llm_client(
-            payload.provider_type,
-            api_key,
-            payload.model,
-            config=payload.config,
         )
         response = await client.complete(payload.prompt, max_tokens=100)
         return AIProviderTestResponse(
@@ -1784,8 +1790,8 @@ def update_slack_config(
         config.name = payload.name
     if payload.webhook_url is not None:
         config.webhook_url_encrypted = encrypt_secret(payload.webhook_url)
-    if payload.channel is not None:
-        config.channel = payload.channel
+    if "channel" in payload.model_fields_set:
+        config.channel = payload.channel or None
     if payload.daily_report_enabled is not None:
         config.daily_report_enabled = payload.daily_report_enabled
     if payload.daily_report_cron is not None:
@@ -1980,6 +1986,10 @@ async def generate_report(
         slack_client=slack_client,
         use_ai_summary=use_ai,
     )
+    if result.get("slack_sent") and slack_config is not None:
+        from cryo.reporting.scheduler import record_sent
+
+        record_sent(session, f"daily_report:{slack_config.id}", datetime.now(UTC))
 
     return DailyReportResponse(**result)
 

@@ -1,5 +1,5 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { getScanCostAttribution } from "../api/client";
 import { EmptyState, QueryErrorAlert } from "../components/common";
 import { Badge } from "../components/ui/badge";
@@ -19,7 +19,9 @@ const DAY_OPTIONS = [
 
 export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
   const { api } = useAuth();
-  const [days, setDays] = useState("7");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawDays = searchParams.get("range") ?? "7";
+  const days = DAY_OPTIONS.some((option) => option.value === rawDays) ? rawDays : "7";
 
   const query = useQuery({
     queryKey: ["scan-cost-attribution", days],
@@ -43,7 +45,18 @@ export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
           title="Reads"
           subtitle="Bytes scanned per client and schema, from the query log. This is not a dollar cost."
           actions={
-            <Select className="w-40" value={days} onChange={(value) => setDays(value ?? "7")} options={DAY_OPTIONS} />
+          <Select
+            className="w-40"
+            value={days}
+            onChange={(value) =>
+              setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                next.set("range", value ?? "7");
+                return next;
+              })
+            }
+            options={DAY_OPTIONS}
+          />
           }
         />
       )}

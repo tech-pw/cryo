@@ -172,7 +172,7 @@ const EmergencyStop = ({
       <AlertDialogTrigger asChild>
         <Button variant="danger" disabled={disabled}>
           <OctagonX className="size-4" aria-hidden />
-          Emergency stop
+          Hold all maintenance
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent>
@@ -868,14 +868,17 @@ export const ControlRoom = () => {
               <div className="flex flex-wrap gap-2">
                 <TargetedHold
                   destinationIds={destinationIds}
-                  disabled={!canOperate}
+            disabled={!canOperate || (row.original.scope_type === "global" && !canEmergencyStop)}
                   pending={pause.isPending}
                   onConfirm={(destinationId, reason) =>
                     pause.mutate({ scopeType: "destination", scopeId: destinationId, reason })
                   }
                 />
                 <EmergencyStop
-                  disabled={!canEmergencyStop || summary.data.active_pauses > 0}
+                  disabled={
+                    !canEmergencyStop ||
+                    (controls.data ?? []).some((control) => control.paused && control.scope_type === "global")
+                  }
                   pending={pause.isPending}
                   onConfirm={(reason) =>
                     pause.mutate({ scopeType: "global", scopeId: "global", reason })

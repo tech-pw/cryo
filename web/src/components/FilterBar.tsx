@@ -16,6 +16,7 @@ export type { CatalogFilterOption };
 interface Props {
   value: TableFilterState;
   onChange: (value: TableFilterState) => void;
+  onReset?: () => void;
   catalogOptions?: CatalogFilterOption[];
   presetOptions?: CatalogFilterOption[];
   matchingTotal?: number;
@@ -29,6 +30,7 @@ interface Props {
 export const FilterBar = ({
   value,
   onChange,
+  onReset,
   catalogOptions = [],
   presetOptions = [],
   matchingTotal = 0,
@@ -187,7 +189,7 @@ export const FilterBar = ({
               </label>
             </PopoverContent>
           </Popover>
-          <Button onClick={() => onChange({ activeOnly: true })}>Reset</Button>
+          <Button onClick={() => (onReset ? onReset() : onChange({ activeOnly: true }))}>Reset</Button>
           {chips.map((chip, idx) => (
             <Badge key={`${chip.key ?? "chip"}-${idx}`} variant="secondary" className="gap-1">
               {chip.label}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 
 import { cn } from "../../lib/cn";
@@ -98,7 +98,7 @@ export const AppShell = ({ children }: AppShellProps) => (
 
 const AppShellFrame = ({ children }: AppShellProps) => {
   const { pathname } = useLocation();
-  const { openAssistant, toggle } = useAssistant();
+  const { open, panel, openAssistant, setOpen } = useAssistant();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
@@ -113,12 +113,56 @@ const AppShellFrame = ({ children }: AppShellProps) => {
     });
   }, []);
 
+  const mobileWasOpen = useRef(false);
+
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
 
   useEffect(() => {
+    if (mobileOpen) {
+      mobileWasOpen.current = true;
+      document.getElementById("primary-navigation")?.querySelector<HTMLElement>("a")?.focus();
+      const onTab = (event: KeyboardEvent) => {
+        if (event.key !== "Tab") return;
+        const nav = document.getElementById("primary-navigation");
+        const links = nav ? [...nav.querySelectorAll<HTMLElement>("a")] : [];
+        if (links.length === 0) return;
+        const first = links[0];
+        const last = links[links.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      };
+      document.addEventListener("keydown", onTab);
+      return () => document.removeEventListener("keydown", onTab);
+    }
+    if (mobileWasOpen.current) {
+      mobileWasOpen.current = false;
+      document.querySelector<HTMLElement>(".cryo-shell__menu-btn")?.focus();
+    }
+  }, [mobileOpen]);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 768px)");
+    const onChange = () => {
+      if (!query.matches) setMobileOpen(false);
+    };
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && mobileOpen) {
+        event.preventDefault();
+        setMobileOpen(false);
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setPaletteOpen(true);
@@ -126,7 +170,8 @@ const AppShellFrame = ({ children }: AppShellProps) => {
       if (event.repeat) return;
       if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "i") {
         event.preventDefault();
-        toggle();
+        if (open && panel === "ask") setOpen(false);
+        else openAssistant();
       }
       if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "b") {
         event.preventDefault();
@@ -135,7 +180,7 @@ const AppShellFrame = ({ children }: AppShellProps) => {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [toggle, toggleSidebar]);
+  }, [mobileOpen, open, panel, openAssistant, setOpen, toggleSidebar]);
 
   return (
     <ShellProvider value={{ openCommandPalette, closeMobileNav, openAssistant }}>
@@ -150,14 +195,15 @@ const AppShellFrame = ({ children }: AppShellProps) => {
             type="button"
             className="cryo-shell__backdrop"
             aria-label="Close navigation menu"
+            tabIndex={-1}
             onClick={closeMobileNav}
           />
         ) : null}
 
         <Sidebar pathname={pathname} mobileOpen={mobileOpen} onNavigate={closeMobileNav} />
 
-        <div className="cryo-shell__main">
-          <Topbar onMenuClick={() => setMobileOpen(true)} />
+        <div className="cryo-shell__main" inert={mobileOpen ? true : undefined}>
+          <Topbar menuOpen={mobileOpen} onMenuClick={() => setMobileOpen((open) => !open)} />
           <main
             className="cryo-shell__content"
             id="main-content"

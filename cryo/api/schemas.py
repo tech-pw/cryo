@@ -886,7 +886,7 @@ class DatalakeTotals(BaseModel):
     estimated_monthly_s3_cost_usd: float
     projected_monthly_s3_cost_usd: float = 0
     projected_savings_usd_month: float = 0
-    reclaimable_bytes: int = 0
+    reclaimable_bytes: int | None = None
     query_count_30d: int
 
 

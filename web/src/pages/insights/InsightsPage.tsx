@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   getQueryPerformanceDashboard,
   getSharedS3Anomalies,
+  refreshSharedS3Anomalies,
   getSimilarityClusters,
   getSimilarityPairs,
+  runDedupPipeline,
   listDestinations,
   listSources,
   type QueryPerformanceData,
@@ -25,6 +27,8 @@ import { DataTable } from "../../components/ui/data-table";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { useAuth } from "../../lib/auth";
+import { useWriteControl } from "../../lib/useWriteControl";
+import { toast } from "sonner";
 import { formatBytesGb, formatDuration, formatGb, formatTime } from "../../lib/format";
 
 const INSIGHTS_TABS = ["duplicates", "shared-paths", "queries"] as const;
@@ -49,12 +53,16 @@ const formatLatency = (ms: number | null | undefined): string => {
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : "Failed to load data");
 
-const destinationQueryLogEnabled = (destination: DestinationRead): boolean => {
+const destinationQueryLogEnabled = (destination: DestinationRead, engine?: string): boolean => {
+  if (destination.enabled === false) return false;
+  if (destination.engine !== "trino") return false;
+  if (engine && destination.engine !== engine) return false;
   const config = destination.query_log_config;
   if (!config || typeof config !== "object") return false;
-  if (config.enabled === false) return false;
-  if (config.enabled === true) return true;
-  return typeof config.mode === "string" && config.mode.length > 0;
+  if (config.enabled !== true) return false;
+  if (config.mode === "read_through") return false;
+  if (typeof config.sample_rate === "number" && config.sample_rate <= 0) return false;
+  return true;
 };
 
 const sourceWritesActivityOnly = (source: SourceRead): boolean => {
@@ -114,19 +122,42 @@ const RetryButton = ({ onClick, pending, label }: { onClick: () => void; pending
 
 const DuplicatesPanel = () => {
   const { api } = useAuth();
+  const queryClient = useQueryClient();
+  const scanAccess = useWriteControl("runDedup");
+  const scan = useMutation({
+    mutationFn: () => runDedupPipeline(api, { sample_rows: true }),
+    onSuccess: () => {
+      toast.success("Similarity scan finished");
+      void queryClient.invalidateQueries({ queryKey: ["similarity-clusters"] });
+      void queryClient.invalidateQueries({ queryKey: ["similarity-pairs"] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "Similarity scan failed")
+  });
   const clustersQuery = useQuery({
     queryKey: ["similarity-clusters"],
     queryFn: () => getSimilarityClusters(api)
   });
-  const pairsQuery = useQuery({
-    queryKey: ["similarity-pairs"],
-    queryFn: () => getSimilarityPairs(api, { min_score: 0.3, limit: 100 })
-  });
-
   const clusters = useMemo(
     () => [...(clustersQuery.data?.clusters ?? [])].sort((a, b) => b.reclaimable_gb - a.reclaimable_gb),
     [clustersQuery.data?.clusters]
   );
+  const pairsQuery = useQuery({
+    queryKey: ["similarity-pairs", clusters.map((cluster) => cluster.cluster_id).join(",")],
+    queryFn: async () => {
+      const pages = await Promise.all(
+        clusters.map((cluster) =>
+          getSimilarityPairs(api, {
+            table_ids: cluster.members.map((member) => member.table_id),
+            min_score: 0,
+            limit: 200
+          })
+        )
+      );
+      return pages.flat();
+    },
+    enabled: clusters.length > 0
+  });
+
   const pairStatus = pairsQuery.isLoading ? "loading" : pairsQuery.isError ? "error" : "ready";
   const asOf = clusters[0]?.computed_at;
 
@@ -159,6 +190,16 @@ const DuplicatesPanel = () => {
           {asOf ? ` As of ${formatTime(asOf)}.` : ""}
         </p>
       </div>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        disabled={!scanAccess.allowed || scan.isPending}
+        title={scanAccess.reason ?? undefined}
+        onClick={() => scan.mutate()}
+      >
+        {scan.isPending ? "Scanning…" : "Run similarity scan"}
+      </Button>
       {clusters.length === 0 ? (
         <EmptyState
           title={
@@ -246,10 +287,20 @@ const DuplicatesPanel = () => {
 
 const SharedPathsPanel = () => {
   const { api } = useAuth();
+  const queryClient = useQueryClient();
+  const refreshAccess = useWriteControl("refreshAnomalies");
   const [pageIndex, setPageIndex] = useState(0);
   const reportQuery = useQuery({
     queryKey: ["shared-s3-anomalies", api.token],
     queryFn: () => getSharedS3Anomalies(api)
+  });
+  const refresh = useMutation({
+    mutationFn: () => refreshSharedS3Anomalies(api),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["shared-s3-anomalies", api.token], data);
+      toast.success("Shared-path harvest finished");
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "Harvest failed")
   });
   const report = reportQuery.data;
   const groups = report?.groups ?? [];
@@ -286,7 +337,7 @@ const SharedPathsPanel = () => {
                     {member.qualified_name}
                   </Link>
                 ) : (
-                  <span className="text-sm">{member.qualified_name}</span>
+                  <span className="text-sm">{member.qualified_name} · Not in Cryo</span>
                 )}
               </li>
             ))}
@@ -302,16 +353,8 @@ const SharedPathsPanel = () => {
       <div>
         <h2 className="text-base font-semibold text-foreground">Which names share one S3 location?</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Overlapping S3 locations are the old Anomalies view. Two catalog names on one warehouse prefix are one
-          physical table. Dropping an alias can delete the sibling.
-        </p>
-        <p className="mt-2 text-sm">
-          <Link to="/anomalies" className="text-[var(--color-primary)] hover:underline">
-            Open the shared-path list
-          </Link>
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          This opens the current list. The Insights route will be wired when routes land.
+          Two catalog names on one warehouse prefix are one physical table. Unregister an alias, or drop it
+          without purge. Cryo skips orphan removal on these names. Expire snapshots does not delete the sibling.
         </p>
       </div>
 
@@ -338,6 +381,18 @@ const SharedPathsPanel = () => {
         <EmptyState
           title="Shared-path overlap has not been measured"
           description="No harvest yet. A missing harvest is not zero overlapping paths."
+          action={
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!refreshAccess.allowed || refresh.isPending}
+              title={refreshAccess.reason ?? undefined}
+              onClick={() => refresh.mutate()}
+            >
+              {refresh.isPending ? "Harvesting…" : "Refresh from catalogs"}
+            </Button>
+          }
         />
       ) : null}
 
@@ -377,7 +432,15 @@ const QuerySetupLink = ({ children }: { children: string }) => (
   </Link>
 );
 
-const QueryResults = ({ data }: { data: QueryPerformanceData }) => {
+const QueryResults = ({
+  data,
+  hours,
+  engine
+}: {
+  data: QueryPerformanceData;
+  hours: number;
+  engine?: string;
+}) => {
   const columns = useMemo(
     () => [
       {
@@ -435,11 +498,11 @@ const QueryResults = ({ data }: { data: QueryPerformanceData }) => {
       <dl className="grid gap-3 text-sm sm:grid-cols-3">
         <div>
           <dt className="text-xs text-muted-foreground">Window</dt>
-          <dd>Last {QUERY_WINDOW_HOURS} hours</dd>
+          <dd>Last {hours} hours</dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Workload scope</dt>
-          <dd>All engines</dd>
+          <dd>{engine ?? "All engines"}</dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Query count</dt>
@@ -488,11 +551,20 @@ const QueryResults = ({ data }: { data: QueryPerformanceData }) => {
   );
 };
 
+const queryWindowHours = (raw: string | null): number => {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 168) return QUERY_WINDOW_HOURS;
+  return Math.floor(parsed);
+};
+
 const QueriesPanel = () => {
   const { api } = useAuth();
+  const [searchParams] = useSearchParams();
+  const hours = queryWindowHours(searchParams.get("hours"));
+  const engine = searchParams.get("engine")?.trim() || undefined;
   const performanceQuery = useQuery({
-    queryKey: ["query-performance", api.token, undefined, QUERY_WINDOW_HOURS],
-    queryFn: () => getQueryPerformanceDashboard(api, QUERY_WINDOW_HOURS)
+    queryKey: ["query-performance", api.token, engine, hours],
+    queryFn: () => getQueryPerformanceDashboard(api, hours, engine)
   });
   const destinationsQuery = useQuery({
     queryKey: ["destinations", api.token],
@@ -514,7 +586,7 @@ const QueriesPanel = () => {
       <div>
         <h2 className="text-base font-semibold text-foreground">Which queries are slow?</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Named percentiles over the last {QUERY_WINDOW_HOURS} hours, all engines. A missing query log is not a count
+          Named percentiles over the last {hours} hours{engine ? `, ${engine}` : ", all engines"}. A missing query log is not a count
           of slow queries.
         </p>
       </div>
@@ -532,35 +604,49 @@ const QueriesPanel = () => {
         </div>
       ) : null}
 
-      {hasRows && performanceQuery.data ? <QueryResults data={performanceQuery.data} /> : null}
+      {hasRows && performanceQuery.data ? (
+        <QueryResults data={performanceQuery.data} hours={hours} engine={engine} />
+      ) : null}
 
-      {!coverageLoading && !performanceQuery.isError && !hasRows && (destinationsQuery.isError || sourcesQuery.isError) ? (
+      {!coverageLoading && !performanceQuery.isError && !hasRows && sourcesQuery.isSuccess && sourcesQuery.data?.some(sourceWritesActivityOnly) ? (
+        <QueryCoverageNotice connected={false} activityOnly hours={hours} />
+      ) : !coverageLoading && !performanceQuery.isError && !hasRows && (destinationsQuery.isError || sourcesQuery.isError) ? (
         <Alert
           variant="info"
           title="Query log status is unknown"
           description="Cryo could not check whether query-log ingestion is enabled. An empty window is not a count of slow queries."
         />
-      ) : null}
-
-      {!coverageLoading && !performanceQuery.isError && !hasRows && destinationsQuery.isSuccess && sourcesQuery.isSuccess ? (
+      ) : !coverageLoading && !performanceQuery.isError && !hasRows && destinationsQuery.isSuccess && sourcesQuery.isSuccess ? (
         <QueryCoverageNotice
-          connected={(destinationsQuery.data ?? []).some(destinationQueryLogEnabled)}
-          activityOnly={(sourcesQuery.data ?? []).some(sourceWritesActivityOnly)}
+          connected={(destinationsQuery.data ?? []).some((destination) => destinationQueryLogEnabled(destination, engine))}
+          activityOnly={false}
+          hours={hours}
+          engine={engine}
         />
       ) : null}
     </section>
   );
 };
 
-const QueryCoverageNotice = ({ connected, activityOnly }: { connected: boolean; activityOnly: boolean }) => {
+const QueryCoverageNotice = ({
+  connected,
+  activityOnly,
+  hours,
+  engine
+}: {
+  connected: boolean;
+  activityOnly: boolean;
+  hours: number;
+  engine?: string;
+}) => {
   if (connected) {
     return (
       <Alert
         variant="info"
-        title="No query log rows in the last 24 hours"
+        title={`No query log rows in the last ${hours} hours`}
         description={
           <span>
-            Query-log ingestion is enabled. Workload scope is all engines. This window has no rows, so percentiles are
+            Query-log ingestion is enabled. Workload scope is {engine ?? "all engines"}. This window has no rows, so percentiles are
             not available.{" "}
             <QuerySetupLink>Inspect query log ingestion</QuerySetupLink>
           </span>

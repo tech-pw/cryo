@@ -424,7 +424,7 @@ export const rankPartitions = (rows: PartitionRead[]): { metric: string; ranked:
     const source = row as PartitionRow;
     const small = measuredNumber(source.small_files_in_partition_count);
     const files = measuredNumber(source.files_per_partition);
-    const label = source.partition_value || source.partition_path || source.partition_key || `Partition ${index + 1}`;
+    const label = source.partition_key || source.partition_path || source.partition_value || `Partition ${index + 1}`;
     return {
       id: String(source.id ?? `${label}-${index}`),
       label,

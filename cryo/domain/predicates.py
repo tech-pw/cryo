@@ -83,10 +83,11 @@ def _evaluate_leaf(predicate: Mapping[str, Any], row: Mapping[str, Any]) -> bool
         if not isinstance(expected, list | tuple | set | frozenset):
             raise ValueError("in predicate value must be a collection")
         return bool(actual in expected)
+    ignore_case = field_name in {"schema_name", "table_name"}
     if op == "like":
-        return _like_matches(actual, expected)
+        return _like_matches(actual, expected, ignore_case=ignore_case)
     if op == "glob":
-        return _like_matches(actual, _glob_to_like(str(expected)))
+        return _like_matches(actual, _glob_to_like(str(expected)), ignore_case=ignore_case)
 
     raise ValueError(f"Unsupported filter operator: {op}")
 
@@ -147,10 +148,11 @@ def _datetime_value(value: Any) -> datetime:
         raise ValueError(f"Unsupported ordered predicate value: {value!r}") from exc
 
 
-def _like_matches(actual: Any, expected: Any) -> bool:
+def _like_matches(actual: Any, expected: Any, *, ignore_case: bool = False) -> bool:
     if actual is None or expected is None:
         return False
-    return re.fullmatch(_like_to_regex(str(expected)), str(actual), flags=re.DOTALL) is not None
+    flags = re.DOTALL | (re.IGNORECASE if ignore_case else 0)
+    return re.fullmatch(_like_to_regex(str(expected)), str(actual), flags=flags) is not None
 
 
 def _like_to_regex(pattern: str) -> str:

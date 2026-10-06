@@ -38,10 +38,10 @@ const priorityVariant = (priority?: string | null) => {
 
 const statusVariant = (status?: string | null) => {
   const key = status?.toLowerCase() ?? "";
-  if (["succeeded", "success"].includes(key)) return "success" as const;
-  if (["failed", "error"].includes(key)) return "danger" as const;
-  if (["running", "admitted", "processing"].includes(key)) return "default" as const;
-  if (["cancelled", "warning", "partial_failed", "deferred"].includes(key)) return "warning" as const;
+  if (["succeeded", "success", "ok", "qualified", "authorized", "green"].includes(key)) return "success" as const;
+  if (["failed", "error", "red"].includes(key)) return "danger" as const;
+  if (["running", "admitted", "processing", "submitted"].includes(key)) return "default" as const;
+  if (["cancelled", "warning", "partial", "partial_failed", "deferred", "unknown", "blocked", "yellow"].includes(key)) return "warning" as const;
   if (["scheduled", "queued", "accepted", "skipped"].includes(key)) return "secondary" as const;
   return "secondary" as const;
 };
@@ -62,8 +62,15 @@ export const PriorityTag = ({ priority }: { priority?: string | null }) => (
   <Badge variant={priorityVariant(priority)}>{priority ?? "-"}</Badge>
 );
 
+const statusLabel = (status?: string | null): string => {
+  const key = status?.trim().toLowerCase() ?? "";
+  if (key === "partial" || key === "partial_failed") return "Partial";
+  if (!status) return "-";
+  return status.replaceAll("_", " ");
+};
+
 export const StatusTag = ({ status }: { status?: string | null }) => (
-  <Badge variant={statusVariant(status)}>{status ?? "-"}</Badge>
+  <Badge variant={statusVariant(status)}>{statusLabel(status)}</Badge>
 );
 
 export const RunKindTag = ({ kind }: { kind?: string | null }) => {

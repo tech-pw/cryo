@@ -10,7 +10,6 @@ import {
   Lightbulb,
   Moon,
   Plug,
-  Plus,
   RadioTower,
   Scan,
   ScanSearch,
@@ -95,26 +94,38 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
   }, [api, debouncedSearch]);
 
   const [tableHits, setTableHits] = useState<Awaited<ReturnType<typeof searchCatalog>> | null>(null);
+  const [searchFailed, setSearchFailed] = useState(false);
 
   useEffect(() => {
     if (!tableSearch) {
       setTableHits(null);
+      setSearchFailed(false);
       return;
     }
     let cancelled = false;
     tableSearch
       .then((data) => {
-        if (!cancelled) setTableHits(data);
+        if (!cancelled) {
+          setTableHits(data);
+          setSearchFailed(false);
+        }
       })
       .catch(() => {
-        if (!cancelled) setTableHits(null);
+        if (!cancelled) {
+          setTableHits(null);
+          setSearchFailed(true);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [tableSearch]);
 
-  const recent = listRecentItems().slice(0, 6);
+  const recent = search.trim()
+    ? []
+    : listRecentItems()
+        .filter((item) => !["/runs", "/tables", "/cost", "/insights", "/decisions", "/settings", "/"].includes(item.href))
+        .slice(0, 6);
 
   const go = (href: string, label: string, type: "route" | "table" | "run" | "preset" = "route") => {
     pushRecentItem({ type, label, href });
@@ -134,6 +145,21 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
           />
           <Command.List>
             <Command.Empty>No results found.</Command.Empty>
+
+            {recent.length > 0 ? (
+              <Command.Group heading="Recent">
+                {recent.map((item) => (
+                  <Command.Item
+                    key={item.href}
+                    value={`recent ${item.label} ${item.href}`}
+                    onSelect={() => go(item.href, item.label, item.type)}
+                  >
+                    <Clock size={14} aria-hidden />
+                    {item.label}
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            ) : null}
 
             <Command.Group heading="Actions">
               {search.trim() ? (
@@ -166,13 +192,7 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
                 <Scan size={14} aria-hidden />
                 Run scan
               </Command.Item>
-              <Command.Item
-                value="create preset new maintenance"
-                onSelect={() => go("/runs?tab=workflows", "Workflows", "preset")}
-              >
-                <Plus size={14} aria-hidden />
-                Create preset
-              </Command.Item>
+
               <Command.Item
                 value="toggle theme dark light mode"
                 onSelect={() => {
@@ -213,6 +233,13 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
               </Command.Item>
             </Command.Group>
 
+            {searchFailed ? (
+              <Command.Group heading="Tables">
+                <Command.Item value={`${search} search unavailable`} disabled>
+                  Search unavailable
+                </Command.Item>
+              </Command.Group>
+            ) : null}
             {tableHits && tableHits.groups.some((g) => g.items.length > 0) ? (
               <Command.Group heading="Tables">
                 {tableHits.groups.flatMap((group) =>
@@ -222,7 +249,7 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
                     return (
                       <Command.Item
                         key={`${group.type}-${hit.id}`}
-                        value={`${debouncedSearch} ${hit.name} ${hit.qualified_name ?? ""} ${subtitle ?? ""} table`}
+                        value={`${search} ${hit.name} ${hit.qualified_name ?? ""} ${subtitle ?? ""} table`}
                         onSelect={() => go(href, hit.qualified_name ?? hit.name, "table")}
                       >
                         <LayoutDashboard size={14} aria-hidden />
@@ -237,20 +264,6 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
               </Command.Group>
             ) : null}
 
-            {recent.length > 0 ? (
-              <Command.Group heading="Recent">
-                {recent.map((item) => (
-                  <Command.Item
-                    key={item.href}
-                    value={`recent ${item.label} ${item.href}`}
-                    onSelect={() => go(item.href, item.label, item.type)}
-                  >
-                    <Clock size={14} aria-hidden />
-                    {item.label}
-                  </Command.Item>
-                ))}
-              </Command.Group>
-            ) : null}
           </Command.List>
 
           <div className="cryo-cmdk__hint">

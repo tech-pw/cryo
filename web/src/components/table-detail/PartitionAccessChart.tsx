@@ -71,7 +71,11 @@ export const partitionDays = (points: PartitionAccessChartProps["points"]) => {
 
 export const PartitionAccessChart = ({ points, partitions }: PartitionAccessChartProps) => {
   if (!points.length && !partitions.length) {
-    return <span className="text-sm text-muted-foreground">No partition access data yet.</span>;
+    return (
+      <span className="text-sm text-muted-foreground">
+        No partition access data yet. Enable S3 request-cost tracking on the source in Connections, then wait for an ingest.
+      </span>
+    );
   }
 
   const days = partitionDays(points);

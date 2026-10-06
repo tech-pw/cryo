@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { patchSource } from "../../api/client";
 import type { SourceRead } from "../../api/types";
 import { AwsStatusBadge } from "../../components/AwsStatusBadge";
+import { QueryErrorAlert } from "../../components/common";
 import { ConfirmAction } from "../../components/confirm";
 import { StatusTag } from "../../components/status";
 import { Badge } from "../../components/ui/badge";
@@ -97,7 +98,7 @@ export const LakehousesTab = () => {
             {purgeAccess.hidden ? null : (
             <ConfirmAction
               title={`Permanently delete "${row.original.name}"?`}
-              description="This deletes the lakehouse and everything Cryo scanned from it -- all its tables, health/cost history, and tier policies. This cannot be undone. If you just want to pause it, use Disable instead."
+              description="Deletes the lakehouse, its scanned tables, and the stored AWS integration. If jobs still reference it, nothing is deleted. Use Disable to pause it instead."
               onConfirm={() => purgeSourceMutation.mutate(row.original.id)}
             >
               <Button size="sm" variant="danger" loading={purgeSourceMutation.isPending}>
@@ -131,6 +132,9 @@ export const LakehousesTab = () => {
           New lakehouse
         </Button>
       </div>
+      {sources.isError ? (
+        <QueryErrorAlert error={sources.error} title="Failed to load lakehouses" />
+      ) : (
       <DataTable
         key={`lakehouses-${pendingScanVersion}`}
         columns={columns}
@@ -141,6 +145,7 @@ export const LakehousesTab = () => {
         emptyTitle="No lakehouses connected"
         emptyDescription="Connect a catalog. Cryo will scan it and show table health here."
       />
+      )}
     </div>
   );
 };

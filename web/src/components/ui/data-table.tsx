@@ -233,7 +233,7 @@ export function DataTable<TData>({
   pagination,
   loading = false,
   emptyTitle = "No rows to show",
-  emptyDescription = "Adjust filters or run a scan to populate this table.",
+  emptyDescription,
   emptyAction,
   getRowId,
   rowSelection,
@@ -247,7 +247,7 @@ export function DataTable<TData>({
   columnVisibility,
   onColumnVisibilityChange
 }: DataTableProps<TData>) {
-  const selectionEnabled = Boolean(enableRowSelection || rowSelection || onRowSelectionChange);
+  const selectionEnabled = enableRowSelection !== false && Boolean(enableRowSelection || rowSelection || onRowSelectionChange);
 
   const tableColumns = useMemo(() => {
     if (!selectionEnabled) return columns;
@@ -259,6 +259,7 @@ export function DataTable<TData>({
           checked={table.getIsAllPageRowsSelected() ? true : table.getIsSomePageRowsSelected() ? "indeterminate" : false}
           onCheckedChange={(value) => table.toggleAllPageRowsSelected(value === true)}
           aria-label="Select all rows on this page"
+          title="Select all rows on this page"
         />
       ),
       cell: ({ row }) => (
@@ -340,7 +341,7 @@ export function DataTable<TData>({
               ))}
             </thead>
             <tbody>
-              {loading
+              {loading && data.length === 0
                 ? Array.from({ length: pagination?.pageSize ?? 5 }).map((_, rowIndex) => (
                     <tr key={`loading-${rowIndex}`} className={cn("border-b border-border/70", rowHeightClass[density])}>
                       {tableColumns.map((column, columnIndex) => (

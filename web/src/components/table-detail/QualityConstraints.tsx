@@ -130,6 +130,15 @@ const AddRuleForm = ({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    const invalid = paramFields[kind].find((field) => {
+      const raw = values[field.key] ?? "";
+      if (!raw.trim()) return field.placeholder !== "optional";
+      return !Number.isFinite(Number(raw)) || /[% ,]/.test(raw);
+    });
+    if (invalid) {
+      toast.error(`${invalid.label} must be a plain number`);
+      return;
+    }
     onSubmit({
       name: name.trim() || kindLabels[kind],
       kind,
@@ -233,7 +242,18 @@ export const QualityConstraints = () => {
   });
   const toggle = useMutation({
     mutationFn: (rule: QualityConstraintRead) => updateQualityConstraint(api, rule.id, { enabled: !rule.enabled }),
-    onSuccess: refresh,
+    onSuccess: (updated) => {
+      queryClient.setQueryData(key, (current: { constraints: QualityConstraintRead[] } | undefined) => {
+        if (!current) return current;
+        return {
+          ...current,
+          constraints: current.constraints.map((row) =>
+            row.id === updated.id ? { ...row, enabled: updated.enabled } : row
+          )
+        };
+      });
+      refresh();
+    },
     onError
   });
   const remove = useMutation({
@@ -297,7 +317,7 @@ export const QualityConstraints = () => {
         <div className="flex items-center justify-end gap-2">
             <Switch
               checked={rule.enabled}
-              disabled={!constraintAccess.allowed}
+              disabled={!constraintAccess.allowed || (toggle.isPending && toggle.variables?.id === rule.id)}
               aria-label={rule.enabled ? `Disable ${rule.name}` : `Enable ${rule.name}`}
               title={constraintAccess.reason ?? undefined}
               onCheckedChange={() => {
@@ -340,6 +360,14 @@ export const QualityConstraints = () => {
           Checked against the metadata each scan already collects, so no data is read. When the metadata
           can&apos;t decide a rule, it shows Unknown and says why.
         </p>
+        {rules.isError ? (
+          <p className="text-sm text-destructive">
+            Couldn't load quality rules.{" "}
+            <button type="button" className="underline" onClick={() => void rules.refetch()}>
+              Retry
+            </button>
+          </p>
+        ) : (
         <SimpleTable
           size="small"
           columns={columns}
@@ -349,6 +377,7 @@ export const QualityConstraints = () => {
           emptyTitle="No rules yet"
           emptyDescription="Add a rule for row counts, null rates, value ranges or freshness."
         />
+        )}
         {adding ? (
           <AddRuleForm
             columns={(rules.data?.columns ?? []) as { field_id: number; name: string; type?: string | null; kinds: Kind[] }[]}

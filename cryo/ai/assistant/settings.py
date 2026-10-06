@@ -42,7 +42,8 @@ def load_assistant_settings(
             retention_days=install.assistant_retention_days,
             team_instructions_skillset=None,
         )
-    tiers = tuple(int(item) for item in (row.enabled_tiers or [0]))
+    stored_tiers = row.enabled_tiers
+    tiers = tuple(int(item) for item in stored_tiers) if stored_tiers is not None else (0,)
     return AssistantSettings(
         enabled=bool(row.enabled and install.assistant_enabled),
         allowed_min_role=row.allowed_min_role,

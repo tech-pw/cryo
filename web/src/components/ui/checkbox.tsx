@@ -1,5 +1,5 @@
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
-import { Check } from "lucide-react";
+import { Check, Minus } from "lucide-react";
 import { forwardRef, type ComponentPropsWithoutRef } from "react";
 import { cn } from "../../lib/cn";
 
@@ -14,12 +14,17 @@ const Checkbox = forwardRef<
       "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-[var(--focus-ring-color)] focus-visible:ring-offset-[var(--focus-ring-offset)]",
       "disabled:cursor-not-allowed disabled:opacity-60",
       "data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground",
+      "data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary data-[state=indeterminate]:text-primary-foreground",
       className
     )}
     {...props}
   >
     <CheckboxPrimitive.Indicator className={cn("flex items-center justify-center text-current")}>
-      <Check className="h-3 w-3" strokeWidth={3} />
+      {props.checked === "indeterminate" ? (
+        <Minus className="h-3 w-3" strokeWidth={3} />
+      ) : (
+        <Check className="h-3 w-3" strokeWidth={3} />
+      )}
     </CheckboxPrimitive.Indicator>
   </CheckboxPrimitive.Root>
 ));

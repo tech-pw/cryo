@@ -106,9 +106,15 @@ export const SourceDrawer = ({
         setSchemaOptions(data.namespaces);
       }
     },
-    onError: () => {
+    onError: (error) => {
       setTestPassed(false);
-      toast.error("Advanced properties must be valid JSON before testing.");
+      toast.error(
+        error instanceof SyntaxError
+          ? "Advanced properties must be valid JSON before testing."
+          : error instanceof Error
+            ? error.message
+            : "Test failed"
+      );
     }
   });
 
@@ -446,7 +452,7 @@ export const SourceDrawer = ({
                     label={
                       <HintLabel
                         label="External ID (optional)"
-                        tooltip="External ID for additional security when assuming the role."
+                        tooltip="Stored with the lakehouse. Current catalog clients do not send this when assuming the role."
                       />
                     }
                   >
@@ -466,7 +472,7 @@ export const SourceDrawer = ({
                     label={
                       <HintLabel
                         label="Session name (optional)"
-                        tooltip="Name for the assumed role session. Defaults to 'cryo-session'."
+                        tooltip="Stored as the role session name. Blank saves nothing; nothing fills in cryo-session."
                       />
                     }
                   >

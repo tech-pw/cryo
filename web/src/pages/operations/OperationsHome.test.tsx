@@ -116,7 +116,7 @@ describe("OperationsHome", () => {
 
     expect(nightlyLink).toHaveAttribute("href", "/runs/bbbbbbbb-0000-0000-0000-000000000002");
     expect(nightlyRow.getByText("Nightly (CronJob)")).toBeInTheDocument();
-    expect(nightlyRow.getByText("partial")).toBeInTheDocument();
+    expect(nightlyRow.getByText("Partial")).toBeInTheDocument();
     expect(nightlyRow.getByRole("list", { name: /last 2 runs/i })).toBeInTheDocument();
     expect(nightlyRow.getByRole("link", { name: "Open" })).toHaveAttribute(
       "href",

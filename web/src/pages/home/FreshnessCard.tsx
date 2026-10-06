@@ -20,7 +20,7 @@ export const FreshnessCard = ({ rows, asOf, loading }: {
   rows: FreshnessRow[]; asOf: string | null; loading: boolean;
 }) => (
   <HomeCard title="Table freshness" description="Time since the latest snapshot. Older does not always mean unhealthy." busy={loading} className="home-freshness">
-    {loading ? <div className="space-y-3">{[0, 1, 2, 3].map((key) => <Skeleton key={key} className="h-6 w-full" />)}</div> : rows.length === 0 ? <div className="home-empty"><p>No snapshot ages yet.</p><Link className="home-text-link" to="/runs/scanner">Run a catalog scan</Link></div> : <>
+    {loading ? <div className="space-y-3">{[0, 1, 2, 3].map((key) => <Skeleton key={key} className="h-6 w-full" />)}</div> : rows.length === 0 ? <div className="home-empty"><p>No snapshot ages yet.</p><Link className="home-text-link" to="/runs/scanner?tab=config">Run a catalog scan</Link></div> : <>
       <div className="home-freshness-columns" aria-hidden="true"><span>Snapshot age</span><span>Tables · share</span></div>
       <ul className="home-freshness-rows" aria-label="Tables by latest snapshot age">
         {rows.map((row) => <li key={row.key}>

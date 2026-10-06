@@ -8,10 +8,12 @@ import { tableKeys } from "./tableKeys";
 import "./snapshotsTab.css";
 import { useParams, useSearchParams } from "react-router-dom";
 import {
+  listProtectedSnapshots,
   listTableSnapshots,
   protectTableSnapshot,
   type SnapshotRef,
-  type TableSnapshot
+  type TableSnapshot,
+  type TableSnapshotsResponse
 } from "../../api/snapshots";
 import { QueryErrorAlert } from "../../components/common";
 import { ExcludedFromExpiry } from "../../components/table-detail/ExcludedFromExpiry";
@@ -80,11 +82,13 @@ const When = ({ value }: { value?: string | null }) => {
 const SummaryCard = ({
   total,
   pinned,
+  excluded,
   latest,
   oldest
 }: {
   total: number;
   pinned: number;
+  excluded: number | null;
   latest: string | null;
   oldest: string | null;
 }) => {
@@ -93,11 +97,12 @@ const SummaryCard = ({
     <Card className="td-snapshots-summary">
       <div className="td-snapshots-summary-heading">
         <div><h2>Snapshot history</h2><p>See what changed, compare recorded summaries, and manage retention.</p></div>
-        {launcher ? <Button type="button" size="sm" variant="secondary" disabled={Boolean(launcher.blockedReason)} title={launcher.blockedReason ?? undefined} onClick={() => launcher.launch("expire_snapshots")}><Archive aria-hidden="true" />Preview expiry</Button> : null}
+        {launcher ? <Button type="button" size="sm" variant="secondary" disabled={Boolean(launcher.blockedReason)} title={launcher.blockedReason ?? "Queues snapshot expiry. It does not list the rows that will be removed."} onClick={() => launcher.launch("expire_snapshots")}>Expire snapshots…</Button> : null}
       </div>
       <dl className="td-snapshots-facts">
         <div><dt>Live snapshots</dt><dd>{formatNumber(total)}</dd></div>
         <div><dt>Referenced by tags or branches</dt><dd>{formatNumber(pinned)}</dd></div>
+        <div><dt>Excluded from Cryo expiry</dt><dd>{excluded == null ? "—" : formatNumber(excluded)}</dd></div>
         <div><dt>Latest commit</dt><dd><When value={latest} /></dd></div>
         <div><dt>Oldest retained commit</dt><dd><When value={oldest} /></dd></div>
       </dl>
@@ -109,12 +114,16 @@ const shortId = (id: string): string => (id.length > 10 ? `…${id.slice(-8)}` :
 
 const SnapshotActions = ({
   snapshotId,
+  alreadyExcluded,
+  isCurrent,
   protectAllowed,
   protectReason,
   pending,
   onProtect
 }: {
   snapshotId: string;
+  alreadyExcluded: boolean;
+  isCurrent: boolean;
   protectAllowed: boolean;
   protectReason: string | null;
   pending: boolean;
@@ -125,7 +134,13 @@ const SnapshotActions = ({
       <PopoverTrigger asChild><Button type="button" size="sm" variant="ghost">Actions</Button></PopoverTrigger>
       <PopoverContent align="end" className="w-72 p-3">
         <div role="group" aria-label="Snapshot actions">
-          <Button type="button" size="sm" variant="secondary" className="w-full justify-start" disabled={!protectAllowed || pending} title={protectReason ?? undefined} onClick={() => onProtect(snapshotId)}>Protect</Button>
+          <Button type="button" size="sm" variant="secondary" className="w-full justify-start" disabled={!protectAllowed || pending || alreadyExcluded} title={protectReason ?? undefined} onClick={() => onProtect(snapshotId)}>
+            {alreadyExcluded ? "Already excluded" : "Protect"}
+          </Button>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Records snapshot {snapshotId} so a later Spark expire keeps it. It does not follow the branch.
+            {isCurrent ? " This is the current commit, not later commits." : ""} Trino expire cannot skip one id.
+          </p>
           {protectReason ? <p className="mt-2 text-xs text-muted-foreground">{protectReason}</p> : null}
           <p className="mt-3 text-xs text-muted-foreground">{RESTORE_REASON}.</p>
         </div>
@@ -136,7 +151,7 @@ const SnapshotActions = ({
 
 export const SnapshotsTab = () => {
   const { tableId = "" } = useParams();
-  const { api } = useAuth();
+  const { api, token } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const page = pageFromUrl(searchParams.get("page"));
@@ -147,12 +162,26 @@ export const SnapshotsTab = () => {
   });
 
   const protectAccess = useWriteControl("protectSnapshot");
+  const excluded = useQuery({
+    queryKey: tableKeys.protectedSnapshots(tableId, token),
+    queryFn: () => listProtectedSnapshots(api, tableId),
+    enabled: tableId.length > 0
+  });
   const protect = useMutation({
     mutationFn: (snapshotId: string) => protectTableSnapshot(api, tableId, snapshotId),
-    onSuccess: () => {
-      toast.success("Snapshot excluded from Cryo expiry");
+    onSuccess: (_result, snapshotId) => {
+      toast.success(`Snapshot ${snapshotId} recorded for Cryo expiry exclusion`);
+      queryClient.setQueriesData<TableSnapshotsResponse>({ queryKey: ["table-snapshots", tableId] }, (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          snapshots: current.snapshots.map((row) =>
+            row.snapshot_id === snapshotId ? { ...row, protected: true } : row
+          )
+        };
+      });
       void queryClient.invalidateQueries({ queryKey: ["table-snapshots", tableId] });
-      void queryClient.invalidateQueries({ queryKey: tableKeys.protectedSnapshots(tableId, api.token) });
+      void queryClient.invalidateQueries({ queryKey: tableKeys.protectedSnapshots(tableId, token) });
     },
     onError: (error: Error) => toast.error(error.message)
   });
@@ -308,9 +337,11 @@ export const SnapshotsTab = () => {
         cell: ({ row }) => (
           <SnapshotActions
             snapshotId={row.original.snapshot_id}
+            alreadyExcluded={row.original.protected}
+            isCurrent={row.original.snapshot_id === currentSnapshotId}
             protectAllowed={protectAccess.allowed}
             protectReason={protectAccess.reason}
-            pending={protect.isPending}
+            pending={protect.isPending && protect.variables === row.original.snapshot_id}
             onProtect={(snapshotId) => protect.mutate(snapshotId)}
           />
         )
@@ -326,6 +357,7 @@ export const SnapshotsTab = () => {
         <SummaryCard
           total={data.total}
           pinned={data.pinned_count}
+          excluded={excluded.isError ? null : excluded.data ? excluded.data.snapshots.length : null}
           latest={data.latest_committed_at}
           oldest={data.oldest_committed_at}
         />
@@ -358,7 +390,7 @@ export const SnapshotsTab = () => {
         }
       /> : null}
       </section>
-      <Card className="td-snapshots-retention"><ExcludedFromExpiry tableId={tableId} /><p className="text-xs text-muted-foreground">Tags and branches follow Iceberg retention rules. Cryo exclusions only affect Cryo expiry. Preview an expiry plan before deciding what to remove.</p></Card>
+      <Card className="td-snapshots-retention"><ExcludedFromExpiry tableId={tableId} /><p className="text-xs text-muted-foreground">Tags and branches follow Iceberg retention rules. Spark expire keeps each recorded id with a tag. Trino expire cannot skip one id. A job already planning will not see a click made after it started.</p></Card>
     </div>
   );
 };

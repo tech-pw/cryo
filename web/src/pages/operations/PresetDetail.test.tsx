@@ -91,9 +91,7 @@ describe("PresetDetail overview", () => {
     renderPage();
     const orderLine = await screen.findByText("Operation order:");
     const container = orderLine.parentElement as HTMLElement;
-    // preset.operations lists optimize before expire_snapshots, but canonical order
-    // (expire_snapshots -> optimize) should be preserved for display.
-    expect(container.textContent).toMatch(/expire snapshots.*optimize/i);
+    expect(container.textContent).toMatch(/optimize.*expire snapshots/i);
   });
 
   it("shows matched-count and size once simulation resolves", async () => {

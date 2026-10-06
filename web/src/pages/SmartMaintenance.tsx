@@ -325,10 +325,10 @@ export function SmartMaintenance() {
             title="Apply this layout change?"
             description={
               <span>
-                Physically re-sorts <strong>{row.original.table_ref}</strong> by{" "}
+                Queues one OPTIMIZE for <strong>{row.original.table_ref}</strong> using{" "}
                 <strong>{row.original.recommended_columns?.join(", ") || "the recommended columns"}</strong> (
-                {row.original.recommended_strategy}) and sets <code>write.sort-order</code>. This runs a maintenance
-                job now and cannot be undone once it completes.
+                {row.original.recommended_strategy}). Sort also sets <code>write.sort-order</code>. Z-order does not.
+                The previous snapshot remains until expiry.
               </span>
             }
             onConfirm={() => execute.mutate(row.original)}

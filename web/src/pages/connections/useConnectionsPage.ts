@@ -63,7 +63,6 @@ export const useConnectionsPage = () => {
   const [reportUseAi, setReportUseAi] = useState(true);
   const [testResult, setTestResult] = useState<DestinationCapacityTestResult | null>(null);
   const [pendingScanVersion, setPendingScanVersion] = useState(0);
-  const [urlEditHydrated, setUrlEditHydrated] = useState(false);
 
   const syncEditUrl = useCallback(
     (kind: EditKind, id: string | null) => {
@@ -116,7 +115,7 @@ export const useConnectionsPage = () => {
   const redirectToScanner = (notice: ConnectionScanNotice) => {
     markConnectionNeedsScan(notice);
     setPendingScanVersion((value) => value + 1);
-    navigate("/scans", { state: { connectionNotice: notice } });
+    navigate("/runs/scanner", { state: { connectionNotice: notice } });
   };
 
   const sources = useQuery({ queryKey: ["sources", token], queryFn: () => listSources(api) });
@@ -145,25 +144,27 @@ export const useConnectionsPage = () => {
     queryFn: () => listSlackConfigs(api)
   });
 
-  // One-time hydration of a drawer from `?edit=<kind>&editId=<id-or-new>` -- e.g. a bookmarked or
-  // shared link to a specific source's edit drawer. Waits for the relevant list query to load
-  // before resolving an id to a row, then clears the params if the id no longer exists.
   useEffect(() => {
-    if (urlEditHydrated) return;
     const editKind = searchParams.get("edit");
     const editId = searchParams.get("editId");
-    if (!isEditKind(editKind) || !editId) {
-      setUrlEditHydrated(true);
-      return;
-    }
+    if (!isEditKind(editKind) || !editId) return;
+    const current =
+      editKind === "source"
+        ? sourceDrawer
+        : editKind === "destination"
+          ? destinationDrawer
+          : editKind === "ai-provider"
+            ? aiProviderDrawer
+            : slackDrawer;
     if (editId === "new") {
+      if (current === "new") return;
       if (editKind === "source") setSourceDrawerState("new");
       else if (editKind === "destination") setDestinationDrawerState("new");
       else if (editKind === "ai-provider") setAiProviderDrawerState("new");
       else setSlackDrawerState("new");
-      setUrlEditHydrated(true);
       return;
     }
+    if (current && current !== "new" && current.id === editId) return;
     const queryForKind =
       editKind === "source"
         ? sources
@@ -172,21 +173,31 @@ export const useConnectionsPage = () => {
           : editKind === "ai-provider"
             ? aiProviders
             : slackConfigs;
-    if (queryForKind.isLoading) return;
+    if (queryForKind.isLoading || queryForKind.isError) return;
     const row = (queryForKind.data as Array<{ id: string }> | undefined ?? []).find((item) => item.id === editId);
-    if (row) {
-      if (editKind === "source") setSourceDrawerState(row as SourceRead);
-      else if (editKind === "destination") setDestinationDrawerState(row as DestinationRead);
-      else if (editKind === "ai-provider") setAiProviderDrawerState(row as AIProviderRead);
-      else setSlackDrawerState(row as SlackConfigRead);
-    } else {
+    if (!row) {
       const next = new URLSearchParams(searchParams);
       next.delete("edit");
       next.delete("editId");
       setSearchParams(next, { replace: true });
+      return;
     }
-    setUrlEditHydrated(true);
-  }, [urlEditHydrated, searchParams, setSearchParams, sources, destinations, aiProviders, slackConfigs]);
+    if (editKind === "source") setSourceDrawerState(row as SourceRead);
+    else if (editKind === "destination") setDestinationDrawerState(row as DestinationRead);
+    else if (editKind === "ai-provider") setAiProviderDrawerState(row as AIProviderRead);
+    else setSlackDrawerState(row as SlackConfigRead);
+  }, [
+    searchParams,
+    setSearchParams,
+    sourceDrawer,
+    destinationDrawer,
+    aiProviderDrawer,
+    slackDrawer,
+    sources,
+    destinations,
+    aiProviders,
+    slackConfigs
+  ]);
 
   const saveSource = useMutation({
     mutationFn: (body: SourceWrite) =>
@@ -214,11 +225,12 @@ export const useConnectionsPage = () => {
       setDestinationDrawer(null);
       void queryClient.invalidateQueries({ queryKey: ["destinations"] });
       if (isNew) {
-        redirectToScanner({ kind: "engine", id: saved.id, name: saved.name });
+        markConnectionNeedsScan({ kind: "engine", id: saved.id, name: saved.name });
+        setPendingScanVersion((value) => value + 1);
       }
     },
     onError: (error) => {
-      if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
+      if (error instanceof ApiError && error.status === 403) {
         toast.error("Admin role required to create or edit engines. Sign in with role admin.");
         return;
       }

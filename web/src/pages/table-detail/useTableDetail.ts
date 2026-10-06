@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
+import { toastScanResult } from "../../lib/operations";
 import {
   assignTables,
   getBloomFilterRecommendations,
@@ -98,6 +99,7 @@ const isNotFoundError = (error: unknown): boolean => {
 export function useTableDetail() {
   const { tableId = "" } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { api, token, role } = useAuth();
@@ -242,7 +244,7 @@ export function useTableDetail() {
   const compliance = useQuery({
     queryKey: ["table-compliance", tableId, token],
     queryFn: () => getComplianceStatus(api, tableId),
-    enabled: onTab("quality"),
+    enabled: onTab("quality") || settingsOpen,
     retry: false
   });
   const partitions = useQuery({
@@ -485,8 +487,8 @@ export function useTableDetail() {
       });
     },
     onSuccess: (result) => {
-      toast.success(result.message || `Scan queued: ${result.run_id}`);
-      setQueuedScanRunId(result.run_id);
+      toastScanResult(result);
+      if (result.queued) setQueuedScanRunId(result.run_id);
       void queryClient.invalidateQueries({ queryKey: ["table", tableId] });
       void queryClient.invalidateQueries({ queryKey: ["tables"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
@@ -769,6 +771,25 @@ export function useTableDetail() {
       window.history.replaceState(null, "", nextUrl);
     }
   }, [activeTab, requestedTab, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const raw = (location.hash || window.location.hash).replace(/^#/, "");
+    const mapped = TABLE_HASH_ALIASES[raw];
+    const hashId = mapped?.hash || (raw.startsWith("hq-") ? "" : raw);
+    if (!hashId) return;
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      const target = document.getElementById(hashId);
+      attempts += 1;
+      if (target) {
+        target.scrollIntoView({ block: "start" });
+        window.clearInterval(timer);
+      } else if (attempts > 20) {
+        window.clearInterval(timer);
+      }
+    }, 150);
+    return () => window.clearInterval(timer);
+  }, [activeTab, location.hash]);
 
   const handleTabChange = (tabKey: string) => {
     const next = new URLSearchParams(searchParams);

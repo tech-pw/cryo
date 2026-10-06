@@ -132,6 +132,8 @@ class LayoutRecommendationRead(BaseModel):
 
 class LayoutRecommendationListRead(BaseModel):
     items: list[LayoutRecommendationRead]
+    truncated: bool = False
+    limit: int = 500
 
 
 class ApproveLayoutRecommendationRequest(BaseModel):
@@ -358,7 +360,9 @@ def list_layout_recommendations(
     )
     if status:
         stmt = stmt.where(LayoutRecommendation.status == status)
-    rows = session.execute(stmt.order_by(LayoutRecommendation.updated_at.desc()).limit(500)).all()
+    rows = session.execute(stmt.order_by(LayoutRecommendation.updated_at.desc()).limit(501)).all()
+    truncated = len(rows) > 500
+    rows = rows[:500]
     items = [
         LayoutRecommendationRead(
             id=rec.id,
@@ -377,7 +381,7 @@ def list_layout_recommendations(
         )
         for rec, table in rows
     ]
-    return LayoutRecommendationListRead(items=items)
+    return LayoutRecommendationListRead(items=items, truncated=truncated, limit=500)
 
 
 @router.post(

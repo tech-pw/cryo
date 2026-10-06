@@ -3,10 +3,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, false, not_, or_, true
+from sqlalchemy import ColumnElement, and_, false, func, not_, or_, select, true
 
-from cryo.db.models import Table, TableAssignment, TableCost, TableStats
+from cryo.db.models import Source, Table, TableAssignment, TableCost, TableStats
 from cryo.domain.predicates import (
     LEAF_OPERATORS,
     LIKE_ESCAPE,
@@ -96,13 +97,38 @@ def _compile_leaf(predicate: Mapping[str, Any]) -> ColumnElement[bool]:
     if op == "in":
         if not isinstance(value, list | tuple | set):
             raise ValueError("in predicate value must be a collection")
+        if field_name == "source_id":
+            return _source_id_in(value)
         return column.in_(value)
+    if op in {"like", "glob"} and field_name in {"schema_name", "table_name"}:
+        pattern = _glob_to_like(str(value)) if op == "glob" else str(value)
+        return column.ilike(pattern, escape=LIKE_ESCAPE)
     if op == "like":
         return column.like(str(value), escape=LIKE_ESCAPE)
     if op == "glob":
         return column.like(_glob_to_like(str(value)), escape=LIKE_ESCAPE)
 
     raise ValueError(f"Unsupported filter operator: {op}")
+
+
+def _source_id_in(value: list | tuple | set) -> ColumnElement[bool]:
+    ids: list[UUID] = []
+    names: list[str] = []
+    for item in value:
+        text = str(item)
+        try:
+            ids.append(UUID(text))
+        except ValueError:
+            names.append(text)
+    clauses: list[ColumnElement[bool]] = []
+    if ids:
+        clauses.append(Table.source_id.in_(ids))
+    if names:
+        lowered = [name.lower() for name in names]
+        clauses.append(
+            Table.source_id.in_(select(Source.id).where(func.lower(Source.name).in_(lowered)))
+        )
+    return or_(*clauses) if clauses else false()
 
 
 def _field(predicate: Mapping[str, Any]) -> str:

@@ -31,6 +31,17 @@ export const clearAllLakehousePendingScans = () => {
   keys.forEach((key) => sessionStorage.removeItem(key));
 };
 
+export const readPendingLakehouseScan = (): ConnectionScanNotice | null => {
+  for (let i = 0; i < sessionStorage.length; i++) {
+    const key = sessionStorage.key(i);
+    if (!key?.startsWith("cryo.pendingScan.lakehouse.")) continue;
+    const name = sessionStorage.getItem(key);
+    const id = key.slice("cryo.pendingScan.lakehouse.".length);
+    if (name && id) return { kind: "lakehouse", id, name };
+  }
+  return null;
+};
+
 export const readConnectionScanNotice = (state: unknown): ConnectionScanNotice | null => {
   if (!state || typeof state !== "object") return null;
   const notice = (state as { connectionNotice?: ConnectionScanNotice }).connectionNotice;

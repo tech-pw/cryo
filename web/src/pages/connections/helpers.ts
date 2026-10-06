@@ -43,5 +43,5 @@ export const formatDestinationTestSummary = (result: DestinationCapacityTestResu
     const used = typeof result.used === "number" ? result.used : Math.max(result.capacity - result.available, 0);
     return `${name} has ${result.available} of ${result.capacity} maintenance capacity slots free (${used} in use).`;
   }
-  return `${name} is reachable and ready to run maintenance.`;
+  return result.message ?? `${name} was not probed. Do not treat this as reachable.`;
 };

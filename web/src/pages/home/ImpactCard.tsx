@@ -18,6 +18,6 @@ export const ImpactCard = ({ reclaim, reclaimableBytes, loading, error }: {
     </div>
     <p className="home-caption home-impact-evidence">{reclaim.caption ?? (reclaim.tone === "number" ? "Based on recorded maintenance results." : "Reported when maintenance records byte evidence.")}</p>
     <div className="home-opportunity"><div><p className="home-caption">Reclaimable now</p>{loading ? <Skeleton className="mt-2 h-6 w-28" /> : <p className="home-opportunity-value">{error ? "Unavailable" : reclaimableBytes == null || !Number.isFinite(reclaimableBytes) ? "Not measured" : formatBytesGb(reclaimableBytes)}</p>}</div><span className="home-estimate-label">Estimate</span></div>
-    <div className="home-card-footer"><span className="home-caption">Potential cleanup, subject to retention policies.</span><Link className="home-text-link" to="/cost">Explore cost <ArrowUpRight size={14} aria-hidden="true" /></Link></div>
+    <div className="home-card-footer"><span className="home-caption">Potential cleanup, subject to retention policies.</span><Link className="home-text-link" to="/cost?tab=impact">Explore cost <ArrowUpRight size={14} aria-hidden="true" /></Link></div>
   </HomeCard>
 );

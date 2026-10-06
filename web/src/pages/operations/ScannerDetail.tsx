@@ -10,16 +10,15 @@ import {
   getSourceNamespaceTables,
   listRuns,
   listSources,
-  listTables,
   patchScannerConfig,
   triggerScan
 } from "../../api/client";
 import type { RunRead, ScannerConfigUpdate, SourceRead } from "../../api/types";
-import { leaf } from "../../lib/predicate";
 import { CronInput } from "../../components/CronInput";
 import { ConfirmAction } from "../../components/confirm";
 import { StatStrip } from "../../components/common";
 import { OperationPipeline, scanPipelineSteps } from "../../components/operations/OperationPipeline";
+import { toastScanResult } from "../../lib/operations";
 import { MiniRunHistoryBar } from "../../components/operations/RunHistoryGrid";
 import { describeCronSchedule, nextCronRun } from "../../components/operations/scheduleSummary";
 import { StatusTag } from "../../components/status";
@@ -35,6 +34,7 @@ import { validateCronExpression } from "../../lib/cron";
 import {
   clearAllLakehousePendingScans,
   readConnectionScanNotice,
+  readPendingLakehouseScan,
   type ConnectionScanNotice
 } from "../../lib/connectionScanPrompt";
 import { formatNumber, formatTime } from "../../lib/format";
@@ -100,11 +100,6 @@ const ScanScopeForm = ({
     queryFn: () => listSources(api),
     enabled: needsSource
   });
-  const sourceTables = useQuery({
-    queryKey: ["source-tables-for-scan", sourceId],
-    queryFn: () => listTables(api, { predicate: leaf("source_id", "=", sourceId as string), limit: 500 }),
-    enabled: Boolean(sourceId) && (scope === "schemas" || scope === "tables")
-  });
   const sourceNamespaces = useQuery({
     queryKey: ["source-namespaces-for-scan", sourceId],
     queryFn: () => getSourceNamespaces(api, sourceId as string),
@@ -147,7 +142,7 @@ const ScanScopeForm = ({
       return triggerScan(api, { scope: "all", full_scan: true, trigger: "web-scanner" });
     },
     onSuccess: (result) => {
-      toast.success(result.message || `Scan queued: ${result.run_id}`);
+      toastScanResult(result);
       onQueued(result.run_id);
     },
     onError: (error) => toast.error((error as Error).message)
@@ -177,9 +172,9 @@ const ScanScopeForm = ({
       <p>
         This queues a <strong>full scan</strong> (not incremental) of {scopeDescription}.
       </p>
-      {hasActiveRun ? (
+      {hasActiveRun && scope === "all" ? (
         <p className="text-destructive">
-          A scan is already running. This new scan will be queued behind it, not run in parallel.
+          A scan is already running. Another full scan cannot start until it finishes.
         </p>
       ) : null}
     </div>
@@ -216,6 +211,81 @@ const ScanScopeForm = ({
           </select>
         </div>
       ) : null}
+      {scope === "schemas" && sourceId ? (
+        <fieldset className="space-y-1.5">
+          <legend className="text-sm font-medium">Schemas</legend>
+          {sourceNamespaces.isError ? (
+            <p role="alert" className="text-sm text-destructive">Could not load schemas.</p>
+          ) : (
+            <div className="max-h-48 space-y-1 overflow-y-auto rounded-[var(--radius-default)] border border-border p-2">
+              {(sourceNamespaces.data?.namespaces ?? []).map((name) => (
+                <label key={name} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={schemaNames.includes(name)}
+                    onChange={(event) =>
+                      setSchemaNames((current) =>
+                        event.target.checked ? [...current, name] : current.filter((item) => item !== name)
+                      )
+                    }
+                  />
+                  {name}
+                </label>
+              ))}
+              {sourceNamespaces.isSuccess && (sourceNamespaces.data?.namespaces ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">No schemas found for this lakehouse.</p>
+              ) : null}
+            </div>
+          )}
+        </fieldset>
+      ) : null}
+      {scope === "tables" && sourceId ? (
+        <div className="space-y-3">
+          <fieldset className="space-y-1.5">
+            <legend className="text-sm font-medium">Schema</legend>
+            <div className="max-h-40 space-y-1 overflow-y-auto rounded-[var(--radius-default)] border border-border p-2">
+              {(sourceNamespaces.data?.namespaces ?? []).map((name) => (
+                <label key={name} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="scan-schema"
+                    checked={schemaNames[0] === name && schemaNames.length === 1}
+                    onChange={() => {
+                      setSchemaNames([name]);
+                      setUnscannedTableSelection([]);
+                    }}
+                  />
+                  {name}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          {singleNarrowedSchema ? (
+            <fieldset className="space-y-1.5">
+              <legend className="text-sm font-medium">Tables</legend>
+              <div className="max-h-48 space-y-1 overflow-y-auto rounded-[var(--radius-default)] border border-border p-2">
+                {(namespaceTables.data?.tables ?? []).map((name) => (
+                  <label key={name} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={unscannedTableSelection.includes(name)}
+                      onChange={(event) =>
+                        setUnscannedTableSelection((current) =>
+                          event.target.checked ? [...current, name] : current.filter((item) => item !== name)
+                        )
+                      }
+                    />
+                    {name}
+                  </label>
+                ))}
+                {namespaceTables.isSuccess && (namespaceTables.data?.tables ?? []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No tables found in this schema.</p>
+                ) : null}
+              </div>
+            </fieldset>
+          ) : null}
+        </div>
+      ) : null}
       <ConfirmAction
         title="Trigger this scan?"
         description={confirmDescription}
@@ -225,7 +295,7 @@ const ScanScopeForm = ({
           variant="primary"
           className="w-full"
           loading={trigger.isPending}
-          disabled={!canOperate || !canSubmit}
+          disabled={!canOperate || !canSubmit || (hasActiveRun && scope === "all")}
         >
           Trigger scan
         </Button>
@@ -606,7 +676,7 @@ export const ScannerDetail = () => {
   const { api, role } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [connectionNotice, setConnectionNotice] = useState<ConnectionScanNotice | null>(() =>
-    readConnectionScanNotice(location.state)
+    readConnectionScanNotice(location.state) ?? readPendingLakehouseScan()
   );
 
   const rawTab = searchParams.get("tab");
@@ -616,7 +686,7 @@ export const ScannerDetail = () => {
     mutationFn: (sourceId: string) =>
       triggerScan(api, { scope: "source", source_id: sourceId, full_scan: true, trigger: "web-scanner" }),
     onSuccess: (result) => {
-      toast.success(result.message || `Scan queued: ${result.run_id}`);
+      toastScanResult(result);
       clearAllLakehousePendingScans();
       setConnectionNotice(null);
       navigate(`/operations/runs/${result.run_id}`, { replace: true, state: {} });

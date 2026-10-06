@@ -347,7 +347,6 @@ const applyConnections = (
 
 const applySmartMaintenance = (params: URLSearchParams, hash: string, input: AppLocation): AppLocation | null => {
   const raw = params.get("tab");
-  if (raw === "tiers") params.set("panel", "tiers");
   dropTab(params);
   params.set("tab", "recommendations");
   return finish("/decisions", params, hash, input);

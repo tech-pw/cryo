@@ -19,7 +19,7 @@ _SQL = {
         "CALL cdp.system.rewrite_position_delete_files(table => 'cdp.demo.events')"
     ),
     "expire_snapshots": (
-        "ALTER TABLE cdp.demo.events CREATE OR REPLACE TAG `cryo-protected-latest` "
+        "ALTER TABLE cdp.demo.events CREATE OR REPLACE TAG `cryo-protect-1` "
         "AS OF VERSION 1;\n"
         "CALL cdp.system.expire_snapshots(table => 'cdp.demo.events', retain_last => 1)"
     ),

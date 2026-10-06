@@ -38,7 +38,7 @@
 }
 
 .table-detail-workspace :is(section[id], [id$="settings"]) {
-  scroll-margin-top: 24px;
+  scroll-margin-top: 56px;
 }
 
 @media (max-width: 767px) {

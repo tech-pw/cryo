@@ -31,6 +31,26 @@ describe("tableFiltersToPredicate", () => {
     });
   });
 
+  it("matches a pasted schema.table name against both columns", () => {
+    expect(tableFiltersToPredicate({ schemaSearch: "analytics.orders" })).toEqual({
+      all: [
+        { field: "is_active", op: "=", value: true },
+        {
+          any: [
+            { field: "schema_name", op: "glob", value: "*analytics.orders*" },
+            { field: "table_name", op: "glob", value: "*analytics.orders*" },
+            {
+              all: [
+                { field: "schema_name", op: "glob", value: "*analytics*" },
+                { field: "table_name", op: "glob", value: "*orders*" }
+              ]
+            }
+          ]
+        }
+      ]
+    });
+  });
+
   it("maps savings filters to cost predicate fields", () => {
     expect(
       tableFiltersToPredicate({

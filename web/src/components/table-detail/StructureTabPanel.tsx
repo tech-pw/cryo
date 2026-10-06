@@ -187,7 +187,9 @@ export const StructureTabPanel = () => {
             onRetry={() => void partitions.refetch()}
             skeleton={<span className="text-sm text-muted-foreground">Loading partition breakdown…</span>}
           >
-            <PartitionHistogram partitions={partitions.data ?? []} />
+            <PartitionHistogram
+              partitions={Array.isArray(partitions.data) ? partitions.data : partitions.data?.items ?? []}
+            />
           </AsyncBoundary>
         </ChartCard>
         <ColumnStatsTab api={api} tableId={tableId} />

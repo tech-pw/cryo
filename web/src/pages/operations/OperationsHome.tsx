@@ -5,7 +5,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getScannerStatus, listPresets, listRuns } from "../../api/client";
 import type { PresetRead, RunRead } from "../../api/types";
-import { PageHeader, StatStrip } from "../../components/common";
+import { PageHeader, QueryErrorAlert, StatStrip } from "../../components/common";
 import { MiniRunHistoryBar } from "../../components/operations/RunHistoryGrid";
 import { StatusTag, RunKindTag } from "../../components/status";
 import { Badge } from "../../components/ui/badge";
@@ -84,7 +84,7 @@ export const OperationsHome = () => {
   const setRunFilter = (filter: "all" | "failed" | "active") => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
-      next.set("tab", "runs");
+      next.set("tab", "history");
       if (filter === "all") {
         next.delete("runFilter");
       } else {
@@ -165,10 +165,10 @@ export const OperationsHome = () => {
   }, [runs]);
 
   const filteredRuns = useMemo(() => {
-    if (runFilter === "failed") return runs.filter((r) => r.status === "failed");
+    if (runFilter === "failed") return failed24h;
     if (runFilter === "active") return activeRuns;
     return runs;
-  }, [activeRuns, runFilter, runs]);
+  }, [activeRuns, failed24h, runFilter, runs]);
 
   const paginatedRuns = useMemo(() => {
     const start = runsPage * RUNS_PAGE_SIZE;
@@ -341,7 +341,7 @@ export const OperationsHome = () => {
             ) : null}
             {row.original.isScanner ? (
               <Button size="sm" variant="primary" asChild>
-                <Link to="/operations/scanner">Trigger</Link>
+                <Link to="/runs/scanner?tab=config">Trigger</Link>
               </Button>
             ) : row.original.isNightly || !row.original.to ? null : (
               <Button size="sm" variant="secondary" asChild>
@@ -387,10 +387,10 @@ export const OperationsHome = () => {
         </div>
         <div className="ops-control-hero__actions" aria-label="Run shortcuts">
           <Button size="sm" variant={activeRuns.length ? "primary" : "secondary"} onClick={() => setRunFilter("active")}>
-            Running now ({activeRuns.length})
+            Running now ({allRuns.isError ? "—" : activeRuns.length})
           </Button>
           <Button size="sm" variant={failed24h.length ? "danger" : "secondary"} onClick={() => setRunFilter("failed")}>
-            Failed runs ({failed24h.length})
+            Failed runs ({allRuns.isError ? "—" : failed24h.length})
           </Button>
           <Button size="sm" variant="secondary" asChild>
             <Link to="/operations/scanner">Overdue scans</Link>
@@ -418,8 +418,14 @@ export const OperationsHome = () => {
                   label: "Scanner",
                   value: (
                     <HealthDot
-                      ok={!scannerStatus.data?.active_run}
-                      label={scannerStatus.data?.active_run ? "Running" : "Idle"}
+                      ok={scannerStatus.isError ? false : !scannerStatus.data?.active_run}
+                      label={
+                        scannerStatus.isError
+                          ? "Unavailable"
+                          : scannerStatus.data?.active_run
+                            ? "Running"
+                            : "Idle"
+                      }
                     />
                   )
                 },
@@ -429,11 +435,11 @@ export const OperationsHome = () => {
                 },
                 {
                   label: "Failed runs (24h)",
-                  value: formatNumber(failed24h.length)
+                  value: allRuns.isError ? "—" : formatNumber(failed24h.length)
                 },
                 {
                   label: "Active runs",
-                  value: formatNumber(activeRuns.length)
+                  value: allRuns.isError ? "—" : formatNumber(activeRuns.length)
                 },
                 {
                   label: "Queue depth",
@@ -450,11 +456,7 @@ export const OperationsHome = () => {
             onValueChange={(key) =>
               setSearchParams((prev) => {
                 const next = new URLSearchParams(prev);
-                if (key === "workflows") {
-                  next.delete("tab");
-                } else {
-                  next.set("tab", key);
-                }
+                next.set("tab", key === "runs" ? "history" : key);
                 return next;
               })
             }
@@ -505,6 +507,9 @@ export const OperationsHome = () => {
                   Active
                 </Button>
               </div>
+              {allRuns.isError ? (
+                <QueryErrorAlert error={allRuns.error} title="Failed to load runs" />
+              ) : (
               <DataTable
                 columns={runColumns}
                 data={paginatedRuns}
@@ -520,6 +525,7 @@ export const OperationsHome = () => {
                   onPageChange: setRunsPage
                 }}
               />
+              )}
             </div>
             </TabsContent>
 

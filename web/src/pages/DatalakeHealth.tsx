@@ -108,9 +108,13 @@ export const DatalakeHealth = () => {
       ? "Unavailable"
       : scannerStatus.data?.active_run
         ? "Running"
-        : scannerStatus.data
-          ? "Idle"
-          : null;
+        : scannerStatus.data?.config && scannerStatus.data.config.enabled === false
+          ? "Off"
+          : scannerStatus.data?.latest_run?.status === "failed"
+            ? "Last scan failed"
+            : scannerStatus.data
+              ? "Idle"
+              : null;
   const engineLabel = engineLoad.isPending
     ? null
     : engineLoad.isError

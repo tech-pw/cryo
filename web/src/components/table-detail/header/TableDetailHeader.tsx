@@ -384,7 +384,7 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
             ) : null}
             <ConfirmAction
               title="Run the full workflow now?"
-              description="Queues every operation in the assigned workflow for this table."
+              description="Queues one job. Only the operations this mode and the latest scan allow will run."
               onConfirm={onRun}
               disabled={maintenanceDisabled || runPending}
             >

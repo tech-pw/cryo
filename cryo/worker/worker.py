@@ -2619,16 +2619,14 @@ def _shared_location_unknown() -> bool:
 def _protected_snapshot_ids(table_id: UUID | str | None) -> list[int]:
     """Return snapshot IDs tagged as protected for a table.
 
-    Reads protected_snapshots via the worker session factory. Returns [] on
-    any session failure so a transient DB issue cannot block maintenance.
+    A failed read must fail the expire plan. Returning [] used to expire every
+    excluded snapshot on a transient DB error while the UI still said they were kept.
     """
     if table_id is None:
         return []
-    try:
-        from cryo.db.repositories.protected_snapshots import ProtectedSnapshotRepository
-        from cryo.db.session import SessionLocal
-    except Exception:
-        return []
+    from cryo.db.repositories.protected_snapshots import ProtectedSnapshotRepository
+    from cryo.db.session import SessionLocal
+
     if isinstance(table_id, str):
         try:
             table_uuid = UUID(table_id)
@@ -2639,8 +2637,10 @@ def _protected_snapshot_ids(table_id: UUID | str | None) -> list[int]:
     try:
         with SessionLocal() as session:
             return sorted(ProtectedSnapshotRepository(session).list_snapshot_ids(table_uuid))
-    except Exception:
-        return []
+    except Exception as exc:
+        raise RuntimeError(
+            "could not read Cryo snapshot exclusions; expire was not planned"
+        ) from exc
 
 
 def _skip_operations_from_preset(
