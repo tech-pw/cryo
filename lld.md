@@ -679,7 +679,7 @@ CALL {cat}.system.rewrite_position_delete_files(table=>'{schema}.{table}',
   options => map('partial-progress.enabled','true', 'partial-progress.max-commits','10',
                  'max-concurrent-file-group-rewrites','5', 'rewrite-job-order','files-desc'))
 -- expire (protected snapshots: a tag, never a procedure; ";\n" = separate statement)
-[ALTER TABLE {cat}.{schema}.{table} CREATE OR REPLACE TAG `cryo-protected-latest` AS OF VERSION {id};]
+[ALTER TABLE {cat}.{schema}.{table} CREATE OR REPLACE TAG `cryo-protect-{id}` AS OF VERSION {id};]
 CALL {cat}.system.expire_snapshots(table=>'{schema}.{table}', older_than => TIMESTAMP '{cutoff}', retain_last => {n}, stream_results => true)
 -- orphan
 CALL {cat}.system.remove_orphan_files(table=>'{schema}.{table}', older_than => TIMESTAMP '{cutoff}')

@@ -78,13 +78,18 @@ export const SlackDrawer = ({
       const current = form.getValues();
       return testSlackConfigValues(api, {
         webhook_url: current.webhook_url || "",
-        channel: current.channel || undefined,
+        channel: current.channel.trim() ? current.channel.trim() : null,
         config_id: isEditing ? editingConfig.id : undefined
       });
     },
     onSuccess: () => {
       setTestPassed(true);
-      toast.success("Test message sent to Slack!");
+      const channel = form.getValues("channel").trim();
+      toast.success(
+        channel
+          ? "Test message sent to Slack!"
+          : "Test message sent to Slack. No channel override was sent."
+      );
     },
     onError: (error) => {
       setTestPassed(false);
@@ -94,13 +99,18 @@ export const SlackDrawer = ({
 
   useEffect(() => {
     const subscription = form.watch((_values, { name }) => {
-      if (name) {
+      if (name === "webhook_url" || name === "channel") {
+        const clearing =
+          isEditing &&
+          !form.getValues("webhook_url").trim() &&
+          !form.getValues("channel").trim();
+        if (name === "channel" && clearing) return;
         setTestPassed(false);
         testConnection.reset();
       }
     });
     return () => subscription.unsubscribe();
-  }, [form, testConnection]);
+  }, [form, isEditing, testConnection]);
 
   const submit = (values: SlackFormValues) => {
     if (!values.name.trim()) {
@@ -120,7 +130,7 @@ export const SlackDrawer = ({
     const body: SlackConfigWrite & { id?: string } = {
       name: values.name,
       webhook_url: values.webhook_url || undefined,
-      channel: values.channel || undefined,
+      channel: values.channel.trim() ? values.channel.trim() : null,
       daily_report_enabled: values.daily_report_enabled,
       daily_report_cron: values.daily_report_cron,
       daily_report_use_ai: values.daily_report_use_ai,
@@ -184,16 +194,12 @@ export const SlackDrawer = ({
 
             <FormField
               name="channel"
-              label={
-                <HintLabel
-                  label="Channel override (optional)"
-                  tooltip="Override the default channel configured in the webhook. Leave blank to use the webhook's default channel."
-                />
-              }
+              label="Channel override (optional)"
+              description="Blank uses the webhook's channel."
             >
               {(field) => (
                 <Input
-                  placeholder="#cryo-alerts"
+                  placeholder="Leave blank for the webhook channel"
                   value={String(field.value ?? "")}
                   onChange={field.onChange}
                   onBlur={field.onBlur}
@@ -288,17 +294,25 @@ export const SlackDrawer = ({
               }
             />
 
-            {!testPassed ? (
-              <Alert
-                variant="warning"
-                title="Send a test message before saving"
-                description="Click &quot;Send test message&quot; above with a passing result to enable Save."
-              />
-            ) : null}
-
-            <Button type="submit" loading={saving} disabled={!testPassed}>
-              Save
-            </Button>
+            {(() => {
+              const clearingChannel =
+                isEditing && !form.watch("webhook_url").trim() && !form.watch("channel").trim();
+              const canSave = testPassed || clearingChannel;
+              return (
+                <>
+                  {!canSave ? (
+                    <Alert
+                      variant="warning"
+                      title="Send a test message before saving"
+                      description="Click &quot;Send test message&quot; above with a passing result to enable Save. Clearing the channel override does not need a new test."
+                    />
+                  ) : null}
+                  <Button type="submit" loading={saving} disabled={!canSave}>
+                    Save
+                  </Button>
+                </>
+              );
+            })()}
           </form>
         </FormProvider>
       </SheetContent>

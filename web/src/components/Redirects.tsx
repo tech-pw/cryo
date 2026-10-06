@@ -49,7 +49,7 @@ const TablesBody = () => {
   if (view === "unused" || view === "freshness" || view === "maintenance-age" || view === "p95-latency") {
     return <Catalog />;
   }
-  if (view === "scan-failed" || notice === "governance-triage" || notice === "governance-unknown") {
+  if (notice === "governance-triage" || notice === "governance-unknown") {
     return (
       <>
         <AttentionTab />

@@ -57,10 +57,10 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
           <section className="space-y-3">
             <h4 className="text-sm font-semibold">Compliance &amp; protection</h4>
             <AsyncBoundary
-              isLoading={compliance.isLoading}
-              isError={Boolean(compliance.error) && !complianceNotFound}
+              isLoading={compliance.isPending}
+              isError={Boolean(compliance.error)}
               error={compliance.error}
-              isEmpty={complianceNotFound || !compliance.data}
+              isEmpty={compliance.isFetched && !compliance.data && !compliance.error}
               emptyTitle="No deletion-tracking data yet"
               emptyDescription="This table has no compliance events yet."
             >
@@ -82,21 +82,33 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
 
             <p className="text-xs text-muted-foreground">
               Snapshot exclusion lives on the{" "}
-              <Link className="underline" to={`/tables/${tableId}?tab=snapshots`}>
+              <Link className="underline" to={`/tables/${tableId}?tab=snapshots#excluded-from-expiry`} onClick={() => onOpenChange(false)}>
                 Snapshots
               </Link>{" "}
-              tab. It excludes a snapshot from Cryo expiry only.
+              tab. Spark expire keeps each recorded id. Trino expire cannot skip one id.
             </p>
           </section>
 
           <section className="space-y-3 border-t border-border pt-6">
             <h4 className="text-sm font-semibold">Ownership</h4>
+            <label className="text-xs text-muted-foreground" htmlFor="owner-email">
+              Owner email
+            </label>
             <div className="flex gap-1.5">
               <Input
+                id="owner-email"
+                type="email"
+                autoComplete="email"
+                aria-label="Owner email"
                 value={ownerEmailInput}
                 onChange={(event) => setOwnerEmailInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && ownerAccess.allowed && !setOwner.isPending) {
+                    setOwner.mutate(ownerEmailInput.trim());
+                  }
+                }}
                 placeholder={row?.owner_email || "owner@example.com"}
-                disabled={!ownerAccess.allowed}
+                disabled={!ownerAccess.allowed || setOwner.isPending}
               />
               <Button
                 size="sm"
@@ -108,15 +120,24 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
                 Save
               </Button>
             </div>
+            {!ownerAccess.allowed && ownerAccess.reason ? (
+              <p className="text-xs text-muted-foreground">{ownerAccess.reason}</p>
+            ) : null}
           </section>
 
           <section className="space-y-3 border-t border-border pt-6">
             <h4 className="text-sm font-semibold">Alert subscribers</h4>
             <p className="text-xs text-muted-foreground">
-              Owner and subscribers get an email (and Slack, if configured) when this table breaches its SLA or
-              data-quality thresholds.
+              The owner address is the email recipient for SLA and quality breaches. Slack, if configured, is a shared
+              channel, not a message to this address.
             </p>
             <div className="space-y-1">
+              {alertSubscriptions.isPending ? (
+                <p className="text-xs text-muted-foreground">Loading subscribers…</p>
+              ) : null}
+              {alertSubscriptions.isError ? (
+                <p className="text-xs text-destructive">Couldn't load subscribers.</p>
+              ) : null}
               {(alertSubscriptions.data ?? []).map((sub) => (
                 <div key={sub.id} className="flex items-center justify-between text-sm">
                   <span>{sub.email}</span>
@@ -146,8 +167,8 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
                 placeholder="consumer@example.com"
                 onKeyDown={(event) => {
                   if (event.key !== "Enter" || !newSubscriberEmail.trim()) return;
-                  addSubscriber.mutate(newSubscriberEmail.trim());
-                  setNewSubscriberEmail("");
+                  const email = newSubscriberEmail.trim();
+                  addSubscriber.mutate(email, { onSuccess: () => setNewSubscriberEmail("") });
                 }}
               />
               <Button
@@ -158,8 +179,8 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
                 title={ownerAccess.reason ?? undefined}
                 onClick={() => {
                   if (!newSubscriberEmail.trim()) return;
-                  addSubscriber.mutate(newSubscriberEmail.trim());
-                  setNewSubscriberEmail("");
+                  const email = newSubscriberEmail.trim();
+                  addSubscriber.mutate(email, { onSuccess: () => setNewSubscriberEmail("") });
                 }}
               >
                 Subscribe

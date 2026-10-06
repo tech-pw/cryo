@@ -111,7 +111,7 @@ describe("SnapshotsTab", () => {
     expect(await screen.findByText("Current")).toBeInTheDocument();
     expect(screen.getByText("Unknown")).toBeInTheDocument();
     expect(screen.queryByText("0 GB")).not.toBeInTheDocument();
-    expect(screen.queryByText("0")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Excluded from Cryo expiry").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: "Actions" }));
 

@@ -25,7 +25,7 @@ class ProtectedSnapshotRepository:
         stmt = (
             select(ProtectedSnapshot)
             .where(ProtectedSnapshot.table_id == table_id)
-            .order_by(ProtectedSnapshot.snapshot_id.asc())
+            .order_by(ProtectedSnapshot.protected_at.desc())
         )
         return list(self._session.scalars(stmt).all())
 

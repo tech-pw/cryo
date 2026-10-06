@@ -34,6 +34,7 @@ import {
   buildDestinationConfig,
   buildQueryLogConfig,
   decomposeDestinationConfig,
+  queryLogFormFields,
   type DestinationFormValues,
   type TrinoCoordinatorFormValue
 } from "./destinationConfig";
@@ -56,7 +57,13 @@ const buildDefaultValues = (value: DestinationRead | "new" | null): DestinationF
     offpeak_start: isEditing ? value.offpeak_start : 0,
     offpeak_end: isEditing ? value.offpeak_end : 0,
     coordinators: [{ host: "", port: 8080, http_scheme: "http" }],
-    ...existingConfig
+    ...existingConfig,
+    ...(isEditing
+      ? queryLogFormFields(
+          value.query_log_config as Record<string, unknown> | null | undefined,
+          value.query_log_retention_days
+        )
+      : {})
   } as DestinationFormValues;
 };
 
@@ -114,9 +121,16 @@ export const DestinationDrawer = ({
       setTestPassed(Boolean(data.ok));
       if (!data.ok) toast.error(data.message ?? "Test failed");
     },
-    onError: () => {
+    onError: (error) => {
       setTestPassed(false);
-      toast.error("Spark submit params must be valid JSON before testing.");
+      const sparkJson = form.getValues().engine === "spark_emr" && error instanceof SyntaxError;
+      toast.error(
+        sparkJson
+          ? "Spark submit params must be valid JSON before testing."
+          : error instanceof Error
+            ? error.message
+            : "Test failed"
+      );
     }
   });
 
@@ -131,6 +145,7 @@ export const DestinationDrawer = ({
       } else if (name === "engine") {
         setEngine((formValues.engine as EngineType) ?? "trino");
       }
+      if (name === "query_log_enabled" || name.startsWith("query_log_")) return;
       setTestPassed(false);
       testConnection.reset();
     });
@@ -173,7 +188,7 @@ export const DestinationDrawer = ({
         offpeak_start: values.offpeak_start ?? null,
         offpeak_end: values.offpeak_end ?? null,
         query_log_config,
-        query_log_retention_days: values.query_log_enabled ? values.query_log_retention_days ?? 30 : null
+        query_log_retention_days: values.query_log_enabled ? values.query_log_retention_days ?? null : null
       };
       // The API never returns the stored secret_ref (DestinationRead omits it entirely), so this
       // field always starts blank on an edit. Only send it when the user actually typed something
@@ -774,7 +789,7 @@ export const DestinationDrawer = ({
               <Alert
                 variant="warning"
                 title="Test the connection before saving"
-                description="Click &quot;Test connection&quot; above with a passing result to enable Save."
+                description={'Click "Test connection" above with a passing result to enable Save.'}
               />
             ) : null}
 
@@ -810,7 +825,11 @@ export const DestinationDrawer = ({
               <div className="flex justify-between gap-2 sm:block">
                 <dt className="text-muted-foreground">Off-peak window</dt>
                 <dd className="font-medium">
-                  {form.watch("offpeak_start")}:00–{form.watch("offpeak_end")}:00 IST
+                  {form.watch("offpeak_start") == null ||
+                  form.watch("offpeak_end") == null ||
+                  form.watch("offpeak_start") === form.watch("offpeak_end")
+                    ? "Any time"
+                    : `${form.watch("offpeak_start")}:00–${form.watch("offpeak_end")}:00 IST`}
                 </dd>
               </div>
               <div className="flex justify-between gap-2 sm:block">

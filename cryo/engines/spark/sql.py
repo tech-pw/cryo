@@ -69,13 +69,12 @@ def _render_expire(catalog: str, table_name: str, params: dict[str, Any]) -> str
     protected_ids = sorted({int(s) for s in params.get("protected_snapshot_ids") or []})
     tag_stmt = ""
     if protected_ids:
-        # expire_snapshots never removes a snapshot a tag points at. This used to render
-        # CALL system.set_snapshot_ref(...), which Iceberg does not have (1.11's
-        # SparkProcedures registry), joined with "; " that the runner never splits: any
-        # table with a protected snapshot failed expire and, with it, the rest of its plan.
-        tag_stmt = (
+        # expire_snapshots never removes a snapshot a tag points at. Snapshot ids are
+        # random, so tagging only the largest id kept the wrong commit. One tag per id.
+        tag_stmt = "".join(
             f"ALTER TABLE {catalog}.{table_name} CREATE OR REPLACE TAG "
-            f"`cryo-protected-latest` AS OF VERSION {protected_ids[-1]};\n"
+            f"`cryo-protect-{snapshot_id}` AS OF VERSION {snapshot_id};\n"
+            for snapshot_id in protected_ids
         )
     expire_call = (
         f"CALL {catalog}.system.expire_snapshots("

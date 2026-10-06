@@ -144,10 +144,10 @@ export const buildDestinationConfig = (values: DestinationFormValues): Record<st
       poll_interval_seconds: values.poll_interval_seconds || 10,
       timeout_seconds: values.timeout_seconds || 3600
     };
-    if (values.s3_logs_bucket) config.s3_logs_bucket = values.s3_logs_bucket;
-    if (values.spark_submit_params_json?.trim()) {
-      config.spark_submit_params = JSON.parse(values.spark_submit_params_json);
-    }
+    config.s3_logs_bucket = values.s3_logs_bucket || null;
+    config.spark_submit_params = values.spark_submit_params_json?.trim()
+      ? JSON.parse(values.spark_submit_params_json)
+      : null;
     return config;
   }
   if (values.engine === "native") {
@@ -157,7 +157,7 @@ export const buildDestinationConfig = (values: DestinationFormValues): Record<st
       operation_mode: values.operation_mode || "execute",
       timeout_seconds: values.timeout_seconds ?? 3600
     };
-    if (values.binary_path?.trim()) config.binary_path = values.binary_path.trim();
+    config.binary_path = values.binary_path?.trim() || null;
     return config;
   }
 
@@ -170,7 +170,7 @@ export const buildDestinationConfig = (values: DestinationFormValues): Record<st
     user: values.user || "cryo",
     catalog: values.catalog || "iceberg"
   };
-  if (values.schema) config.schema = values.schema;
+  config.schema = values.schema || null;
   const bindings = (values.catalog_bindings ?? [])
     .filter((b) => b?.source_id)
     .map((b) => {
@@ -179,7 +179,9 @@ export const buildDestinationConfig = (values: DestinationFormValues): Record<st
       return entry;
     });
   config.catalog_bindings = bindings;
-  if (values.use_basic_auth) {
+  if (!values.use_basic_auth) {
+    config.auth = null;
+  } else if (values.use_basic_auth) {
     // The `auth` object is always sent in full (unlike the Source's flat config keys, there's no
     // way to omit just the password here), so a blank password must be resolved explicitly: if a
     // password was already saved and the field was left untouched, resubmit the redaction
@@ -193,6 +195,43 @@ export const buildDestinationConfig = (values: DestinationFormValues): Record<st
     config.auth = { type: "basic", username: values.auth_username, password };
   }
   return config;
+};
+
+export const queryLogFormFields = (
+  queryLog: Record<string, unknown> | null | undefined,
+  retentionDays?: number | null
+): Pick<
+  DestinationFormValues,
+  | "query_log_enabled"
+  | "query_log_mode"
+  | "query_log_external_table"
+  | "query_log_sample_rate"
+  | "query_log_pull_interval_seconds"
+  | "query_log_watermark_overlap_seconds"
+  | "query_log_telemetry_coordinators"
+  | "query_log_retention_days"
+> => {
+  const ql = queryLog ?? undefined;
+  const coordinators = Array.isArray(ql?.telemetry_coordinators)
+    ? (ql.telemetry_coordinators as string[]).join("\n")
+    : "";
+  return {
+    query_log_enabled: Boolean(ql && ql.enabled),
+    query_log_mode: ql?.mode === "read_through" ? "read_through" : "trino_system_runtime",
+    query_log_external_table: typeof ql?.external_table === "string" ? ql.external_table : "",
+    query_log_sample_rate: typeof ql?.sample_rate === "number" ? ql.sample_rate : 1.0,
+    query_log_pull_interval_seconds:
+      typeof ql?.pull_interval_seconds === "number" ? ql.pull_interval_seconds : 300,
+    query_log_watermark_overlap_seconds:
+      typeof ql?.watermark_overlap_seconds === "number" ? ql.watermark_overlap_seconds : 900,
+    query_log_telemetry_coordinators: coordinators,
+    query_log_retention_days:
+      typeof retentionDays === "number"
+        ? retentionDays
+        : typeof ql?.retention_days === "number"
+          ? ql.retention_days
+          : null
+  };
 };
 
 export const buildQueryLogConfig = (values: DestinationFormValues): Record<string, unknown> | null => {

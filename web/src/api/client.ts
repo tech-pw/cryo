@@ -163,6 +163,20 @@ export class ApiError extends Error {
 const responseError = (response: Response, message: string, detail?: unknown): ApiError =>
   new ApiError(response.status, message, detail, response.headers.get("x-correlation-id"));
 
+const formatApiDetail = (detail: unknown): string => {
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (item && typeof item === "object" && "msg" in item) return String((item as { msg: unknown }).msg);
+        return typeof item === "string" ? item : "";
+      })
+      .filter(Boolean)
+      .join("; ");
+  }
+  if (detail && typeof detail === "object") return "";
+  return detail == null ? "" : String(detail);
+};
+
 interface RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   query?: Record<string, string | number | boolean | undefined>;
@@ -198,7 +212,7 @@ export const apiFetch = async <T>(
 
   if (!response.ok) {
     const detail = typeof payload === "object" && payload !== null ? (payload as JsonObject).detail : payload;
-    throw responseError(response, String(detail || response.statusText), detail);
+    throw responseError(response, formatApiDetail(detail) || response.statusText, detail);
   }
 
   return payload as T;
@@ -247,12 +261,16 @@ export const listTables = (
 
 export const exportTablesCsv = (
   api: ApiOptions,
-  args: { predicate?: Predicate | null; sort?: string; signal?: AbortSignal }
+  args: { predicate?: Predicate | null; sort?: string; signal?: AbortSignal } & TableViewQuery
 ) =>
   apiFetch<string>("/tables/export.csv", api, {
     query: {
       filter: serializePredicate(args.predicate),
-      sort: args.sort
+      sort: args.sort,
+      freshness_breach: args.freshness_breach ? true : undefined,
+      maintenance_overdue: args.maintenance_overdue ? true : undefined,
+      p95_breach: args.p95_breach ? true : undefined,
+      no_reads_days: args.no_reads_days
     },
     signal: args.signal
   });
@@ -308,7 +326,12 @@ export const createTableAlertSubscription = (api: ApiOptions, id: UUID, email: s
 export const deleteTableAlertSubscription = (api: ApiOptions, id: UUID, subscriptionId: UUID) =>
   apiFetch<void>(`/tables/${id}/alert-subscriptions/${subscriptionId}`, api, { method: "DELETE" });
 export const getTablePartitions = (api: ApiOptions, id: UUID) =>
-  apiFetch<{ items: PartitionRead[] }>(`/tables/${id}/partitions`, api).then((payload) => payload.items);
+  apiFetch<{ items: PartitionRead[]; total?: number }>(`/tables/${id}/partitions`, api, {
+    query: { limit: 1000 }
+  }).then((payload) => ({
+    items: payload.items ?? [],
+    total: payload.total ?? payload.items?.length ?? 0
+  }));
 export const getTableAudit = (api: ApiOptions, id: UUID, query?: { limit?: number; offset?: number }) =>
   apiFetch<{ items: AuditEntry[] }>(`/tables/${id}/audit`, api, { query }).then((payload) => payload.items);
 export const getTableHistory = (api: ApiOptions, id: UUID) =>
@@ -615,12 +638,13 @@ export const runTableOperations = (
 
 export const listRuns = (
   api: ApiOptions,
-  args: { kind?: string; source_id?: UUID; limit?: number; offset?: number } = {}
+  args: { kind?: string; source_id?: UUID; preset_id?: UUID; limit?: number; offset?: number } = {}
 ) =>
   apiFetch<RunRead[]>("/runs", api, {
     query: {
       kind: args.kind,
       source_id: args.source_id,
+      preset_id: args.preset_id,
       limit: args.limit,
       offset: args.offset
     }
@@ -1577,7 +1601,9 @@ export interface JobDetailDashboard {
 
 export const getCostAttributionDashboard = (api: ApiOptions, month?: string) =>
   dashboardFetch<CostAttributionResponse>(
-    month ? `/cost-attribution?month=${encodeURIComponent(month)}` : "/cost-attribution",
+    month
+      ? `/dashboards/cost-attribution?month=${encodeURIComponent(month)}`
+      : "/dashboards/cost-attribution",
     api
   );
 
@@ -1820,13 +1846,13 @@ export const listQualityConstraints = (api: ApiOptions, tableId: UUID) =>
 export const createQualityConstraint = (api: ApiOptions, tableId: UUID, body: QualityConstraintCreate) =>
   apiFetch<QualityConstraintRead>(`/tables/${tableId}/quality-constraints`, api, {
     method: "POST",
-    body: JSON.stringify(body)
+    body
   });
 
 export const updateQualityConstraint = (api: ApiOptions, constraintId: UUID, body: QualityConstraintUpdate) =>
   apiFetch<QualityConstraintRead>(`/quality-constraints/${constraintId}`, api, {
     method: "PATCH",
-    body: JSON.stringify(body)
+    body
   });
 
 export const deleteQualityConstraint = (api: ApiOptions, constraintId: UUID) =>
@@ -2198,6 +2224,14 @@ export const getShallowHealth = async (): Promise<{ status: string }> => {
 export const getDeepHealth = async (): Promise<DeepHealthResponse> => {
   const response = await fetch("/healthz/deep");
   const payload = await response.json();
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "status" in payload &&
+    "checks" in payload
+  ) {
+    return payload as DeepHealthResponse;
+  }
   if (!response.ok) {
     throw responseError(response, "Deep health check failed", payload);
   }
@@ -2296,7 +2330,7 @@ export const getActiveSkillset = (
   api: ApiOptions,
   name: string
 ): Promise<SkillsetRead | null> =>
-  apiFetch<SkillsetRead | null>(`/advanced/skillsets/${name}/active`, api);
+  apiFetch<SkillsetRead | null>(`/advanced/skillsets/${encodeURIComponent(name)}/active`, api);
 
 export const createSkillset = (
   api: ApiOptions,
@@ -2309,7 +2343,7 @@ export const rollbackSkillset = (
   name: string,
   body: SkillsetRollbackRequest
 ): Promise<SkillsetRead> =>
-  apiFetch<SkillsetRead>(`/advanced/skillsets/${name}/rollback`, api, {
+  apiFetch<SkillsetRead>(`/advanced/skillsets/${encodeURIComponent(name)}/rollback`, api, {
     method: "POST",
     body
   });
@@ -2319,7 +2353,7 @@ export const activateSkillset = (
   name: string,
   body: SkillsetActivateRequest
 ): Promise<SkillsetRead> =>
-  apiFetch<SkillsetRead>(`/advanced/skillsets/${name}/activate`, api, {
+  apiFetch<SkillsetRead>(`/advanced/skillsets/${encodeURIComponent(name)}/activate`, api, {
     method: "POST",
     body
   });
@@ -2329,7 +2363,7 @@ export const promoteSkillset = (
   name: string,
   body: SkillsetPromoteRequest
 ): Promise<SkillsetRead> =>
-  apiFetch<SkillsetRead>(`/advanced/skillsets/${name}/promote`, api, {
+  apiFetch<SkillsetRead>(`/advanced/skillsets/${encodeURIComponent(name)}/promote`, api, {
     method: "POST",
     body
   });
@@ -2359,18 +2393,21 @@ export const listLlmObservations = (
 export const diagnoseRunFailure = (
   api: ApiOptions,
   runId: UUID,
-  options: { force?: boolean } = {}
+  options: { force?: boolean; jobId?: UUID } = {}
 ): Promise<RunFailureDiagnosisRead> =>
   apiFetch<RunFailureDiagnosisRead>(`/ai/runs/${runId}/diagnose`, api, {
-    query: { force: options.force ?? false },
+    query: { force: options.force ?? false, job_id: options.jobId },
     method: "POST"
   });
 
 export const getLatestRunDiagnosis = (
   api: ApiOptions,
-  runId: UUID
+  runId: UUID,
+  jobId?: UUID
 ): Promise<RunFailureDiagnosisRead | null> =>
-  apiFetch<RunFailureDiagnosisRead | null>(`/ai/runs/${runId}/diagnosis-latest`, api);
+  apiFetch<RunFailureDiagnosisRead | null>(`/ai/runs/${runId}/diagnosis-latest`, api, {
+    query: jobId ? { job_id: jobId } : undefined
+  });
 
 export const submitDiagnosisFeedback = (
   api: ApiOptions,
@@ -2604,6 +2641,7 @@ const normalizeSearchHit = (hit: SearchMatchRaw): SearchHit => ({
   name: hit.name,
   qualified_name: hit.qualified_name,
   catalog: hit.catalog_name,
+  catalog_id: hit.catalog_id,
   schema_name: hit.schema_name,
   table_id: hit.table_id,
   column_name: hit.column_name,
@@ -2632,6 +2670,7 @@ export interface SearchHit {
   name: string;
   qualified_name?: string | null;
   catalog?: string | null;
+  catalog_id?: string | null;
   schema_name?: string | null;
   table_id?: string | null;
   column_name?: string | null;

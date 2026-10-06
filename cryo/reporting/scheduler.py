@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -58,6 +58,7 @@ class ReportScheduler:
 
     def __init__(self) -> None:
         self._running = False
+        self._retry_after: dict[str, datetime] = {}
 
     async def start(self, poll_interval_sec: int = 60) -> None:
         """Start the report scheduler loop."""
@@ -101,11 +102,21 @@ class ReportScheduler:
                     continue
 
                 report_key = f"daily_report:{config.id}"
+                retry_after = self._retry_after.get(report_key)
+                if retry_after is not None and now < retry_after:
+                    continue
                 last_run = last_sent_at(session, report_key)
                 if cron_is_due(config.daily_report_cron, now=now, last_run_at=last_run):
                     logger.info(f"Daily report is due for Slack config '{config.name}'")
-                    await self._send_daily_report(config)
-                    record_sent(session, report_key, now)
+                    if await self._send_daily_report(config):
+                        self._retry_after.pop(report_key, None)
+                        record_sent(session, report_key, now)
+                    else:
+                        self._retry_after[report_key] = now + timedelta(minutes=15)
+                        logger.error(
+                            "Daily report Slack send failed for '%s'; retrying after 15 minutes",
+                            config.name,
+                        )
 
             settings = get_settings()
             if settings.shared_s3_report_enabled:
@@ -234,11 +245,11 @@ class ReportScheduler:
         finally:
             session.close()
 
-    async def _send_daily_report(self, config: SlackConfig) -> None:
-        """Generate and send the daily report."""
+    async def _send_daily_report(self, config: SlackConfig) -> bool:
+        """Generate and send the daily report. False means the window must be retried."""
         if config.webhook_url_encrypted is None:
             logger.warning("Skipping Slack config '%s' without a webhook URL", config.name)
-            return
+            return False
 
         session = SessionLocal()
         try:
@@ -255,15 +266,18 @@ class ReportScheduler:
                 use_ai_summary=False,
                 include_diagnostics=False,
             )
-            if res.get("slack_sent"):
+            sent = bool(res.get("slack_sent"))
+            if sent:
                 logger.info(f"Daily report sent successfully to '{config.name}'")
             else:
                 logger.warning(
                     "Daily report generated but Slack notification failed to send for '%s'",
                     config.name,
                 )
+            return sent
         except Exception:
             logger.exception(f"Failed to send daily report to '{config.name}'")
+            return False
         finally:
             session.close()
 

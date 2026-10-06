@@ -77,12 +77,7 @@ export const tableFiltersToPredicate = (filters: TableFilterState): Predicate | 
       ? leaf("needs_compaction", "=", filters.needsCompaction)
       : null,
     presetFilterPredicate(filters.presetFilter),
-    filters.schemaSearch?.trim()
-      ? any([
-          leaf("schema_name", "glob", `*${escapeGlob(filters.schemaSearch.trim())}*`),
-          leaf("table_name", "glob", `*${escapeGlob(filters.schemaSearch.trim())}*`)
-        ])
-      : null,
+    nameSearchPredicate(filters.schemaSearch),
     typeof filters.minSizeGb === "number" && Number.isFinite(filters.minSizeGb)
       ? leaf("total_size_gb", ">=", filters.minSizeGb)
       : null,
@@ -194,3 +189,24 @@ export const predicateSummary = (
 };
 
 const escapeGlob = (value: string): string => value.replace(/([?*])/g, "\\$1");
+
+const nameSearchPredicate = (raw: string | undefined): Predicate | null => {
+  const trimmed = raw?.trim();
+  if (!trimmed) return null;
+  const clauses: Array<Predicate | null> = [
+    leaf("schema_name", "glob", `*${escapeGlob(trimmed)}*`),
+    leaf("table_name", "glob", `*${escapeGlob(trimmed)}*`)
+  ];
+  const parts = trimmed.split(".").filter(Boolean);
+  if (parts.length >= 2) {
+    const schema = parts[parts.length - 2];
+    const table = parts[parts.length - 1];
+    clauses.push(
+      all([
+        leaf("schema_name", "glob", `*${escapeGlob(schema)}*`),
+        leaf("table_name", "glob", `*${escapeGlob(table)}*`)
+      ])
+    );
+  }
+  return any(clauses);
+};

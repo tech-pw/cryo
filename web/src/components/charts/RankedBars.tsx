@@ -13,15 +13,17 @@ export const RankedBars = ({
   unit,
   items,
   total,
+  limit = 15,
   provenance = "measured"
 }: {
   title: string;
   unit: string;
   items: RankedBarItem[];
   total?: number;
+  limit?: number;
   provenance?: ChartProvenance;
 }) => {
-  const shown = items.slice(0, 15);
+  const shown = items.slice(0, Math.max(0, limit));
   const max = Math.max(...shown.map((item) => plotValue(item.value) ?? 0), 0);
   const rows = shown.map((item) => ({
     id: item.id,

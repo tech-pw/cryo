@@ -152,7 +152,10 @@ const ProposalActions = ({
     !approveAccess.allowed || rec.status === "applied" || rec.status === "approved";
   const dismissDisabled =
     !dismissAccess.allowed || rec.status === "rejected" || rec.status === "applied";
-  const executeDisabled = !executeAccess.allowed || rec.status !== "approved";
+  const executeDisabled =
+    !executeAccess.allowed ||
+    rec.status !== "approved" ||
+    (rec.recommended_strategy !== "sort" && rec.recommended_strategy !== "zorder");
 
   return (
     <div className="flex flex-wrap gap-1">
@@ -448,7 +451,7 @@ export function DecisionsPage() {
         <div className="flex flex-wrap gap-1">
           <ConfirmAction
             title="Approve this request?"
-            description="The approved operation will proceed when scheduled."
+            description="Releases the waiting job on the next governor wave and authorizes later runs of this operation until the grant expires."
             onConfirm={() => actOnOperationApproval.mutate({ id: row.original.id, approved: true })}
             disabled={!approveAccess.allowed}
           >
@@ -572,7 +575,7 @@ export function DecisionsPage() {
           {queue}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle>Operation approval requests</CardTitle>
+              <CardTitle id="operation-approvals">Operation approval requests</CardTitle>
             </CardHeader>
             <CardContent className="p-0 pt-0">
               <AsyncBoundary
@@ -608,7 +611,7 @@ export function DecisionsPage() {
                   {missingPreset.map((row) => (
                     <li key={row.table_id}>
                       <Link to={`/tables/${row.table_id}`} className="text-primary hover:underline">
-                        {row.schema_name}.{row.table_name}
+                        {row.table_name}
                       </Link>
                     </li>
                   ))}

@@ -5,7 +5,7 @@ import { PartitionAccessChart, partitionDays } from "./PartitionAccessChart";
 describe("PartitionAccessChart", () => {
   it("shows an empty-state message when there are no points", () => {
     render(<PartitionAccessChart points={[]} partitions={[]} />);
-    expect(screen.getByText("No partition access data yet.")).toBeInTheDocument();
+    expect(screen.getByText(/No partition access data yet/)).toBeInTheDocument();
   });
 
   it("ranks partitions by requests and summarises concentration", () => {

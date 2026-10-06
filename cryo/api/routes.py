@@ -618,8 +618,10 @@ def test_destination_config(
         dest_id = str(payload.destination_id) if payload.destination_id is not None else None
         return _test_native_destination(dict(config), destination_id=dest_id)
     return DestinationTestResponse(
-        ok=True,
-        message="Configuration present; live engine probe is implemented in the governor/worker.",
+        ok=False,
+        message=(
+            "No live probe for this engine yet. Saving the config does not mean it is reachable."
+        ),
     )
 
 
@@ -664,12 +666,10 @@ def test_destination(destination_id: uuid.UUID, session: SessionDep) -> dict[str
             "message": result.message,
         }
     return {
-        "ok": bool(destination.enabled),
+        "ok": False,
         "engine": destination.engine,
         "name": destination.name,
-        "message": (
-            "Configuration is present; live engine probe is implemented in the governor/worker."
-        ),
+        "message": "No live probe for this engine yet. Enabled does not mean reachable.",
     }
 
 
@@ -983,9 +983,19 @@ def export_tables_csv(
     session: SessionDep,
     filter: Annotated[str | None, Query()] = None,
     sort: Annotated[str | None, Query()] = None,
+    freshness_breach: Annotated[bool, Query()] = False,
+    maintenance_overdue: Annotated[bool, Query()] = False,
+    p95_breach: Annotated[bool, Query()] = False,
+    no_reads_days: Annotated[int | None, Query(ge=1, le=3660)] = None,
 ) -> Response:
     predicate = _parse_filter(filter)
     tenant_id = require_tenant(session)
+    view = build_table_view_filter(
+        freshness_breach=freshness_breach,
+        maintenance_overdue=maintenance_overdue,
+        p95_breach=p95_breach,
+        no_reads_days=no_reads_days,
+    )
     stmt = (
         select(
             Source.name,
@@ -1013,6 +1023,8 @@ def export_tables_csv(
     stmt = scope_by_tenant(stmt, Table, tenant_id)
     if predicate is not None:
         stmt = stmt.where(predicate)
+    if view.clause is not None:
+        stmt = stmt.where(view.clause)
     stmt = stmt.order_by(*_sort_clauses(sort))
 
     output = io.StringIO()
@@ -1080,8 +1092,13 @@ _SIZE_BUCKET_EXPR = case(
 # Untyped to match FIELD_MAP's own convention in cryo/api/predicates.py: mypy sees each
 # InstrumentedAttribute's specific column type (str, bool, ...) rather than the common
 # ColumnElement base, and typing this dict explicitly fights that rather than working with it.
+_DISPLAY_CATALOG = func.coalesce(
+    func.nullif(Source.config["catalog_name"].astext, ""),
+    func.nullif(Source.config["catalog"].astext, ""),
+    Source.name,
+)
 _GROUP_BY_FIELDS = {
-    "catalog": Source.name,
+    "catalog": _DISPLAY_CATALOG,
     "schema_name": Table.schema_name,
     "grade": TableStats.grade,
     "compaction_priority": TableStats.compaction_priority,
@@ -1903,6 +1920,7 @@ def list_runs(
     session: SessionDep,
     kind: str | None = Query(default=None),
     source_id: uuid.UUID | None = Query(default=None),  # noqa: B008 - uuid.UUID isn't in ruff's immutable-type allowlist; default is always None
+    preset_id: uuid.UUID | None = Query(default=None),  # noqa: B008
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[RunRead]:
@@ -1914,6 +1932,8 @@ def list_runs(
     )
     if kind:
         stmt = stmt.where(MaintenanceRun.kind == kind)
+    if preset_id is not None:
+        stmt = stmt.where(MaintenanceRun.preset_id == preset_id)
     if source_id is not None:
         # Only scan runs record source_id in their summary (source/schemas/tables scope) --
         # fleet-wide "all" scans aren't tied to one lakehouse, so they're excluded here by design.

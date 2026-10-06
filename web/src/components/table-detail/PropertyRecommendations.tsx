@@ -186,7 +186,10 @@ export const PropertyRecommendations = () => {
             size="sm"
             loading={applyMutation.isPending && applyMutation.variables?.property_key === item.property_key}
             disabled={!bloomAccess.allowed}
-            title={bloomAccess.reason ?? undefined}
+            title={
+              bloomAccess.reason ??
+              "Sets the bloom property for new files. Existing files stay unchanged until rewritten."
+            }
             onClick={() => {
               if (!bloomAccess.allowed) return;
               applyMutation.mutate({
@@ -195,7 +198,7 @@ export const PropertyRecommendations = () => {
               });
             }}
           >
-            Enable bloom
+            Enable bloom{item.bloom_filter_column ? ` on ${item.bloom_filter_column}` : ""}
           </Button>
           {bloomAccess.reason ? (
             <span className="mt-1 block max-w-48 text-right text-[11px] text-muted-foreground">{bloomAccess.reason}</span>
@@ -253,7 +256,7 @@ export const PropertyRecommendations = () => {
             >
               <span className="font-medium">Maintenance blocked</span>
               <span className="text-muted-foreground">
-                gc.enabled=false — Cryo maintenance operations are disabled for this table.
+                gc.enabled=false —                 Expire snapshots and orphan removal are skipped while gc.enabled is false. Other property writes still apply.
               </span>
             </div>
           ) : null}
@@ -274,7 +277,7 @@ export const PropertyRecommendations = () => {
                 <tbody>
                   {items.map((item) => (
                     <tr key={item.property_key} className="border-b border-border last:border-b-0">
-                      <td className="max-w-[240px] truncate px-3 py-2 font-mono text-xs">
+                      <td className="max-w-[240px] truncate px-3 py-2 font-mono text-xs" title={item.property_key}>
                         {item.property_key}
                       </td>
                       <td className="px-3 py-2 font-mono text-xs">
@@ -286,7 +289,7 @@ export const PropertyRecommendations = () => {
                       <td className="px-3 py-2">
                         <Badge variant={tierVariant[item.tier]}>{tierLabel[item.tier]}</Badge>
                       </td>
-                      <td className="max-w-[420px] truncate px-3 py-2 text-xs text-muted-foreground">
+                      <td className="max-w-[420px] truncate px-3 py-2 text-xs text-muted-foreground" title={item.reason}>
                         {item.reason}
                       </td>
                       <td className="px-3 py-2 text-right">{actionButton(item)}</td>
@@ -312,10 +315,12 @@ export const PropertyRecommendations = () => {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirm risky property change</AlertDialogTitle>
+            <AlertDialogTitle>
+              Set {riskyConfirm.item?.property_key ?? "this property"} to {riskyConfirm.item?.recommended_value ?? "the recommended value"}?
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {riskyConfirm.item?.reason ??
-                "This change may affect table readers. Apply only after verifying compatibility."}
+                "This writes a catalog property. It does not rewrite existing files."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

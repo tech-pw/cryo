@@ -16,13 +16,23 @@ _MISSED_FIRE_LOOKBACK = timedelta(hours=24)
 
 def _fields_match_minute(fields: list[str], moment: datetime) -> bool:
     minute, hour, dom, month, dow = fields
-    return (
+    if not (
         _field_matches(minute, moment.minute, 0, 59)
         and _field_matches(hour, moment.hour, 0, 23)
-        and _field_matches(dom, moment.day, 1, 31)
         and _field_matches(month, moment.month, 1, 12)
-        and _field_matches(dow, moment.weekday(), 0, 6)
-    )
+    ):
+        return False
+    # Standard cron ORs day-of-month and day-of-week when both are restricted.
+    dom_match = _field_matches(dom, moment.day, 1, 31)
+    # 0 = Sunday. datetime.weekday() is Monday = 0.
+    dow_match = _field_matches(dow, (moment.weekday() + 1) % 7, 0, 6)
+    if dom == "*" and dow == "*":
+        return True
+    if dom == "*":
+        return dow_match
+    if dow == "*":
+        return dom_match
+    return dom_match or dow_match
 
 
 def cron_is_due(
@@ -71,6 +81,10 @@ def cron_is_due(
     earliest = probe - _MISSED_FIRE_LOOKBACK
     while probe >= earliest:
         if _fields_match_minute(fields, probe):
+            # A restricted weekday must not catch up on the next calendar day.
+            if fields[4] != "*" and probe.date() != current.date():
+                probe -= timedelta(minutes=1)
+                continue
             return last is None or probe > last.replace(second=0, microsecond=0)
         probe -= timedelta(minutes=1)
     return False
@@ -138,11 +152,11 @@ def normalize_cron_expression(expression: str) -> str:
 def _field_matches(field: str, value: int, minimum: int, maximum: int) -> bool:
     if field == "*":
         return True
-    if field.startswith("*/"):
-        step = int(field[2:])
-        return value % step == 0
     if "," in field:
         return any(_field_matches(part, value, minimum, maximum) for part in field.split(","))
+    if field.startswith("*/"):
+        step = int(field[2:])
+        return step > 0 and (value - minimum) % step == 0
     if "-" in field and not field.startswith("-"):
         start, end = field.split("-", 1)
         return int(start) <= value <= int(end)

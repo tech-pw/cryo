@@ -1,6 +1,6 @@
 import type { AuditEntry, TableRunRead } from "../../../api/types";
 
-export type CellTone = "success" | "failed" | "running" | "queued" | "skipped" | "none";
+export type CellTone = "success" | "failed" | "attention" | "running" | "queued" | "skipped" | "none";
 
 /** Grid rows, in execution order. Delete rewrites and stats only appear when a run used them. */
 export const GRID_OPERATIONS = [
@@ -28,7 +28,8 @@ export const OPERATION_SHORT: Record<string, string> = {
 export const toneFor = (status: string | null | undefined): CellTone => {
   const key = (status ?? "").trim().toLowerCase();
   if (!key) return "none";
-  if (["succeeded", "success", "ok", "partial", "completed", "done"].includes(key)) return "success";
+  if (["succeeded", "success", "ok", "completed", "done"].includes(key)) return "success";
+  if (key === "partial" || key === "partial_failed") return "attention";
   if (key.includes("fail") || key.includes("error") || key === "timeout") return "failed";
   // "admitted"/"waiting" mean waiting for engine capacity in Cryo, not executing.
   if (["running", "dispatched", "in_progress"].includes(key)) return "running";

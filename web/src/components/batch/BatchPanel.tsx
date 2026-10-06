@@ -51,7 +51,7 @@ export interface BatchPanelProps {
 export function BatchPanel({
   identity,
   draft: draftProp,
-  readyCount = 0,
+  readyCount,
   blockedCount = 0,
   nothingToDoCount = 0,
   rewriteEstimate,
@@ -69,7 +69,7 @@ export function BatchPanel({
   const admissionId = useId();
   const [draft, setDraft] = useState<MaintenanceBatchDraft>(() => draftProp ?? loadDraft(identity));
   const [showBlocked, setShowBlocked] = useState(false);
-  const ready = finiteReady(readyCount);
+  const ready = finiteReady(readyCount ?? draft.tables.length);
   const blocked = finiteReady(blockedCount);
   const nothingToDo = finiteReady(nothingToDoCount);
   const highlightClass = batchHighlightClass(reducedMotion, pulse);
@@ -195,7 +195,7 @@ export function BatchPanel({
         {draft.receipts.map((receipt) => (
           <li key={receipt.id} className="text-muted-foreground">
             {receipt.label}
-            {receipt.declaredCount != null ? ` · ${receipt.declaredCount}` : ""} · Resolving…
+            {receipt.declaredCount != null ? ` · ${receipt.declaredCount}` : " · Resolving…"}
           </li>
         ))}
       </ul>

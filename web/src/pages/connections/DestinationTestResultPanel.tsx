@@ -15,8 +15,12 @@ interface DestinationTestResultPanelProps {
 export const DestinationTestResultPanel = ({ result, onDismiss }: DestinationTestResultPanelProps) => (
   <Alert
     className="page-alert"
-    variant={result.ok ? "success" : "warning"}
-    title={result.ok ? "Engine capacity check passed" : "Engine capacity check returned warnings"}
+    variant={result.ok && typeof result.available === "number" ? "success" : "warning"}
+    title={
+      result.ok && typeof result.available === "number"
+        ? "Engine capacity check passed"
+        : "Engine was not probed"
+    }
     description={
       <div className="mt-1 space-y-2">
         <p>{formatDestinationTestSummary(result)}</p>

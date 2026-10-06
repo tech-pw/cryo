@@ -82,14 +82,15 @@ describe("TableCostPanel", () => {
     expect(screen.getByText("$12")).toBeInTheDocument();
     expect(screen.getByText("S3 request cost · 30 days")).toBeInTheDocument();
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
-    expect(await screen.findByText("Delete-file bytes")).toBeInTheDocument();
+    expect(screen.queryByText("Delete-file bytes")).not.toBeInTheDocument();
+    expect(screen.getByText("Request logs have not been recorded")).toBeInTheDocument();
     expect(screen.getAllByText(/Modelled/).length).toBeGreaterThan(0);
     expect(await screen.findByText("Move to Intelligent-Tiering")).toBeInTheDocument();
     expect(screen.getByText("Objects have not been read recently")).toBeInTheDocument();
     expect(screen.queryByText("dt=do-not-rank/")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open compaction ranking" })).toHaveAttribute(
       "href",
-      "/tables/table-1?tab=maintenance#maintenance-compaction"
+      "/tables/table-1?tab=maintenance#maintenance-compaction-horizon"
     );
   });
 });

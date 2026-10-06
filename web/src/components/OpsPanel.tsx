@@ -6,6 +6,7 @@ import { getDeepHealth, getMetricsText, getShallowHealth, triggerGitOpsWebhook }
 import { EmptyState, QueryErrorAlert } from "./common";
 import { useAuth } from "../lib/auth";
 import { Alert } from "./ui/alert";
+import { Link } from "react-router-dom";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -53,7 +54,22 @@ export const OpsPanel = () => {
     },
     onSuccess: (result) => {
       setGitopsResult(JSON.stringify(result, null, 2));
-      toast.success("GitOps webhook processed");
+      const record = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+      const status = typeof record.status === "string" ? record.status : "";
+      const synced = Number(record.policies_synced ?? 0);
+      const updated = Number(record.tables_updated ?? 0);
+      const loaded = Number(record.policies_loaded ?? 0);
+      if (status === "ok" && (synced > 0 || updated > 0)) {
+        toast.success(`Synced ${synced} policies, updated ${updated} tables`);
+      } else if (status === "ok") {
+        toast.warning(loaded === 0 ? "GitOps webhook loaded no policies" : "GitOps webhook processed nothing");
+      } else if (status === "partial") {
+        toast.warning(`Synced ${synced} of ${loaded} policies`);
+      } else if (status === "conflict") {
+        toast.error("GitOps policies not applied");
+      } else {
+        toast.error(status ? `GitOps webhook ${status}` : "GitOps webhook did not apply");
+      }
     },
     onError: (error) => toast.error((error as Error).message)
   });
@@ -62,7 +78,11 @@ export const OpsPanel = () => {
     <div className="flex w-full flex-col gap-4">
       <p className="tab-intro text-sm text-muted-foreground">
         Platform observability and GitOps hooks for admins. These endpoints are intended for operators and monitoring
-        — not day-to-day maintenance workflows.
+        — not day-to-day maintenance workflows. To hold maintenance, open{" "}
+        <Link to="/runs?tab=holds" className="text-primary underline-offset-2 hover:underline">
+          Runs → Holds
+        </Link>
+        .
       </p>
 
       <div className="grid gap-3 md:grid-cols-3">
@@ -203,7 +223,11 @@ export const OpsPanel = () => {
               Trigger webhook
             </Button>
             {gitopsResult ? (
-              <Alert variant="success" title="Webhook response" description={<pre className="inline-json">{gitopsResult}</pre>} />
+              <Alert
+                variant={gitopsResult.includes('"status": "ok"') && !gitopsResult.includes('"policies_synced": 0') ? "success" : "warning"}
+                title="Webhook response"
+                description={<pre className="inline-json">{gitopsResult}</pre>}
+              />
             ) : null}
           </CardContent>
         </Card>

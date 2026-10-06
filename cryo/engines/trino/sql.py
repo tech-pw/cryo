@@ -77,17 +77,14 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
 def _render_expire(table_ref: str, params: dict[str, Any]) -> str:
     retention_days = int(params.get("retention_days", 7))
     retain_last = int(params.get("retain_last", 1))
-    protected_ids = list(params.get("protected_snapshot_ids") or [])
-    expire_sql = (
+    # Trino 483 expire_snapshots cannot keep a specific snapshot id, and it has no
+    # set_snapshots procedure. Emitting one used to fail the whole expire (and the
+    # rest of the plan) whenever a Cryo exclusion row existed.
+    return (
         f"ALTER TABLE {table_ref} "
         "EXECUTE expire_snapshots("
         f"retention_threshold => '{retention_days}d', retain_last => {retain_last})"
     )
-    if not protected_ids:
-        return expire_sql
-    keep_list = ", ".join(str(sid) for sid in sorted(set(protected_ids)))
-    set_sql = f"ALTER TABLE {table_ref} EXECUTE set_snapshots(snapshot_ids => ARRAY[{keep_list}])"
-    return f"{set_sql}; {expire_sql}"
 
 
 def _render_orphan(table_ref: str, params: dict[str, Any]) -> str:

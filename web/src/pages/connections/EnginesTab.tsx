@@ -92,9 +92,11 @@ export const EnginesTab = () => {
         id: "offpeak",
         header: "Off-peak window",
         cell: ({ row }) =>
-          row.original.offpeak_start === null || row.original.offpeak_start === undefined
-            ? "-"
-            : `${row.original.offpeak_start}:00-${row.original.offpeak_end}:00`
+          row.original.offpeak_start == null ||
+          row.original.offpeak_end == null ||
+          row.original.offpeak_start === row.original.offpeak_end
+            ? "Any time"
+            : `${row.original.offpeak_start}:00–${row.original.offpeak_end}:00 IST`
       },
       {
         id: "actions",

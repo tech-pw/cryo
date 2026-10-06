@@ -14,10 +14,12 @@ import { Button } from "../ui/button";
 
 export const ConversationHistory = ({
   activeId,
-  onSelect
+  onSelect,
+  onDeleted
 }: {
   activeId: string | null;
   onSelect: (id: string) => void;
+  onDeleted?: (id: string) => void;
 }) => {
   const { api, token } = useAuth();
   const queryClient = useQueryClient();
@@ -28,7 +30,10 @@ export const ConversationHistory = ({
   });
   const remove = useMutation({
     mutationFn: (id: string) => deleteAssistantConversation(api, id),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["assistant", "conversations"] })
+    onSuccess: (_data, id) => {
+      onDeleted?.(id);
+      void queryClient.invalidateQueries({ queryKey: ["assistant", "conversations"] });
+    }
   });
   const share = useMutation({
     mutationFn: (id: string) => shareAssistantConversation(api, id)

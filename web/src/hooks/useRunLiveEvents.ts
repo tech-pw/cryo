@@ -118,6 +118,15 @@ export const useRunLiveEvents = (runId: UUID, token: string) => {
       markRunTerminal(event.run?.status);
       return;
     }
+    if (event.type === "error") {
+      ingestEvent({
+        type: "log_line",
+        message: event.detail ?? event.message ?? "Live log error",
+        level: "error",
+        ts: event.ts ?? new Date().toISOString()
+      });
+      return;
+    }
     if (!isLiveLogEvent(event)) {
       return;
     }
@@ -129,17 +138,22 @@ export const useRunLiveEvents = (runId: UUID, token: string) => {
     setMessages((current) => [event, ...current].slice(0, MAX_MESSAGES));
   }, [markRunTerminal]);
 
+  const seenRunId = useRef(runId);
   useEffect(() => {
     clearRetryTimer();
-    retryCountRef.current = 0;
-    setReconnectAttempt(0);
-    setRunTerminal(false);
-    runTerminalRef.current = false;
-    setWsExhausted(false);
+    const runChanged = seenRunId.current !== runId;
+    seenRunId.current = runId;
+    if (runChanged) {
+      retryCountRef.current = 0;
+      setReconnectAttempt(0);
+      setRunTerminal(false);
+      runTerminalRef.current = false;
+      setWsExhausted(false);
+      setMessages([]);
+      setSnapshot(null);
+      seenKeysRef.current = new Set();
+    }
     setWsOpen(false);
-    setMessages([]);
-    setSnapshot(null);
-    seenKeysRef.current = new Set();
 
     const socket = new WebSocket(wsRunUrl(runId, token));
     socketRef.current = socket;
@@ -161,7 +175,7 @@ export const useRunLiveEvents = (runId: UUID, token: string) => {
     socket.onerror = () => setWsOpen(false);
     socket.onclose = () => {
       setWsOpen(false);
-      if (socketRef.current === socket && !runTerminalRef.current) {
+      if (socketRef.current === socket && !runTerminalRef.current && messageEvent.code !== 1008) {
         scheduleReconnect();
       }
     };

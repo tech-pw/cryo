@@ -169,13 +169,16 @@ export const ArchiveSection = ({ tableId }: { tableId: string }) => {
         ) : null}
         {evidenceMissing ? <p>{NO_EVIDENCE_COPY}</p> : null}
         <QueryErrorAlert error={partitions.error} title="Failed to load archive partitions" />
+        {partitions.isError ? null : (
         <DataTable
           columns={columns}
           data={rows}
           density="compact"
+          loading={partitions.isLoading}
           showDensityToggle={false}
           getRowId={(row) => row.partition_key}
           emptyTitle="No partitions in the latest scan"
+          emptyDescription="Run a scan so partition ages are recorded."
           pagination={
             partitions.data && partitions.data.total > PAGE_SIZE
               ? {

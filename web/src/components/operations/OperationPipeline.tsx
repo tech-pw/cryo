@@ -54,7 +54,7 @@ export const maintenanceOpsToSteps = (
       return { key: op, label: opLabel(op), status: "failed" as const };
     }
     if (partialOps.includes(op)) {
-      return { key: op, label: opLabel(op), status: "succeeded" as const, detail: "partial" };
+      return { key: op, label: opLabel(op), status: "failed" as const, detail: "partial" };
     }
     if (completedOps.includes(op)) {
       return { key: op, label: opLabel(op), status: "succeeded" as const };

@@ -80,8 +80,9 @@ export const TableDetailHeaderBar = () => {
       onScan={() => ctx.scan.mutate()}
       onRefreshStats={() => ctx.scan.mutate()}
       onChooseWorkflow={() => {
-        ctx.handleTabChange("maintenance");
-        window.location.hash = "maintenance-settings";
+        const next = new URLSearchParams(ctx.searchParams);
+        next.set("tab", "maintenance");
+        ctx.navigate({ search: `?${next.toString()}`, hash: "#maintenance-settings" });
       }}
       onPreview={() => ctx.setPreviewOpen(true)}
       onRun={() => ctx.run.mutate()}

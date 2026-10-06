@@ -22,6 +22,7 @@ export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
         background: "var(--sidebar-bg)",
         borderRight: "1px solid var(--color-border-default)"
       }}
+      id="primary-navigation"
       aria-label="Primary navigation"
     >
       <div className="cryo-shell__brand">
@@ -48,6 +49,7 @@ export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
 
           return (
             <div key={group.label} className="cryo-shell__nav-group">
+              {group.label ? (
               <div
                 className="cryo-shell__nav-group-label"
                 style={{
@@ -59,6 +61,7 @@ export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
               >
                 {group.label}
               </div>
+              ) : null}
               {items.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeHref === item.href;
@@ -83,6 +86,7 @@ export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
                     }}
                     onClick={onNavigate}
                     end={item.href === "/"}
+                    title={item.label}
                   >
                     <Icon
                       size={16}
