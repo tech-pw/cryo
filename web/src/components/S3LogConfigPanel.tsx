@@ -80,11 +80,11 @@ const BucketCard = ({ sourceId, config }: { sourceId: UUID; config: S3LogConfigR
   const saveManual = useMutation({
     mutationFn: (values: ManualFormValues) =>
       patchS3LogConfig(api, sourceId, config.bucket, {
-        log_target_bucket: values.log_target_bucket || undefined,
-        log_target_prefix: values.log_target_prefix || undefined,
-        access_key_id: values.access_key_id || undefined,
+        log_target_bucket: values.log_target_bucket || null,
+        log_target_prefix: values.log_target_prefix || null,
+        access_key_id: values.access_key_id || null,
         secret_access_key: values.secret_access_key || undefined,
-        region: values.region || undefined,
+        region: values.region || null,
         manual_override: true
       }),
     onSuccess: () => {
@@ -208,7 +208,7 @@ const BucketCard = ({ sourceId, config }: { sourceId: UUID; config: S3LogConfigR
             </p>
             <ConfirmAction
               title="Turn on request-cost logging for this bucket?"
-              description={`Cryo will create or reuse a log target bucket and turn on S3 server access logging for "${config.bucket}".`}
+              description={`Replaces any existing server-access-logging target for "${config.bucket}" with Cryo's bucket and prefix.`}
               onConfirm={() => enableLogging.mutate()}
               okText="Enable logging"
             >

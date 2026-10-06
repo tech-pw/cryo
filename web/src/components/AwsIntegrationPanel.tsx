@@ -127,7 +127,7 @@ export const AwsIntegrationPanel = ({ sourceId, compact = false }: AwsIntegratio
       const body: AWSIntegrationWrite = {
         bucket: values.bucket,
         region: values.region,
-        access_key_id: values.access_key_id || undefined,
+        access_key_id: values.access_key_id || null,
         enabled: values.enabled
       };
       if (values.secret_access_key) {
@@ -240,7 +240,7 @@ export const AwsIntegrationPanel = ({ sourceId, compact = false }: AwsIntegratio
             label={
               <HintLabel
                 label="Access key ID (optional)"
-                tooltip="Leave blank to use IRSA, instance profile, or ~/.aws/credentials."
+                tooltip="Blank on create stores no key. Blank on edit keeps the saved key. Blank does not select IRSA."
               />
             }
           >
@@ -265,7 +265,7 @@ export const AwsIntegrationPanel = ({ sourceId, compact = false }: AwsIntegratio
                 tooltip={
                   existing
                     ? "Stored encrypted at rest. Leave blank to keep the existing secret."
-                    : "Stored encrypted at rest. Leave blank to use the default AWS credential chain."
+                    : "A secret is required on create. Blank does not fall back to IRSA."
                 }
               />
             }
@@ -273,7 +273,7 @@ export const AwsIntegrationPanel = ({ sourceId, compact = false }: AwsIntegratio
             {(field) => (
               <Input
                 type="password"
-                placeholder={existing ? "Leave blank to keep existing" : "Optional with IRSA"}
+                placeholder={existing ? "Leave blank to keep existing" : "Required on create"}
                 autoComplete="off"
                 value={String(field.value ?? "")}
                 onChange={field.onChange}

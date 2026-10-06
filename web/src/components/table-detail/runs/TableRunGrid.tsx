@@ -34,6 +34,7 @@ type Filter = "all" | "manual" | "nightly";
 const TONE_LABEL: Record<CellTone, string> = {
   success: "Succeeded",
   failed: "Failed",
+  attention: "Partial",
   running: "Running",
   queued: "Waiting",
   skipped: "Skipped",
@@ -407,13 +408,20 @@ const StepRow = ({ cell, runStart, runEnd }: { cell: OpCell; runStart: number; r
 
 const LiveLog = ({ runId, jobId }: { runId: string; jobId: string }) => {
   const { token } = useAuth();
-  const { messages, wsOpen } = useRunLiveEvents(runId, token);
-  const lines = messages.filter((item) => !item.job_id || item.job_id === jobId).slice().reverse();
+  const { messages, snapshot, wsOpen, wsExhausted, runTerminal, manualReconnect } = useRunLiveEvents(runId, token);
+  const jobError = snapshot?.jobs?.find((job) => job.id === jobId)?.error;
+  const lines = messages.filter((item) => !item.job_id || item.job_id === jobId);
   return (
     <div className="td-run-live">
       <p className="td-run-live-state" data-open={wsOpen || undefined}>
-        <i aria-hidden="true" /> {wsOpen ? "Connected" : "Connecting…"}
+        <i aria-hidden="true" /> {wsOpen ? "Connected" : runTerminal ? "Ended" : wsExhausted ? "Live log disconnected" : "Connecting…"}
       </p>
+      {wsExhausted ? (
+        <button type="button" className="text-xs underline" onClick={manualReconnect}>
+          Retry
+        </button>
+      ) : null}
+      {jobError ? <p className="td-run-note">{jobError}</p> : null}
       {lines.length ? (
         <ol>
           {lines.map((line, index) => (

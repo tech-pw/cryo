@@ -339,7 +339,7 @@ export interface AWSIntegrationRead {
 export interface AWSIntegrationWrite {
   bucket: string;
   region: string;
-  access_key_id?: string;
+  access_key_id?: string | null;
   secret_access_key?: string;
   enabled?: boolean;
 }
@@ -1131,6 +1131,8 @@ export interface TableCostRead {
   get_requests_30d?: number | null;
   put_requests_30d?: number | null;
   list_requests_30d?: number | null;
+  head_requests_30d?: number | null;
+  delete_requests_30d?: number | null;
   request_cost_usd_month?: number | null;
   request_cost_pricing_source?: string | null;
 }

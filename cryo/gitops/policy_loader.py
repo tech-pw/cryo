@@ -200,7 +200,29 @@ def _extract_webhook_ref(payload: dict[str, Any]) -> str | None:
 
 
 def checkout_ref(repo_path: Path, ref: str) -> None:
-    """Checkout a Git ref in the local policy repository."""
+    """Checkout a Git ref in the local policy repository.
+
+    ``refs/heads/*`` is a local branch. ``git fetch`` updates the remote-tracking
+    ref, not that local branch, so checking the local name out reapplies the old
+    commit. Detach at the fetched tip instead.
+    """
+    if ref.startswith("refs/heads/"):
+        branch = ref.removeprefix("refs/heads/")
+        subprocess.run(
+            ["git", "fetch", "origin", branch],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "checkout", "--detach", "FETCH_HEAD"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return
     subprocess.run(
         ["git", "fetch", "--all", "--prune"],
         cwd=repo_path,

@@ -61,9 +61,20 @@ const SchemaBadges = ({ row }: { row: SchemaColumnRow }) => (
   <span className="inline-flex flex-wrap gap-1">
     {row.isPartition ? <Badge>Partition</Badge> : null}
     {row.isSort ? <Badge>Sort</Badge> : null}
-    {row.piiCategory ? <Badge variant="warning">PII: {row.piiCategory}</Badge> : null}
+    {row.piiCategory ? (
+      <Badge
+        variant="warning"
+        title="Untagged name guess. Optimize is deferred until this column is tagged."
+      >
+        Likely {row.piiCategory}
+      </Badge>
+    ) : null}
     {row.drift ? <Badge variant="warning">Drift</Badge> : null}
-    {row.bloom ? <Badge variant="secondary">Bloom</Badge> : null}
+    {row.bloom ? (
+      <Badge variant="secondary" title="Recommended from query patterns. Not enabled on existing files.">
+        Bloom candidate
+      </Badge>
+    ) : null}
   </span>
 );
 
@@ -73,7 +84,15 @@ const NullRateCell = ({ rate }: { rate: number | null }) =>
 const hasSketches = (rows: SchemaColumnRow[]): boolean =>
   rows.some((row) => row.ndv != null || row.p50 != null || row.p95 != null);
 
-const SchemaTable = ({ rows, highlight }: { rows: SchemaColumnRow[]; highlight: string | null }) => {
+const SchemaTable = ({
+  rows,
+  highlight,
+  columnStatsError
+}: {
+  rows: SchemaColumnRow[];
+  highlight: string | null;
+  columnStatsError?: string | null;
+}) => {
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const filtered = useMemo(() => {
@@ -99,7 +118,7 @@ const SchemaTable = ({ rows, highlight }: { rows: SchemaColumnRow[]; highlight: 
       document.getElementById("files-schema-highlight")?.scrollIntoView({ block: "center" });
     }, 50);
     return () => window.clearTimeout(timer);
-  }, [highlight, page]);
+  }, [highlight, page, rows]);
 
   const columns = useMemo<ColumnDef<SchemaColumnRow, unknown>[]>(() => [
     { id: "name", header: "Name", cell: ({ row }) => <span id={row.original.name.toLowerCase() === highlight ? "files-schema-highlight" : undefined} data-testid="schema-column-name" className="font-mono text-xs">{row.original.name}</span> },
@@ -128,7 +147,11 @@ const SchemaTable = ({ rows, highlight }: { rows: SchemaColumnRow[]; highlight: 
         emptyDescription={search ? "Try a different column name." : "Column metadata appears after a scan records schema statistics."}
         pagination={{ pageIndex: page, pageSize: PAGE_SIZE, totalRows: filtered.length, onPageChange: setPage }}
       />
-      {!hasSketches(rows) && rows.length > 0 ? <p className="text-xs text-muted-foreground">Distinct counts and percentiles appear after a statistics pass computes column sketches.</p> : null}
+      {columnStatsError ? (
+        <p role="alert" className="text-xs text-destructive">{columnStatsError}</p>
+      ) : !hasSketches(rows) && rows.length > 0 ? (
+        <p className="text-xs text-muted-foreground">Distinct counts and percentiles appear after a statistics pass computes column sketches.</p>
+      ) : null}
     </div>
   );
 };
@@ -207,7 +230,13 @@ export const FilesTabPanel = () => {
   const checks = layoutChecks(stats);
   const measures = fileMeasures(stats);
   const unpartitioned = isUnpartitionedTable(stats);
-  const ranked = useMemo(() => rankPartitions(partitions.data ?? []), [partitions.data]);
+  const partitionPage = Array.isArray(partitions.data)
+    ? { items: partitions.data, total: partitions.data.length }
+    : {
+        items: partitions.data?.items ?? [],
+        total: partitions.data?.total ?? partitions.data?.items.length ?? 0
+      };
+  const ranked = useMemo(() => rankPartitions(partitionPage.items), [partitionPage.items]);
   const top = ranked.ranked.slice(0, 15);
   const series = useMemo(() => smallFileSeries(history.data), [history.data]);
   const propertyItems = (properties.data?.items ?? []) as Array<
@@ -226,7 +255,16 @@ export const FilesTabPanel = () => {
         <p className="td-files-caption">Column types, bounds and signals from recorded metadata. Missing measurements are shown explicitly.</p>
         {table.isLoading ? <p className="text-sm text-muted-foreground">Loading</p> : null}
         {table.isError ? <p role="alert">{queryError(table.error)}</p> : null}
-        {table.isSuccess ? <SchemaTable rows={columns} highlight={highlight} /> : null}
+        {columnStats.isError || pii.isError || dataQuality.isError || bloom.isError ? (
+          <p role="alert">{queryError(columnStats.error ?? pii.error ?? dataQuality.error ?? bloom.error)}</p>
+        ) : null}
+        {table.isSuccess ? (
+          <SchemaTable
+            rows={columns}
+            highlight={highlight}
+            columnStatsError={columnStats.isError ? queryError(columnStats.error) : null}
+          />
+        ) : null}
       </section>
 
       <section id="files-files" className="td-files-section" aria-labelledby="files-files-title">
@@ -297,13 +335,13 @@ export const FilesTabPanel = () => {
         ) : (
           <>
             <RankedBars
-              title={`Top ${top.length} of ${ranked.ranked.length} partitions`}
+              title={`Top ${top.length} of ${partitionPage.total} partitions`}
               unit={ranked.metric}
               total={ranked.ranked.length}
               items={top.map((item) => ({ id: item.id, label: item.label, value: item.value }))}
             />
             <details className="td-files-disclosure"><summary>Exact partition counts</summary><div className="overflow-x-auto"><table className="w-full text-sm">
-              <caption className="sr-only">Top {top.length} of {ranked.ranked.length} partitions</caption>
+              <caption className="sr-only">Top {top.length} of {partitionPage.total} partitions</caption>
               <thead>
                 <tr className="text-left text-xs text-muted-foreground">
                   <th className="px-2 py-1 font-medium">Partition</th>

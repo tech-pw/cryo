@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ApiOptions } from "../api/client";
+import { clearRecentItems } from "../components/shell/recent";
 import type { RoleToken } from "../api/types";
 
 const ROLE_STORAGE_KEY = "cryo.devRole";
@@ -60,6 +61,7 @@ interface AuthContextValue {
   token: string;
   api: ApiOptions;
   loading: boolean;
+  submitting: boolean;
   error: string | null;
   isAuthenticated: boolean;
   authMode: AuthMode;
@@ -239,6 +241,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [subject, setSubject] = useState("");
   const [accessToken, setAccessToken] = useState("");
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authMode, setAuthMode] = useState<AuthMode>("dev");
   const [devTokenEnabled, setDevTokenEnabled] = useState(true);
@@ -268,7 +271,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signIn = async (nextRole: RoleToken, nextSubject: string) => {
-    setLoading(true);
+    setSubmitting(true);
     setError(null);
     try {
       const trimmed = nextSubject.trim() || "dev-ui";
@@ -279,12 +282,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setAccessToken("");
       throw err;
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
   const signInWithPassword = async (username: string, password: string) => {
-    setLoading(true);
+    setSubmitting(true);
     setError(null);
     try {
       const response = await fetch("/api/v1/auth/login", {
@@ -299,12 +302,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setError(err instanceof Error ? err.message : "Sign-in failed");
       throw err;
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
   const signInWithGoogle = async (idToken: string) => {
-    setLoading(true);
+    setSubmitting(true);
     setError(null);
     try {
       const response = await fetch("/api/v1/auth/google", {
@@ -320,7 +323,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setError(err instanceof Error ? err.message : "Google sign-in failed");
       throw err;
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
@@ -362,7 +365,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (!oidcConfig) {
       throw new Error("OIDC is not configured");
     }
-    setLoading(true);
+    setSubmitting(true);
     setError(null);
     const codeVerifier = window.sessionStorage.getItem(OIDC_VERIFIER_STORAGE_KEY);
     try {
@@ -379,7 +382,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setAccessToken("");
       throw err;
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
@@ -395,6 +398,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     window.localStorage.removeItem(AUTH_MODE_STORAGE_KEY);
     window.sessionStorage.removeItem(OIDC_STATE_STORAGE_KEY);
     window.sessionStorage.removeItem(OIDC_VERIFIER_STORAGE_KEY);
+    clearRecentItems();
   };
 
   useEffect(() => {
@@ -487,6 +491,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       token: accessToken,
       api: { token: accessToken },
       loading,
+      submitting,
       error,
       isAuthenticated: Boolean(accessToken && subject),
       authMode,
@@ -506,6 +511,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       subject,
       accessToken,
       loading,
+      submitting,
       error,
       authMode,
       devTokenEnabled,

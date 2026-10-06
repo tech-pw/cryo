@@ -1,5 +1,15 @@
-import type { RunRead } from "../api/types";
+import { toast } from "sonner";
+
+import type { RunRead, ScanTriggerResponse } from "../api/types";
 import { formatBytesGb } from "./format";
+
+export const toastScanResult = (result: ScanTriggerResponse): void => {
+  if (!result.queued) {
+    toast.error(result.message || `Scan accepted, but not queued: ${result.run_id}`);
+    return;
+  }
+  toast.success(result.message || `Scan queued: ${result.run_id}`);
+};
 
 export const shortRunId = (value?: string | null) => value?.slice(0, 8) ?? "-";
 

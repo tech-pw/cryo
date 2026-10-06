@@ -219,7 +219,7 @@ export const InventoryTab = () => {
           {role === "admin" ? (
             <ConfirmAction
               title="Compact observation history?"
-              description="Merges small append-only observation files into fewer, larger ones. Safe to run anytime; does not delete events."
+              description="Rewrites each hour file in place and drops duplicate event ids. It does not merge across hours."
               onConfirm={() => compactObservationsMutation.mutate()}
             >
               <Button size="sm" loading={compactObservationsMutation.isPending}>

@@ -49,6 +49,7 @@ import { MetricTile } from "../../components/ui/stat";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { useAuth } from "../../lib/auth";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../../lib/format";
+import { toastScanResult } from "../../lib/operations";
 import { qualifiedTableName } from "../../lib/tableLabels";
 import type { Predicate } from "../../lib/predicate";
 import { useWriteControl } from "../../lib/useWriteControl";
@@ -279,7 +280,7 @@ export const CostOverviewTab = () => {
       if (!scanAccess.allowed) throw new Error(scanAccess.reason ?? "Not allowed");
       return triggerCostScan(api, { cost_full_scan: true, trigger: "web-cost-full" });
     },
-    onSuccess: (result) => toast.success(result.message || `Scan queued: ${result.run_id}`),
+    onSuccess: (result) => toastScanResult(result),
     onError: (error) => toast.error((error as Error).message)
   });
   const bulkManifestRewrite = useMutation({
@@ -323,7 +324,7 @@ export const CostOverviewTab = () => {
         trigger: "web-cost-selection"
       });
     },
-    onSuccess: (result) => toast.success(result.message || `Scan queued: ${result.run_id}`),
+    onSuccess: (result) => toastScanResult(result),
     onError: (error) => toast.error((error as Error).message)
   });
 
@@ -621,7 +622,7 @@ export const CostOverviewTab = () => {
                           key: "size",
                           header: "Size",
                           align: "right",
-                          render: (row) => displayBytes(row.size_gb)
+                          render: (row) => displayMeasuredGb(row.size_gb)
                         }
                       ]}
                       rows={schemaCost.data ?? []}
@@ -721,18 +722,13 @@ export const CostOverviewTab = () => {
                 bulkManifestRewrite.mutate({ destinationId, presetId })
               }
               onScan={() => bulkScan.mutate()}
-              onPreview={async () => {
+              onPreview={() => {
                 if (!selection) throw new Error("No tables selected");
-                setPreviewTables(
-                  selection.mode === "filter"
-                    ? []
-                    : (
-                        await listTables(api, {
-                          predicate: { all: { ids: selection.ids } } as unknown as Predicate,
-                          limit: 25
-                        })
-                      ).items ?? []
-                );
+                const picked =
+                  selection.mode === "ids"
+                    ? opportunityRows.filter((row) => selection.ids.includes(row.id))
+                    : opportunityRows;
+                setPreviewTables(picked.slice(0, 25));
                 setPreviewOpen(true);
               }}
             />

@@ -75,16 +75,19 @@ export const PresetConfigForm = ({
   }, [preset, destinations.data, form]);
 
   useEffect(() => {
-    if (!isNative) return;
+    const id = form.getValues("destination_id");
+    const destination = (destinations.data ?? []).find((item) => item.id === id);
+    if (!isNativeDestination(destination)) return;
+    const impl = resolveNativeEngineImpl(destination.config);
     const currentOps = form.getValues("operations");
-    const nextOps = (currentOps ?? []).filter((op) => nativeSupportsOperation(op, nativeImpl ?? "go"));
+    const nextOps = (currentOps ?? []).filter((op) => nativeSupportsOperation(op, impl ?? "go"));
     if (nextOps.length !== (currentOps ?? []).length) {
       form.setValue("operations", nextOps);
     }
     if (form.getValues("mode") === "manifest_only") {
       form.setValue("mode", "deep");
     }
-  }, [destinationId, form, isNative, nativeImpl]);
+  }, [destinationId, destinations.data, form]);
 
   const save = useMutation({
     mutationFn: (body: PresetWrite) =>
@@ -132,7 +135,7 @@ export const PresetConfigForm = ({
 
   if (loading) return null;
 
-  const disabled = role === "viewer";
+  const disabled = role !== "admin";
 
   return (
     <div className="flex w-full flex-col gap-4">
@@ -320,6 +323,11 @@ const PresetRulesSection = ({ presetId }: { presetId: UUID }) => {
     mutationFn: () => {
       const predicate = tableFiltersToPredicate(filters);
       if (!predicate) throw new Error("Choose at least one filter.");
+      const onlyActive =
+        "field" in predicate && predicate.field === "is_active" && predicate.op === "=" && predicate.value === true;
+      if (onlyActive) {
+        throw new Error("Choose at least one filter. Active tables alone matches the whole fleet.");
+      }
       return createPresetRule(api, presetId, { predicate, enabled: true });
     },
     onSuccess: () => {
@@ -366,7 +374,7 @@ const PresetRulesSection = ({ presetId }: { presetId: UUID }) => {
     <div className="space-y-3">
       <h4 className="text-sm font-semibold">Assignment rules</h4>
       <FilterBar value={filters} onChange={setFilters} />
-      <Button loading={addRule.isPending} onClick={() => addRule.mutate()}>
+      <Button loading={addRule.isPending} disabled={role !== "admin"} onClick={() => addRule.mutate()}>
         Add rule
       </Button>
       <DataTable

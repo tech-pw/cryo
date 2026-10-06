@@ -40,6 +40,10 @@ const ROUTE_LABELS: Record<string, string> = {
 
 const labelFor = (segment: string, acc: string): string => {
   if (ROUTE_LABELS[acc]) return ROUTE_LABELS[acc];
+  if (acc === "/runs/workflows") return "Workflows";
+  if (acc === "/runs/jobs") return "Jobs";
+  if (acc === "/runs/scanner") return "Scanner";
+  if (acc === "/runs/batch") return "Batch";
   if (acc.startsWith("/operations/runs/") || /^\/runs\/[^/]+$/.test(acc)) {
     return `Run ${shortRunId(segment)}`;
   }
@@ -53,7 +57,7 @@ const labelFor = (segment: string, acc: string): string => {
 export const PageBreadcrumbs = ({ root }: { root?: Crumb }) => {
   const { pathname } = useLocation();
   const { api, token } = useAuth();
-  const presetIdMatch = pathname.match(/^\/operations\/presets\/([^/]+)/);
+  const presetIdMatch = pathname.match(/^\/(?:operations\/presets|runs\/workflows)\/([^/]+)/);
   const presetId = presetIdMatch?.[1];
   const presets = useQuery({
     queryKey: ["presets", token],
@@ -76,11 +80,27 @@ export const PageBreadcrumbs = ({ root }: { root?: Crumb }) => {
       acc += `/${segment}`;
       const isLast = idx === parts.length - 1;
       let label = labelFor(segment, acc);
-      if (presetId && acc === `/operations/presets/${presetId}` && presetName) {
+      if (presetId && presetName && (acc === `/operations/presets/${presetId}` || acc === `/runs/workflows/${presetId}`)) {
         label = presetName;
       }
       crumbs.push({
-        title: isLast ? <span aria-current="page">{label}</span> : <Link to={acc}>{label}</Link>
+        title: isLast ? (
+          <span aria-current="page">{label}</span>
+        ) : (
+          <Link
+            to={
+              acc === "/runs/workflows"
+                ? "/runs?tab=workflows"
+                : acc === "/runs/jobs"
+                  ? "/runs?tab=history"
+                  : acc === "/runs/scanner"
+                    ? "/runs/scanner"
+                    : acc
+            }
+          >
+            {label}
+          </Link>
+        )
       });
     });
     return crumbs;

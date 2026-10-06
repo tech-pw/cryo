@@ -5,7 +5,7 @@ import { useSearchParams } from "react-router-dom";
 
 import { getImpactHistory } from "../api/impact";
 import { RankedBars } from "../components/charts";
-import { PageHeader } from "../components/common";
+import { PageHeader, QueryErrorAlert } from "../components/common";
 import { Button } from "../components/ui/button";
 import { DataTable } from "../components/ui/data-table";
 import { useAuth } from "../lib/auth";
@@ -75,47 +75,57 @@ export const Impact = ({ embedded = false }: { embedded?: boolean }) => {
     []
   );
 
+  const rangeButtons = (
+    <div className="flex gap-2">
+      {RANGES.map((days) => (
+        <Button
+          key={days}
+          size="sm"
+          variant={range === days ? "primary" : "secondary"}
+          onClick={() =>
+            setSearchParams((prev) => {
+              const next = new URLSearchParams(prev);
+              next.set("range", String(days));
+              return next;
+            })
+          }
+        >
+          {days}d
+        </Button>
+      ))}
+    </div>
+  );
+
   return (
     <div className="flex flex-col gap-4">
       {embedded ? (
-        <p className="mb-3 text-sm text-muted-foreground">
-          {rows.length ? fullyMeasuredSummary(rows) : "Daily ledger of what maintenance actually changed."} Unmeasured
-          days are gaps, not zero.
-        </p>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            {rows.length ? fullyMeasuredSummary(rows) : "Daily ledger of what maintenance actually changed."} Unmeasured
+            days are gaps, not zero.
+          </p>
+          {rangeButtons}
+        </div>
       ) : (
       <PageHeader
         title="Impact"
         subtitle={rows.length ? fullyMeasuredSummary(rows) : "Daily ledger of what maintenance actually changed."}
         rootCrumb={{ label: "Impact", to: "/cost?tab=impact" }}
-        actions={
-          <div className="flex gap-2">
-            {RANGES.map((days) => (
-              <Button
-                key={days}
-                size="sm"
-                variant={range === days ? "primary" : "secondary"}
-                onClick={() =>
-                  setSearchParams((prev) => {
-                    const next = new URLSearchParams(prev);
-                    next.set("range", String(days));
-                    return next;
-                  })
-                }
-              >
-                {days}d
-              </Button>
-            ))}
-          </div>
-        }
+        actions={rangeButtons}
       />
       )}
       <p className="text-sm text-muted-foreground">
         Logical file changes recorded by maintenance, not a billing line. Unmeasured days are gaps, not zero.
       </p>
+      {history.isError ? (
+        <QueryErrorAlert error={history.error} title="Failed to load impact history" />
+      ) : (
+      <>
       <RankedBars
         title="Which days have a measured reclaim?"
         unit="GB"
         provenance="partial"
+        limit={Math.max(chartRows.length, 1)}
         items={chartRows.map((row) => ({ id: row.day, label: `${row.day} · ${row.label}`, value: row.gb }))}
       />
       <DataTable
@@ -127,6 +137,8 @@ export const Impact = ({ embedded = false }: { embedded?: boolean }) => {
         emptyTitle="No impact history"
         emptyDescription="The daily ledger appears after the reporter records a day."
       />
+      </>
+      )}
     </div>
   );
 };

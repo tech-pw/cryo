@@ -21,16 +21,18 @@ export const getSearchResultHref = (hit: SearchHit): string => {
   if (hit.type === "tables" && hit.table_id) {
     return `/tables/${hit.table_id}`;
   }
-  if (hit.type === "schemas" && hit.catalog && hit.schema_name) {
-    return `/tables?catalog=${encodeURIComponent(hit.catalog)}&schema=${encodeURIComponent(hit.schema_name)}`;
+  if (hit.type === "schemas" && hit.schema_name) {
+    const catalogId =
+      hit.catalog_id ?? (hit.id.includes(":") ? hit.id.slice(0, hit.id.indexOf(":")) : hit.id);
+    return `/tables?catalog=${encodeURIComponent(catalogId)}&schema=${encodeURIComponent(hit.schema_name)}`;
   }
   if (hit.type === "catalogs") {
-    return `/tables?catalog=${encodeURIComponent(hit.name)}`;
+    return `/tables?catalog=${encodeURIComponent(hit.catalog_id ?? hit.id)}`;
   }
   if (hit.table_id) {
     return `/tables/${hit.table_id}`;
   }
-  return `/tables?q=${encodeURIComponent(hit.name)}`;
+  return searchResultsHref(hit.name);
 };
 
 export const formatMatchReason = (hit: SearchHit): string => {

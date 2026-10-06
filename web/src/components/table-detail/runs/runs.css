@@ -1,6 +1,7 @@
 .td-runs {
   --tone-success: var(--color-status-success);
   --tone-failed: var(--color-status-danger);
+  --tone-attention: var(--color-status-warning);
   --tone-running: var(--color-chart-primary);
   --tone-queued: var(--color-muted-subtle);
   --tone-skipped: var(--color-border-strong);
@@ -35,6 +36,7 @@
 
 .td-runs-count[data-tone="success"] { color: var(--tone-success); font-weight: 600; }
 .td-runs-count[data-tone="failed"] { color: var(--tone-failed); font-weight: 600; }
+.td-runs-count[data-tone="attention"] { color: var(--tone-attention); font-weight: 600; }
 .td-runs-count[data-tone="running"] { color: var(--tone-running); font-weight: 600; }
 
 .td-runs-tools {
@@ -171,6 +173,7 @@
 
 .td-grid-cell[data-tone="success"] { background: var(--tone-success); }
 .td-grid-cell[data-tone="failed"] { background: var(--tone-failed); }
+.td-grid-cell[data-tone="attention"] { background: var(--tone-attention); }
 .td-grid-cell[data-tone="running"] {
   background: var(--tone-running);
   animation: td-pulse 1.4s ease-in-out infinite;
@@ -274,6 +277,10 @@
   color: var(--tone-success);
 }
 
+.td-run-status[data-tone="attention"] {
+  background: color-mix(in srgb, var(--tone-attention) 14%, transparent);
+  color: var(--tone-attention);
+}
 .td-run-status[data-tone="failed"] {
   background: color-mix(in srgb, var(--tone-failed) 14%, transparent);
   color: var(--tone-failed);

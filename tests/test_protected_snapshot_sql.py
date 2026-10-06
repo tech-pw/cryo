@@ -29,7 +29,7 @@ def test_expire_omits_keep_param_when_no_protected_ids() -> None:
     assert "protected_snapshot_ids" not in expire_op.params
 
 
-def test_trino_renderer_emits_set_snapshots_then_expire() -> None:
+def test_trino_renderer_does_not_emit_set_snapshots() -> None:
     plan = build_plan(
         _stats(),
         [],
@@ -39,10 +39,9 @@ def test_trino_renderer_emits_set_snapshots_then_expire() -> None:
     )
     rendered = render_trino(plan)
     expire = next(s for s in rendered if str(s.action).endswith("expire_snapshots"))
-    assert "set_snapshots" in expire.sql
-    assert "ARRAY[7, 9]" in expire.sql
-    assert expire.sql.find("set_snapshots") < expire.sql.find("expire_snapshots")
+    assert "set_snapshots" not in expire.sql
     assert "retention_threshold => '7d'" in expire.sql
+    assert "retain_last => 1" in expire.sql
 
 
 def test_trino_renderer_skips_set_when_no_protected_ids() -> None:
@@ -66,9 +65,12 @@ def test_spark_renderer_tags_the_protected_snapshot_before_expire() -> None:
     rendered = render_spark(plan)
     expire = next(s for s in rendered if str(s.action).endswith("expire_snapshots"))
     assert "set_snapshot_ref" not in expire.sql
-    tag_stmt, expire_stmt = expire.sql.split(";\n")
-    assert tag_stmt == (
-        "ALTER TABLE iceberg.s.t CREATE OR REPLACE TAG `cryo-protected-latest` AS OF VERSION 200"
+    first, second, expire_stmt = expire.sql.split(";\n")
+    assert first == (
+        "ALTER TABLE iceberg.s.t CREATE OR REPLACE TAG `cryo-protect-100` AS OF VERSION 100"
+    )
+    assert second == (
+        "ALTER TABLE iceberg.s.t CREATE OR REPLACE TAG `cryo-protect-200` AS OF VERSION 200"
     )
     assert expire_stmt.startswith("CALL iceberg.system.expire_snapshots(")
 

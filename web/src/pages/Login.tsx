@@ -20,7 +20,7 @@ export const Login = () => {
     signInWithPassword,
     signInWithGoogle,
     startOidcSignIn,
-    loading,
+    submitting,
     error,
     authMode,
     devTokenEnabled,
@@ -84,7 +84,7 @@ export const Login = () => {
                 Sign in with Google
               </Button>
             ) : null}
-            <Button variant="primary" loading={loading} className="w-full" onClick={startOidcSignIn}>
+            <Button variant="primary" loading={submitting} className="w-full" onClick={startOidcSignIn}>
               <Lock aria-hidden="true" />
               Sign in with SSO
             </Button>
@@ -96,6 +96,12 @@ export const Login = () => {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const typedPassword = document.getElementById("login-password");
+    const passwordValue = typedPassword instanceof HTMLInputElement ? typedPassword.value : password;
+    if (passwordLoginEnabled && passwordValue.trim()) {
+      void signInWithPassword(subject, passwordValue);
+      return;
+    }
     void signIn(role, subject);
   };
 
@@ -175,15 +181,9 @@ export const Login = () => {
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     autoComplete="current-password"
-                    required
                   />
                 </div>
-                <Button
-                  type="button"
-                  variant="primary"
-                  className="w-full"
-                  onClick={() => void signInWithPassword(subject, password)}
-                >
+                <Button type="submit" variant="primary" className="w-full" loading={submitting}>
                   Sign in with password
                 </Button>
               </>
@@ -210,7 +210,7 @@ export const Login = () => {
             <Button
               type="submit"
               variant="primary"
-              loading={loading}
+              loading={submitting}
               disabled={!devTokenEnabled}
               className="w-full"
             >

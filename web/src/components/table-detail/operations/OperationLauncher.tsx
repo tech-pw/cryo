@@ -50,7 +50,7 @@ export const settingLines = (
 ): string[] => {
   if (op === "expire_snapshots") {
     const days = numberParam(params, "retention_days") ?? 7;
-    const lines = [`Keeps snapshots from the last ${days} day${days === 1 ? "" : "s"}; protected snapshots are never expired.`];
+    const lines = [`Keeps snapshots from the last ${days} day${days === 1 ? "" : "s"} and the retain-last floor. Spark expire also keeps ids recorded on the Snapshots tab. Trino expire cannot skip one id.`];
     if (commitsPerDay != null && commitsPerDay >= 20) {
       lines.push(`~${Math.round(commitsPerDay)} commits/day, so the planner may tighten retention to 1–3 days (recorded in the run's plan notes).`);
     }
@@ -188,9 +188,14 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
             <span className="td-op-dialog-kicker" data-destructive={destructive || undefined}>
               {destructive ? "Deletes files" : "Safe to run"}
             </span>
-            <DialogTitle>Run {cart.length === 1 ? OPERATION_CATALOG[cart[0]].title.toLowerCase() : `${cart.length} operations`}</DialogTitle>
+            <DialogTitle>
+              {cart.length === 1 ? OPERATION_CATALOG[cart[0]].title : `Queue ${cart.length} operations`}
+            </DialogTitle>
             <DialogDescription>
-              On <code>{tableName}</code>, as one run, in this order. Only these operations run, not the rest of the workflow.
+              On <code>{tableName}</code>. This queues a run. It starts when the engine has a free slot.
+              {cart.includes("optimize")
+                ? " Compact may also rewrite position-delete files or compute statistics when the workflow planner emits them."
+                : " Only the operations listed here are requested."}
             </DialogDescription>
           </DialogHeader>
 
@@ -248,7 +253,7 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
               onClick={() => run.mutate(cart)}
             >
               <Play aria-hidden="true" />
-              {cart.length === 1 ? `${OPERATION_CATALOG[cart[0]].verb} now` : `Run ${cart.length} operations`}
+              {cart.length === 1 ? `Queue ${OPERATION_CATALOG[cart[0]].title}` : `Queue ${cart.length} operations`}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   assistantErrorMessage,
@@ -47,7 +48,8 @@ const writeWidth = (width: number): void => {
 };
 
 export const AskCryoDrawer = () => {
-  const { open, setOpen, pending, conversationId, setConversationId, panel, setPanel } = useAssistant();
+  const navigate = useNavigate();
+  const { open, setOpen, pending, conversationId, setConversationId, panel, setPanel, openAssistant } = useAssistant();
   const { subject } = useAuth();
   const { api, token } = useAuth();
   const pageContext = usePageContext();
@@ -174,8 +176,8 @@ export const AskCryoDrawer = () => {
   useEffect(() => {
     if (!conversationId || seenAsk.current === conversationId) return;
     seenAsk.current = conversationId;
-    setOpen(true);
-  }, [conversationId, setOpen]);
+    openAssistant();
+  }, [conversationId, openAssistant]);
 
   useEffect(() => {
     if (!conversationId || sendingRef.current) return;
@@ -257,7 +259,7 @@ export const AskCryoDrawer = () => {
         type="button"
         className="fixed bottom-5 right-5 z-40 flex h-12 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground shadow-lg"
         aria-label="Ask Cryo"
-        onClick={() => setOpen(true)}
+        onClick={() => openAssistant()}
       >
         Ask Cryo
       </button>
@@ -294,6 +296,10 @@ export const AskCryoDrawer = () => {
                 principalId: subject || "anonymous",
                 tenantId: "local"
               }}
+              onRun={() => {
+                setOpen(false);
+                navigate("/runs/batch");
+              }}
             />
           </div>
         ) : (
@@ -329,6 +335,12 @@ export const AskCryoDrawer = () => {
                   sendingRef.current = false;
                   setConversationId(id);
                   setHistoryOpen(false);
+                  setMessages([]);
+                }}
+                onDeleted={(id) => {
+                  if (id !== conversationId) return;
+                  sendingRef.current = false;
+                  setConversationId(null);
                   setMessages([]);
                 }}
               />

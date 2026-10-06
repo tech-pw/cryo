@@ -18,6 +18,7 @@ from cryo.config import get_settings
 from cryo.db.model_utils import qualified_table_name
 from cryo.db.models import (
     AuditLog,
+    JobStep,
     MaintenanceJob,
     QueryLog,
     Source,
@@ -648,6 +649,135 @@ def get_table_health_trends(
     )
 
 
+_NON_OPERATION_AUDIT_ACTIONS = frozenset({"force_admit"})
+_STATEMENT_PREFIXES = ("select ", "alter ", "execute ", "call ", "optimize ", "with ", "native:")
+
+
+def statements_from_detail(detail: str | None) -> list[str]:
+    """Pull rendered SQL out of an audit or step detail.
+
+    Workers store the statement as a plain string. Some writers nest a
+    ``sql_statements`` list in JSON. Error text is not a statement.
+    """
+    if not detail or not detail.strip():
+        return []
+    text = detail.strip()
+    try:
+        parsed: object = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        raw = parsed.get("sql_statements")
+        if isinstance(raw, list):
+            return [str(item).strip() for item in raw if str(item).strip()]
+        return []
+    lowered = text.lower()
+    if lowered.startswith(_STATEMENT_PREFIXES):
+        return [text]
+    return []
+
+
+def collect_job_statements(
+    audits: list[AuditLog],
+    steps: list[JobStep],
+) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for step in sorted(steps, key=lambda item: item.step_index):
+        for statement in statements_from_detail(step.detail):
+            if statement not in seen:
+                seen.add(statement)
+                ordered.append(statement)
+    for audit in sorted(audits, key=lambda item: item.ts or datetime.min.replace(tzinfo=UTC)):
+        if audit.action in _NON_OPERATION_AUDIT_ACTIONS:
+            continue
+        for statement in statements_from_detail(audit.detail):
+            if statement not in seen:
+                seen.add(statement)
+                ordered.append(statement)
+    return ordered
+
+
+def aggregate_job_file_counts(
+    audits: list[AuditLog],
+) -> tuple[int | None, int | None, float | None]:
+    inputs = [
+        audit.input_files_count
+        for audit in audits
+        if audit.action not in _NON_OPERATION_AUDIT_ACTIONS and audit.input_files_count is not None
+    ]
+    outputs = [
+        audit.output_files_count
+        for audit in audits
+        if audit.action not in _NON_OPERATION_AUDIT_ACTIONS and audit.output_files_count is not None
+    ]
+    input_count = sum(inputs) if inputs else None
+    output_count = sum(outputs) if outputs else None
+    ratio = None
+    if input_count is not None and output_count:
+        ratio = float(input_count) / output_count
+    return input_count, output_count, ratio
+
+
+def job_duration_seconds(started_at: datetime | None, finished_at: datetime | None) -> float | None:
+    if started_at is None or finished_at is None:
+        return None
+    return (finished_at - started_at).total_seconds()
+
+
+def format_partition_predicate(predicate: object) -> str:
+    if isinstance(predicate, str):
+        return predicate
+    if not isinstance(predicate, dict):
+        return str(predicate)
+    reason = predicate.get("unsupported_reason")
+    if isinstance(reason, str) and reason:
+        return reason
+    terms = predicate.get("terms")
+    if not isinstance(terms, list) or not terms:
+        return "full table"
+    parts: list[str] = []
+    for term in terms:
+        if not isinstance(term, dict):
+            parts.append(str(term))
+            continue
+        column = term.get("partition_field") or term.get("base_column") or "partition"
+        transform = term.get("transform")
+        label = f"{transform}({column})" if transform and transform != "identity" else str(column)
+        parts.append(f"{label} = {term.get('value')}")
+    return " AND ".join(parts)
+
+
+def partition_predicates_from_plan(plan: object) -> list[str] | None:
+    if not isinstance(plan, dict):
+        return None
+    operations = plan.get("operations")
+    if not isinstance(operations, list):
+        return None
+    predicates: list[str] = []
+    for operation in operations:
+        if not isinstance(operation, dict):
+            continue
+        raw = operation.get("predicates")
+        if isinstance(raw, list):
+            predicates.extend(format_partition_predicate(item) for item in raw)
+    return predicates or None
+
+
+def operation_label_from_plan(plan: object) -> str:
+    if not isinstance(plan, dict):
+        return "unknown"
+    operations = plan.get("operations")
+    if not isinstance(operations, list):
+        return "unknown"
+    types = [
+        str(operation.get("type"))
+        for operation in operations
+        if isinstance(operation, dict) and operation.get("type")
+    ]
+    return ", ".join(types) if types else "unknown"
+
+
 @router.get("/jobs/{job_id}/detail", response_model=JobDetailRead, tags=["runs"])
 def get_job_detail(
     job_id: UUID,
@@ -660,72 +790,36 @@ def get_job_detail(
         raise HTTPException(status_code=404, detail="Job not found")
     get_scoped_resource(session, Table, job.table_id, resource_type="Table")
 
-    # Get associated audit log entry
-    audit_stmt = (
-        select(AuditLog).where(AuditLog.job_id == job.id).order_by(desc(AuditLog.ts)).limit(1)
+    audits = list(
+        session.scalars(
+            select(AuditLog).where(AuditLog.job_id == job.id).order_by(AuditLog.ts).limit(500)
+        )
     )
-    audit = session.execute(audit_stmt).scalar_one_or_none()
+    steps = list(
+        session.scalars(
+            select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.step_index).limit(500)
+        )
+    )
 
-    # Get table name
     table = session.get(Table, job.table_id)
     table_name = qualified_table_name(table) if table else str(job.table_id)
-
-    # Calculate effectiveness ratio
-    effectiveness_ratio = None
-    if audit and audit.input_files_count and audit.output_files_count:
-        effectiveness_ratio = float(audit.input_files_count) / audit.output_files_count
-
-    # Extract SQL from audit detail
-    sql_statements = None
-    if audit and audit.detail:
-        try:
-            detail = json.loads(audit.detail) if isinstance(audit.detail, str) else audit.detail
-            if isinstance(detail, dict):
-                raw_statements = detail.get("sql_statements", [])
-                if isinstance(raw_statements, list):
-                    sql_statements = [str(statement) for statement in raw_statements]
-        except Exception:
-            pass
-
-    # Extract partition predicates
-    partition_predicates = None
-    if job.plan and "operations" in job.plan:
-        operations = job.plan["operations"]
-        predicates: list[str] = []
-        if isinstance(operations, list):
-            for op in operations:
-                if isinstance(op, dict):
-                    raw_predicates = op.get("predicates")
-                    if isinstance(raw_predicates, list):
-                        predicates.extend(str(pred) for pred in raw_predicates)
-        partition_predicates = predicates if predicates else None
-
-    operation_type = "unknown"
-    if job.plan:
-        operations = job.plan.get("operations", [])
-        if isinstance(operations, list) and operations:
-            first_operation = operations[0]
-            if isinstance(first_operation, dict):
-                operation_type = str(first_operation.get("type", "unknown"))
-
-    duration_seconds = None
-    if audit and audit.duration_ms is not None:
-        duration_seconds = audit.duration_ms / 1000
+    input_files, output_files, effectiveness_ratio = aggregate_job_file_counts(audits)
+    sql_statements = collect_job_statements(audits, steps) or None
 
     return JobDetailRead(
         job_id=job_id,
         run_id=job.run_id,
         table_id=job.table_id,
         table_name=table_name,
-        operation_type=operation_type,
+        operation_type=operation_label_from_plan(job.plan),
         status=job.status,
         engine=job.destination.engine if job.destination else "unknown",
         replica=job.replica,
-        started_at=job.started_at or (audit.ts if audit else None),
+        started_at=job.started_at,
         completed_at=job.finished_at,
-        duration_seconds=duration_seconds,
-        input_files_count=audit.input_files_count if audit else None,
-        output_files_count=audit.output_files_count if audit else None,
+        duration_seconds=job_duration_seconds(job.started_at, job.finished_at),
+        input_files_count=input_files,
+        output_files_count=output_files,
         effectiveness_ratio=effectiveness_ratio,
         # Previously suppressed unless status == FAILED, so a queued/deferred job's
         # "table_locked"/"cooldown"/etc reason (job.error is set for those statuses too)
@@ -733,7 +827,7 @@ def get_job_detail(
         # progressing short of asking someone to check server-side state by hand.
         error_message=job.error,
         sql_statements=sql_statements,
-        partition_predicates=partition_predicates,
+        partition_predicates=partition_predicates_from_plan(job.plan),
         force_admit=job.force_admit,
     )
 
@@ -913,7 +1007,9 @@ def get_sla_status(
     )
 
 
-@router.get("/cost-attribution", response_model=CostAttributionResponse, tags=["dashboards"])
+@router.get(
+    "/dashboards/cost-attribution", response_model=CostAttributionResponse, tags=["dashboards"]
+)
 def get_cost_attribution(
     session: SessionDep,
     _principal: Annotated[dict, Depends(require_viewer)],
@@ -922,7 +1018,11 @@ def get_cost_attribution(
         Query(description="Month in YYYY-MM format (default: current month)"),
     ] = None,
 ) -> CostAttributionResponse:
-    """Get cost attribution by team/department."""
+    """Team/department cost stub.
+
+    Lives off ``/cost-attribution`` so it cannot shadow the scan-cost report at
+    ``GET /api/v1/cost-attribution``.
+    """
     if month:
         try:
             year, month_num = map(int, month.split("-"))

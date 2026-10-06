@@ -96,9 +96,15 @@ export const CatalogSearch = () => {
         id="catalog-search-preview"
         align="center"
         sideOffset={6}
-        className="w-[min(32rem,calc(100vw-2rem))] p-2"
+        className="max-h-[min(24rem,calc(100vh-6rem))] w-[min(32rem,calc(100vw-2rem))] overflow-y-auto p-2"
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}
+        onInteractOutside={(event) => {
+          const target = event.target;
+          if (target instanceof Element && target.closest(".cryo-shell__search-wrap")) {
+            event.preventDefault();
+          }
+        }}
       >
         {searchQuery.isLoading ? (
           <div className="cryo-shell__search-loading">Searching…</div>

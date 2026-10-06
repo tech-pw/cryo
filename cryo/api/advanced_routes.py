@@ -824,6 +824,19 @@ def create_skillset(
     """Create a new skillset version (and optionally activate it)."""
     from cryo.ai.skillset import Skillset as SkillsetDC
     from cryo.ai.skillset import register_skillset
+    from cryo.db.models import Skillset as SkillsetRow
+
+    existing = session.scalar(
+        select(SkillsetRow).where(
+            SkillsetRow.name == payload.name,
+            SkillsetRow.version == payload.version,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A skillset with this name and version already exists",
+        )
 
     skillset = SkillsetDC(
         id="",

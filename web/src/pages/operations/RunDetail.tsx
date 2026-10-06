@@ -151,7 +151,7 @@ const failedFirst = (jobs: JobRead[]): JobRead[] => {
   const failed: JobRead[] = [];
   const rest: JobRead[] = [];
   for (const job of jobs) {
-    if (job.status.toLowerCase() === "failed") failed.push(job);
+    if (job.status.toLowerCase() === "failed" || job.status.toLowerCase() === "partial") failed.push(job);
     else rest.push(job);
   }
   return failed.length === 0 ? jobs : [...failed, ...rest];
@@ -209,7 +209,7 @@ const RunOutcomeSummary = ({
   const outcome =
     status === "succeeded"
       ? { label: "Completed", icon: CheckCircle2, tone: "success", copy: "The recorded work finished successfully." }
-      : status === "failed" || status === "partial_failed"
+      : status === "failed" || status === "partial" || status === "partial_failed"
         ? { label: "Needs attention", icon: AlertTriangle, tone: "danger", copy: "Open the failed jobs below to see the exact table and error." }
         : status === "cancelled"
           ? { label: "Cancelled", icon: AlertTriangle, tone: "warning", copy: "This run stopped before all queued work completed." }
@@ -427,7 +427,7 @@ export const RunDetail = () => {
   const forceAdmit = useMutation({
     mutationFn: (jobId: string) => forceAdmitJob(api, jobId),
     onSuccess: () => {
-      toast.success("Job re-queued for admission.");
+      toast.success("Scheduling gates bypassed. The job still waits for a free slot.");
       void queryClient.invalidateQueries({ queryKey: ["run-jobs", runId] });
     },
     onError: (error) => toast.error((error as Error).message)
@@ -516,8 +516,9 @@ export const RunDetail = () => {
       if (prev !== undefined) {
         if (status === "running" || status === "admitted") setAnnouncement("Run is now running.");
         else if (status === "succeeded") setAnnouncement("Run succeeded.");
-        else if (status === "failed" || status === "partial_failed") setAnnouncement("Run failed.");
-        else if (status === "partial") setAnnouncement("Run finished; some tables failed");
+        else if (status === "failed" || status === "partial" || status === "partial_failed") {
+          setAnnouncement("Run needs attention.");
+        }
         else if (status === "cancelled") setAnnouncement("Run cancelled.");
       }
       prevStatusRef.current = status;
@@ -585,9 +586,14 @@ export const RunDetail = () => {
         cell: ({ row }) => (
           <div className="flex min-w-0 w-full flex-wrap items-center gap-1">
             {STUCK_STATUSES.has(row.original.status) && !row.original.force_admit ? (
-              <ConfirmAction title="Bypass scheduling gates?" onConfirm={() => forceAdmit.mutate(row.original.id)}>
-                <Button size="sm" variant="secondary" loading={forceAdmit.isPending}>
-                  Force run
+              <ConfirmAction
+                title="Bypass scheduling gates?"
+                description="Skips cooldown, off-peak, benefit score, and this run's admission cutoff. A free engine slot is still required. Table locks and safety checks still apply."
+                onConfirm={() => forceAdmit.mutate(row.original.id)}
+                disabled={!cancelAccess.allowed}
+              >
+                <Button size="sm" variant="secondary" loading={forceAdmit.isPending} disabled={!cancelAccess.allowed} title={cancelAccess.reason ?? undefined}>
+                  Bypass gates
                 </Button>
               </ConfirmAction>
             ) : null}
@@ -653,7 +659,9 @@ export const RunDetail = () => {
         }
         actions={
           <div className="flex items-center gap-2">
-            {runData?.status === "failed" || runData?.status === "partial_failed" ? (
+            {runData?.status === "failed" ||
+            runData?.status === "partial" ||
+            runData?.status === "partial_failed" ? (
               <Button
                 variant="secondary"
                 onClick={() => {
@@ -664,15 +672,15 @@ export const RunDetail = () => {
                 Ask a follow-up
               </Button>
             ) : null}
-            {runData?.status === "failed" ? (
+            {runData?.status === "failed" || runData?.status === "partial" ? (
               <Button variant="secondary" loading={diagnose.isPending} onClick={() => diagnose.mutate()}>
                 Diagnose
               </Button>
             ) : null}
-            {!runFinished ? (
+            {runData && !runFinished ? (
               <ConfirmAction
                 title="Cancel this run?"
-                description="Queued jobs will be stopped; jobs already running may finish."
+                description="Marks this run cancelled and skips jobs not yet claimed. A Trino or Spark statement already running is not stopped. A native job is asked to stop."
                 onConfirm={() => cancel.mutate(false)}
                 disabled={!cancelAccess.allowed}
               >
@@ -688,7 +696,7 @@ export const RunDetail = () => {
             ) : cancellableJobs > 0 ? (
               <ConfirmAction
                 title="Cancel the remaining jobs?"
-                description={`This run has finished and keeps its recorded outcome. This stops the ${formatNumber(cancellableJobs)} ${cancellableJobs === 1 ? "job" : "jobs"} still queued, deferred or running.`}
+                description={`This run keeps its recorded outcome. ${formatNumber(cancellableJobs)} ${cancellableJobs === 1 ? "job" : "jobs"} still queued, admitted, deferred, or running will be marked skipped. An engine statement already running may still finish.`}
                 onConfirm={() => cancel.mutate(true)}
                 disabled={!cancelAccess.allowed}
               >
@@ -747,7 +755,9 @@ export const RunDetail = () => {
                   <div className="h-2 overflow-hidden rounded-full bg-[var(--color-surface-sunken)]">
                     <div
                       className={`h-full rounded-full transition-all ${
-                        runData?.status === "failed" ? "bg-[var(--color-status-danger)]" : "bg-primary"
+                        runData?.status === "failed" || runData?.status === "partial" || runData?.status === "partial_failed"
+                          ? "bg-[var(--color-status-danger)]"
+                          : "bg-primary"
                       }`}
                       style={{ width: `${scanPercent}%` }}
                     />
@@ -840,7 +850,7 @@ export const RunDetail = () => {
                 emptyDescription={
                   tableQuery.trim() || statusFilter
                     ? "No jobs match this filter."
-                    : "Adjust filters or run a scan to populate this table."
+                    : "This run has no jobs yet."
                 }
                 pagination={{
                   pageIndex: safeJobPage,
@@ -855,7 +865,7 @@ export const RunDetail = () => {
           <div className="run-console-card">
             <ConsoleShell
             title="Live log"
-            items={messages}
+            items={[...messages].reverse()}
             wsOpen={wsOpen}
             wsExhausted={wsExhausted}
             runTerminal={runFinished}
@@ -899,7 +909,8 @@ export const RunDetail = () => {
           </SheetHeader>
           {logJob ? (
             <div className="mt-4 space-y-3">
-              {jobLogMessages.length === 0 ? (
+              {logJob.error ? <p className="text-sm text-destructive">{logJob.error}</p> : null}
+              {jobLogMessages.length === 0 && !logJob.error ? (
                 <p className="text-sm text-muted-foreground">No live events for this job yet.</p>
               ) : (
                 <ul className="log-list-ul">
