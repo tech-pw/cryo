@@ -1,0 +1,12 @@
+<svg class="plate-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100" aria-hidden="true">
+  <line class="plate-ground" x1="8" y1="88" x2="152" y2="88"/>
+  <rect class="plate-core" x="28" y="48" width="88" height="28" rx="14"/>
+  <path class="plate-cut" d="M48 48v28"/>
+  <line class="plate-string" x1="108" y1="48" x2="124" y2="24"/>
+  <rect class="plate-label" x="118" y="18" width="28" height="18" rx="2"/>
+  <circle class="plate-hole" cx="124" cy="24" r="2"/>
+  <g class="plate-marker">
+    <line x1="132" y1="18" x2="132" y2="4"/>
+    <path class="plate-marker-flag" d="M132 4h14l-4 5 4 5h-14z"/>
+  </g>
+</svg>

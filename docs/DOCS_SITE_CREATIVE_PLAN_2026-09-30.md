@@ -1,5 +1,7 @@
 # Cryo docs site — creative enhancement plan
 
+> **Superseded 2026-10-05** by [`DOCS_SITE_DESIGN_RESEARCH_2026-10-05.md`](./DOCS_SITE_DESIGN_RESEARCH_2026-10-05.md). The chart engine (`charts.js`) and embedded Archify frames described below were replaced by build-time SVG diagrams and a generated site. Kept for the research it records.
+
 Status: plan only, no implementation. Scope: `site/`. This is the merged
 version of the original Claude/Anthropic-narrow plan and the broader
 2025-2026 dev-tool survey. The original plan's structure and 5 ranked

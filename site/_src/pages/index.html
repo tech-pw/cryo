@@ -1,0 +1,236 @@
+---
+title: Cryo
+lede: Cryo reads your Apache Iceberg catalogs, plans maintenance, and admits the work to Trino or Spark. Reading and writing never share a code path, and every run leaves a receipt.
+description: Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. It reads your catalogs, plans maintenance, admits the work to Trino or Spark, and leaves a receipt for every decision.
+updated: 2026-10-06
+---
+<!--
+THESIS: A calm promise first; the maintenance mechanism earns its own full-width section below.
+OWN-WORLD: Sky gradient, dot grid, Cormorant + IBM Plex, one survey-orange marker at a time.
+STORY: Read the promise, then watch one table pass through Cryo and leave maintained, with a receipt.
+FIRST VIEWPORT: Type-first hero, tally, actions, stack. No product graphic.
+-->
+<section class="hero sky" data-dots>
+    <div class="wrap hero-in">
+        <div class="hero-copy">
+            <a class="sky-pill" href="https://github.com/tech-pw/cryo"><span class="sky-dot" aria-hidden="true"></span>Pre-1.0 · Apache-2.0<span aria-hidden="true">→</span></a>
+            <h1 id="home-title">Iceberg maintenance with<br> <mark class="marker">a receipt</mark> for every decision.</h1>
+            <p class="lede">Cryo reads your catalogs, plans compaction and cleanup, and admits the work to Trino or Spark only when they have headroom.</p>
+            <dl class="tally" aria-label="Cryo at a glance">
+                <div><dt>Operations</dt><dd>7</dd></div>
+                <div><dt>Engines</dt><dd>2</dd></div>
+                <div><dt>SQL in planner</dt><dd>0</dd></div>
+                <div><dt>Receipt per action</dt><dd>1</dd></div>
+            </dl>
+            <div class="hero-actions">
+                <a class="btn btn-primary btn-lg" href="@/quickstart/">Start with the quickstart</a>
+                <a class="btn btn-ghost btn-lg" href="@/architecture/">See how it fits together</a>
+            </div>
+            <p class="stack-k">Runs against the stack you already have:</p>
+            <div class="stack marquee-track">
+                <ul>
+                    <li>Apache Iceberg</li>
+                    <li>Iceberg REST</li>
+                    <li>Hive Metastore</li>
+                    <li>AWS Glue</li>
+                    <li>Trino</li>
+                    <li>Spark on EMR</li>
+                    <li>PostgreSQL</li>
+                    <li>Redis</li>
+                    <li>Helm</li>
+                    <li>Kubernetes</li>
+                    <li>Amazon S3</li>
+                </ul>
+                <ul aria-hidden="true">
+                    <li>Apache Iceberg</li>
+                    <li>Iceberg REST</li>
+                    <li>Hive Metastore</li>
+                    <li>AWS Glue</li>
+                    <li>Trino</li>
+                    <li>Spark on EMR</li>
+                    <li>PostgreSQL</li>
+                    <li>Redis</li>
+                    <li>Helm</li>
+                    <li>Kubernetes</li>
+                    <li>Amazon S3</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="maintenance-demo reveal" data-maintenance-flow aria-labelledby="maintenance-demo-title">
+    <div class="wrap">
+        <header class="maintenance-demo-head">
+            <p class="eyebrow">What Cryo does</p>
+            <h2 id="maintenance-demo-title">Plans a safe rewrite.<br> Runs it with headroom.</h2>
+            <p>One table passes through Cryo and leaves maintained, with a receipt.</p>
+        </header>
+        <div class="maintenance-machine">
+            <include src="includes/maintenance-flow.svg"/>
+        </div>
+        <p class="maintenance-demo-foot">
+            <span>The rewrite stays partition-aware and load-aware.</span>
+            <a href="@/maintenance/">See the maintenance flow <span aria-hidden="true">→</span></a>
+        </p>
+    </div>
+</section>
+
+<section class="showcase reveal" aria-labelledby="how">
+    <div class="wrap">
+        <header class="maintenance-demo-head">
+            <p class="eyebrow">How Cryo works</p>
+            <h2 id="how">The stack you run, Cryo in the middle, the lake on the right.</h2>
+        </header>
+        <div class="window">
+            <div class="window-bar"><div class="shot-chrome" aria-hidden="true"><span></span><span></span><span></span></div>
+                <a href="@/architecture/">Full map →</a></div>
+            <div class="window-body">
+                <diagram name="platform" bare />
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="sect reveal" aria-labelledby="order">
+    <div class="wrap split">
+        <div class="split-sticky">
+            <p class="eyebrow">The order</p>
+            <h2 id="order">Compact first, then clean up.</h2>
+            <p class="sub">A run on one table walks seven operations in a fixed order. Compaction creates new files and expiry removes old ones, so a single pass reclaims the space its own compaction freed.</p>
+            <p><a class="btn" href="@/maintenance/">Read the guardrails</a></p>
+        </div>
+        <div class="ops">
+            <div class="ops-group">
+                <p class="ops-phase">Compact</p>
+                <ol>
+                    <li>
+                        <div><code>convert_deletes</code>
+                            <p>Apply delete files into data files.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div><code>rewrite_position_deletes</code>
+                            <p>Consolidate position deletes (Spark only).</p>
+                        </div>
+                    </li>
+                    <li class="is-focus">
+                        <div><code>optimize</code>
+                            <p>Merge small files, one partition chunk at a time.</p>
+                        </div>
+                    </li>
+                </ol>
+            </div>
+            <div class="ops-group">
+                <p class="ops-phase">Measure</p>
+                <ol>
+                    <li>
+                        <div><code>compute_statistics</code>
+                            <p>Refresh table statistics after the rewrite.</p>
+                        </div>
+                    </li>
+                </ol>
+            </div>
+            <div class="ops-group">
+                <p class="ops-phase">Clean up</p>
+                <ol>
+                    <li>
+                        <div><code>optimize_manifests</code>
+                            <p>Consolidate manifests.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div><code>expire_snapshots</code>
+                            <p>Drop snapshots the retention policy would not keep.</p>
+                        </div>
+                    </li>
+                    <li>
+                        <div><code>remove_orphan_files</code>
+                            <p>Delete files that no snapshot references.</p>
+                        </div>
+                    </li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="sect reveal" aria-labelledby="guarantees">
+    <div class="wrap split">
+        <div>
+            <p class="eyebrow">Guarantees</p>
+            <h2 id="guarantees">Four things Cryo will not trade away</h2>
+            <p class="sub">These are design rules of the platform, not options you switch on.</p>
+            <dl class="guarantees">
+                <div>
+                    <dt>Read stays apart from write</dt>
+                    <dd>Sources are where tables live. Destinations are where work runs. They have separate tables, configs and code.</dd>
+                    <a href="@/concepts/">How the split works</a>
+                </div>
+                <div>
+                    <dt>The plan contains no SQL</dt>
+                    <dd>The planner emits operations and partition predicates. Trino and Spark each render their own dialect.</dd>
+                    <a href="@/engines/">Engines and renderers</a>
+                </div>
+                <div>
+                    <dt>Engine load decides concurrency</dt>
+                    <dd>The governor probes live Trino and Spark load before admitting work. Adding workers does not add parallel rewrites.</dd>
+                    <a href="@/maintenance/#admission">How admission works</a>
+                </div>
+                <div>
+                    <dt>Every action leaves a receipt</dt>
+                    <dd>Table, operation, engine, status and duration are written to an audit row, whether the run succeeded or not.</dd>
+                    <a href="@/architecture/#component-jobs">Who does what</a>
+                </div>
+            </dl>
+        </div>
+        <div class="receipt" aria-label="Example audit receipts" role="img">
+            <div class="receipt-bar"><span class="pulse" aria-hidden="true"></span>audit log · live example</div>
+            <ol class="receipt-feed">
+                <li><code>optimize</code><span>analytics.events</span><em class="ok">succeeded</em><time>4m 12s</time></li>
+                <li><code>expire_snapshots</code><span>analytics.events</span><em class="ok">succeeded</em><time>18s</time></li>
+                <li><code>optimize</code><span>billing.invoices</span><em class="wait">deferred · trino busy</em><time>—</time></li>
+                <li><code>remove_orphan_files</code><span>analytics.events</span><em class="ok">succeeded</em><time>51s</time></li>
+                <li><code>optimize_manifests</code><span>crm.accounts</span><em class="ok">succeeded</em><time>9s</time></li>
+                <li><code>optimize</code><span>billing.invoices</span><em class="ok">succeeded</em><time>2m 40s</time></li>
+                <li><code>compute_statistics</code><span>crm.accounts</span><em class="ok">succeeded</em><time>22s</time></li>
+                <li><code>expire_snapshots</code><span>ops.metrics</span><em class="bad">failed · retried</em><time>3s</time></li>
+            </ol>
+        </div>
+    </div>
+</section>
+
+<section class="sect try-line reveal" aria-labelledby="try">
+    <div class="wrap">
+        <h2 id="try">See it on a demo lake</h2>
+        <p class="sub">The seeded tables have small files, stale manifests and expirable snapshots, so there is something for Cryo to find.</p>
+        <codeblock lang="bash" title="terminal">
+$ git clone https://github.com/tech-pw/cryo.git && cd Cryo
+$ make up && make seed
+        </codeblock>
+        <p><a class="btn btn-primary" href="@/quickstart/">Open the quickstart</a></p>
+    </div>
+</section>
+
+<section class="sect reveal" aria-labelledby="contributors">
+    <div class="wrap">
+        <h2 id="contributors">Built at Physics&nbsp;Wallah, by the Data Platform team.</h2>
+        <ul class="contributors">
+            <li>
+                <span class="contrib-mark" aria-hidden="true">01</span>
+                <span class="contrib-name">Name to come</span>
+                <span class="contrib-role">Data Platform, Physics Wallah</span>
+            </li>
+            <li>
+                <span class="contrib-mark" aria-hidden="true">02</span>
+                <span class="contrib-name">Name to come</span>
+                <span class="contrib-role">Data Platform, Physics Wallah</span>
+            </li>
+            <li>
+                <span class="contrib-mark" aria-hidden="true">03</span>
+                <span class="contrib-name">Name to come</span>
+                <span class="contrib-role">Data Platform, Physics Wallah</span>
+            </li>
+        </ul>
+    </div>
+</section>

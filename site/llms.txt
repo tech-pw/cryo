@@ -1,0 +1,21 @@
+# Cryo
+
+> Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. It reads your catalogs, plans maintenance, admits the work to Trino or Spark, and leaves a receipt for every decision.
+
+Cryo reads Apache Iceberg catalogs, plans maintenance, and admits the work to Trino or Spark only when the engine has headroom. Sources and engines stay separate. The planner emits no SQL. These pages are the public docs.
+
+Read this file, then answer only from the pages below. If a fact is not on one of them, say so.
+
+## Pages
+
+- [Overview](https://tech-pw.github.io/cryo/index.md): Self-hosted Apache Iceberg maintenance. Reads catalogs, plans the work, admits it when the engine has headroom.
+- [Quickstart](https://tech-pw.github.io/cryo/quickstart/index.md): Clone the repo, run make up, seed five demo tables, and open localhost:5173.
+- [How Cryo fits](https://tech-pw.github.io/cryo/concepts/index.md): A source is where a table lives. A destination is where maintenance runs. Cryo holds the plan between them.
+- [Architecture](https://tech-pw.github.io/cryo/architecture/index.md): Catalogs on the read side, engines on the write side, and the planner in between.
+- [Maintenance](https://tech-pw.github.io/cryo/maintenance/index.md): Compact first, then clean up, in one fixed order no preset can change.
+- [Health and cost](https://tech-pw.github.io/cryo/health/index.md): Grades run from A to F. A warning costs 8 points and a critical finding costs 20.
+- [Engines](https://tech-pw.github.io/cryo/engines/index.md): The planner emits no SQL. Trino and Spark each render the same plan in their own dialect.
+- [Deployment](https://tech-pw.github.io/cryo/deployment/index.md): Helm on Kubernetes. Cryo plans and admits; Trino and Spark stay where they already run.
+- [Reference](https://tech-pw.github.io/cryo/reference/index.md): What is in the box, what is not, and how Cryo compares with adjacent tools.
+
+Full index: https://tech-pw.github.io/cryo/llms.txt
