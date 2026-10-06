@@ -12,8 +12,27 @@ from cryo.scanner.failure_classifier import (
 )
 
 
-def table_to_read(table: Table) -> TableRead:
-    read = TableRead.model_validate(table)
+class _Masked:
+    """Attribute proxy that answers selected names without touching the wrapped ORM object,
+    so `from_attributes` validation can't lazy-load a deferred column."""
+
+    def __init__(self, obj: object, **overrides: object) -> None:
+        self._obj = obj
+        self._overrides = overrides
+
+    def __getattr__(self, name: str) -> object:
+        if name in self._overrides:
+            return self._overrides[name]
+        return getattr(self._obj, name)
+
+
+def table_to_read(table: Table, *, include_raw: bool = True) -> TableRead:
+    """Serialize a table. List endpoints pass ``include_raw=False``: `stats.raw` carries
+    the scanner's per-partition detail (up to MBs per table), which only detail views read."""
+    if include_raw or table.stats is None:
+        read = TableRead.model_validate(table)
+    else:
+        read = TableRead.model_validate(_Masked(table, stats=_Masked(table.stats, raw=None)))
     updates: dict[str, object] = {}
     if table.last_scan_error:
         category = classify_scan_failure(table.last_scan_error)

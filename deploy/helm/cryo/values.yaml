@@ -35,6 +35,9 @@ observability:
 api:
   replicas: 2
   port: 8000
+  # Uvicorn processes per pod. Endpoints are mostly sync and CPU-bound on JSON
+  # serialization, so one process lets a single heavy response stall every other request.
+  workers: 2
   # Ask Cryo streams SSE on POST /api/v1/assistant/conversations/{id}/messages.
   # This chart has no Ingress. The ingress in front of the API Service must set
   # proxy-buffering off and a read timeout of at least 60s for that path.
