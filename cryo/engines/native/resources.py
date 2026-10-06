@@ -1,0 +1,603 @@
+"""Smart CPU/memory sizing for native maintenance K8s Jobs.
+
+Estimates per-table resource requests from scanner stats and planned ops.
+Hard ceiling: memory requests never exceed 16Gi (16384 MiB).
+
+Chunk size is derived *from* pod memory (not a preset knob): size the pod
+from stats first, then ``chunk_size_gb_for_pod_mem`` fills the planner budget
+and ``max_bytes_per_group_for_pod_mem`` coalesces rewrite file groups up to a
+cap floored at the output target file size (never shreds below one output file).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
+
+from cryo.domain.enums import OperationType
+
+MAX_POD_MEM_MIB = 16384  # 16Gi — absolute max any pod may request
+MAX_POD_CPU_MILLI = 4000
+
+_MIN_MEM_MIB = 512
+_MIN_CPU_MILLI = 250
+
+# DataFusion/Arrow columnar rewrite has substantial fixed overhead (batch buffers, Parquet
+# writer row groups) independent of chunk size -- a 512Mi base OOM-killed on a real 73MB
+# rewrite (37 files, single partition) during production validation (2026-07-21). 2Gi floor
+# + faster per-GB scaling gives real headroom; expire/orphan keep their own lighter bases.
+_MEM_BASE_MIB = 2048
+_CPU_BASE_MILLI = 250
+
+# Rewrite: ~1024 MiB per 10 GB of planned chunk / table size, plus file/delete pressure.
+_REWRITE_MEM_PER_10GB = 1024
+_REWRITE_CPU_PER_10GB = 200
+_REWRITE_MEM_PER_1K_FILES = 64
+_REWRITE_MEM_PER_MAX_PART_FILES = 0.25  # MiB per file in hottest partition
+_REWRITE_MEM_PER_DELETE_PCT = 8  # MiB per percentage point of delete files
+
+# Fallback sizing when total_size_gb is missing/zero (new table, not yet scanned, or a scan
+# that hasn't populated size yet). Live-verified 2026-09-01: the flat "assume 100GB" fallback
+# this replaced was the dominant driver of the cryo namespace's own unused-vs-used AWS cost
+# ratio (589 of 699 live native pods requesting the 2.4 CPU/12Gi ceiling regardless of real
+# table size) -- 73% of jobs in an 8h sample were on tables under 1GB, and any of those
+# lacking a fresh stats row got sized as if it were 100GB. Missing data should default toward
+# the fleet's actual common case, not the worst case: this fleet's median table is small.
+# Two-tier estimate instead of one flat guess:
+#   1. total_files present (row exists, size just didn't populate) -> files * assumed avg
+#      file size, a real per-table signal instead of a constant.
+#   2. No stats row at all -> a small fixed floor. A genuinely huge never-scanned table will
+#      OOM-fail once and get real stats on its next attempt (the same retry path Item 1's
+#      transient-metastore-retry fix and the watcher's finalize-to-DEFERRED mechanism already
+#      exercise) rather than every unscanned table permanently paying max-ceiling cost.
+# Live-verified 2026-09-01 against real fleet table_stats (total_files > 0, total_size_gb >
+# 0): median real per-file size is 0.44MB, p90 74MB, mean 30MB (skewed by a long tail of
+# larger tables). Compaction targets are dominated by small-file-fragmented tables --
+# exactly the ones needing OPTIMIZE -- so the p90, not the mean, is the safer assumption: it
+# covers the large majority of real tables without inheriting the long tail's skew the way a
+# flat mean would.
+_MISSING_SIZE_ASSUMED_AVG_FILE_MB = 75
+_MISSING_SIZE_FILES_ONLY_FLOOR_GB = 1.0
+_MISSING_SIZE_NO_STATS_FLOOR_GB = 1.0
+
+# Expire / orphan are lighter metadata / listing workloads.
+_EXPIRE_MEM_BASE = 256
+_EXPIRE_MEM_PER_1K_SNAPSHOTS = 32
+_EXPIRE_MEM_PER_1K_MANIFESTS = 16
+_ORPHAN_MEM_BASE = 384
+_ORPHAN_MEM_PER_10GB = 48
+_ORPHAN_MEM_PER_1K_FILES = 24
+
+_HOT_MEM_FRACTION = 0.5
+_HOT_SIZE_GB = 500.0
+_HOT_MAX_FILES_PER_PARTITION = 50_000
+
+MIN_CHUNK_GB = 1.0
+MAX_CHUNK_GB = 500.0
+
+# Rewrite file-group sizing (compressed input bytes per ExecuteCompactionGroup).
+# Hard floor = target_file_size_bytes (never shred bins below one output file).
+# Packing floor = N× target so the rolling writer amortizes remainder tails
+# across multiple full outputs (avoids a small file per tiny group).
+# Cap from budget ÷ planning expansion (not a raw budget multiplier):
+# run 3483a157 coalesced to 2 GiB groups under slack=4× → ~20 GiB RSS.
+_DEFAULT_TARGET_FILE_SIZE_BYTES = 256 * 1024 * 1024
+_MAX_BYTES_PER_GROUP_HARD = 8 * 1024 * 1024 * 1024  # 8 GiB
+# Peak RSS ≈ compressed_group_bytes × factor (large tables ~10×).
+_PLANNING_MEMORY_EXPANSION = 8
+# Prefer groups that can fill this many target-sized outputs before a remainder.
+_PACKING_TARGETS_PER_GROUP = 2
+
+_REWRITE_OPS = frozenset(
+    {
+        OperationType.OPTIMIZE,
+        OperationType.OPTIMIZE.value,
+        "rewrite_data_files",
+        "optimize",
+    }
+)
+_EXPIRE_OPS = frozenset(
+    {
+        OperationType.EXPIRE_SNAPSHOTS,
+        OperationType.EXPIRE_SNAPSHOTS.value,
+        "expire_snapshots",
+    }
+)
+_ORPHAN_OPS = frozenset(
+    {
+        OperationType.REMOVE_ORPHAN_FILES,
+        OperationType.REMOVE_ORPHAN_FILES.value,
+        "remove_orphan_files",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ResourceCeilings:
+    """Effective ceilings after clamping config to hard maxima."""
+
+    max_cpu_milli: int = MAX_POD_CPU_MILLI
+    max_mem_mib: int = MAX_POD_MEM_MIB
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any] | None = None) -> ResourceCeilings:
+        cfg = config or {}
+        max_cpu = _parse_cpu_milli(
+            cfg.get("max_cpu_milli")
+            or cfg.get("maxCpu")
+            or cfg.get("k8s_max_cpu")
+            or MAX_POD_CPU_MILLI
+        )
+        max_mem = _parse_memory_mib(
+            cfg.get("max_memory_mib")
+            or cfg.get("maxMemory")
+            or cfg.get("k8s_max_memory")
+            or MAX_POD_MEM_MIB
+        )
+        return cls(
+            max_cpu_milli=max(_MIN_CPU_MILLI, min(max_cpu, MAX_POD_CPU_MILLI)),
+            max_mem_mib=max(_MIN_MEM_MIB, min(max_mem, MAX_POD_MEM_MIB)),
+        )
+
+
+@dataclass(frozen=True)
+class TableResourceEstimate:
+    cpu_milli: int
+    mem_mib: int
+    hot: bool
+    reasons: tuple[str, ...] = ()
+    has_rewrite: bool = False
+
+
+def rewrite_file_pressure_mib(stats: Mapping[str, Any] | None) -> int:
+    """Fixed file/delete overhead subtracted when inverting pod mem → chunk GB."""
+    stats = stats or {}
+    total_files = _as_int(stats.get("total_files"), 0)
+    max_files_per_partition = _as_int(stats.get("max_files_per_partition"), 0)
+    delete_file_pct = _as_float(stats.get("delete_file_pct"), 0.0)
+    total_delete_files = _as_int(stats.get("total_delete_files"), 0)
+    return (
+        int(total_files / 1000 * _REWRITE_MEM_PER_1K_FILES)
+        + int(max_files_per_partition * _REWRITE_MEM_PER_MAX_PART_FILES)
+        + int(delete_file_pct * _REWRITE_MEM_PER_DELETE_PCT)
+        + int(total_delete_files / 1000 * 32)
+    )
+
+
+def chunk_size_gb_for_pod_mem(
+    mem_mib: int,
+    stats: Mapping[str, Any] | None = None,
+) -> float:
+    """Derive planner chunk_size_gb from a pod memory request (invert rewrite formula).
+
+    Pod requests already include file/delete pressure in ``estimate_table_resources``.
+    Invert only the base + rewrite_gb term so chunk fills the data budget:
+
+    ``mem ≈ MEM_BASE + (rewrite_gb/10)*128``  (+ file pressure already in mem)
+    → ``rewrite_gb ≈ (mem - MEM_BASE) / 12.8``
+    """
+    _ = stats  # reserved if we later soft-adjust for extreme file pressure
+    capped = min(max(int(mem_mib), _MIN_MEM_MIB), MAX_POD_MEM_MIB)
+    usable = max(0, capped - _MEM_BASE_MIB)
+    chunk_gb = usable / (_REWRITE_MEM_PER_10GB / 10.0)
+    return float(max(MIN_CHUNK_GB, min(MAX_CHUNK_GB, chunk_gb)))
+
+
+def estimate_table_resources(
+    stats: Mapping[str, Any] | None,
+    *,
+    operations: Sequence[Any] | None = None,
+    plan: Mapping[str, Any] | None = None,
+    params: Mapping[str, Any] | None = None,
+    ceilings: ResourceCeilings | None = None,
+) -> TableResourceEstimate:
+    """Estimate CPU/mem for one table's planned native maintenance.
+
+    Sizes from table stats (fill toward the pod ceiling); does **not** require
+    preset ``chunk_size_gb``. Peak memory is the max across op working sets.
+    Result is always clamped to ≤16Gi.
+    """
+    caps = ceilings or ResourceCeilings()
+    stats = stats or {}
+    params = params or {}
+    op_types = _normalize_operations(operations, plan)
+
+    total_size_gb = _as_float(stats.get("total_size_gb"), 0.0)
+    total_files = _as_int(stats.get("total_files"), 0)
+    # Provisional rewrite working set: grow with table size up to what fits
+    # under the memory ceiling (inverse of the rewrite mem formula, ignoring
+    # file pressure for the provisional cap so large tables request near-max).
+    max_rewrite_gb_for_ceiling = max(
+        MIN_CHUNK_GB,
+        (caps.max_mem_mib - _MEM_BASE_MIB) / (_REWRITE_MEM_PER_10GB / 10.0),
+    )
+    if total_size_gb > 0:
+        rewrite_gb = min(total_size_gb, max_rewrite_gb_for_ceiling)
+    elif total_files > 0:
+        # A real per-table signal (row exists, size just didn't populate) beats a constant.
+        estimated_gb = total_files * _MISSING_SIZE_ASSUMED_AVG_FILE_MB / 1024.0
+        rewrite_gb = min(
+            max(estimated_gb, _MISSING_SIZE_FILES_ONLY_FLOOR_GB), max_rewrite_gb_for_ceiling
+        )
+    else:
+        # No stats row at all -- small conservative floor, not a worst-case guess. A genuinely
+        # huge never-scanned table fails once and retries with real stats rather than every
+        # unscanned table (the common case: new/small tables, per live 2026-09-01 data) paying
+        # near-ceiling cost by default.
+        rewrite_gb = min(_MISSING_SIZE_NO_STATS_FLOOR_GB, max_rewrite_gb_for_ceiling)
+
+    max_files_per_partition = _as_int(stats.get("max_files_per_partition"), 0)
+    total_snapshots = _as_int(stats.get("total_snapshots"), 0)
+    manifest_count = _as_int(stats.get("manifest_count"), 0)
+    group_concurrency = max(1, _as_int(params.get("group_concurrency"), 2))
+
+    has_rewrite = bool(op_types & _REWRITE_OPS)
+    has_expire = bool(op_types & _EXPIRE_OPS)
+    has_orphan = bool(op_types & _ORPHAN_OPS)
+    if not op_types and not params.get("metadata_only_sizing_hint"):
+        # Cost remediation plan §2, 2026-09-16 (docs/CRYO_UNUSED_COST_FIX_2026-09-16.md): an
+        # empty operations sequence defaults to "assume worst-case rewrite" because the
+        # ordinary caller shape for "empty" is genuinely unknown work (no operations were ever
+        # planned) -- but native_admit.py's sizing now also produces an empty sequence when
+        # every *planned* operation was filtered out because none of them are native-
+        # executable for this table (e.g. an OPTIMIZE-only job on a delete-heavy table, routed
+        # entirely to the SQL fallback). That's not "unknown, assume the worst" -- it's "known
+        # to be zero native work" -- so the caller sets metadata_only_sizing_hint to opt out of
+        # this default rather than pay for a rewrite this pod will never execute.
+        has_rewrite = True
+
+    peaks: list[int] = []
+    reasons: list[str] = []
+
+    if has_rewrite:
+        rewrite_mem = (
+            _MEM_BASE_MIB
+            + int(rewrite_gb / 10 * _REWRITE_MEM_PER_10GB)
+            + rewrite_file_pressure_mib(stats)
+        )
+        peaks.append(rewrite_mem)
+        reasons.append(f"rewrite_gb={rewrite_gb:.1f}")
+
+    if has_expire:
+        expire_mem = (
+            _EXPIRE_MEM_BASE
+            + int(total_snapshots / 1000 * _EXPIRE_MEM_PER_1K_SNAPSHOTS)
+            + int(manifest_count / 1000 * _EXPIRE_MEM_PER_1K_MANIFESTS)
+        )
+        peaks.append(expire_mem)
+        reasons.append(f"expire_snapshots={total_snapshots}")
+
+    if has_orphan:
+        orphan_mem = (
+            _ORPHAN_MEM_BASE
+            + int(total_size_gb / 10 * _ORPHAN_MEM_PER_10GB)
+            + int(total_files / 1000 * _ORPHAN_MEM_PER_1K_FILES)
+        )
+        peaks.append(orphan_mem)
+        reasons.append(f"orphan_files={total_files}")
+
+    if not peaks:
+        peaks.append(_MIN_MEM_MIB)
+
+    raw_mem = max(peaks)
+    mem_mib = _clamp(raw_mem, _MIN_MEM_MIB, caps.max_mem_mib)
+    if has_rewrite:
+        # Ensure group coalesce can keep ≥ packing-floor output file size,
+        # but don't size for a floor the table's own data could never fill. Uses rewrite_gb
+        # (the estimate computed above -- real size when known, otherwise the small
+        # files-based or floor default) rather than raw total_size_gb, so a missing/zero
+        # total_size_gb doesn't fall back to None here and re-inherit the uncapped packing
+        # floor this same fix is meant to avoid for the size estimate itself.
+        table_total_bytes = int(rewrite_gb * (1024**3))
+        mem_mib = _clamp(
+            mem_mib_for_group_packing(mem_mib, params, table_total_bytes=table_total_bytes),
+            _MIN_MEM_MIB,
+            caps.max_mem_mib,
+        )
+
+    raw_cpu = _CPU_BASE_MILLI
+    if has_rewrite:
+        raw_cpu += int(rewrite_gb / 10 * _REWRITE_CPU_PER_10GB)
+        raw_cpu += int(total_files / 5000 * 50) + (group_concurrency - 1) * 100
+    if has_orphan:
+        raw_cpu += 50
+    cpu_milli = _clamp(raw_cpu, _MIN_CPU_MILLI, caps.max_cpu_milli)
+
+    hot = False
+    hot_reasons: list[str] = []
+    if has_rewrite:
+        if mem_mib >= int(_HOT_MEM_FRACTION * caps.max_mem_mib):
+            hot = True
+            hot_reasons.append("mem_near_ceiling")
+        if total_size_gb >= _HOT_SIZE_GB:
+            hot = True
+            hot_reasons.append(f"size_gb>={_HOT_SIZE_GB:g}")
+        if max_files_per_partition >= _HOT_MAX_FILES_PER_PARTITION:
+            hot = True
+            hot_reasons.append("hot_partition_files")
+
+    all_reasons = tuple(reasons + hot_reasons)
+    assert mem_mib <= MAX_POD_MEM_MIB
+    assert cpu_milli <= MAX_POD_CPU_MILLI
+    return TableResourceEstimate(
+        cpu_milli=cpu_milli,
+        mem_mib=mem_mib,
+        hot=hot,
+        reasons=all_reasons,
+        has_rewrite=has_rewrite,
+    )
+
+
+def compute_job_resources(
+    size_gb: float,
+    *,
+    ceilings: ResourceCeilings | None = None,
+) -> tuple[int, int]:
+    """Backward-compatible wrapper: size from a GB working-set hint."""
+    estimate = estimate_table_resources(
+        {"total_size_gb": size_gb},
+        operations=(OperationType.OPTIMIZE,),
+        ceilings=ceilings,
+    )
+    return estimate.cpu_milli, estimate.mem_mib
+
+
+def compaction_memory_budget_bytes(mem_mib: int) -> int:
+    """In-process Go budget: leave ~25% headroom under the pod request, ≤16Gi."""
+    capped = min(mem_mib, MAX_POD_MEM_MIB)
+    budget_mib = max(_MIN_MEM_MIB, int(capped * 0.75))
+    return budget_mib * 1024 * 1024
+
+
+def packing_floor_bytes(
+    params: Mapping[str, Any] | None = None,
+    *,
+    table_total_bytes: int | None = None,
+) -> int:
+    """Minimum coalesce size that keeps output files at/above target size.
+
+    One target is the shred floor; ``_PACKING_TARGETS_PER_GROUP`` targets lets
+    the rolling writer finish multiple full files before a remainder tail.
+
+    ``table_total_bytes``, when given, caps the floor at what the table could
+    ever actually need: a table smaller than the uncapped floor (e.g. a 0.5GB
+    table against the default 512MiB floor) cannot produce a group that large
+    regardless of how much memory the pod requests, so sizing for it is pure
+    waste, not safety margin. The shred floor (one target file size) is never
+    reduced below -- that's a compaction-quality constant, unrelated to table
+    size. Confirmed live, 2026-08-06: native dispatch pods averaged 154MiB
+    actual RSS against ~6GiB requested (2.5% utilization) fleet-wide, since
+    the uncapped floor sized every rewrite job as if it had >=512MiB of
+    compressed data to coalesce even when the whole table didn't.
+    """
+    target = target_file_size_bytes_from_params(params)
+    floor = target * _PACKING_TARGETS_PER_GROUP
+    if table_total_bytes is not None and table_total_bytes > 0:
+        floor = max(target, min(floor, table_total_bytes))
+    return floor
+
+
+def mem_mib_for_group_packing(
+    mem_mib: int,
+    params: Mapping[str, Any] | None = None,
+    *,
+    table_total_bytes: int | None = None,
+) -> int:
+    """Raise pod mem so ``budget / planning_expansion`` can hold the packing floor.
+
+    Without this bump, small rewrite estimates (e.g. ~682 MiB for a 4.5 GiB
+    table) force ``max_bytes_per_group`` down to a single target and produce
+    one undersized remainder file per group.
+
+    ``table_total_bytes`` caps the floor this bump targets -- see
+    ``packing_floor_bytes``. A no-op for tables at/above the uncapped floor.
+    """
+    packing = packing_floor_bytes(params, table_total_bytes=table_total_bytes)
+    needed_budget = packing * _PLANNING_MEMORY_EXPANSION
+    # Invert compaction_memory_budget_bytes: budget_mib = int(mem * 0.75).
+    needed_budget_mib = max(_MIN_MEM_MIB, (needed_budget + (1024 * 1024) - 1) // (1024 * 1024))
+    needed_mem_mib = int((needed_budget_mib + 0.749999) / 0.75)
+    return min(MAX_POD_MEM_MIB, max(int(mem_mib), needed_mem_mib, _MIN_MEM_MIB))
+
+
+def target_file_size_bytes_from_params(params: Mapping[str, Any] | None = None) -> int:
+    """Output target file size used as the floor for rewrite file-group bytes."""
+    params = params or {}
+    raw = params.get("target_file_size_bytes")
+    if raw is not None:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+    file_size_mb = params.get("file_size_mb")
+    if file_size_mb is not None:
+        try:
+            mb = int(file_size_mb)
+            if mb > 0:
+                return mb * 1024 * 1024
+        except (TypeError, ValueError):
+            pass
+    return _DEFAULT_TARGET_FILE_SIZE_BYTES
+
+
+def max_bytes_per_group_for_pod_mem(
+    mem_mib: int,
+    params: Mapping[str, Any] | None = None,
+    *,
+    chunk_size_gb: float | None = None,
+    table_total_bytes: int | None = None,
+) -> int:
+    """Derive rewrite ``max_bytes_per_group`` from pod memory / chunk budget.
+
+    iceberg-go packs candidates toward ``target_file_size_bytes``; Cryo then
+    coalesces same-partition bins up to this cap. Rules:
+
+    - Never below ``target_file_size_bytes`` (avoids shredding → small outputs).
+    - Prefer at least ``_PACKING_TARGETS_PER_GROUP`` × target when the budget
+      allows, so rolling-writer remainders stay rare.
+    - Upper-bounded by ``compaction_memory_budget_bytes / planning_expansion``
+      so decode expansion cannot turn one group into multi-× pod RSS.
+    - Grows with derived ``chunk_size_gb`` and pod compaction budget.
+    - Hard-capped at 8 GiB per group for blast-radius / RSS safety.
+    """
+    params = params or {}
+    target = target_file_size_bytes_from_params(params)
+    packing = packing_floor_bytes(params, table_total_bytes=table_total_bytes)
+    chunk_gb = (
+        float(chunk_size_gb) if chunk_size_gb is not None else chunk_size_gb_for_pod_mem(mem_mib)
+    )
+    chunk_bytes = max(target, int(chunk_gb * (1024**3)))
+    budget = compaction_memory_budget_bytes(mem_mib)
+    expansion = max(1, _as_int(params.get("memory_expansion_factor"), _PLANNING_MEMORY_EXPANSION))
+    # Cap at the planning factor so the admit-gate default (96×) does not force
+    # sub-target groups; a lower explicit factor may enlarge the safe byte cap.
+    planning_expansion = min(expansion, _PLANNING_MEMORY_EXPANSION)
+    safe_bytes = budget // planning_expansion
+    # Shred floor = one target; packing floor when memory admits it.
+    floor = packing if safe_bytes >= packing else target
+    safe_bytes = max(floor, safe_bytes)
+    scaled = min(chunk_bytes, safe_bytes, _MAX_BYTES_PER_GROUP_HARD)
+    return max(floor, int(scaled))
+
+
+_GROUP_CONCURRENCY_MIN = 2
+_GROUP_CONCURRENCY_MAX = 8
+# Aim to keep a rewrite under this many sequential commit rounds. group_concurrency=2
+# (the flat historical default) was validated on a 24-48-file local-MinIO fixture
+# (docs/native-go-compaction-throughput.md) -- three orders of magnitude below real
+# tables with hundreds of partitions. Confirmed live, 2026-07-21: a 340-partition table
+# at concurrency=2 needed ~170 sequential rounds, accounting for the bulk of a
+# 46-minute rewrite. Scale toward this target instead of a flat constant.
+_GROUP_CONCURRENCY_TARGET_ROUNDS = 40
+
+
+def group_concurrency_for_table(
+    stats: Mapping[str, Any] | None,
+    *,
+    max_cpu_milli: int = MAX_POD_CPU_MILLI,
+) -> int:
+    """Scale OPTIMIZE's group_concurrency toward the table's partition count.
+
+    Each concurrent group is CPU-bound in practice (Arrow/Parquet decode, zstd,
+    memmove -- see docs/native-go-compaction-throughput.md's CPU profile), so also
+    cap by the pod's CPU ceiling: no point staging more groups in parallel than
+    there is CPU to actually run them concurrently.
+    """
+    stats = stats or {}
+    total_partitions = _as_int(stats.get("total_partitions"), 0)
+    if total_partitions <= 0:
+        return _GROUP_CONCURRENCY_MIN
+    wanted = -(-total_partitions // _GROUP_CONCURRENCY_TARGET_ROUNDS)  # ceil div
+    cpu_cap = max(_GROUP_CONCURRENCY_MIN, max_cpu_milli // 1000)
+    return max(_GROUP_CONCURRENCY_MIN, min(wanted, _GROUP_CONCURRENCY_MAX, cpu_cap))
+
+
+def derive_chunk_params(
+    mem_mib: int,
+    stats: Mapping[str, Any] | None,
+    base_params: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Merge pod-derived rewrite knobs into planner/execute params.
+
+    Always sets ``chunk_size_gb`` and ``compaction_memory_budget_bytes``.
+    Sets ``max_bytes_per_group`` unless the caller already provided an explicit
+    override (e.g. dense-table memory tuning).
+    """
+    merged = dict(base_params or {})
+    table_size_gb = _as_float((stats or {}).get("total_size_gb"), 0.0)
+    table_total_bytes = int(table_size_gb * (1024**3)) if table_size_gb > 0 else None
+    sized_mem = mem_mib_for_group_packing(mem_mib, merged, table_total_bytes=table_total_bytes)
+    chunk = chunk_size_gb_for_pod_mem(sized_mem, stats)
+    merged["chunk_size_gb"] = chunk
+    merged["compaction_memory_budget_bytes"] = compaction_memory_budget_bytes(sized_mem)
+    if "max_bytes_per_group" not in merged:
+        merged["max_bytes_per_group"] = max_bytes_per_group_for_pod_mem(
+            sized_mem, merged, chunk_size_gb=chunk, table_total_bytes=table_total_bytes
+        )
+    return merged
+
+
+def _normalize_operations(
+    operations: Sequence[Any] | None,
+    plan: Mapping[str, Any] | None,
+) -> set[Any]:
+    result: set[Any] = set()
+    if operations:
+        for op in operations:
+            if isinstance(op, OperationType):
+                result.add(op)
+                result.add(op.value)
+            elif isinstance(op, str):
+                result.add(op)
+            elif isinstance(op, Mapping):
+                op_type = op.get("type") or op.get("operation")
+                if op_type is not None:
+                    result.add(op_type)
+            else:
+                op_type = getattr(op, "type", None)
+                if op_type is not None:
+                    result.add(op_type)
+                    if isinstance(op_type, OperationType):
+                        result.add(op_type.value)
+    if plan and not result:
+        for op in plan.get("operations") or ():
+            if isinstance(op, Mapping):
+                op_type = op.get("type")
+                if op_type is not None:
+                    result.add(op_type)
+            elif isinstance(op, str):
+                result.add(op)
+    return result
+
+
+def _clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(high, int(value)))
+
+
+def _as_float(value: Any, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_int(value: Any, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_cpu_milli(value: Any) -> int:
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text.endswith("m"):
+            return int(float(text[:-1]))
+        return int(float(text) * 1000)
+    return MAX_POD_CPU_MILLI
+
+
+def _parse_memory_mib(value: Any) -> int:
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text.endswith("gi"):
+            return int(float(text[:-2]) * 1024)
+        if text.endswith("g"):
+            return int(float(text[:-1]) * 1024)
+        if text.endswith("mi"):
+            return int(float(text[:-2]))
+        if text.endswith("m"):
+            return int(float(text[:-1]))
+        return int(float(text))
+    return MAX_POD_MEM_MIB

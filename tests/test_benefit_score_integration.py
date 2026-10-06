@@ -1,0 +1,1594 @@
+"""Integration tests for AutoComp benefit scoring."""
+
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import select
+
+from cryo.db.models import AuditLog, QueryLog, Source, Table, TablePartition, TableStats
+from cryo.planner.benefit_score import (
+    _GC_COLLECT_EVERY_N_TABLES,
+    DEFAULT_MOOP_WEIGHTS,
+    compute_benefit_score,
+    compute_moop_scores,
+    enhanced_bcr_from_table,
+    get_compaction_effectiveness_stats,
+    get_top_compaction_candidates,
+    update_all_benefit_scores,
+    update_all_benefit_scores_batch,
+    update_partition_benefit_scores,
+    update_table_effectiveness,
+)
+
+
+def _seed_source(session) -> Source:
+    source = Source(
+        id=uuid4(),
+        name=f"source-{uuid4()}",
+        type="rest",
+        config={},
+    )
+    session.add(source)
+    session.flush()
+    return source
+
+
+def _seed_table(session, *, schema_name: str, table_name: str) -> Table:
+    source = _seed_source(session)
+    table = Table(
+        id=uuid4(),
+        source_id=source.id,
+        schema_name=schema_name,
+        table_name=table_name,
+        is_active=True,
+    )
+    session.add(table)
+    session.flush()
+    return table
+
+
+def test_compute_benefit_score():
+    """Test benefit score calculation."""
+    score = compute_benefit_score(
+        small_files=100,
+        query_frequency=50.0,
+        partition_size_gb=10.0,
+    )
+    assert score > 100.0
+
+    score = compute_benefit_score(
+        small_files=10,
+        query_frequency=1.0,
+        partition_size_gb=10.0,
+    )
+    assert score < 10.0
+
+    score = compute_benefit_score(
+        small_files=0,
+        query_frequency=100.0,
+        partition_size_gb=1.0,
+    )
+    assert score == 0.0
+
+
+def test_compute_benefit_score_scan_cost_multiplier_is_neutral_when_unknown():
+    """avg_bytes_per_query defaults to None -- every pre-existing caller that never learned
+    about this parameter must keep scoring exactly as before it existed."""
+    without_signal = compute_benefit_score(
+        small_files=100, query_frequency=10.0, partition_size_gb=5.0
+    )
+    with_none = compute_benefit_score(
+        small_files=100, query_frequency=10.0, partition_size_gb=5.0, avg_bytes_per_query=None
+    )
+    assert without_signal == with_none
+
+
+def test_compute_benefit_score_rewards_tables_with_expensive_scans():
+    """Two tables, identical fragmentation and identical query *count* -- the one whose queries
+    actually scan more bytes per hit (the real Trino cost signal) must score higher. This is
+    the exact gap a count-only query_frequency term can't see."""
+    cheap_queries = compute_benefit_score(
+        small_files=200,
+        query_frequency=20.0,
+        partition_size_gb=10.0,
+        avg_bytes_per_query=10 * 1024 * 1024,  # 10MB/query -- cheap
+    )
+    expensive_queries = compute_benefit_score(
+        small_files=200,
+        query_frequency=20.0,
+        partition_size_gb=10.0,
+        avg_bytes_per_query=50 * 1024 * 1024 * 1024,  # 50GB/query -- real Trino cost driver
+    )
+    assert expensive_queries > cheap_queries
+
+
+def test_compute_benefit_score_scan_cost_multiplier_is_bounded():
+    """An extreme outlier (real sample: one query scanned 525GB) shouldn't let scan cost alone
+    drown out every other trait -- see _MAX_BYTES_MULTIPLIER's rationale in benefit_score.py."""
+    from cryo.planner.benefit_score import _MAX_BYTES_MULTIPLIER, _scan_cost_multiplier
+
+    huge = _scan_cost_multiplier(525 * 1024 * 1024 * 1024)  # 525GB, the real observed outlier
+    assert huge == _MAX_BYTES_MULTIPLIER
+
+    tiny = _scan_cost_multiplier(1)  # 1 byte -- degenerate small end
+    assert tiny > 0.0  # never suppresses the score to zero on its own
+
+
+def test_compute_benefit_score_scan_cost_multiplier_zero_or_negative_is_neutral():
+    from cryo.planner.benefit_score import _scan_cost_multiplier
+
+    assert _scan_cost_multiplier(0) == 1.0
+    assert _scan_cost_multiplier(-5.0) == 1.0
+
+
+def test_enhanced_bcr_from_table_scan_cost_is_neutral_when_unknown():
+    """ROIGate.decide() callers that don't pass avg_bytes_per_query (or pass None) must get
+    identical BCR breakdowns to before this parameter existed."""
+    stats = {
+        "query_count_30d": 100,
+        "small_files_count": 500,
+        "delete_file_pct": 10.0,
+        "total_size_gb": 20.0,
+    }
+    without_signal = enhanced_bcr_from_table(stats)
+    with_none = enhanced_bcr_from_table(stats, avg_bytes_per_query=None)
+    assert without_signal == with_none
+
+
+def test_enhanced_bcr_from_table_rewards_expensive_scans():
+    """The actual admission-gate regression this fixes: two tables, identical fragmentation
+    and identical query counts -- the one whose queries scan more bytes per hit must get a
+    higher latency_benefit (and therefore BCR), or ROIGate can SKIP/DEFER a table that's
+    genuinely expensive to scan while PROCEEDing one that's fragmented but cheap."""
+    stats = {
+        "query_count_30d": 100,
+        "small_files_count": 500,
+        "delete_file_pct": 10.0,
+        "total_size_gb": 20.0,
+    }
+    cheap = enhanced_bcr_from_table(stats, avg_bytes_per_query=10 * 1024 * 1024)  # 10MB/query
+    expensive = enhanced_bcr_from_table(
+        stats, avg_bytes_per_query=50 * 1024 * 1024 * 1024
+    )  # 50GB/query
+    assert expensive.latency_benefit_usd_month > cheap.latency_benefit_usd_month
+    assert expensive.bcr > cheap.bcr
+    # Only the scan-cost-driven latency_benefit (and opportunity_benefit, which is derived from
+    # it) should move -- storage/request benefit and every cost term are untouched by this
+    # signal.
+    assert expensive.storage_benefit_usd_month == cheap.storage_benefit_usd_month
+    assert expensive.request_benefit_usd_month == cheap.request_benefit_usd_month
+    assert expensive.rewrite_compute_cost_usd_month == cheap.rewrite_compute_cost_usd_month
+
+
+def test_compute_moop_scores_empty_batch():
+    assert compute_moop_scores([]) == []
+
+
+def test_compute_moop_scores_ranks_small_files_and_frequency_up_size_down():
+    candidates = [
+        {"small_files": 500, "size_gb": 5.0, "query_frequency": 20.0},  # best on 3 traits
+        {"small_files": 10, "size_gb": 100.0, "query_frequency": 0.0},  # worst on 3 traits
+    ]
+    traits = compute_moop_scores(candidates)
+    assert len(traits) == 2
+    assert traits[0].s_c > traits[1].s_c
+    assert traits[0].t1 == 1.0  # most small files in this batch -> max-normalized to 1.0
+    assert traits[0].t2 == 0.0  # smallest (cheapest) size -> min-normalized to 0.0
+    assert traits[1].t1 == 0.0
+    assert traits[1].t2 == 1.0
+
+
+def test_compute_moop_scores_all_tied_candidates_get_neutral_traits_not_zero():
+    # Every candidate identical on every trait -- min==max, so normalization is undefined; must
+    # not silently read as "worst on every trait" (0.0) for an entire uniform batch.
+    candidates = [{"small_files": 50, "size_gb": 5.0, "query_frequency": 2.0} for _ in range(3)]
+    traits = compute_moop_scores(candidates)
+    for t in traits:
+        assert t.t1 == 0.5
+        assert t.t2 == 0.5
+        assert t.t4 == 0.5
+
+
+def test_compute_moop_scores_t4_unaffected_when_avg_bytes_per_query_absent():
+    """No candidate carries avg_bytes_per_query -- T4 (and therefore s_c) must be identical to
+    before this parameter existed, same guarantee as compute_benefit_score's own None default."""
+    candidates_without_key = [
+        {"small_files": 500, "size_gb": 5.0, "query_frequency": 20.0},
+        {"small_files": 10, "size_gb": 100.0, "query_frequency": 5.0},
+    ]
+    candidates_with_none = [{**c, "avg_bytes_per_query": None} for c in candidates_without_key]
+    assert compute_moop_scores(candidates_without_key) == compute_moop_scores(candidates_with_none)
+
+
+def test_compute_moop_scores_rewards_expensive_scans_via_t4():
+    """Two candidates, identical query_frequency -- the one whose queries actually scan more
+    bytes per hit must score higher on T4 (query affinity) and therefore s_c, the score
+    job_store._table_autocomp_summary and planner._compare_candidates actually dispatch on."""
+    candidates = [
+        {
+            "small_files": 100,
+            "size_gb": 10.0,
+            "query_frequency": 20.0,
+            "avg_bytes_per_query": 10 * 1024 * 1024,  # 10MB/query -- cheap
+        },
+        {
+            "small_files": 100,
+            "size_gb": 10.0,
+            "query_frequency": 20.0,
+            "avg_bytes_per_query": 50 * 1024 * 1024 * 1024,  # 50GB/query -- expensive
+        },
+    ]
+    traits = compute_moop_scores(candidates)
+    cheap, expensive = traits
+    assert expensive.t4 > cheap.t4
+    assert expensive.s_c > cheap.s_c
+    # T1/T2 (file count, size) are identical between the two -- only T4 should diverge.
+    assert expensive.t1 == cheap.t1
+    assert expensive.t2 == cheap.t2
+
+
+def test_compute_moop_scores_without_file_entropy_redistributes_its_weight():
+    weights = DEFAULT_MOOP_WEIGHTS
+    candidates = [
+        {"small_files": 500, "size_gb": 1.0, "query_frequency": 10.0},
+        {"small_files": 10, "size_gb": 1.0, "query_frequency": 0.0},
+    ]
+    traits = compute_moop_scores(candidates, weights)
+    # T3 excluded entirely (no file_entropy anywhere in the batch) -- its weight lands on
+    # T1/T4 proportionally, not silently dropped (S_c would otherwise never reach its max).
+    assert traits[0].t3 == 0.0
+    top = traits[0]
+    base = weights.t1_file_count + weights.t4_query_affinity
+    share = weights.t3_file_entropy / base
+    t1_w = weights.t1_file_count + weights.t1_file_count * share
+    t4_w = weights.t4_query_affinity + weights.t4_query_affinity * share
+    expected = t1_w * top.t1 + t4_w * top.t4 - weights.t2_compute_cost * top.t2
+    assert top.s_c == pytest.approx(round(expected, 4))
+
+
+def test_compute_moop_scores_with_file_entropy_uses_it_and_can_go_negative():
+    candidates = [
+        # Worst on every positive trait (fewest small files, coldest, lowest entropy) and
+        # worst (most expensive) on the one negative trait -- guaranteed s_c < 0, since T2 is
+        # the only term still contributing once T1/T3/T4 all bottom out at 0.
+        {"small_files": 1, "size_gb": 1000.0, "query_frequency": 0.0, "file_entropy": 0.0},
+        {"small_files": 100, "size_gb": 1.0, "query_frequency": 10.0, "file_entropy": 5.0},
+    ]
+    traits = compute_moop_scores(candidates)
+    assert traits[1].s_c > traits[0].s_c
+    assert traits[0].s_c < 0
+    assert traits[0].t3 == 0.0
+    assert traits[1].t3 == 1.0
+
+
+def test_update_partition_benefit_scores(session):
+    """Test updating benefit scores for all partitions of a table."""
+    table = _seed_table(session, schema_name="test", table_name="compaction_table")
+
+    stats = TableStats(
+        table_id=table.id,
+        scan_at=datetime.now(UTC),
+        needs_compaction=True,
+        compaction_priority="HIGH",
+        grade="C",
+        overall_score=50,
+        total_files=500,
+        small_files_count=500,
+        total_size_gb=100.0,
+    )
+    session.add(stats)
+
+    scan_at = datetime.now(UTC)
+    partitions = [
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-01"},
+            partition_fields=[],
+            partition_value="2024-01-01",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=100,
+            scan_at=scan_at,
+        ),
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-02"},
+            partition_fields=[],
+            partition_value="2024-01-02",
+            partition_size_gb=5.0,
+            small_files_in_partition_count=50,
+            scan_at=scan_at,
+        ),
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-03"},
+            partition_fields=[],
+            partition_value="2024-01-03",
+            partition_size_gb=20.0,
+            small_files_in_partition_count=200,
+            scan_at=scan_at,
+        ),
+    ]
+    session.add_all(partitions)
+
+    source = session.get(Source, table.source_id)
+    for i in range(20):
+        log = QueryLog(
+            source_id=source.id,
+            table_id=table.id,
+            query_id=f"query-{i}",
+            engine="trino",
+            query_text="SELECT * FROM test.compaction_table",
+            executed_at=datetime.now(UTC) - timedelta(hours=i),
+            duration_ms=1000,
+        )
+        session.add(log)
+
+    session.commit()
+
+    updated = update_partition_benefit_scores(session, table.id)
+    assert updated == 3
+
+    updated_partitions = session.scalars(
+        select(TablePartition).where(TablePartition.table_id == table.id)
+    ).all()
+
+    for partition in updated_partitions:
+        assert partition.compaction_benefit_score is not None
+        assert partition.compaction_benefit_score > 0
+        assert partition.query_frequency is not None
+        # None of these fixture partitions carry a base_column/transform, so there is no
+        # per-partition signal to attribute to -- every partition must still fall back to the
+        # broadcast table-level rate, unchanged from before per-partition affinity existed.
+        assert partition.query_frequency == pytest.approx(20 / 7)
+        # AutoComp §A2: MOOP traits persisted alongside the score every scan, not just on
+        # some separate opt-in pass.
+        assert partition.autocomp_traits is not None
+        assert set(partition.autocomp_traits) == {"t1", "t2", "t3", "t4", "s_c", "weights_version"}
+
+    by_value = {p.partition_value: p for p in updated_partitions}
+    # Tied query_frequency (broadcast) across all three -- small_files should still drive T1
+    # divergence: the 200-small-file partition should out-rank the 50-small-file one.
+    hottest_s_c = by_value["2024-01-03"].autocomp_traits["s_c"]
+    coldest_s_c = by_value["2024-01-02"].autocomp_traits["s_c"]
+    assert hottest_s_c > coldest_s_c
+
+
+def test_update_partition_benefit_scores_uses_real_scan_cost_from_query_log(session):
+    """Two otherwise-identical tables (same fragmentation, same query count) -- the one whose
+    QueryLog rows carry a high bytes_read must end up with a higher compaction_benefit_score.
+    End-to-end version of test_compute_benefit_score_rewards_tables_with_expensive_scans,
+    proving the signal actually reaches the DB write path, not just the pure function."""
+    cheap_table = _seed_table(session, schema_name="test", table_name="cheap_scans")
+    expensive_table = _seed_table(session, schema_name="test", table_name="expensive_scans")
+    scan_at = datetime.now(UTC)
+
+    for table in (cheap_table, expensive_table):
+        session.add(
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=10.0,
+                small_files_in_partition_count=100,
+                scan_at=scan_at,
+            )
+        )
+
+    def _seed_queries(table, bytes_read: int, count: int = 10) -> None:
+        source = session.get(Source, table.source_id)
+        for i in range(count):
+            session.add(
+                QueryLog(
+                    source_id=source.id,
+                    table_id=table.id,
+                    query_id=f"{table.table_name}-query-{i}",
+                    engine="trino",
+                    query_text=f"SELECT * FROM test.{table.table_name}",
+                    executed_at=datetime.now(UTC) - timedelta(hours=i),
+                    duration_ms=1000,
+                    bytes_read=bytes_read,
+                )
+            )
+
+    _seed_queries(cheap_table, bytes_read=10 * 1024 * 1024)  # 10MB/query
+    _seed_queries(expensive_table, bytes_read=50 * 1024 * 1024 * 1024)  # 50GB/query
+    session.commit()
+
+    update_partition_benefit_scores(session, cheap_table.id)
+    update_partition_benefit_scores(session, expensive_table.id)
+
+    cheap_partition = session.scalars(
+        select(TablePartition).where(TablePartition.table_id == cheap_table.id)
+    ).one()
+    expensive_partition = session.scalars(
+        select(TablePartition).where(TablePartition.table_id == expensive_table.id)
+    ).one()
+
+    # Both tables have identical fragmentation and identical query counts (10/window on each) --
+    # only the real Trino scan-cost signal (bytes_read) differs, and it must be what separates
+    # them here.
+    assert expensive_partition.query_frequency == pytest.approx(cheap_partition.query_frequency)
+    assert expensive_partition.compaction_benefit_score > cheap_partition.compaction_benefit_score
+
+
+def test_update_partition_benefit_scores_scan_cost_reaches_dispatch_score(session):
+    """job_store._table_autocomp_summary and planner._compare_candidates prefer
+    autocomp_traits["s_c"] over compaction_benefit_score whenever both are present -- that's
+    the field real job dispatch order actually reads. Two partitions on the *same* table/scan
+    (so MOOP's within-batch min-max normalization has a real spread to normalize against,
+    unlike a single-partition table where every trait degenerates to the trivial 0.5 midpoint):
+    identical size, uneven small_files so query_frequency naturally diverges per-partition via
+    real filter affinity, plus a high table-level scan-cost signal -- the higher-frequency
+    partition's s_c must end up materially above the neutral tie point, proving the scan-cost
+    multiplier reached the persisted dispatch field end-to-end, not just the pure function."""
+    table = _seed_table(session, schema_name="analytics", table_name="scan_cost_dispatch")
+    scan_at = datetime.now(UTC)
+
+    def _day_partition(epoch_day: int, small_files: int) -> TablePartition:
+        return TablePartition(
+            table_id=table.id,
+            partition_values={"event_date_day": epoch_day},
+            partition_fields=[
+                {
+                    "base_column": "event_date",
+                    "partition_field": "event_date_day",
+                    "transform": "day",
+                    "col_type": "date",
+                }
+            ],
+            partition_value=str(epoch_day),
+            base_column="event_date",
+            base_column_type="date",
+            transform="day",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=small_files,
+            scan_at=scan_at,
+        )
+
+    hot = _day_partition(20210, small_files=100)  # queried a lot, expensive scans
+    cold = _day_partition(20211, small_files=100)  # never queried
+    session.add_all([hot, cold])
+
+    source = session.get(Source, table.source_id)
+    for i in range(8):
+        session.add(
+            QueryLog(
+                source_id=source.id,
+                table_id=table.id,
+                query_id=f"hot-{i}",
+                engine="trino",
+                query_text=(
+                    "SELECT * FROM analytics.scan_cost_dispatch WHERE event_date = DATE "
+                    "'2025-05-02'"
+                ),
+                executed_at=datetime.now(UTC) - timedelta(hours=i),
+                duration_ms=1000,
+                bytes_read=50 * 1024 * 1024 * 1024,  # 50GB/query -- expensive
+            )
+        )
+    session.commit()
+
+    update_partition_benefit_scores(session, table.id)
+
+    by_value = {
+        p.partition_value: p
+        for p in session.scalars(
+            select(TablePartition).where(TablePartition.table_id == table.id)
+        ).all()
+    }
+    hot_traits = by_value["20210"].autocomp_traits
+    cold_traits = by_value["20211"].autocomp_traits
+
+    # Identical fragmentation (t1/t2 tied) -- only the queried, expensive-scan partition should
+    # come out ahead, and specifically via t4 (query affinity), not t1/t2 drift.
+    assert hot_traits["t1"] == cold_traits["t1"]
+    assert hot_traits["t2"] == cold_traits["t2"]
+    assert hot_traits["t4"] > cold_traits["t4"]
+    assert hot_traits["s_c"] > cold_traits["s_c"]
+
+
+def test_update_partition_benefit_scores_applies_qualified_cost_and_latency_feedback(session):
+    """End-to-end proof that realized_cost_multiplier/realized_latency_multiplier
+    (cryo.intelligence.autocomp_feedback) actually reach compaction_benefit_score, not just
+    the pure-function unit tests in test_autocomp_realized_value.py. A table whose
+    TableStats.raw already carries a qualified, real-cost-reduction calibration
+    (cost_calibration_multiplier=1.3) must score higher than an otherwise-identical table with
+    no calibration history at all."""
+    from cryo.intelligence.autocomp_feedback import AUTOCOMP_FEEDBACK_SCHEMA_VERSION
+
+    calibrated_table = _seed_table(session, schema_name="test", table_name="cost_calibrated")
+    plain_table = _seed_table(session, schema_name="test", table_name="cost_uncalibrated")
+    scan_at = datetime.now(UTC)
+
+    qualified_feedback = {
+        "schema": AUTOCOMP_FEEDBACK_SCHEMA_VERSION,
+        "status": "qualified",
+        "evidence_sufficient": True,
+        "stable": True,
+        "calibration_multiplier": 1.0,
+        "cost_status": "qualified",
+        "cost_evidence_sufficient": True,
+        "cost_stable": True,
+        "cost_calibration_multiplier": 1.3,
+        "latency_status": "abstained",
+        "latency_evidence_sufficient": False,
+        "latency_stable": False,
+        "latency_calibration_multiplier": 1.0,
+    }
+    for table, raw in (
+        (calibrated_table, {"autocomp_realized_value": qualified_feedback}),
+        (plain_table, {}),
+    ):
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=scan_at,
+                needs_compaction=True,
+                compaction_priority="HIGH",
+                grade="C",
+                overall_score=50,
+                total_files=500,
+                small_files_count=500,
+                total_size_gb=100.0,
+                raw=raw,
+            )
+        )
+        session.add(
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=10.0,
+                small_files_in_partition_count=100,
+                scan_at=scan_at,
+            )
+        )
+    session.commit()
+
+    update_partition_benefit_scores(session, calibrated_table.id)
+    update_partition_benefit_scores(session, plain_table.id)
+
+    calibrated_partition = session.scalars(
+        select(TablePartition).where(TablePartition.table_id == calibrated_table.id)
+    ).one()
+    plain_partition = session.scalars(
+        select(TablePartition).where(TablePartition.table_id == plain_table.id)
+    ).one()
+
+    assert calibrated_partition.compaction_benefit_score == round(
+        plain_partition.compaction_benefit_score * 1.3, 4
+    )
+
+
+def test_update_partition_benefit_scores_diverges_per_partition_with_uneven_filters(session):
+    """AutoComp §A3.1: a partition actually queried should score higher than an equally
+    small-filed, equally sized partition nobody queries -- the bug the table-broadcast
+    behavior above still has when a real partition spec + literal query filters exist."""
+    table = _seed_table(session, schema_name="analytics", table_name="events")
+    scan_at = datetime.now(UTC)
+
+    def _day_partition(epoch_day: int, small_files: int) -> TablePartition:
+        return TablePartition(
+            table_id=table.id,
+            partition_values={"event_date_day": epoch_day},
+            partition_fields=[
+                {
+                    "base_column": "event_date",
+                    "partition_field": "event_date_day",
+                    "transform": "day",
+                    "col_type": "date",
+                }
+            ],
+            partition_value=str(epoch_day),
+            base_column="event_date",
+            base_column_type="date",
+            transform="day",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=small_files,
+            scan_at=scan_at,
+        )
+
+    hot = _day_partition(20210, small_files=50)  # 2025-05-02, queried a lot
+    cold = _day_partition(20211, small_files=200)  # 2025-05-03, never queried
+    untouched = _day_partition(20212, small_files=200)  # 2025-05-04, never queried
+    session.add_all([hot, cold, untouched])
+
+    source = session.get(Source, table.source_id)
+    for i in range(8):
+        session.add(
+            QueryLog(
+                source_id=source.id,
+                table_id=table.id,
+                query_id=f"hot-{i}",
+                engine="trino",
+                query_text="SELECT * FROM analytics.events WHERE event_date = DATE '2025-05-02'",
+                executed_at=datetime.now(UTC) - timedelta(hours=i),
+                duration_ms=500,
+            )
+        )
+    # A couple of queries that don't reference the partition column at all -- they count toward
+    # the coverage denominator but must not be attributable to any partition.
+    for i in range(2):
+        session.add(
+            QueryLog(
+                source_id=source.id,
+                table_id=table.id,
+                query_id=f"untargeted-{i}",
+                engine="trino",
+                query_text="SELECT count(*) FROM analytics.events",
+                executed_at=datetime.now(UTC) - timedelta(hours=i),
+                duration_ms=200,
+            )
+        )
+    session.commit()
+
+    updated = update_partition_benefit_scores(session, table.id)
+    assert updated == 3
+
+    by_value = {
+        p.partition_value: p
+        for p in session.scalars(
+            select(TablePartition).where(TablePartition.table_id == table.id)
+        ).all()
+    }
+
+    # 8/10 queries resolved to the hot partition -> 80% coverage, well above the 20% trust
+    # threshold, so per-partition (not broadcast) frequency applies.
+    assert by_value["20210"].query_frequency == pytest.approx(8 / 7)
+    assert by_value["20211"].query_frequency == 0.0
+    assert by_value["20212"].query_frequency == 0.0
+
+    # The never-queried partition has *more* small files than the queried one -- under the old
+    # table-broadcast behavior it would still win on benefit score just by file count. With
+    # per-partition affinity, actual query traffic must be what decides it.
+    assert by_value["20210"].compaction_benefit_score > by_value["20211"].compaction_benefit_score
+
+
+def test_update_partition_benefit_scores_falls_back_to_broadcast_below_coverage_threshold(
+    session,
+):
+    """When too few in-window queries resolve to a specific partition, trust the existing
+    table-level rate rather than noisy per-partition numbers (AutoComp §A3.1 fallback)."""
+    table = _seed_table(session, schema_name="analytics", table_name="low_coverage")
+    scan_at = datetime.now(UTC)
+    partition = TablePartition(
+        table_id=table.id,
+        partition_values={"event_date_day": 20210},
+        partition_fields=[
+            {
+                "base_column": "event_date",
+                "partition_field": "event_date_day",
+                "transform": "day",
+                "col_type": "date",
+            }
+        ],
+        partition_value="20210",
+        base_column="event_date",
+        base_column_type="date",
+        transform="day",
+        partition_size_gb=10.0,
+        small_files_in_partition_count=100,
+        scan_at=scan_at,
+    )
+    session.add(partition)
+
+    source = session.get(Source, table.source_id)
+    # One resolvable query out of ten -- 10% coverage, below MIN_COVERAGE_RATIO (20%).
+    session.add(
+        QueryLog(
+            source_id=source.id,
+            table_id=table.id,
+            query_id="resolvable",
+            engine="trino",
+            query_text="SELECT * FROM analytics.low_coverage WHERE event_date = DATE '2025-05-02'",
+            executed_at=datetime.now(UTC),
+            duration_ms=500,
+        )
+    )
+    for i in range(9):
+        session.add(
+            QueryLog(
+                source_id=source.id,
+                table_id=table.id,
+                query_id=f"untargeted-{i}",
+                engine="trino",
+                query_text="SELECT count(*) FROM analytics.low_coverage",
+                executed_at=datetime.now(UTC) - timedelta(hours=i),
+                duration_ms=200,
+            )
+        )
+    session.commit()
+
+    update_partition_benefit_scores(session, table.id)
+
+    refreshed = session.get(TablePartition, partition.id)
+    # 10 queries / 7 days broadcast, same as if affinity had never run.
+    assert refreshed.query_frequency == pytest.approx(10 / 7)
+
+
+def test_update_all_benefit_scores_covers_every_active_table(session):
+    """update_all_benefit_scores was rewritten to loop over plain table ids and expunge the
+    session's identity map after each table (see its docstring) -- this pins the actual
+    functional contract (every active table's partitions get scored) that refactor must not
+    break, independent of the memory-management mechanics."""
+    table_a = _seed_table(session, schema_name="test", table_name="table_a")
+    table_b = _seed_table(session, schema_name="test", table_name="table_b")
+    scan_at = datetime.now(UTC)
+    session.add_all(
+        [
+            TablePartition(
+                table_id=table_a.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=10.0,
+                small_files_in_partition_count=100,
+                scan_at=scan_at,
+            ),
+            TablePartition(
+                table_id=table_b.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=5.0,
+                small_files_in_partition_count=50,
+                scan_at=scan_at,
+            ),
+        ]
+    )
+    session.commit()
+
+    total = update_all_benefit_scores(session)
+
+    assert total == 2
+    partitions = session.scalars(select(TablePartition)).all()
+    assert len(partitions) == 2
+    for partition in partitions:
+        assert partition.compaction_benefit_score is not None
+
+
+def test_update_all_benefit_scores_expunges_session_after_each_table(session):
+    """Regression test for the OOM that was killing the scheduler process every ~20-40min in
+    production: the old version looped over Table ORM objects held in the session's identity
+    map for the entire run, and commit() doesn't clear that map -- across a large fleet (13k+
+    tables, up to 10k partitions each) that unbounded accumulation, not any single table's own
+    work, was the actual memory growth. Confirms objects are genuinely detached, not just that
+    the function still returns the right count."""
+    table = _seed_table(session, schema_name="test", table_name="expunge_check")
+    scan_at = datetime.now(UTC)
+    partition = TablePartition(
+        table_id=table.id,
+        partition_values={"dt": "2024-01-01"},
+        partition_fields=[],
+        partition_value="2024-01-01",
+        partition_size_gb=10.0,
+        small_files_in_partition_count=100,
+        scan_at=scan_at,
+    )
+    session.add(partition)
+    session.commit()
+
+    update_all_benefit_scores(session)
+
+    assert table not in session
+    assert partition not in session
+
+
+def test_update_all_benefit_scores_forces_gc_collect_periodically(session, monkeypatch):
+    """Regression test for the 2026-08-25 incident: the scheduler pod was still hitting 8.9GB+
+    RSS and getting OOMKilled/node-evicted across a ~99min, 1.56M-partition sweep even though
+    expunge_all() was already correctly firing every table (see that test above) -- consistent
+    with heap fragmentation across ~13k short-lived per-table object graphs rather than a true
+    reference leak. Confirms gc.collect() is actually invoked at the configured cadence, not
+    just that _GC_COLLECT_EVERY_N_TABLES exists as an unused constant."""
+    import cryo.planner.benefit_score as benefit_score_module
+
+    call_count = 0
+
+    def _fake_gc_collect() -> int:
+        nonlocal call_count
+        call_count += 1
+        return 0
+
+    monkeypatch.setattr(benefit_score_module.gc, "collect", _fake_gc_collect)
+
+    table_count = _GC_COLLECT_EVERY_N_TABLES + 1
+    scan_at = datetime.now(UTC)
+    for i in range(table_count):
+        table = _seed_table(session, schema_name="test", table_name=f"gc_check_{i}")
+        session.add(
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=1.0,
+                small_files_in_partition_count=10,
+                scan_at=scan_at,
+            )
+        )
+    session.commit()
+
+    update_all_benefit_scores(session)
+
+    # index 0 and index _GC_COLLECT_EVERY_N_TABLES both satisfy `index % N == 0` -- two
+    # collections across table_count = N + 1 tables.
+    assert call_count == 2
+
+
+def test_update_all_benefit_scores_refreshes_realized_value_within_budget(session):
+    """Root-cause fix for CR-04's regression, 2026-09-16: refresh_realized_value=False was
+    applied globally as an emergency OOM stopgap on 2026-09-15/16, which stopped per-table
+    learning forever, not just during the incident. With a budget that comfortably covers this
+    table, the realized-value refresh must actually run (autocomp_realized_value present),
+    proving learning is restored -- not just that the function still runs without OOMing."""
+    table = _seed_table(session, schema_name="test", table_name="realized_value_in_budget")
+    stats = TableStats(
+        table_id=table.id,
+        scan_at=datetime.now(UTC),
+        needs_compaction=False,
+        compaction_priority="LOW",
+        grade="A",
+        overall_score=95,
+        total_files=10,
+        small_files_count=0,
+        total_size_gb=1.0,
+    )
+    session.add(stats)
+    session.add(
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-01"},
+            partition_fields=[],
+            partition_value="2024-01-01",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=100,
+            scan_at=datetime.now(UTC),
+        )
+    )
+    session.commit()
+
+    update_all_benefit_scores(session, refresh_realized_value=True, max_realized_value_refreshes=500)
+
+    refreshed = session.get(TableStats, table.id)
+    assert "autocomp_realized_value" in refreshed.raw
+
+
+def test_update_all_benefit_scores_respects_zero_refresh_budget(session):
+    """The bounded default must not silently ignore a zero budget -- this is the same effect
+    the old refresh_realized_value=False stopgap had, reachable as an explicit budget instead
+    of a separate code path, so an operator can dial the budget to zero in a real emergency
+    without losing the cheap compaction_effectiveness update that always runs."""
+    table = _seed_table(session, schema_name="test", table_name="realized_value_zero_budget")
+    stats = TableStats(
+        table_id=table.id,
+        scan_at=datetime.now(UTC),
+        needs_compaction=False,
+        compaction_priority="LOW",
+        grade="A",
+        overall_score=95,
+        total_files=10,
+        small_files_count=0,
+        total_size_gb=1.0,
+    )
+    session.add(stats)
+    session.add(
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-01"},
+            partition_fields=[],
+            partition_value="2024-01-01",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=100,
+            scan_at=datetime.now(UTC),
+        )
+    )
+    session.commit()
+
+    update_all_benefit_scores(session, refresh_realized_value=True, max_realized_value_refreshes=0)
+
+    refreshed = session.get(TableStats, table.id)
+    assert "autocomp_realized_value" not in refreshed.raw
+    # The cheap update must still have run even with zero realized-value budget.
+    assert "compaction_effectiveness" in refreshed.raw
+
+
+def test_update_all_benefit_scores_prefers_the_stalest_tables_when_over_budget(session):
+    """Direct test of the ranking: with a budget smaller than the fleet, the table whose
+    autocomp_realized_value.computed_at is oldest (and the table with no prior value at all,
+    ranked stalest of all) must be the ones that get this sweep's refresh -- a table refreshed
+    moments ago must not compete with a table that has genuinely never been refreshed."""
+    fresh_table = _seed_table(session, schema_name="test", table_name="fresh_realized_value")
+    stale_table = _seed_table(session, schema_name="test", table_name="stale_realized_value")
+    never_table = _seed_table(session, schema_name="test", table_name="never_realized_value")
+
+    for table, raw in (
+        (fresh_table, {"autocomp_realized_value": {"computed_at": datetime.now(UTC).isoformat()}}),
+        (
+            stale_table,
+            {
+                "autocomp_realized_value": {
+                    "computed_at": (datetime.now(UTC) - timedelta(days=30)).isoformat()
+                }
+            },
+        ),
+        (never_table, {}),
+    ):
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=datetime.now(UTC),
+                needs_compaction=False,
+                compaction_priority="LOW",
+                grade="A",
+                overall_score=95,
+                total_files=10,
+                small_files_count=0,
+                total_size_gb=1.0,
+                raw=raw,
+            )
+        )
+        session.add(
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=10.0,
+                small_files_in_partition_count=100,
+                scan_at=datetime.now(UTC),
+            )
+        )
+    session.commit()
+
+    before_fresh_computed_at = session.get(TableStats, fresh_table.id).raw[
+        "autocomp_realized_value"
+    ]["computed_at"]
+
+    update_all_benefit_scores(session, refresh_realized_value=True, max_realized_value_refreshes=2)
+
+    fresh_after = session.get(TableStats, fresh_table.id)
+    stale_after = session.get(TableStats, stale_table.id)
+    never_after = session.get(TableStats, never_table.id)
+
+    # The budget (2) covered only the never-refreshed and 30-day-stale tables -- the freshly
+    # refreshed table's own computed_at must be untouched (proves it was skipped, not
+    # re-refreshed with an indistinguishable new timestamp).
+    assert fresh_after.raw["autocomp_realized_value"]["computed_at"] == before_fresh_computed_at
+    assert "autocomp_realized_value" in stale_after.raw
+    assert stale_after.raw["autocomp_realized_value"]["computed_at"] != before_fresh_computed_at
+    assert "autocomp_realized_value" in never_after.raw
+
+
+def test_stalest_realized_value_table_ids_ranks_correctly_across_multiple_batches(session):
+    """Real incident, 2026-09-17: the original implementation queried TableStats.raw for
+    every table_id in a single query -- looked memory-safe ("one column, never a full ORM
+    object") but the live fleet's raw JSONB averages 522KB/row (max 10.3MB), totaling ~6.8GB
+    across 13,043 tables, and loading that in one Python list OOMKilled the scheduler pod 45
+    times in under 5 hours. Fixed by scanning in _STALENESS_SCAN_BATCH_SIZE-sized batches,
+    keeping only a running top-`limit` candidate list across batches. This test forces more
+    than one batch (2.5x _STALENESS_SCAN_BATCH_SIZE tables) and confirms the ranking is still
+    correct across the batch boundary -- the stalest tables must win regardless of which batch
+    they land in, not just within their own batch."""
+    from cryo.planner.benefit_score import (
+        _STALENESS_SCAN_BATCH_SIZE,
+        _stalest_realized_value_table_ids,
+    )
+
+    table_count = int(_STALENESS_SCAN_BATCH_SIZE * 2.5)
+    tables = [
+        _seed_table(session, schema_name="test", table_name=f"batch_check_{i}")
+        for i in range(table_count)
+    ]
+    # Stagger computed_at so table i is staler than table i+1 -- the single stalest table
+    # (index 0) is seeded in the middle of the id list, deliberately not aligned with any
+    # batch boundary, so a correct implementation must still find it.
+    base = datetime.now(UTC)
+    for i, table in enumerate(tables):
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=base,
+                needs_compaction=False,
+                compaction_priority="LOW",
+                grade="A",
+                overall_score=95,
+                total_files=10,
+                small_files_count=0,
+                total_size_gb=1.0,
+                raw={
+                    "autocomp_realized_value": {
+                        "computed_at": (base - timedelta(days=table_count - i)).isoformat()
+                    }
+                },
+            )
+        )
+    session.commit()
+
+    table_ids = [t.id for t in tables]
+    stalest_ids = _stalest_realized_value_table_ids(session, table_ids, limit=5)
+
+    # The 5 stalest are the lowest-index tables (staggered oldest-first).
+    assert stalest_ids == {tables[i].id for i in range(5)}
+
+
+def test_update_partition_benefit_scores_resumes_via_coverage_cursor_across_sweeps(
+    session, monkeypatch
+):
+    """Recovery plan §3, 2026-09-20: a table with more partitions than one sweep's page size
+    must make real forward progress across multiple sweeps (via TableStats.
+    partition_coverage_cursor) instead of the old bare `.limit(N)` silently scoring the same
+    arbitrary subset forever. Uses a small monkeypatched page size so this test doesn't need
+    to seed 10,000+ real rows to exercise the same logic path."""
+    import cryo.planner.benefit_score as benefit_score_module
+
+    monkeypatch.setattr(benefit_score_module, "_MAX_PARTITIONS_PER_TABLE_SWEEP", 2)
+
+    table = _seed_table(session, schema_name="test", table_name="paged_table")
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="A",
+            overall_score=95,
+            total_files=10,
+            small_files_count=0,
+            total_size_gb=1.0,
+        )
+    )
+    scan_at = datetime.now(UTC)
+    partitions = [
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": f"2024-01-{i:02d}"},
+            partition_fields=[],
+            partition_value=f"2024-01-{i:02d}",
+            partition_size_gb=1.0,
+            small_files_in_partition_count=10,
+            scan_at=scan_at,
+        )
+        for i in range(1, 6)  # 5 partitions, page size 2 -> 3 sweeps to cover them all
+    ]
+    session.add_all(partitions)
+    session.commit()
+
+    seen_partition_ids: set[int] = set()
+
+    # Sweep 1: first page (2 of 5).
+    updated_1 = update_partition_benefit_scores(session, table.id)
+    assert updated_1 == 2
+    stats = session.get(TableStats, table.id)
+    assert stats.partition_coverage_cursor is not None
+    assert stats.partition_coverage_cursor_scan_at.replace(tzinfo=UTC) == scan_at
+    seen_partition_ids.update(
+        p.id
+        for p in session.scalars(
+            select(TablePartition).where(
+                TablePartition.table_id == table.id,
+                TablePartition.compaction_benefit_score.isnot(None),
+            )
+        ).all()
+    )
+    assert len(seen_partition_ids) == 2
+
+    # Sweep 2: second page (next 2 of 5) -- must not re-cover the first page's ids.
+    updated_2 = update_partition_benefit_scores(session, table.id)
+    assert updated_2 == 2
+    newly_scored = {
+        p.id
+        for p in session.scalars(
+            select(TablePartition).where(
+                TablePartition.table_id == table.id,
+                TablePartition.compaction_benefit_score.isnot(None),
+            )
+        ).all()
+    }
+    assert len(newly_scored) == 4  # 2 + 2, no overlap
+    assert seen_partition_ids <= newly_scored
+
+    # Sweep 3: final page (last 1 of 5) -- cursor must clear once the end is reached.
+    updated_3 = update_partition_benefit_scores(session, table.id)
+    assert updated_3 == 1
+    stats_after = session.get(TableStats, table.id)
+    assert stats_after.partition_coverage_cursor is None
+    assert stats_after.partition_coverage_cursor_scan_at is None
+
+    all_scored = session.scalars(
+        select(TablePartition).where(
+            TablePartition.table_id == table.id,
+            TablePartition.compaction_benefit_score.isnot(None),
+        )
+    ).all()
+    assert len(all_scored) == 5  # every partition eventually covered across the 3 sweeps
+
+    # Sweep 4: with the cursor cleared, a fresh sweep against the same scan_at starts over
+    # from the beginning (this is the documented "reached the end, reset" behavior) rather
+    # than permanently starving this table of future rescoring.
+    updated_4 = update_partition_benefit_scores(session, table.id)
+    assert updated_4 == 2
+
+
+def test_update_partition_benefit_scores_ignores_a_cursor_from_a_stale_scan(session, monkeypatch):
+    """A cursor computed against an old scan_at must never be reused against a newer scan's
+    partition rows -- recovery plan §3's 'never mix generations silently'."""
+    import cryo.planner.benefit_score as benefit_score_module
+
+    monkeypatch.setattr(benefit_score_module, "_MAX_PARTITIONS_PER_TABLE_SWEEP", 2)
+
+    table = _seed_table(session, schema_name="test", table_name="rescanned_table")
+    old_scan_at = datetime.now(UTC) - timedelta(hours=1)
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=old_scan_at,
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="A",
+            overall_score=95,
+            total_files=10,
+            small_files_count=0,
+            total_size_gb=1.0,
+        )
+    )
+    session.add_all(
+        [
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": f"2024-01-{i:02d}"},
+                partition_fields=[],
+                partition_value=f"2024-01-{i:02d}",
+                partition_size_gb=1.0,
+                small_files_in_partition_count=10,
+                scan_at=old_scan_at,
+            )
+            for i in range(1, 4)
+        ]
+    )
+    session.commit()
+
+    # First sweep against the old scan leaves a cursor set for old_scan_at.
+    update_partition_benefit_scores(session, table.id)
+    stats = session.get(TableStats, table.id)
+    assert stats.partition_coverage_cursor is not None
+    assert stats.partition_coverage_cursor_scan_at.replace(tzinfo=UTC) == old_scan_at
+
+    # A fresh scan lands with a new scan_at and entirely new partition rows.
+    new_scan_at = datetime.now(UTC)
+    stats.scan_at = new_scan_at
+    session.add(
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-02-01"},
+            partition_fields=[],
+            partition_value="2024-02-01",
+            partition_size_gb=1.0,
+            small_files_in_partition_count=10,
+            scan_at=new_scan_at,
+        )
+    )
+    session.commit()
+
+    # The next sweep must score against the NEW scan's partition (ignoring the stale cursor),
+    # not silently apply an old-scan cursor value to the new scan's unrelated partition ids.
+    updated = update_partition_benefit_scores(session, table.id)
+    assert updated == 1
+    new_partition = session.scalars(
+        select(TablePartition).where(
+            TablePartition.table_id == table.id, TablePartition.scan_at == new_scan_at
+        )
+    ).first()
+    assert new_partition.compaction_benefit_score is not None
+
+
+def test_get_top_compaction_candidates(session):
+    """Test getting top compaction candidates by benefit score."""
+    table = _seed_table(session, schema_name="test", table_name="ranked_table")
+    scan_at = datetime.now(UTC)
+
+    partitions = [
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-01"},
+            partition_fields=[],
+            partition_value="2024-01-01",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=100,
+            compaction_benefit_score=50.0,
+            scan_at=scan_at,
+        ),
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-02"},
+            partition_fields=[],
+            partition_value="2024-01-02",
+            partition_size_gb=5.0,
+            small_files_in_partition_count=50,
+            compaction_benefit_score=5.0,
+            scan_at=scan_at,
+        ),
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-03"},
+            partition_fields=[],
+            partition_value="2024-01-03",
+            partition_size_gb=20.0,
+            small_files_in_partition_count=200,
+            compaction_benefit_score=100.0,
+            scan_at=scan_at,
+        ),
+    ]
+    session.add_all(partitions)
+    session.commit()
+
+    candidates = get_top_compaction_candidates(
+        session,
+        table.id,
+        min_score=10.0,
+        limit=10,
+    )
+
+    assert len(candidates) == 2
+    assert candidates[0].compaction_benefit_score == 100.0
+    assert candidates[1].compaction_benefit_score == 50.0
+
+
+def test_get_top_compaction_candidates_ignores_stale_scans(session):
+    """table_partitions is append-only (one row per partition per scan). A partition that scored
+    high in an older scan must not show up as a duplicate "different" candidate alongside its
+    current-scan row -- only the latest scan's rows should ever be ranked."""
+    table = _seed_table(session, schema_name="test", table_name="stale_scan_table")
+    older_scan = datetime.now(UTC) - timedelta(days=1)
+    latest_scan = datetime.now(UTC)
+
+    session.add_all(
+        [
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=10.0,
+                small_files_in_partition_count=100,
+                compaction_benefit_score=90.0,
+                scan_at=older_scan,
+            ),
+            TablePartition(
+                table_id=table.id,
+                partition_values={"dt": "2024-01-01"},
+                partition_fields=[],
+                partition_value="2024-01-01",
+                partition_size_gb=10.0,
+                small_files_in_partition_count=100,
+                compaction_benefit_score=95.0,
+                scan_at=latest_scan,
+            ),
+        ]
+    )
+    session.commit()
+
+    candidates = get_top_compaction_candidates(session, table.id, min_score=10.0, limit=10)
+
+    assert len(candidates) == 1
+    assert candidates[0].compaction_benefit_score == 95.0
+
+
+def test_compaction_effectiveness_stats(session):
+    """Test compaction effectiveness ratio calculation."""
+    table = _seed_table(session, schema_name="test", table_name="effectiveness_table")
+    session.commit()
+
+    now = datetime.now(UTC)
+    audit_logs = [
+        AuditLog(
+            table_id=table.id,
+            action="optimize",
+            status="OK",
+            input_files_count=100,
+            output_files_count=2,
+            ts=now - timedelta(days=1),
+            duration_ms=60000,
+        ),
+        AuditLog(
+            table_id=table.id,
+            action="optimize",
+            status="ok",
+            input_files_count=50,
+            output_files_count=1,
+            ts=now - timedelta(days=2),
+            duration_ms=30000,
+        ),
+    ]
+    session.add_all(audit_logs)
+    session.commit()
+
+    stats = get_compaction_effectiveness_stats(session, table.id, lookback_days=30)
+
+    assert stats["total_input_files"] == 150
+    assert stats["total_output_files"] == 3
+    assert stats["run_count"] == 2
+    assert stats["effectiveness_ratio"] == 50.0
+    assert stats["effectiveness"] == "excellent"
+
+
+def test_update_table_effectiveness_persists_onto_table_stats_raw(session):
+    table = _seed_table(session, schema_name="test", table_name="effectiveness_persist")
+    stats = TableStats(
+        table_id=table.id,
+        scan_at=datetime.now(UTC),
+        needs_compaction=False,
+        compaction_priority="LOW",
+        grade="A",
+        overall_score=95,
+        total_files=10,
+        small_files_count=0,
+        total_size_gb=1.0,
+        raw={"unrelated_key": "keep-me"},
+    )
+    session.add(stats)
+    session.add(
+        AuditLog(
+            table_id=table.id,
+            action="optimize",
+            status="ok",
+            input_files_count=100,
+            output_files_count=2,
+            ts=datetime.now(UTC),
+            duration_ms=1000,
+        )
+    )
+    session.commit()
+
+    updated = update_table_effectiveness(session, table.id)
+    assert updated is True
+
+    refreshed = session.get(TableStats, table.id)
+    assert refreshed.raw["unrelated_key"] == "keep-me"  # existing raw keys aren't clobbered
+    persisted = refreshed.raw["compaction_effectiveness"]
+    assert persisted["effectiveness_ratio"] == 50.0
+    assert persisted["effectiveness"] == "excellent"
+    assert "computed_at" in persisted
+
+
+def test_update_table_effectiveness_is_noop_without_a_stats_row(session):
+    table = _seed_table(session, schema_name="test", table_name="no_stats_yet")
+    session.commit()
+    assert update_table_effectiveness(session, table.id) is False
+
+
+def test_update_all_benefit_scores_also_refreshes_effectiveness(session):
+    table = _seed_table(session, schema_name="test", table_name="fleet_effectiveness")
+    stats = TableStats(
+        table_id=table.id,
+        scan_at=datetime.now(UTC),
+        needs_compaction=False,
+        compaction_priority="LOW",
+        grade="A",
+        overall_score=95,
+        total_files=10,
+        small_files_count=0,
+        total_size_gb=1.0,
+    )
+    session.add(stats)
+    scan_at = datetime.now(UTC)
+    session.add(
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-01"},
+            partition_fields=[],
+            partition_value="2024-01-01",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=100,
+            scan_at=scan_at,
+        )
+    )
+    session.add(
+        AuditLog(
+            table_id=table.id,
+            action="optimize",
+            status="ok",
+            input_files_count=20,
+            output_files_count=1,
+            ts=datetime.now(UTC),
+            duration_ms=1000,
+        )
+    )
+    session.commit()
+
+    update_all_benefit_scores(session)
+
+    refreshed = session.get(TableStats, table.id)
+    assert refreshed.raw["compaction_effectiveness"]["effectiveness_ratio"] == 20.0
+
+
+def test_benefit_score_prevents_premature_compaction(session):
+    """Test that low benefit scores prevent wasteful compaction."""
+    table = _seed_table(session, schema_name="test", table_name="premature_table")
+
+    scan_at = datetime.now(UTC)
+    partition = TablePartition(
+        table_id=table.id,
+        partition_values={"dt": "2024-01-01"},
+        partition_fields=[],
+        partition_value="2024-01-01",
+        partition_size_gb=50.0,
+        small_files_in_partition_count=5,
+        scan_at=scan_at,
+    )
+    session.add(partition)
+    session.commit()
+
+    updated = update_partition_benefit_scores(session, table.id)
+    assert updated == 1
+
+    updated_partition = session.scalar(
+        select(TablePartition).where(
+            TablePartition.table_id == table.id,
+            TablePartition.partition_value == "2024-01-01",
+        )
+    )
+
+    assert updated_partition.compaction_benefit_score is not None
+    assert updated_partition.compaction_benefit_score < 1.0
+
+    candidates = get_top_compaction_candidates(
+        session,
+        table.id,
+        min_score=1.0,
+        limit=10,
+    )
+    assert candidates == []
+
+
+def _seed_table_with_one_partition(session, *, table_name: str) -> Table:
+    table = _seed_table(session, schema_name="test", table_name=table_name)
+    session.add(
+        TablePartition(
+            table_id=table.id,
+            partition_values={"dt": "2024-01-01"},
+            partition_fields=[],
+            partition_value="2024-01-01",
+            partition_size_gb=10.0,
+            small_files_in_partition_count=100,
+            scan_at=datetime.now(UTC),
+        )
+    )
+    session.commit()
+    return table
+
+
+def test_update_all_benefit_scores_batch_processes_one_bounded_batch(session):
+    """Recovery plan §3's fleet-level keyset pagination: a batch smaller than the fleet must
+    report done=False and a next_cursor pointing at the last table it processed, in Table.id
+    order -- this is the contract cryo/analysis/runner.py relies on to resume mid-fleet."""
+    tables = sorted(
+        [_seed_table_with_one_partition(session, table_name=f"batch_{i}") for i in range(5)],
+        key=lambda t: t.id,
+    )
+
+    result = update_all_benefit_scores_batch(session, batch_size=2)
+
+    assert result.tables_processed == 2
+    assert result.partitions_updated == 2
+    assert result.done is False
+    assert result.next_cursor == tables[1].id
+
+
+def test_update_all_benefit_scores_batch_resumes_from_cursor_and_terminates(session):
+    """A full walk of batch_size=2 over 5 tables must cover every table exactly once and end
+    with done=True, next_cursor=None -- the resumable-fleet-sweep analogue of the per-table
+    partition pagination tests."""
+    tables = sorted(
+        [_seed_table_with_one_partition(session, table_name=f"resume_{i}") for i in range(5)],
+        key=lambda t: t.id,
+    )
+
+    seen_ids: list = []
+    cursor = None
+    for _ in range(10):  # generous upper bound; real loop stops via `done`
+        result = update_all_benefit_scores_batch(session, cursor=cursor, batch_size=2)
+        if result.tables_processed == 0:
+            break
+        seen_ids.append(cursor)
+        cursor = result.next_cursor
+        if result.done:
+            break
+
+    all_partitions = session.scalars(select(TablePartition)).all()
+    assert len(all_partitions) == 5
+    for partition in all_partitions:
+        assert partition.compaction_benefit_score is not None
+    assert cursor is None  # final batch cleared the cursor
+    assert {t.id for t in tables} == {p.table_id for p in all_partitions}
+
+
+def test_update_all_benefit_scores_batch_honors_a_caller_tracked_generation_wide_budget(session):
+    """Review finding F08: without refresh_budget_remaining, a multi-batch fleet sweep spends
+    up to max_realized_value_refreshes PER BATCH, not once per generation -- 6 tables at
+    batch_size=2 with a nominal budget of 2 would (bug, proven below by re-running WITHOUT
+    tracking the budget) spend up to 2 refreshes/batch * 3 batches = 6 total, i.e. the entire
+    fleet, when the intended cap was 2 for the whole generation. Tracking
+    refresh_budget_remaining across calls (as cryo/analysis/runner.py now does via
+    AnalysisTask.task_state) must cap the total spend across all batches at the configured
+    budget instead."""
+    tables = sorted(
+        [_seed_table_with_one_partition(session, table_name=f"budget_{i}") for i in range(6)],
+        key=lambda t: t.id,
+    )
+    # A TableStats row with no autocomp_realized_value at all ranks "never refreshed" --
+    # stalest of all -- so every table is an equally eligible refresh candidate and the budget
+    # is the only thing limiting how many actually get refresh_realized_value=True this
+    # generation. (_stalest_realized_value_table_ids only considers table_ids that HAVE a
+    # TableStats row at all -- a table with none is silently excluded from refresh
+    # consideration entirely, a separate, real gap not in scope for this test.)
+    for table in tables:
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=datetime.now(UTC),
+                needs_compaction=False,
+                compaction_priority="LOW",
+                grade="A",
+                overall_score=95,
+                total_files=10,
+                small_files_count=0,
+                total_size_gb=1.0,
+                raw={},
+            )
+        )
+    session.commit()
+
+    total_budget = 2
+
+    def _run_full_sweep(*, track_budget: bool) -> int:
+        remaining = total_budget
+        cursor = None
+        total_spent = 0
+        for _ in range(10):
+            kwargs = (
+                {"refresh_budget_remaining": remaining}
+                if track_budget
+                else {"max_realized_value_refreshes": total_budget}
+            )
+            result = update_all_benefit_scores_batch(session, cursor=cursor, batch_size=2, **kwargs)
+            if result.tables_processed == 0:
+                break
+            total_spent += result.realized_value_refreshes_spent
+            remaining = max(0, remaining - result.realized_value_refreshes_spent)
+            cursor = result.next_cursor
+            if result.done:
+                break
+        return total_spent
+
+    untracked_spend = _run_full_sweep(track_budget=False)
+    assert untracked_spend > total_budget, (
+        "sanity check: per-batch-fresh budget (the pre-fix behavior) must actually exceed the "
+        "intended generation-wide total across multiple batches, or this test cannot "
+        "distinguish the fix from a no-op"
+    )
+
+    tracked_spend = _run_full_sweep(track_budget=True)
+    assert tracked_spend <= total_budget, (
+        f"generation-wide spend ({tracked_spend}) must never exceed the tracked budget "
+        f"({total_budget}), even across {len(tables)} tables' worth of batches"
+    )
+
+
+def test_update_all_benefit_scores_batch_returns_done_immediately_past_the_fleet_end(session):
+    """A cursor already past every table's id (e.g. the fleet shrank, or this is the batch right
+    after the last real one) must report done=True with zero tables processed, not raise or
+    loop -- this is what lets the runner treat 'no more work' as a clean success."""
+    table = _seed_table_with_one_partition(session, table_name="only_table")
+
+    import uuid as _uuid
+
+    far_cursor = _uuid.UUID(int=int(table.id.int) + 1) if table.id.int < 2**127 else table.id
+    result = update_all_benefit_scores_batch(session, cursor=far_cursor)
+
+    assert result.tables_processed == 0
+    assert result.done is True
+    assert result.next_cursor is None

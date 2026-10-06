@@ -1,0 +1,113 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Assign and preview",
+    "locale": "en",
+    "output": "site/diagrams/assign.workflow.html",
+    "visual_preset": "editorial",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "operator", "label": "Web UI" },
+    { "id": "api", "label": "API" },
+    { "id": "planner", "label": "Planner" }
+  ],
+  "phases": [
+    { "id": "choose", "label": "Filter", "fromCol": 0, "toCol": 1 },
+    { "id": "bind", "label": "Assign", "fromCol": 2, "toCol": 2, "variant": "emphasis" },
+    { "id": "act", "label": "Preview and run", "fromCol": 3, "toCol": 4 }
+  ],
+  "mainPath": ["filter", "select", "assign", "preview", "run"],
+  "nodes": [
+    {
+      "id": "filter",
+      "lane": "operator",
+      "col": 0,
+      "type": "frontend",
+      "label": "Filter tables",
+      "sublabel": "server-side",
+      "width": 148
+    },
+    {
+      "id": "select",
+      "lane": "operator",
+      "col": 1,
+      "type": "frontend",
+      "label": "Select all matching",
+      "sublabel": "not page ids",
+      "width": 168
+    },
+    {
+      "id": "assign",
+      "lane": "operator",
+      "col": 2,
+      "type": "frontend",
+      "label": "Assign preset",
+      "sublabel": "preset_id",
+      "width": 148
+    },
+    {
+      "id": "resolve",
+      "lane": "api",
+      "col": 2,
+      "type": "backend",
+      "label": "Resolve filter",
+      "sublabel": "upsert assignments",
+      "width": 156
+    },
+    {
+      "id": "preview",
+      "lane": "operator",
+      "col": 3,
+      "type": "frontend",
+      "label": "Preview plan",
+      "sublabel": "dry-run",
+      "width": 148
+    },
+    {
+      "id": "plan",
+      "lane": "planner",
+      "col": 3,
+      "type": "backend",
+      "label": "Build plan",
+      "sublabel": "no execution",
+      "width": 148
+    },
+    {
+      "id": "run",
+      "lane": "operator",
+      "col": 4,
+      "type": "backend",
+      "label": "Run",
+      "sublabel": "after confirm",
+      "width": 140
+    }
+  ],
+  "edges": [
+    { "id": "filter-select", "from": "filter", "to": "select", "variant": "emphasis", "role": "main" },
+    { "id": "select-assign", "from": "select", "to": "assign", "label": "filter spec", "variant": "emphasis", "role": "main" },
+    { "id": "assign-preview", "from": "assign", "to": "preview", "variant": "emphasis", "role": "main" },
+    { "id": "preview-run", "from": "preview", "to": "run", "label": "confirm", "variant": "emphasis", "role": "main" },
+    { "id": "assign-resolve", "from": "assign", "to": "resolve", "label": "preset" },
+    { "id": "preview-plan", "from": "preview", "to": "plan", "label": "dry-run" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Filter selection",
+      "items": [
+        "Select all matching the filter",
+        "The selection is a filter spec, not a page of ids"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Preview, then run",
+      "items": [
+        "Preview builds a plan and runs nothing",
+        "Run uses the same payload after confirm"
+      ]
+    }
+  ]
+}

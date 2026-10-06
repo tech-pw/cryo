@@ -1,0 +1,453 @@
+package ops
+
+import (
+	"fmt"
+	"testing"
+
+	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/table"
+)
+
+func TestScanConcurrencyFromParams(t *testing.T) {
+	t.Parallel()
+	if got := scanConcurrencyFromParams(nil); got != defaultScanConcurrency {
+		t.Fatalf("nil params: got %d want %d", got, defaultScanConcurrency)
+	}
+	if got := scanConcurrencyFromParams([]byte(`{"scan_concurrency": 2}`)); got != 2 {
+		t.Fatalf("explicit: got %d want 2", got)
+	}
+	if got := scanConcurrencyFromParams([]byte(`{"scan_concurrency": 0}`)); got != defaultScanConcurrency {
+		t.Fatalf("zero should fall back: got %d", got)
+	}
+}
+
+func TestMaxFilesPerGroupFromParams(t *testing.T) {
+	t.Parallel()
+	if got := maxFilesPerGroupFromParams(nil); got != 0 {
+		t.Fatalf("nil params: got %d want 0 (unlimited)", got)
+	}
+	if got := maxFilesPerGroupFromParams([]byte(`{}`)); got != 0 {
+		t.Fatalf("unset: got %d want 0 (unlimited)", got)
+	}
+	if got := maxFilesPerGroupFromParams([]byte(`{"max_files_per_group": 0}`)); got != 0 {
+		t.Fatalf("explicit zero: got %d want 0 (unlimited)", got)
+	}
+	if got := maxFilesPerGroupFromParams([]byte(`{"max_files_per_group": 4}`)); got != 4 {
+		t.Fatalf("explicit: got %d want 4", got)
+	}
+}
+
+func TestMaxBytesPerGroupFromParams(t *testing.T) {
+	t.Parallel()
+	if got := maxBytesPerGroupFromParams(nil); got != defaultTargetFileSizeBytes {
+		t.Fatalf("nil params: got %d want target default %d", got, defaultTargetFileSizeBytes)
+	}
+	if got := maxBytesPerGroupFromParams([]byte(`{"target_file_size_bytes": 67108864}`)); got != 67108864 {
+		t.Fatalf("should follow target when max_bytes unset: got %d", got)
+	}
+	if got := maxBytesPerGroupFromParams([]byte(`{"max_bytes_per_group": 1048576}`)); got != 1048576 {
+		t.Fatalf("explicit: got %d want 1048576", got)
+	}
+	if got := maxBytesPerGroupFromParams([]byte(`{"max_bytes_per_group": 0, "target_file_size_bytes": 67108864}`)); got != 67108864 {
+		t.Fatalf("zero max_bytes should fall back to target: got %d", got)
+	}
+}
+
+func TestMaxBytesPerGroupClampedToMemoryBudget(t *testing.T) {
+	t.Parallel()
+	// Tight budget: clamp 2 GiB stamp down to one target (packing floor needs more budget).
+	raw := []byte(`{
+		"max_bytes_per_group": 2147483648,
+		"compaction_memory_budget_bytes": 536870912,
+		"target_file_size_bytes": 268435456
+	}`)
+	got := maxBytesPerGroupFromParams(raw)
+	want := int64(268435456) // floor at target (budget/8 = 64 MiB < packing floor)
+	if got != want {
+		t.Fatalf("tight budget clamp: got %d want %d", got, want)
+	}
+	// Budget sized for packing floor (2× target × expansion 8 = 4 GiB):
+	// clamp 2 GiB → 512 MiB packing floor, not a single target.
+	rawPacking := []byte(`{
+		"max_bytes_per_group": 2147483648,
+		"compaction_memory_budget_bytes": 4294967296,
+		"target_file_size_bytes": 268435456
+	}`)
+	gotPacking := maxBytesPerGroupFromParams(rawPacking)
+	wantPacking := int64(536870912) // 2 × 256 MiB
+	if gotPacking != wantPacking {
+		t.Fatalf("packing floor clamp: got %d want %d", gotPacking, wantPacking)
+	}
+	// Large budget still allows above-packing groups.
+	rawLarge := []byte(`{
+		"max_bytes_per_group": 2147483648,
+		"compaction_memory_budget_bytes": 12884901888,
+		"target_file_size_bytes": 268435456
+	}`)
+	gotLarge := maxBytesPerGroupFromParams(rawLarge)
+	safe := int64(12884901888) / planningMemoryExpansion
+	if gotLarge != safe {
+		t.Fatalf("large budget: got %d want safe %d", gotLarge, safe)
+	}
+	// Explicit dense override below target is preserved.
+	rawDense := []byte(`{
+		"max_bytes_per_group": 33554432,
+		"compaction_memory_budget_bytes": 4294967296,
+		"target_file_size_bytes": 268435456
+	}`)
+	if got := maxBytesPerGroupFromParams(rawDense); got != 33554432 {
+		t.Fatalf("dense override: got %d want 33554432", got)
+	}
+}
+
+func TestMinInputFilesFromParams(t *testing.T) {
+	t.Parallel()
+	if got := minInputFilesFromParams(nil); got != defaultMinInputFiles {
+		t.Fatalf("nil params: got %d want %d", got, defaultMinInputFiles)
+	}
+	if got := minInputFilesFromParams([]byte(`{"min_input_files": 5}`)); got != 5 {
+		t.Fatalf("explicit: got %d want 5", got)
+	}
+	if got := minInputFilesFromParams([]byte(`{"min_input_files": 0}`)); got != defaultMinInputFiles {
+		t.Fatalf("zero should fall back: got %d", got)
+	}
+}
+
+func makeTask(t *testing.T, path string, size int64) table.FileScanTask {
+	t.Helper()
+	builder, err := iceberg.NewDataFileBuilder(
+		*iceberg.UnpartitionedSpec,
+		iceberg.EntryContentData,
+		path,
+		iceberg.ParquetFile,
+		nil,
+		nil,
+		nil,
+		1,
+		size,
+	)
+	if err != nil {
+		t.Fatalf("build data file: %v", err)
+	}
+	return table.FileScanTask{File: builder.Build()}
+}
+
+func TestSplitOversizedGroupsByCount(t *testing.T) {
+	t.Parallel()
+	group := table.CompactionTaskGroup{
+		PartitionKey: "p=1",
+		Tasks: []table.FileScanTask{
+			makeTask(t, "s3://b/a.parquet", 10),
+			makeTask(t, "s3://b/b.parquet", 20),
+			makeTask(t, "s3://b/c.parquet", 30),
+			makeTask(t, "s3://b/d.parquet", 40),
+			makeTask(t, "s3://b/e.parquet", 50),
+		},
+		TotalSizeBytes: 150,
+	}
+
+	// Optional file-count split with a high byte cap so only the file limit applies.
+	split := splitOversizedGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
+		maxFiles: 2,
+		maxBytes: 1 << 30,
+	})
+	if len(split) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(split))
+	}
+	if len(split[0].Tasks) != 2 || len(split[1].Tasks) != 2 || len(split[2].Tasks) != 1 {
+		t.Fatalf("unexpected sizes: %d %d %d", len(split[0].Tasks), len(split[1].Tasks), len(split[2].Tasks))
+	}
+	if split[0].TotalSizeBytes != 30 || split[1].TotalSizeBytes != 70 || split[2].TotalSizeBytes != 50 {
+		t.Fatalf("unexpected byte totals: %d %d %d", split[0].TotalSizeBytes, split[1].TotalSizeBytes, split[2].TotalSizeBytes)
+	}
+	for _, g := range split {
+		if g.PartitionKey != "p=1" {
+			t.Fatalf("partition key changed: %q", g.PartitionKey)
+		}
+	}
+
+	// maxFiles <= 0: no file-count split; under byte cap → intact.
+	unchanged := splitOversizedGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
+		maxFiles: 0,
+		maxBytes: 1 << 30,
+	})
+	if len(unchanged) != 1 {
+		t.Fatalf("unlimited file count under byte cap should stay intact, got %d", len(unchanged))
+	}
+}
+
+func TestSplitOversizedGroupsByBytes(t *testing.T) {
+	t.Parallel()
+	// Tight memory cap (32 MiB) with ~20 MiB files: split yields pairs that still
+	// fit under the cap (2×20=40 would exceed → flush after first? wait: 20+20=40>32
+	// so each file alone). Split may produce 1-file groups; finalize drops them.
+	group := table.CompactionTaskGroup{
+		PartitionKey: "ingest_date=2025-02-13",
+		Tasks: []table.FileScanTask{
+			makeTask(t, "s3://b/a.parquet", 20*1024*1024),
+			makeTask(t, "s3://b/b.parquet", 20*1024*1024),
+			makeTask(t, "s3://b/c.parquet", 20*1024*1024),
+			makeTask(t, "s3://b/d.parquet", 20*1024*1024),
+		},
+		TotalSizeBytes: 80 * 1024 * 1024,
+	}
+
+	split := splitOversizedGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
+		maxFiles: 0,
+		maxBytes: 32 * 1024 * 1024,
+	})
+	if len(split) != 4 {
+		t.Fatalf("expected 4 single-file groups under 32MiB cap, got %d", len(split))
+	}
+	for i, g := range split {
+		if len(g.Tasks) != 1 {
+			t.Fatalf("group %d: want 1 file, got %d", i, len(g.Tasks))
+		}
+		if g.TotalSizeBytes != 20*1024*1024 {
+			t.Fatalf("group %d: unexpected bytes %d", i, g.TotalSizeBytes)
+		}
+		if g.PartitionKey != "ingest_date=2025-02-13" {
+			t.Fatalf("partition key changed: %q", g.PartitionKey)
+		}
+	}
+
+	// Spark/Iceberg: do not rewrite 1→1 after a memory split that cannot keep ≥2 files.
+	final := finalizeRewriteGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
+		maxFiles: 0,
+		maxBytes: 32 * 1024 * 1024,
+	}, 2)
+	if len(final) != 0 {
+		t.Fatalf("expected all 1-file groups dropped at min_input_files=2, got %d", len(final))
+	}
+}
+
+func TestFinalizeRewriteGroupsPacksTowardTarget(t *testing.T) {
+	t.Parallel()
+	// Default-aligned: max_bytes == target (256 MiB), no file-count cap. Five ~50 MiB
+	// files stay one bin-pack-sized group (≥2 files).
+	const fileBytes = 50 * 1024 * 1024
+	group := table.CompactionTaskGroup{
+		PartitionKey: "ingest_date=2025-02-13",
+		Tasks: []table.FileScanTask{
+			makeTask(t, "s3://b/a.parquet", fileBytes),
+			makeTask(t, "s3://b/b.parquet", fileBytes),
+			makeTask(t, "s3://b/c.parquet", fileBytes),
+			makeTask(t, "s3://b/d.parquet", fileBytes),
+			makeTask(t, "s3://b/e.parquet", fileBytes),
+		},
+		TotalSizeBytes: 5 * fileBytes,
+	}
+	final := finalizeRewriteGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
+		maxFiles: 0,
+		maxBytes: defaultTargetFileSizeBytes, // 256 MiB
+	}, 2)
+	if len(final) != 1 {
+		t.Fatalf("expected 1 group packed toward target, got %d", len(final))
+	}
+	if len(final[0].Tasks) != 5 {
+		t.Fatalf("expected 5 input files kept together, got %d", len(final[0].Tasks))
+	}
+}
+
+func TestFinalizeRewriteGroupsTinyFilesNoFileCap(t *testing.T) {
+	t.Parallel()
+	// 1000 × 1 KiB under a 256 MiB byte budget must stay one group — the old
+	// max_files=8 default would shred this into ~125 undersized rewrite groups.
+	const n = 1000
+	const fileBytes int64 = 1024
+	tasks := make([]table.FileScanTask, n)
+	for i := range tasks {
+		tasks[i] = makeTask(t, fmt.Sprintf("s3://b/%d.parquet", i), fileBytes)
+	}
+	group := table.CompactionTaskGroup{
+		PartitionKey:   "p=1",
+		Tasks:          tasks,
+		TotalSizeBytes: int64(n) * fileBytes,
+	}
+	final := finalizeRewriteGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
+		maxFiles: 0,
+		maxBytes: defaultTargetFileSizeBytes,
+	}, 2)
+	if len(final) != 1 {
+		t.Fatalf("expected 1 group for tiny-file storm, got %d", len(final))
+	}
+	if len(final[0].Tasks) != n {
+		t.Fatalf("expected %d input files kept together, got %d", n, len(final[0].Tasks))
+	}
+}
+
+func TestFinalizeRewriteGroupsKeepsMultiFileChunksUnderTightCap(t *testing.T) {
+	t.Parallel()
+	// 10 MiB files + 32 MiB cap → groups of 3 files (30 MiB); all keep min_input_files=2.
+	const fileBytes = 10 * 1024 * 1024
+	group := table.CompactionTaskGroup{
+		PartitionKey: "p=1",
+		Tasks: []table.FileScanTask{
+			makeTask(t, "s3://b/a.parquet", fileBytes),
+			makeTask(t, "s3://b/b.parquet", fileBytes),
+			makeTask(t, "s3://b/c.parquet", fileBytes),
+			makeTask(t, "s3://b/d.parquet", fileBytes),
+			makeTask(t, "s3://b/e.parquet", fileBytes),
+			makeTask(t, "s3://b/f.parquet", fileBytes),
+		},
+		TotalSizeBytes: 6 * fileBytes,
+	}
+	final := finalizeRewriteGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
+		maxFiles: 0,
+		maxBytes: 32 * 1024 * 1024,
+	}, 2)
+	if len(final) != 2 {
+		t.Fatalf("expected 2 groups of 3 files, got %d", len(final))
+	}
+	for i, g := range final {
+		if len(g.Tasks) != 3 {
+			t.Fatalf("group %d: want 3 files, got %d", i, len(g.Tasks))
+		}
+	}
+}
+
+func TestFilterGroupsByMinInputFiles(t *testing.T) {
+	t.Parallel()
+	groups := []table.CompactionTaskGroup{
+		{PartitionKey: "p=1", Tasks: []table.FileScanTask{makeTask(t, "s3://b/a.parquet", 10)}},
+		{PartitionKey: "p=1", Tasks: []table.FileScanTask{
+			makeTask(t, "s3://b/b.parquet", 10),
+			makeTask(t, "s3://b/c.parquet", 10),
+		}},
+	}
+	kept := filterGroupsByMinInputFiles(groups, 2)
+	if len(kept) != 1 || len(kept[0].Tasks) != 2 {
+		t.Fatalf("expected only the 2-file group, got %+v", kept)
+	}
+}
+
+func TestSplitOversizedGroupsSingleFileLargerThanCap(t *testing.T) {
+	t.Parallel()
+	group := table.CompactionTaskGroup{
+		PartitionKey: "p=1",
+		Tasks: []table.FileScanTask{
+			makeTask(t, "s3://b/huge.parquet", 100*1024*1024),
+		},
+		TotalSizeBytes: 100 * 1024 * 1024,
+	}
+	split := splitOversizedGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
+		maxFiles: 0,
+		maxBytes: 32 * 1024 * 1024,
+	})
+	if len(split) != 1 {
+		t.Fatalf("single oversized file must stay one group, got %d", len(split))
+	}
+	if len(split[0].Tasks) != 1 || split[0].TotalSizeBytes != 100*1024*1024 {
+		t.Fatalf("unexpected group: files=%d bytes=%d", len(split[0].Tasks), split[0].TotalSizeBytes)
+	}
+}
+
+func TestSplitOversizedGroupsBothCapsInteract(t *testing.T) {
+	t.Parallel()
+	// Small files: byte cap allows many, but optional file-count cap of 2 forces splits.
+	group := table.CompactionTaskGroup{
+		PartitionKey: "p=1",
+		Tasks: []table.FileScanTask{
+			makeTask(t, "s3://b/a.parquet", 1*1024*1024),
+			makeTask(t, "s3://b/b.parquet", 1*1024*1024),
+			makeTask(t, "s3://b/c.parquet", 1*1024*1024),
+			makeTask(t, "s3://b/d.parquet", 1*1024*1024),
+		},
+		TotalSizeBytes: 4 * 1024 * 1024,
+	}
+	split := splitOversizedGroups([]table.CompactionTaskGroup{group}, groupSplitLimits{
+		maxFiles: 2,
+		maxBytes: 32 * 1024 * 1024,
+	})
+	if len(split) != 2 {
+		t.Fatalf("expected 2 groups from file-count cap, got %d", len(split))
+	}
+	if len(split[0].Tasks) != 2 || len(split[1].Tasks) != 2 {
+		t.Fatalf("unexpected sizes: %d %d", len(split[0].Tasks), len(split[1].Tasks))
+	}
+}
+
+func TestCoalesceGroupsUpToMergesSamePartition(t *testing.T) {
+	t.Parallel()
+	const bin = 50 * 1024 * 1024
+	groups := []table.CompactionTaskGroup{
+		{PartitionKey: "p=1", Tasks: []table.FileScanTask{makeTask(t, "s3://b/a.parquet", bin), makeTask(t, "s3://b/b.parquet", bin)}, TotalSizeBytes: 2 * bin},
+		{PartitionKey: "p=1", Tasks: []table.FileScanTask{makeTask(t, "s3://b/c.parquet", bin), makeTask(t, "s3://b/d.parquet", bin)}, TotalSizeBytes: 2 * bin},
+		{PartitionKey: "p=1", Tasks: []table.FileScanTask{makeTask(t, "s3://b/e.parquet", bin), makeTask(t, "s3://b/f.parquet", bin)}, TotalSizeBytes: 2 * bin},
+	}
+	// 256 MiB cap → first two bins (200 MiB) merge; third would exceed → 2 groups.
+	merged := coalesceGroupsUpTo(groups, groupSplitLimits{maxBytes: defaultTargetFileSizeBytes})
+	if len(merged) != 2 {
+		t.Fatalf("expected 2 coalesced groups, got %d", len(merged))
+	}
+	if len(merged[0].Tasks) != 4 || merged[0].TotalSizeBytes != 4*bin {
+		t.Fatalf("first group: files=%d bytes=%d", len(merged[0].Tasks), merged[0].TotalSizeBytes)
+	}
+	if len(merged[1].Tasks) != 2 {
+		t.Fatalf("second group: files=%d", len(merged[1].Tasks))
+	}
+}
+
+func TestCoalesceGroupsUpToKeepsPartitionsSeparate(t *testing.T) {
+	t.Parallel()
+	const bin = 10 * 1024 * 1024
+	groups := []table.CompactionTaskGroup{
+		{PartitionKey: "p=1", Tasks: []table.FileScanTask{makeTask(t, "s3://b/a.parquet", bin)}, TotalSizeBytes: bin},
+		{PartitionKey: "p=2", Tasks: []table.FileScanTask{makeTask(t, "s3://b/b.parquet", bin)}, TotalSizeBytes: bin},
+	}
+	merged := coalesceGroupsUpTo(groups, groupSplitLimits{maxBytes: defaultTargetFileSizeBytes})
+	if len(merged) != 2 {
+		t.Fatalf("different partitions must not merge, got %d", len(merged))
+	}
+}
+
+func TestFinalizeRewriteGroupsCoalescesTowardScaledCap(t *testing.T) {
+	t.Parallel()
+	// Simulate PlanCompaction output: four ~64 MiB bins, scaled max_bytes = 256 MiB.
+	const bin = 64 * 1024 * 1024
+	groups := make([]table.CompactionTaskGroup, 4)
+	for i := range groups {
+		groups[i] = table.CompactionTaskGroup{
+			PartitionKey:   "0:_",
+			Tasks:          []table.FileScanTask{makeTask(t, fmt.Sprintf("s3://b/%d.parquet", i), bin), makeTask(t, fmt.Sprintf("s3://b/%d-b.parquet", i), bin/2)},
+			TotalSizeBytes: bin + bin/2,
+		}
+	}
+	final := finalizeRewriteGroups(groups, groupSplitLimits{
+		maxFiles: 0,
+		maxBytes: defaultTargetFileSizeBytes, // 256 MiB
+	}, 2)
+	// Each bin is 96 MiB → 256/96 ≈ 2 per coalesced group → 2 groups.
+	if len(final) != 2 {
+		t.Fatalf("expected 2 coalesced groups under 256 MiB, got %d", len(final))
+	}
+}
+
+func TestFinalizeRewriteGroupsPreservesMaxFilesCeiling(t *testing.T) {
+	t.Parallel()
+	const fileSize = 100 * 1024
+	tasks := make([]table.FileScanTask, 100)
+	for i := range tasks {
+		tasks[i] = makeTask(t, fmt.Sprintf("s3://b/tiny-%d.parquet", i), fileSize)
+	}
+	groups := []table.CompactionTaskGroup{
+		{
+			PartitionKey:   "p=1",
+			Tasks:          tasks,
+			TotalSizeBytes: int64(len(tasks) * fileSize),
+		},
+	}
+	final := finalizeRewriteGroups(
+		groups,
+		groupSplitLimits{maxFiles: 10, maxBytes: defaultTargetFileSizeBytes},
+		2,
+	)
+	if len(final) != 10 {
+		t.Fatalf("expected 10 file-bounded groups, got %d", len(final))
+	}
+	for i, group := range final {
+		if len(group.Tasks) > 10 {
+			t.Fatalf("group %d exceeded maxFiles: %d", i, len(group.Tasks))
+		}
+	}
+}

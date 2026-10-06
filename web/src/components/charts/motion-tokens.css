@@ -1,0 +1,13 @@
+:root,
+[data-theme="dark"] {
+  --motion-layout: 360ms;
+  --motion-highlight: 800ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  [data-theme="dark"] {
+    --motion-layout: 0ms;
+    --motion-highlight: 0ms;
+  }
+}

@@ -1,0 +1,95 @@
+# Cryo's self-managed Spark image: official Apache Spark + the Iceberg Spark plugin +
+# our runner script. No cloud-vendor image or service required -- this runs identically
+# on any Kubernetes cluster via `spark-submit --master k8s://...` (cryo/engines/spark/k8s.py),
+# the same way it already runs against EMR Serverless and local docker-compose.
+#
+# Spark base version and the iceberg-spark-runtime-<X.Y> artifact must match on Spark's
+# MINOR version -- Iceberg ships a separate runtime jar per Spark minor (spark/v4.0,
+# spark/v4.1, ...) because Spark's internal DataSource V2 APIs aren't binary-compatible
+# across minors. Iceberg 1.11.0 only publishes 4.0 and 4.1 runtimes (no 4.2 yet) --
+# pairing iceberg-spark-runtime-4.0 with a 4.2.0 base threw
+# IncompatibleClassChangeError: SparkView does not implement View (confirmed live against
+# a production cluster, 2026-07-21). Keep both pinned to the same minor.
+FROM apache/spark:4.1.2-python3@sha256:e334db9626cb9c5a3e72928c2c2f0efc668769a0b605f116afe6ea7adb38f546
+
+ARG ICEBERG_VERSION=1.11.0
+ARG ICEBERG_SPARK_MINOR=4.1
+# Must match the Hadoop version this Spark base image bundles (check
+# /opt/spark/jars/hadoop-client-api-*.jar) and its declared AWS SDK v2 dependency
+# (org/apache/hadoop/hadoop-project/<HADOOP_VERSION>/hadoop-project-<HADOOP_VERSION>.pom,
+# property aws-java-sdk-v2.version) -- a mismatched pair throws NoSuchMethodError deep in
+# the S3A connector at runtime, not at image build time.
+ARG HADOOP_VERSION=3.4.2
+ARG HADOOP_AWS_SDK_VERSION=2.29.52
+ARG ICEBERG_SPARK_RUNTIME_SHA256=d6ea6c5d099288daeb7d5a92061bd3d7d8f296492632b42378e5f2f0e3066242
+ARG ICEBERG_AWS_BUNDLE_SHA256=38f01da7e96850cdd05e6616d758b77b43314b712a8808e3f9a824d56976162f
+ARG HADOOP_AWS_SHA256=d2d24e6b715b5656b9d238bf13b6682a07e2004dd36aad74a73aeb854319f4d9
+ARG HADOOP_AWS_SDK_SHA256=62638f33045690c6bc5e496b54b0b2e89a9ad38cbedacdf6e017fea6bc85f55c
+ARG BOTO3_VERSION=1.43.0
+USER root
+
+# Iceberg's Spark runtime (Iceberg core + Spark integration, shaded) and the AWS bundle
+# (S3FileIO + AWS SDK v2, for s3a:// warehouses) -- both official Apache Iceberg release
+# artifacts from Maven Central, not vendored/rebuilt.
+#
+# hadoop-aws + its AWS SDK v2 bundle are a second, separate S3 code path: Spark 4.1.2 ships
+# hadoop-client-api/-runtime (Hadoop's minimal shaded client jars) but deliberately excludes
+# cloud-connector modules like hadoop-aws -- callers add the one they need. Iceberg's own
+# actions mostly go through S3FileIO (iceberg-aws-bundle covers that), but
+# DeleteOrphanFilesSparkAction lists the warehouse directory via the classic Hadoop
+# FileSystem API (FileSystemWalker.listDirRecursivelyWithHadoop), which requires
+# org.apache.hadoop.fs.s3a.S3AFileSystem -- missing without hadoop-aws, confirmed live,
+# 2026-07-28: remove_orphan_files failed with ClassNotFoundException while optimize/
+# expire_snapshots (S3FileIO-only) succeeded on the same table. iceberg-aws-bundle's copy
+# of the AWS SDK is shaded/relocated (org.apache.iceberg.shaded.software.amazon.awssdk), so
+# it does not satisfy or conflict with hadoop-aws's unrelocated software.amazon.awssdk
+# dependency -- both bundles are required side by side.
+RUN curl -fsSL -o /opt/spark/jars/iceberg-spark-runtime-${ICEBERG_SPARK_MINOR}_2.13-${ICEBERG_VERSION}.jar \
+      "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-${ICEBERG_SPARK_MINOR}_2.13/${ICEBERG_VERSION}/iceberg-spark-runtime-${ICEBERG_SPARK_MINOR}_2.13-${ICEBERG_VERSION}.jar" \
+    && curl -fsSL -o /opt/spark/jars/iceberg-aws-bundle-${ICEBERG_VERSION}.jar \
+      "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/${ICEBERG_VERSION}/iceberg-aws-bundle-${ICEBERG_VERSION}.jar" \
+    && curl -fsSL -o /opt/spark/jars/hadoop-aws-${HADOOP_VERSION}.jar \
+      "https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/${HADOOP_VERSION}/hadoop-aws-${HADOOP_VERSION}.jar" \
+    && curl -fsSL -o /opt/spark/jars/aws-sdk-bundle-${HADOOP_AWS_SDK_VERSION}.jar \
+      "https://repo1.maven.org/maven2/software/amazon/awssdk/bundle/${HADOOP_AWS_SDK_VERSION}/bundle-${HADOOP_AWS_SDK_VERSION}.jar" \
+    && echo "${ICEBERG_SPARK_RUNTIME_SHA256}  /opt/spark/jars/iceberg-spark-runtime-${ICEBERG_SPARK_MINOR}_2.13-${ICEBERG_VERSION}.jar" | sha256sum --check --strict \
+    && echo "${ICEBERG_AWS_BUNDLE_SHA256}  /opt/spark/jars/iceberg-aws-bundle-${ICEBERG_VERSION}.jar" | sha256sum --check --strict \
+    && echo "${HADOOP_AWS_SHA256}  /opt/spark/jars/hadoop-aws-${HADOOP_VERSION}.jar" | sha256sum --check --strict \
+    && echo "${HADOOP_AWS_SDK_SHA256}  /opt/spark/jars/aws-sdk-bundle-${HADOOP_AWS_SDK_VERSION}.jar" | sha256sum --check --strict
+
+COPY cryo_spark_runner.py /opt/cryo/cryo_spark_runner.py
+
+# boto3 for the missing-file repair mode's S3 existence checks (cryo_spark_runner.py
+# --repair-missing-files) -- not needed for the SQL-CALL path, but negligible weight.
+RUN pip install --no-cache-dir "boto3==${BOTO3_VERSION}"
+
+# cryo_spark_runner.py imports cryo.engines.spark.procedure_metrics (pure stdlib, no
+# heavy deps of its own) to turn an Iceberg procedure's raw result into a bytes-freed
+# number. This image never installed the cryo package at all, so every real dispatch
+# failed at import time with "ModuleNotFoundError: No module named 'cryo'" (confirmed
+# live, 2026-10-06, job 1a02688f -- this is likely the real cause behind this
+# destination's ~55% historical failure rate, not individual table/data issues).
+#
+# Not `pip install .`: two real blockers ruled that out, confirmed locally 2026-10-06.
+# (1) apache/spark:4.1.2-python3 runs Python 3.10.12; pyproject.toml declares
+# requires-python = ">=3.12" for the full app (FastAPI, async SQLAlchemy, etc.) --
+# correctly refused once setuptools could actually read it (see next point). (2) Before
+# that refusal even surfaces, the base image's system setuptools (59.6.0, older than
+# this project's [build-system] requires = ["setuptools>=68", ...]) silently fails to
+# read the modern [project] table and builds an empty "UNKNOWN-0.0.0" wheel instead of
+# erroring -- pip reports success, the image builds clean, only a real import at
+# runtime reveals the package has no content.
+#
+# So: copy just the one module this runner needs, as plain files, bypassing both
+# setuptools and the package's own cryo/engines/spark/__init__.py (which eagerly
+# imports engine.py -> cryo.config -> the full pydantic-settings/env graph -- not
+# something a 3.10 image installing with --no-deps could run anyway). Stand-in empty
+# __init__.py files satisfy Python's package machinery without triggering any of that.
+RUN mkdir -p /opt/cryo-site/cryo/engines/spark \
+    && touch /opt/cryo-site/cryo/__init__.py \
+             /opt/cryo-site/cryo/engines/__init__.py \
+             /opt/cryo-site/cryo/engines/spark/__init__.py
+COPY cryo/engines/spark/procedure_metrics.py /opt/cryo-site/cryo/engines/spark/procedure_metrics.py
+ENV PYTHONPATH="/opt/cryo-site:${PYTHONPATH}"
+
+USER 185

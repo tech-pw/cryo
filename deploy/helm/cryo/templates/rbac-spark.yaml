@@ -1,0 +1,76 @@
+{{- /*
+RBAC for Cryo-managed Spark-on-Kubernetes (cryo.engines.spark.k8s).
+
+One ServiceAccount used both by the dispatch Job's spark-submit client (creates the
+Spark driver pod, cluster mode) and by the driver pod itself (creates its own executor
+pods + a headless service for driver<->executor communication) -- Spark manages that
+lifecycle internally once it has these permissions; Cryo does not create executor pods.
+*/ -}}
+{{- if .Values.spark.k8s.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "cryo.fullname" . }}-spark
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: spark-fallback
+{{- if .Values.imagePullSecrets }}
+imagePullSecrets:
+  {{- range .Values.imagePullSecrets }}
+  - name: {{ . }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "cryo.fullname" . }}-spark
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: spark-fallback
+rules:
+  # patch is required alongside create: Spark's Kubernetes client applies the driver
+  # pod/service/configmap via server-side apply (PATCH with fieldManager=fabric8), not a
+  # plain POST create -- create-only RBAC 403s on "cannot patch resource" (confirmed live
+  # against example-cluster, 2026-07-21). deletecollection is required alongside
+  # delete: the driver's shutdown hook cleans up its own executors/services/etc. by label
+  # selector (a bulk delete), which is a distinct verb from single-resource delete.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch"]
+  # Spark's shutdown hook always attempts this cleanup step regardless of whether the
+  # job used any PVCs.
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch"]
+  # Spark 4.x manages a NetworkPolicy for driver<->executor isolation in cluster mode
+  # (confirmed live against example-cluster, 2026-07-21).
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "cryo.fullname" . }}-spark
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: spark-fallback
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "cryo.fullname" . }}-spark
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "cryo.fullname" . }}-spark
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,48 @@
+name: Dependency canary
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  pyiceberg-canary:
+    name: pyiceberg next-minor canary
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cryo
+          POSTGRES_PASSWORD: cryo
+          POSTGRES_DB: cryo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install with latest pyiceberg minor
+        run: |
+          pip install -U pip
+          pip install -e ".[dev]"
+          pip install -U "pyiceberg>=0.11,<1"
+      - name: Migrate and test
+        env:
+          CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@localhost:5432/cryo_test
+          CRYO_REDIS_URL: redis://localhost:6379/0
+          CRYO_JWT_SECRET: canary-test-secret
+        run: |
+          alembic upgrade head
+          pytest tests/ -q --tb=line -x

@@ -1,0 +1,633 @@
+"""Tests for cryo/reporting/daily_report.py's fleet-health digest.
+
+Covers the parts that don't need a live LLM provider or Slack webhook: status
+classification, the deterministic bottom-line fallback, the real (never-fabricated) size
+delta, action-item construction, and the Block Kit structure per
+docs/SLACK_REPORT_FORMAT_GUIDE.md's 6-section framework.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
+from cryo.db.models import AuditLog, Source, Table, TableCostHistory, TableStats, TableStatsHistory
+from cryo.ml.anomaly_detector import AnomalyAlert
+from cryo.reporting.daily_report import (
+    DailyReportData,
+    _build_action_items,
+    _build_slack_blocks,
+    _classify_status,
+    _collect_report_data,
+    _deterministic_bottom_line,
+    _maintenance_split,
+    _size_snapshot_asof,
+    generate_daily_report,
+)
+from cryo.reporting.impact_signals import DailyImpact, ImpactSignal
+
+
+def _seed_source(session) -> Source:
+    source = Source(id=uuid4(), name=f"source-{uuid4()}", type="rest", config={})
+    session.add(source)
+    session.flush()
+    return source
+
+
+def _seed_table(session, source: Source, *, name: str, owner_email: str | None = None) -> Table:
+    table = Table(
+        id=uuid4(),
+        source_id=source.id,
+        schema_name="finance",
+        table_name=name,
+        is_active=True,
+        owner_email=owner_email,
+    )
+    session.add(table)
+    session.flush()
+    return table
+
+
+def _alert(*, table_id, table_name: str, severity: str) -> AnomalyAlert:
+    return AnomalyAlert(
+        table_id=str(table_id),
+        table_name=table_name,
+        metric_name="small_files_count",
+        current_value=500.0,
+        expected_value=50.0,
+        deviation_sigma=6.2,
+        severity=severity,
+        description="small_files_count spiked to 500 (baseline 50)",
+        detected_at=datetime.now(UTC),
+    )
+
+
+# ---------------------------------------------------------------------------
+# _classify_status
+# ---------------------------------------------------------------------------
+
+
+def test_classify_status_clear_when_no_anomalies_and_all_healthy() -> None:
+    assert _classify_status(unhealthy_tables=0, anomalies=[]) == "CLEAR"
+
+
+def test_classify_status_watch_when_unhealthy_tables_but_no_anomalies() -> None:
+    assert _classify_status(unhealthy_tables=3, anomalies=[]) == "WATCH"
+
+
+def test_classify_status_watch_on_medium_severity_anomaly() -> None:
+    alerts = [_alert(table_id=uuid4(), table_name="finance.orders", severity="medium")]
+    assert _classify_status(unhealthy_tables=0, anomalies=alerts) == "WATCH"
+
+
+def test_classify_status_critical_on_high_severity_anomaly() -> None:
+    alerts = [_alert(table_id=uuid4(), table_name="finance.orders", severity="high")]
+    assert _classify_status(unhealthy_tables=0, anomalies=alerts) == "CRITICAL"
+
+
+def test_classify_status_critical_wins_over_watch() -> None:
+    alerts = [
+        _alert(table_id=uuid4(), table_name="a", severity="medium"),
+        _alert(table_id=uuid4(), table_name="b", severity="high"),
+    ]
+    assert _classify_status(unhealthy_tables=5, anomalies=alerts) == "CRITICAL"
+
+
+# ---------------------------------------------------------------------------
+# _deterministic_bottom_line
+# ---------------------------------------------------------------------------
+
+
+def test_deterministic_bottom_line_clear_says_no_action() -> None:
+    data = DailyReportData(
+        report_date=datetime.now(UTC),
+        status="CLEAR",
+        total_tables=10,
+        healthy_tables=10,
+        unhealthy_tables=0,
+        tables_needing_compaction=0,
+        total_anomalies=0,
+    )
+    line = _deterministic_bottom_line(data)
+    assert "No action required" in line
+    assert "10" in line
+
+
+def test_deterministic_bottom_line_watch_reports_unhealthy_count() -> None:
+    data = DailyReportData(
+        report_date=datetime.now(UTC),
+        status="WATCH",
+        total_tables=10,
+        healthy_tables=7,
+        unhealthy_tables=3,
+        tables_needing_compaction=2,
+        total_anomalies=1,
+        critical_anomalies=[{"table": "finance.orders"}],
+    )
+    line = _deterministic_bottom_line(data)
+    assert "3 of 10" in line
+
+
+def test_deterministic_bottom_line_includes_real_size_delta_only_when_known() -> None:
+    data = DailyReportData(
+        report_date=datetime.now(UTC),
+        status="WATCH",
+        total_tables=10,
+        healthy_tables=7,
+        unhealthy_tables=3,
+        tables_needing_compaction=0,
+        total_anomalies=0,
+        critical_anomalies=[{"table": "x"}],
+        total_size_tb_delta=1.25,
+    )
+    line = _deterministic_bottom_line(data)
+    assert "up 1.25 TB" in line
+
+    data_no_delta = DailyReportData(
+        report_date=datetime.now(UTC),
+        status="WATCH",
+        total_tables=10,
+        healthy_tables=7,
+        unhealthy_tables=3,
+        tables_needing_compaction=0,
+        total_anomalies=0,
+        critical_anomalies=[{"table": "x"}],
+        total_size_tb_delta=None,
+    )
+    line_no_delta = _deterministic_bottom_line(data_no_delta)
+    assert "TB" not in line_no_delta
+
+
+# ---------------------------------------------------------------------------
+# _size_snapshot_asof -- real delta, never fabricated
+# ---------------------------------------------------------------------------
+
+
+def test_size_snapshot_asof_returns_none_with_insufficient_history(session) -> None:
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="a")
+    session.add(
+        TableStatsHistory(
+            table_id=table.id,
+            scan_at=datetime.now(UTC) - timedelta(days=1),
+            total_size_gb=100.0,
+        )
+    )
+    session.commit()
+
+    assert _size_snapshot_asof(session, datetime.now(UTC) - timedelta(days=1)) is None
+
+
+def test_size_snapshot_asof_sums_nearest_prior_row_per_table(session) -> None:
+    source = _seed_source(session)
+    as_of = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
+    for i in range(5):
+        table = _seed_table(session, source, name=f"t{i}")
+        session.add(
+            TableStatsHistory(
+                table_id=table.id,
+                scan_at=as_of - timedelta(hours=1),
+                total_size_gb=1024.0,  # 1 TB each
+            )
+        )
+        # A later row (after as_of) must not be picked.
+        session.add(
+            TableStatsHistory(
+                table_id=table.id,
+                scan_at=as_of + timedelta(hours=1),
+                total_size_gb=999_999.0,
+            )
+        )
+    session.commit()
+
+    result = _size_snapshot_asof(session, as_of)
+
+    assert result == 5.0  # 5 tables x 1 TB, using the pre-as_of row only
+
+
+# ---------------------------------------------------------------------------
+# _build_action_items
+# ---------------------------------------------------------------------------
+
+
+def test_build_action_items_uses_table_owner_when_set(session) -> None:
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="orders", owner_email="owner@example.com")
+    alerts = [_alert(table_id=table.id, table_name="finance.orders", severity="high")]
+
+    items = _build_action_items(session, alerts, top_issues=[])
+
+    assert len(items) == 1
+    assert items[0]["owner"] == "@owner@example.com"
+    assert items[0]["severity"] == "high"
+
+
+def test_build_action_items_flags_missing_owner_honestly(session) -> None:
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="orders", owner_email=None)
+    alerts = [_alert(table_id=table.id, table_name="finance.orders", severity="medium")]
+
+    items = _build_action_items(session, alerts, top_issues=[])
+
+    assert items[0]["owner"] == "no owner assigned"
+
+
+def test_build_action_items_falls_back_to_top_issues_when_no_anomalies(session) -> None:
+    items = _build_action_items(
+        session,
+        [],
+        top_issues=[{"table": "finance.orders", "grade": "D", "score": 42, "small_files": 900}],
+    )
+
+    assert len(items) == 1
+    assert "finance.orders" in items[0]["text"]
+    assert items[0]["owner"] == "no owner assigned"
+
+
+def test_build_action_items_caps_at_three(session) -> None:
+    source = _seed_source(session)
+    alerts = [
+        _alert(
+            table_id=_seed_table(session, source, name=f"t{i}").id,
+            table_name=f"finance.t{i}",
+            severity="high",
+        )
+        for i in range(5)
+    ]
+
+    items = _build_action_items(session, alerts, top_issues=[])
+
+    assert len(items) == 3
+
+
+# ---------------------------------------------------------------------------
+# _collect_report_data -- integration across the pieces above
+# ---------------------------------------------------------------------------
+
+
+def test_collect_report_data_clear_has_no_action_items(session) -> None:
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="orders")
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="A",
+            overall_score=95,
+            total_files=10,
+            small_files_count=0,
+            total_size_gb=5.0,
+        )
+    )
+    session.commit()
+
+    data = _collect_report_data(session)
+
+    assert data.status == "CLEAR"
+    assert data.action_items == []
+
+
+def test_collect_report_data_watch_when_unhealthy_table_present(session) -> None:
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="orders")
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=True,
+            compaction_priority="HIGH",
+            grade="F",
+            overall_score=20,
+            total_files=900,
+            small_files_count=850,
+            total_size_gb=5.0,
+        )
+    )
+    session.commit()
+
+    data = _collect_report_data(session)
+
+    assert data.status == "WATCH"
+    assert data.unhealthy_tables == 1
+    assert data.tables_needing_compaction == 1
+
+
+def test_fleet_numbers_exclude_disabled_sources_and_inactive_tables(session) -> None:
+    live = _seed_source(session)
+    dev = Source(id=uuid4(), name=f"dev-{uuid4()}", type="rest", config={}, enabled=False)
+    session.add(dev)
+    session.flush()
+    kept = _seed_table(session, live, name="orders")
+    retired = _seed_table(session, live, name="orders_old")
+    retired.is_active = False
+    dev_table = _seed_table(session, dev, name="orders_dev")
+    for table in (kept, retired, dev_table):
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=datetime.now(UTC),
+                needs_compaction=True,
+                compaction_priority="HIGH",
+                grade="F",
+                overall_score=20,
+                total_files=900,
+                small_files_count=850,
+                total_size_gb=1024.0,
+            )
+        )
+    session.commit()
+
+    data = _collect_report_data(session)
+
+    assert data.total_tables == 1
+    assert data.unhealthy_tables == 1
+    assert data.tables_needing_compaction == 1
+    assert data.total_size_tb == 1.0
+    assert data.total_files == 900
+
+
+def test_collect_report_data_unexplained_cost_spike_forces_watch(session) -> None:
+    """An unexplained fleet-cost spike must surface even when every table itself looks
+    healthy -- the cost signal is a fleet-wide check, not a table-health one, and the two
+    shouldn't be able to mask each other."""
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="orders")
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="A",
+            overall_score=95,
+            total_files=10,
+            small_files_count=0,
+            total_size_gb=5.0,
+        )
+    )
+    now = datetime.now(UTC)
+    session.add(
+        TableCostHistory(
+            table_id=table.id,
+            scan_at=now - timedelta(days=1, hours=1),
+            current_monthly_cost_usd=200.0,
+        )
+    )
+    session.add(
+        TableCostHistory(
+            table_id=table.id,
+            scan_at=now - timedelta(days=2, hours=1),
+            current_monthly_cost_usd=100.0,
+        )
+    )
+    session.commit()
+
+    data = _collect_report_data(session)
+
+    assert data.status == "WATCH"
+    assert data.cost_signal is not None
+    assert data.cost_signal.direction == "spike"
+    assert data.cost_correlation is not None
+    assert data.cost_correlation.explains_change is False
+    assert any("Fleet cost spike" in item["text"] for item in data.action_items)
+
+
+def test_collect_report_data_explained_cost_spike_does_not_force_watch(session) -> None:
+    """A spike explained by Cryo's own recent rewrite activity shouldn't force WATCH status
+    on an otherwise-healthy fleet -- it's still surfaced, just not as an open question."""
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="orders")
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="A",
+            overall_score=95,
+            total_files=10,
+            small_files_count=0,
+            total_size_gb=5.0,
+        )
+    )
+    now = datetime.now(UTC)
+    session.add(
+        TableCostHistory(
+            table_id=table.id,
+            scan_at=now - timedelta(days=1, hours=1),
+            current_monthly_cost_usd=200.0,
+        )
+    )
+    session.add(
+        TableCostHistory(
+            table_id=table.id,
+            scan_at=now - timedelta(days=2, hours=1),
+            current_monthly_cost_usd=100.0,
+        )
+    )
+    session.add(
+        AuditLog(
+            ts=now - timedelta(hours=6),
+            table_id=table.id,
+            action="optimize",
+            status="OK",
+            actual_bytes_freed=1024**3,
+        )
+    )
+    session.commit()
+
+    data = _collect_report_data(session)
+
+    assert data.status == "CLEAR"
+    assert data.cost_signal is not None
+    assert data.cost_signal.direction == "spike"
+    assert data.cost_correlation is not None
+    assert data.cost_correlation.explains_change is True
+
+
+# ---------------------------------------------------------------------------
+# generate_daily_report -- end to end without a live LLM provider or Slack
+# ---------------------------------------------------------------------------
+
+
+def test_generate_daily_report_uses_deterministic_fallback_without_ai_provider(session) -> None:
+    source = _seed_source(session)
+    table = _seed_table(session, source, name="orders")
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=datetime.now(UTC),
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="A",
+            overall_score=95,
+            total_files=10,
+            small_files_count=0,
+            total_size_gb=5.0,
+        )
+    )
+    session.commit()
+
+    result = asyncio.run(generate_daily_report(session, slack_client=None, use_ai_summary=True))
+
+    assert result["status"] == "CLEAR"
+    assert result["bottom_line_used_llm"] is False
+    assert "No action required" in result["bottom_line"]
+    assert "slack_sent" not in result
+
+
+# ---------------------------------------------------------------------------
+# _build_slack_blocks -- structure per docs/SLACK_REPORT_FORMAT_GUIDE.md
+# ---------------------------------------------------------------------------
+
+
+def test_build_slack_blocks_reports_the_fleet_and_file_counters() -> None:
+    data = DailyReportData(
+        report_date=datetime(2026, 7, 9, 10, 0, tzinfo=UTC),
+        status="CLEAR",
+        total_tables=12591,
+        healthy_tables=5,
+        unhealthy_tables=0,
+        tables_needing_compaction=4297,
+        total_anomalies=0,
+        tables_scanned_yesterday=2373,
+        total_files=1_000_000,
+        small_files=250_000,
+        total_size_tb=2.0,
+        grade_distribution={"A": 10, "F": 2},
+    )
+
+    rendered = [b.to_dict() for b in _build_slack_blocks(data, "ignored")]
+    body = str(rendered)
+
+    assert rendered[0]["type"] == "header"
+    assert "July 09, 2026" in rendered[0]["text"]["text"]
+    for expected in ("12,591", "2,373", "4,297", "2.00 TB", "1,000,000", "250,000"):
+        assert expected in body
+    assert "25.0%" in body, "small-file ratio"
+    assert "2.1 MB" in body, "avg file size = 2 TB / 1M files"
+    assert "Grade Distribution" in body
+
+
+def test_build_slack_blocks_omits_the_sections_that_were_removed() -> None:
+    """The narrative, anomaly, cost and action-item sections are gone on purpose.
+
+    They are still populated on the data object (the API response keeps them), so this
+    guards the Slack surface specifically rather than the collector.
+    """
+    data = DailyReportData(
+        report_date=datetime(2026, 7, 9, 10, 0, tzinfo=UTC),
+        status="CRITICAL",
+        total_tables=5,
+        healthy_tables=3,
+        unhealthy_tables=2,
+        tables_needing_compaction=1,
+        total_anomalies=1,
+        critical_anomalies=[{"table": "finance.orders"}],
+        total_cost_usd=1234.0,
+        projected_savings_usd=99.0,
+        top_issues=[
+            {"table": "finance.orders", "grade": "F", "score": 10, "small_files": 900},
+        ],
+        action_items=[
+            {
+                "severity": "high",
+                "text": "`finance.orders` — null-rate spike",
+                "owner": "@owner@example.com",
+            }
+        ],
+    )
+
+    body = str([b.to_dict() for b in _build_slack_blocks(data, "Orders table degraded.")])
+
+    assert "Orders table degraded." not in body, "narrated bottom line"
+    assert "CRITICAL" not in body, "status banner"
+    assert "Action Items" not in body
+    assert "null-rate spike" not in body
+    assert "Top Unhealthy Tables" not in body
+    assert "Anomalies" not in body
+    assert "1234" not in body and "Projected Savings" not in body
+
+
+def test_maintenance_split_reports_each_operation_separately() -> None:
+    """AuditLog writes 'OK' and 'FAILED' -- these are the real status strings in prod."""
+    rows = _maintenance_split(
+        {
+            "optimize_OK": 1200,
+            "optimize_FAILED": 3,
+            "expire_snapshots_OK": 822,
+            "remove_orphan_files_FAILED": 2,
+            "optimize_SKIPPED": 17,
+        }
+    )
+
+    assert rows == [
+        ["expire_snapshots", "822", "0"],
+        ["optimize", "1,200", "3"],
+        ["remove_orphan_files", "0", "2"],
+    ], "SKIPPED counts as neither succeeded nor failed"
+
+
+def test_maintenance_split_handles_an_action_name_containing_a_dot() -> None:
+    assert _maintenance_split({"fast_path.missing_target_file_size_OK": 50}) == [
+        ["fast_path.missing_target_file_size", "50", "0"],
+    ]
+
+
+def test_build_slack_blocks_always_includes_fallback_footer() -> None:
+    data = DailyReportData(
+        report_date=datetime(2026, 7, 9, 10, 0, tzinfo=UTC),
+        status="CLEAR",
+        total_tables=1,
+        healthy_tables=1,
+        unhealthy_tables=0,
+        tables_needing_compaction=0,
+        total_anomalies=0,
+    )
+
+    blocks = _build_slack_blocks(data, "All clear.")
+
+    assert blocks[-1].type == "context"
+
+
+def test_slack_does_not_print_unmeasured_reclaim_as_gb() -> None:
+    now = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)
+    today = DailyImpact(
+        day_start=now,
+        day_end=now,
+        bytes_freed=0,
+        actions_succeeded=4,
+        tables_touched=2,
+        optimize_files_in=0,
+        optimize_files_out=0,
+        actions_with_bytes_evidence=0,
+        actions_without_bytes_evidence=4,
+    )
+    data = DailyReportData(
+        report_date=now,
+        status="CLEAR",
+        total_tables=1,
+        healthy_tables=1,
+        unhealthy_tables=0,
+        tables_needing_compaction=0,
+        total_anomalies=0,
+        impact_signal=ImpactSignal(
+            direction="unknown",
+            dod_pct=-90.0,
+            wow_pct=-40.0,
+            primary_signal="dod",
+            today=today,
+            dod_baseline_gb=10.0,
+            wow_baseline_gb=8.0,
+            measurement_state=today.measurement_state,
+        ),
+    )
+
+    body = str([block.to_dict() for block in _build_slack_blocks(data, "ignored")])
+
+    assert "unmeasured" in body
+    assert "'text': '0.0 GB'" not in body
+    assert "-90.0%" not in body

@@ -1,0 +1,184 @@
+# Cryo platform services — production-shaped local stack.
+# For full local dev (datalake + observability), use ./start-local.sh or `make up`.
+
+name: cryo
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: cryo-postgres
+    environment:
+      POSTGRES_USER: cryo
+      POSTGRES_PASSWORD: cryo
+      POSTGRES_DB: cryo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - cryo-dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cryo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: cryo-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - cryo-dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  cryo-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cryo-api
+    command: uvicorn cryo.api.app:create_app --factory --host 0.0.0.0 --port 8000
+    environment:
+      CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
+      CRYO_REDIS_URL: redis://redis:6379/0
+      CRYO_JWT_SECRET: dev-secret-change-in-prod
+      CRYO_ENVIRONMENT: dev
+    ports:
+      - "8000:8000"
+    networks:
+      - cryo-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./cryo:/app/cryo
+      - ./migrations:/app/migrations
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  cryo-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cryo-scanner
+    command: python -m cryo.cli scanner
+    environment:
+      CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
+      CRYO_REDIS_URL: redis://redis:6379/0
+      CRYO_JWT_SECRET: dev-secret-change-in-prod
+      CRYO_ENVIRONMENT: dev
+    networks:
+      - cryo-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      cryo-api:
+        condition: service_healthy
+    volumes:
+      - ./cryo:/app/cryo
+    restart: unless-stopped
+
+  cryo-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cryo-scheduler
+    command: python -m cryo.cli scheduler
+    environment:
+      CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
+      CRYO_REDIS_URL: redis://redis:6379/0
+      CRYO_JWT_SECRET: dev-secret-change-in-prod
+      CRYO_ENVIRONMENT: dev
+    networks:
+      - cryo-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./cryo:/app/cryo
+    restart: unless-stopped
+
+  cryo-governor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cryo-governor
+    command: python -m cryo.cli governor
+    environment:
+      CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
+      CRYO_REDIS_URL: redis://redis:6379/0
+      CRYO_JWT_SECRET: dev-secret-change-in-prod
+      CRYO_ENVIRONMENT: dev
+    networks:
+      - cryo-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./cryo:/app/cryo
+    restart: unless-stopped
+
+  cryo-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cryo-worker
+    command: python -m cryo.cli worker
+    environment:
+      CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@postgres:5432/cryo
+      CRYO_REDIS_URL: redis://redis:6379/0
+      CRYO_JWT_SECRET: dev-secret-change-in-prod
+      CRYO_ENVIRONMENT: dev
+    networks:
+      - cryo-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./cryo:/app/cryo
+    restart: unless-stopped
+
+  cryo-web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: cryo-web
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+      VITE_PROXY_TARGET: http://cryo-api:8000
+    ports:
+      - "5173:5173"
+    networks:
+      - cryo-dev
+    volumes:
+      - ./web/src:/app/src
+      - ./web/public:/app/public
+    depends_on:
+      - cryo-api
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  cryo-dev:
+    name: cryo-dev

@@ -1,0 +1,22 @@
+{
+  "detector": {
+    "designSystem": { "enabled": true },
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "IBM Plex Sans",
+        "reason": "Cryo brand font per DESIGN.md §Typography"
+      },
+      {
+        "rule": "overused-font",
+        "value": "IBM Plex Mono",
+        "reason": "Cryo mono for SQL/IDs per DESIGN.md §Typography"
+      }
+    ],
+    "ignoreFiles": [
+      "web/src/styles.css",
+      "web/src/**/*.test.tsx"
+    ]
+  },
+  "hook": { "enabled": true }
+}
