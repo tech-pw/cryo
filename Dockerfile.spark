@@ -63,4 +63,33 @@ COPY cryo_spark_runner.py /opt/cryo/cryo_spark_runner.py
 # --repair-missing-files) -- not needed for the SQL-CALL path, but negligible weight.
 RUN pip install --no-cache-dir "boto3==${BOTO3_VERSION}"
 
+# cryo_spark_runner.py imports cryo.engines.spark.procedure_metrics (pure stdlib, no
+# heavy deps of its own) to turn an Iceberg procedure's raw result into a bytes-freed
+# number. This image never installed the cryo package at all, so every real dispatch
+# failed at import time with "ModuleNotFoundError: No module named 'cryo'" (confirmed
+# live, 2026-10-06, job 1a02688f -- this is likely the real cause behind this
+# destination's ~55% historical failure rate, not individual table/data issues).
+#
+# Not `pip install .`: two real blockers ruled that out, confirmed locally 2026-10-06.
+# (1) apache/spark:4.1.2-python3 runs Python 3.10.12; pyproject.toml declares
+# requires-python = ">=3.12" for the full app (FastAPI, async SQLAlchemy, etc.) --
+# correctly refused once setuptools could actually read it (see next point). (2) Before
+# that refusal even surfaces, the base image's system setuptools (59.6.0, older than
+# this project's [build-system] requires = ["setuptools>=68", ...]) silently fails to
+# read the modern [project] table and builds an empty "UNKNOWN-0.0.0" wheel instead of
+# erroring -- pip reports success, the image builds clean, only a real import at
+# runtime reveals the package has no content.
+#
+# So: copy just the one module this runner needs, as plain files, bypassing both
+# setuptools and the package's own cryo/engines/spark/__init__.py (which eagerly
+# imports engine.py -> cryo.config -> the full pydantic-settings/env graph -- not
+# something a 3.10 image installing with --no-deps could run anyway). Stand-in empty
+# __init__.py files satisfy Python's package machinery without triggering any of that.
+RUN mkdir -p /opt/cryo-site/cryo/engines/spark \
+    && touch /opt/cryo-site/cryo/__init__.py \
+             /opt/cryo-site/cryo/engines/__init__.py \
+             /opt/cryo-site/cryo/engines/spark/__init__.py
+COPY cryo/engines/spark/procedure_metrics.py /opt/cryo-site/cryo/engines/spark/procedure_metrics.py
+ENV PYTHONPATH="/opt/cryo-site:${PYTHONPATH}"
+
 USER 185
