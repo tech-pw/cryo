@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from cryo import __version__
 from cryo.api.advanced_routes import router as advanced_router
@@ -140,6 +141,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         capacity=settings.api_rate_limit_burst,
     )
     app.add_middleware(CorrelationMiddleware)
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     @app.get("/healthz", tags=["health"])
     def healthz() -> dict[str, str]:

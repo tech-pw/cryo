@@ -128,7 +128,11 @@ def _recommend_target_file_size(stats: dict[str, Any]) -> tuple[int, str]:
 def compute_property_recommendations(
     session: Session,
     table_id: uuid.UUID,
+    *,
+    include_bloom_filters: bool = True,
 ) -> list[PropertyRecommendation]:
+    """``include_bloom_filters=False`` skips the layout analyzer, which loads the table from
+    the live catalog -- callers that sweep many tables on a request path must pass it."""
     table = session.get(Table, table_id)
     if table is None:
         return []
@@ -350,8 +354,12 @@ def compute_property_recommendations(
         )
 
     try:
-        analysis = analyze_table_layout(session, table_id)
-        for bloom in analysis.bloom_filter_recommendations[:3]:
+        blooms = (
+            analyze_table_layout(session, table_id).bloom_filter_recommendations[:3]
+            if include_bloom_filters
+            else []
+        )
+        for bloom in blooms:
             prop_key = f"{BLOOM_FILTER_PROPERTY_PREFIX}{bloom.column_name}"
             if props.get(prop_key) == "true":
                 continue

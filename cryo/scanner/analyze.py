@@ -69,6 +69,20 @@ class PartitionAnalysis:
     raw: dict[str, Any]
 
 
+# The full partition list is persisted to `table_partitions`; `raw` only keeps the worst few.
+# Storing all of them (up to 5,000 per table) made `table_stats.raw` multi-MB per row and
+# was copied into every `table_stats_history` row.
+RAW_PARTITION_PREVIEW_LIMIT = 50
+
+
+def raw_partition_preview(partitions: Sequence[PartitionAnalysis]) -> list[dict[str, Any]]:
+    worst = sorted(
+        partitions,
+        key=lambda p: (-p.small_files_in_partition_count, -p.partition_size_gb, p.partition_key),
+    )[:RAW_PARTITION_PREVIEW_LIMIT]
+    return [partition.__dict__ for partition in worst]
+
+
 @dataclass(frozen=True)
 class TableAnalysis:
     schema_name: str
@@ -452,7 +466,7 @@ def analyze_table(
         logger.warning("Puffin sketch write failed: %s", exc)
     raw = {
         "partition_fields": fields,
-        "partitions_to_rewrite": [partition.__dict__ for partition in partitions_for_raw],
+        "partitions_to_rewrite": raw_partition_preview(partitions_for_raw),
         "file_formats": sorted(file_formats),
         "snapshot_overhead_gb": cost.snapshot_overhead_gb,
         "health_deductions": health_deductions,

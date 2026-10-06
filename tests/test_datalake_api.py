@@ -188,6 +188,52 @@ def test_table_csv_export_uses_the_exact_server_filter(api_db: Any) -> None:
     assert "analytics.fresh_orders" not in response.text
 
 
+def test_table_list_omits_stats_raw_but_detail_keeps_it(api_db: Any) -> None:
+    source_response = api_db.client.post(
+        "/api/v1/sources",
+        headers=ADMIN_HEADERS,
+        json={"name": "raw-omit", "type": "rest", "config": {}},
+    )
+    source_id = uuid.UUID(source_response.json()["id"])
+    as_of = datetime(2026, 8, 4, 12, tzinfo=UTC)
+    with api_db.session_factory() as session:
+        table = Table(
+            source_id=source_id,
+            schema_name="analytics",
+            table_name="wide_partitions",
+            first_seen_at=as_of,
+            is_active=True,
+        )
+        session.add(table)
+        session.flush()
+        session.add(
+            TableStats(
+                table_id=table.id,
+                scan_at=as_of,
+                needs_compaction=True,
+                compaction_priority="HIGH",
+                grade="D",
+                overall_score=40,
+                total_files=10,
+                small_files_count=9,
+                total_size_gb=1,
+                query_count_30d=0,
+                raw={"partitions_to_rewrite": [{"partition_key": str(i)} for i in range(100)]},
+            )
+        )
+        session.commit()
+        table_id = str(table.id)
+
+    listing = api_db.client.get("/api/v1/tables", headers=VIEWER_HEADERS)
+    assert listing.status_code == 200
+    [item] = [row for row in listing.json()["items"] if row["id"] == table_id]
+    assert item["stats"]["small_files_count"] == 9
+    assert item["stats"]["raw"] is None
+
+    detail = api_db.client.get(f"/api/v1/tables/{table_id}", headers=VIEWER_HEADERS)
+    assert len(detail.json()["stats"]["raw"]["partitions_to_rewrite"]) == 100
+
+
 def test_cost_dashboard_and_table_cost_endpoints(monkeypatch: Any) -> None:
     table_id = uuid.uuid4()
     scan_at = datetime(2026, 1, 1, tzinfo=UTC)

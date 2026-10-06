@@ -558,7 +558,7 @@ def _top_cost_opportunities(session: Session, *, limit: int) -> list[TableRead]:
             .limit(limit)
         )
     )
-    return [table_to_read(table) for table in tables]
+    return [table_to_read(table, include_raw=False) for table in tables]
 
 
 def _cost_trend(

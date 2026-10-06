@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import String, cast, delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.api.predicates import compile_predicate
@@ -95,9 +95,7 @@ def assignment_to_config(assignment: TableAssignment) -> AssignmentConfig:
     )
 
 
-def table_to_candidate(
-    table: Table, *, last_maintained_at: Any | None = None
-) -> TableCandidate:
+def table_to_candidate(table: Table, *, last_maintained_at: Any | None = None) -> TableCandidate:
     """last_maintained_at is caller-supplied, never queried here -- table_to_candidate is a
     pure Table->TableCandidate transform every existing call site treats as DB-call-free
     (several loop over it per-table; see e.g. SQLSchedulerStore.list_tables' own
@@ -314,9 +312,29 @@ def unassign_tables(session: Session, *, table_ids: Sequence[uuid.UUID]) -> int:
     return len(existing)
 
 
-def run_summary(run: MaintenanceRun) -> dict[str, object]:
+# Per-table name lists, only ever read on the single-run detail page -- a fleet-wide scan's
+# summary carries one entry per unreadable/failed table (12.8KB+ each on a real run, confirmed
+# live 2026-10-06: GET /runs?limit=200 took 17s/529KB and the Runs page's "Running now"/"Failed
+# runs" counts silently showed (0), since the request never resolved before the UI gave up and
+# fell back to an empty list). Dropped from list responses; see run_summary's detail=False.
+_DETAIL_ONLY_SUMMARY_KEYS = ("unreadable_tables", "failed_tables")
+
+
+def run_summary(
+    run: MaintenanceRun, *, target: dict[str, object] | None = None, detail: bool = False
+) -> dict[str, object]:
+    """``target`` comes from :func:`run_target_summaries` on list paths; without it the
+    run's jobs are loaded, which is only acceptable for a single run.
+
+    ``detail=False`` (the list-endpoint default) strips the large per-table name arrays a
+    fleet-wide scan's summary can carry -- list views never read them, only the single-run
+    detail page does (``detail=True``).
+    """
     summary = dict(run.summary or {})
-    summary.update(_run_target_summary(run))
+    summary.update(target if target is not None else _run_target_summary(run))
+    if not detail:
+        for key in _DETAIL_ONLY_SUMMARY_KEYS:
+            summary.pop(key, None)
     return {
         "id": run.id,
         "kind": run.kind,
@@ -365,22 +383,82 @@ def _run_target_summary(run: MaintenanceRun) -> dict[str, object]:
             str(job.id),
         ),
     )[0]
-    if first.table is not None:
-        table_ref = qualified_table_name(first.table)
-        table_id = str(first.table.id)
-    else:
-        table_ref = str(first.table_id)
-        table_id = str(first.table_id)
+    return _job_target_summary(len(jobs), first.table_id, first.table)
 
-    suffix = f" +{len(jobs) - 1} tables" if len(jobs) > 1 else ""
+
+def _job_target_summary(
+    job_count: int, first_table_id: uuid.UUID, first_table: Table | None
+) -> dict[str, object]:
+    if first_table is not None:
+        table_ref = qualified_table_name(first_table)
+        table_id = str(first_table.id)
+    else:
+        table_ref = str(first_table_id)
+        table_id = str(first_table_id)
+
+    suffix = f" +{job_count - 1} tables" if job_count > 1 else ""
     return {
         "target_label": f"{table_ref}{suffix}",
-        "target_kind": "table" if len(jobs) == 1 else "tables",
+        "target_kind": "table" if job_count == 1 else "tables",
         "target_table_id": table_id,
-        "target_schema_name": first.table.schema_name if first.table else None,
-        "target_table_name": first.table.table_name if first.table else None,
-        "job_count": len(jobs),
+        "target_schema_name": first_table.schema_name if first_table else None,
+        "target_table_name": first_table.table_name if first_table else None,
+        "job_count": job_count,
     }
+
+
+def run_target_summaries(
+    session: Session, runs: Sequence[MaintenanceRun]
+) -> dict[uuid.UUID, dict[str, object]]:
+    """Target labels for many runs from one aggregate query instead of loading every job
+    (a scheduled run can own thousands)."""
+    targets: dict[uuid.UUID, dict[str, object]] = {}
+    job_run_ids = []
+    for run in runs:
+        if run.kind == "scan":
+            targets[run.id] = _run_target_summary(run)
+        else:
+            targets[run.id] = {"target_label": "No jobs", "target_kind": run.kind}
+            job_run_ids.append(run.id)
+    if not job_run_ids:
+        return targets
+
+    ranked = (
+        select(
+            MaintenanceJob.run_id,
+            MaintenanceJob.table_id,
+            func.count().over(partition_by=MaintenanceJob.run_id).label("job_count"),
+            func.row_number()
+            .over(
+                partition_by=MaintenanceJob.run_id,
+                order_by=(
+                    func.coalesce(Table.schema_name, ""),
+                    func.coalesce(Table.table_name, ""),
+                    cast(MaintenanceJob.id, String),
+                ),
+            )
+            .label("rank"),
+        )
+        .outerjoin(Table, Table.id == MaintenanceJob.table_id)
+        .where(MaintenanceJob.run_id.in_(job_run_ids))
+        .subquery()
+    )
+    firsts = session.execute(
+        select(ranked.c.run_id, ranked.c.table_id, ranked.c.job_count).where(ranked.c.rank == 1)
+    ).all()
+    tables = {
+        table.id: table
+        for table in session.scalars(
+            select(Table)
+            .where(Table.id.in_({row.table_id for row in firsts}))
+            .options(selectinload(Table.source))
+        )
+    }
+    for row in firsts:
+        targets[row.run_id] = _job_target_summary(
+            int(row.job_count), row.table_id, tables.get(row.table_id)
+        )
+    return targets
 
 
 def job_summary(job: MaintenanceJob) -> dict[str, object]:

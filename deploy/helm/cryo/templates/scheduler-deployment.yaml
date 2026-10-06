@@ -59,6 +59,17 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            # Same gap as CRYO_SPARK_K8S_NAMESPACE above, for the driver pod's own identity
+            # instead of its namespace: without this, SparkK8sConfig.from_config() falls back
+            # to the literal "default" SA, which has zero RBAC grants. spark-submit's cluster-
+            # mode driver creates its own executor pods directly against the K8s API (not
+            # through the wrapper Job's pod spec), so it needs this explicit service account.
+            # Confirmed live, 2026-10-05: a real dispatch failed with "pods is forbidden: User
+            # system:serviceaccount:cryo:default cannot create resource pods" -- the -spark SA
+            # (rbac-spark.yaml) already grants exactly this and is already used the same way
+            # by api/governor/worker/maintenance-cronjob; only this deployment lacked it.
+            - name: CRYO_SPARK_K8S_SERVICE_ACCOUNT
+              value: {{ include "cryo.fullname" . }}-spark
             {{- end }}
           envFrom:
             {{- include "cryo.envFrom" . | nindent 12 }}
