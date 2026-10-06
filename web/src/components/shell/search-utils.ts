@@ -7,6 +7,12 @@ export const SEARCH_GROUP_LABELS: Record<string, string> = {
   columns: "Columns"
 };
 
+export const searchResultsHref = (query: string, group?: string): string => {
+  const params = new URLSearchParams({ q: query, notice: "search" });
+  if (group) params.set("group", group);
+  return `/tables?${params.toString()}`;
+};
+
 export const getSearchResultHref = (hit: SearchHit): string => {
   if (hit.type === "columns" && hit.table_id) {
     const column = hit.column_name ?? hit.name;

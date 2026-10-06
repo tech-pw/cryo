@@ -6,4 +6,9 @@ export { CommandPalette } from "./CommandPalette";
 export { ShellProvider, useShell } from "./ShellContext";
 export { NAV_GROUPS, resolveActiveNavHref } from "./nav-config";
 export { listRecentItems, pushRecentItem, clearRecentItems } from "./recent";
-export { getSearchResultHref, formatMatchReason, formatSearchSubtitle } from "./search-utils";
+export {
+  getSearchResultHref,
+  searchResultsHref,
+  formatMatchReason,
+  formatSearchSubtitle
+} from "./search-utils";

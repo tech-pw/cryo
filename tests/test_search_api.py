@@ -77,7 +77,7 @@ def test_merge_table_matches_deduplicates_by_table_id() -> None:
     assert merged[0].score is None
 
 
-def test_search_endpoint_literal_catalog_schema_table_hits(api_db: ApiDb) -> None:
+def test_search_endpoint_literal_catalog_schema_table_hits(api_db: ApiDb, monkeypatch) -> None:
     session = api_db.session_factory()
     source_id = uuid.uuid4()
     table_id = uuid.uuid4()
@@ -116,6 +116,12 @@ def test_search_endpoint_literal_catalog_schema_table_hits(api_db: ApiDb) -> Non
     )
     session.commit()
     session.close()
+
+    def _forbid_fleet_scan(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("search must not load the fleet or compute embeddings")
+
+    monkeypatch.setattr("cryo.api.search_routes._fleet_rows", _forbid_fleet_scan)
+    monkeypatch.setattr("cryo.api.search_routes.search_semantic_tables", _forbid_fleet_scan)
 
     response = api_db.client.get("/api/v1/search?q=user", headers=VIEWER_HEADERS)
     assert response.status_code == 200
