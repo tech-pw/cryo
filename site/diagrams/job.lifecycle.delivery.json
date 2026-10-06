@@ -4,8 +4,8 @@
   "status": "current",
   "command": "deliver",
   "type": "lifecycle",
-  "input": "/Users/aamir/Projects/Cryo/site/diagrams/job.lifecycle.json",
-  "output": "/Users/aamir/Projects/Cryo/site/diagrams/job.lifecycle.html",
+  "input": "site/diagrams/job.lifecycle.json",
+  "output": "site/diagrams/job.lifecycle.html",
   "specification": {
     "sha256": "b8738fd914a0d74b71a5289f86d87d345291318953eb7fc96db37f5d300921b5",
     "bytes": 2479

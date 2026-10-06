@@ -25,12 +25,12 @@ existing recovery/safety gates still apply to production claims.
 - [x] Audit current portability, Helm and OSS-process gaps; write the phased delivery plan.
 - [~] OSS-0: establish candidate CI/evidence, public/private inventory, release attribution,
       clean artifact boundaries and working private vulnerability reporting.
-      [Baseline checklist](docs/OSS_0_BASELINE_2026-09-25.md): PW-internal docs and agent
+      [Baseline checklist](docs/OSS_0_BASELINE_2026-09-25.md): internal docs and agent
       scratch state moved out of the tracked tree, secrets scan clean, vendored Iceberg Go
       attribution confirmed sound and internal-ticket references redacted, GitHub `main`
       fast-forwarded to the candidate commit. **Remaining open items:** security disclosure
       route unverified against a truly public/unauthenticated reporter (repo is still
-      private); `gitlab-main` has moved further since the CI sync push, needs re-sync/re-check.
+      private); the maintenance branch has moved further since the CI sync push, needs re-sync/re-check.
 - [ ] OSS-1: remove implicit organization assumptions; preserve explicit existing settings;
       validate timezone, placement, identifiers, auth and optional integration configuration.
 - [ ] OSS-2: publish a complete versioned Helm/image set with secure bootstrap, dependency
@@ -41,7 +41,7 @@ existing recovery/safety gates still apply to production claims.
       publish reproducible net-value evidence with its limitations.
 - [ ] OSS-5: reconcile policies/claims, assign maintainers, retain release evidence,
       verify repository protections and rehearse an external contribution.
-- [ ] Complete two independent non-PW installation/maintenance pilots; apply staged
+- [ ] Complete two independent installation/maintenance pilots; apply staged
       public-alpha, beta and production-support gates from the plan.
 
 ## Permanent recovery — 2026-09-20
@@ -214,22 +214,19 @@ exist in S3**, and Trino cannot read them either. The scanner has been accuratel
 real data problem for months; the number to act on is the corruption, not the failure rate.
       Now measurable directly — compare `unreadable` vs `failed` on the next full scan wave.
 
-### `cdp_dev` metastore is unreachable from the cryo namespace — found 2026-09-23
+### A secondary catalog's metastore was unreachable from the Cryo namespace — found 2026-09-23
 
-Found while verifying the above. **Not caused by that change** — `cryo-api` cannot reach these
-hosts either.
+Found while verifying the above. **Not caused by that change** — the API could not reach that
+metastore either.
 
-- `cdp` (11,594 active tables, the real fleet): `thrift://trino-prod-metastore.example.com:9083`
-  → `10.0.0.2` → **reachable**. Healthy.
-- `cdp_dev` (1,164 active tables, 9.1% of the fleet):
-  `thrift://trino-metastore-v2.example.com:9083` → `10.0.0.1`, `10.0.0.1`, `10.0.0.1`
-  → **all three time out**.
+- Primary catalog (production fleet): metastore reachable.
+- Secondary catalog: metastore unreachable (timeouts).
 
-- [x] Disabled the `cdp_dev` source in prod (`sources.enabled = false`, 2026-09-23) to stop the
-      timeout burn. **Re-enable it once the metastore is reachable** — 1,164 tables are
+- [x] Disabled the unreachable source in that install (`sources.enabled = false`, 2026-09-23) to stop the
+      timeout burn. **Re-enable it once the metastore is reachable** — those tables are
       currently invisible to Cryo, which is a deliberate, temporary blind spot, not a fix.
-- [ ] Get `cdp_dev`'s metastore reachable (DevOps) and re-enable the source. Until then every
-      connection attempt would burn a full TCP timeout against three dead IPs in turn.
+- [ ] Get that metastore reachable and re-enable the source. Until then every
+      connection attempt would burn a full TCP timeout.
 - [x] **Confirmed and fixed**: an unreachable source did block scans of tables in a *healthy*
       source. `_discover_candidates` connected to every enabled source even when every
       requested table lived in one of them; it now filters sources down to the ones the

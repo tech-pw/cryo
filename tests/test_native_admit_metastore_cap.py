@@ -4,7 +4,7 @@ jobs started in the surrounding 15 minutes and ~70 concurrently failing with lit
 "failed to connect to metastore". Root cause: native_datafusion's own slot_cap (e.g. 80)
 has no relationship to the shared Hive metastore's real connection capacity, and nothing
 else in the Governor's admission path checked it -- a direct, foreseeable consequence of
-PDAE-8352's async fallback-dispatch fix raising per-wave admission throughput without
+'s async fallback-dispatch fix raising per-wave admission throughput without
 anyone checking whether the downstream metastore had headroom for the resulting
 concurrency. These tests cover the guardrail that closes that gap: a cross-destination
 cap on RUNNING jobs sharing a metastore URI, enforced at native-engine admission time.
@@ -240,7 +240,7 @@ def test_packed_native_plan_preserves_preset_operation_exclusions(monkeypatch) -
         _job("job-1", "table-1"),
         mode=Mode.DEEP,
         operations=(OperationType.EXPIRE_SNAPSHOTS,),
-        params={"table_ref": "cdp.demo.events"},
+        params={"table_ref": "sample.demo.events"},
     )
     store = _store_with_job(job)
     destination = DestinationConfig(id="dest-1", engine="native", config={"k8s_dispatch": True})

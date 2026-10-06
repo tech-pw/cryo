@@ -1,10 +1,10 @@
 """Regression, 2026-07-24: _resolve_spark_fallback (shared by the silent-data-loss repair
 and ad-hoc diagnostic endpoints) had the same bug as native_admit._fallback_engine_config --
-it hardcoded a "cdp" catalog-name default and never propagated the source's own
+it hardcoded a "sample" catalog-name default and never propagated the source's own
 catalog_uri/warehouse, so a table from any other catalog got dispatched against whatever
 catalog/metastore/warehouse the shared fallback destination's static config happened to be
 tuned for. Confirmed live: lms.silver_adminactions (source catalog_name "hive", dev
-metastore/warehouse) fell back to a destination statically configured for "cdp" against the
+metastore/warehouse) fell back to a destination statically configured for "sample" against the
 prod metastore/warehouse, and Spark failed with MISSING_CATALOG_ABILITY.PROCEDURES.
 """
 
@@ -60,7 +60,7 @@ def test_source_catalog_connection_overrides_destination_default(session) -> Non
             "warehouse": "s3://example-dev-bucket/",
         },
         fallback_config={
-            "catalog": "cdp",
+            "catalog": "sample",
             "spark_k8s": {
                 "catalog_impl": "hive",
                 "catalog_uri": "thrift://metastore.example.invalid:9083",
@@ -80,7 +80,7 @@ def test_missing_source_catalog_name_raises_clear_error(session) -> None:
     table_id = _seed(
         session,
         source_config={"uri": "thrift://x:9083", "warehouse": "s3://x/"},
-        fallback_config={"catalog": "cdp"},
+        fallback_config={"catalog": "sample"},
     )
 
     with pytest.raises(HTTPException) as exc_info:

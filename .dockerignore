@@ -12,3 +12,9 @@ web/dist
 
 cryo-native/target
 cryo-engine/target
+
+deploy/helm/cryo/values-*.yaml
+docs/_private
+.env
+.env.*
+!.env.example

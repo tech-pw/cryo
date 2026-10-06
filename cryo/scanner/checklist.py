@@ -111,7 +111,7 @@ def _check_file_size(stats: Mapping[str, Any]) -> ChecklistItem:
     small_pct = (small_files / total_files) * 100
     # Mirrors health.py's MIN_SMALL_FILES_FOR_COMPACTION floor -- a handful of small files on
     # an otherwise tiny table isn't worth flagging red (matches the planner's own "not worth
-    # compacting" gate, see health.py's docstring for the PDAE-8274 incident this avoids).
+    # compacting" gate, see health.py's docstring for the  incident this avoids).
     if small_files < 128:
         return _item("file_size", "green", f"Only {small_files} small files (below compaction floor)", value=small_pct)
     if small_pct >= 50:

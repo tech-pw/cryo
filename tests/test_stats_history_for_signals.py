@@ -2,7 +2,7 @@
 raw snapshot-count delta with no awareness of Cryo's own maintenance activity. A single deep
 run's expire_snapshots/optimize/optimize_manifests steps each commit their own snapshot, so
 the run itself inflates total_snapshots between two scans -- confirmed live on
-pw_bq.silver_dbt_pw_launch: 8 -> 36 snapshots in minutes, misread as 80 commits/day of
+analytics.silver_launch_events: 8 -> 36 snapshots in minutes, misread as 80 commits/day of
 streaming writes. stats_history_for_signals must mark the latest row when a Cryo job explains
 the delta, so detect_streaming_from_history can suppress the false positive.
 """
@@ -20,8 +20,8 @@ def _seed_table(session) -> object:
     table = Table(
         id=uuid4(),
         source_id=uuid4(),
-        schema_name="pw_bq",
-        table_name="silver_dbt_pw_launch",
+        schema_name="analytics",
+        table_name="silver_launch_events",
         is_active=True,
     )
     session.add(table)

@@ -51,7 +51,7 @@ def test_build_native_request_drops_unsupported_operations() -> None:
     because create-on-admit never filtered the plan through native routing, unlike
     the Worker legacy path."""
     plan = MaintenancePlan(
-        table_ref="lake.analytics.load_test_basefact",
+        table_ref="demo.mart.load_test_events",
         mode=Mode.DEEP,
         operations=(
             Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7}),
@@ -99,7 +99,7 @@ def test_build_native_request_defers_convert_deletes_alongside_native_reclaim() 
     deferred too when native expire_snapshots/remove_orphan_files run in the same cycle --
     confirms the guard isn't special-cased to optimize_manifests specifically."""
     plan = MaintenancePlan(
-        table_ref="lake.analytics.load_test_basefact",
+        table_ref="demo.mart.load_test_events",
         mode=Mode.DEEP,
         operations=(
             Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7}),
@@ -129,7 +129,7 @@ def test_build_native_request_defers_optimize_manifests_alongside_native_reclaim
     optimize_manifests would have gone to Spark concurrently -- this is exactly what
     corrupted store.gold_gst_slabs and 869 other tables in production."""
     plan = MaintenancePlan(
-        table_ref="cdp.store.gold_gst_slabs",
+        table_ref="demo.shop.gold_tax_slabs",
         mode=Mode.DEEP,
         operations=(
             Operation(OperationType.EXPIRE_SNAPSHOTS, {"retain_last": 4, "retention_days": 7}),
@@ -160,7 +160,7 @@ def test_build_native_request_defers_optimize_manifests_alongside_native_reclaim
 
 def test_build_native_request_keeps_supported_operations_for_cow_table() -> None:
     plan = MaintenancePlan(
-        table_ref="lake.analytics.load_test_basefact",
+        table_ref="demo.mart.load_test_events",
         mode=Mode.DEEP,
         operations=(
             Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7}),

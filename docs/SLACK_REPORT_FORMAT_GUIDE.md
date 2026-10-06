@@ -220,7 +220,7 @@ Every message with blocks MUST include a top-level `text` field:
 
 ```json
 {
-  "channel": "C0000000000",
+  "channel": "C12345678",
   "text": "🟢 Daily Report — Fleet healthy, no action required",
   "blocks": [ /* ... */ ]
 }
@@ -311,7 +311,7 @@ takes ~1s.
 - One sentence = what happened
 - Second sentence = why it happened (causal link)
 - **Pre-compute all numbers in SQL; LLM only narrates** — eliminates hallucination
-- Example: "Fleet health improved B→B+. EMR up 14% (Lagoon batch spike), Trino down 25% (replica-0 scaled in)."
+- Example: "Fleet health improved B→B+. Compute up 14% (a batch spike), query engine down 25% (a replica scaled in)."
 
 #### 4. Key Metrics
 - Use `section.fields` for two-column grid
@@ -486,7 +486,7 @@ Add `actions` block when:
       "type": "section",
       "text": {
         "type": "mrkdwn",
-        "text": "Fleet B→B+. EMR cost up 14% (Lagoon batch spike). Trino down 25% (replica-0 scaled in). Net cost neutral."
+        "text": "Fleet B→B+. Compute cost up 14% (a batch spike). Query engine down 25% (a replica scaled in). Net cost neutral."
       }
     },
     {
@@ -510,7 +510,7 @@ Add `actions` block when:
       "type": "section",
       "text": {
         "type": "mrkdwn",
-        "text": "*Action Items*\n• 🟡 `events` — null-rate spike, investigate <@U00000000> (today)\n• 🟡 EMR cost — verify Lagoon batch intentional <@U00000000> (tomorrow)"
+        "text": "*Action Items*\n• 🟡 `events` — null-rate spike, investigate <@U12345678> (today)\n• 🟡 Compute cost — verify the batch was intentional <@U23456789> (tomorrow)"
       }
     },
     {
@@ -572,7 +572,7 @@ Add `actions` block when:
       "type": "section",
       "text": {
         "type": "mrkdwn",
-        "text": "*Immediate Action*\n<@U00000000> — investigate CDC pipeline\n<@U00000000> — pause downstream dbt jobs"
+        "text": "*Immediate Action*\n<@U12345678> — investigate the pipeline\n<@U23456789> — pause downstream jobs"
       }
     },
     {

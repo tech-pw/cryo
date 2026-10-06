@@ -56,7 +56,7 @@ func TestIsRetryableCommitError(t *testing.T) {
 		t.Fatal("REST catalog: a properly wrapped ErrCommitDiverged must be retryable")
 	}
 
-	// PDAE-8353: the same unwrapped Hive "branch main has changed" error must be
+	// The same unwrapped Hive "branch main has changed" error must be
 	// retryable even when the request looks like REST (empty catalog type defaults to REST).
 	if !isRetryableCommitError(errUnwrappedHiveConflict, true) {
 		t.Fatal("REST catalog: unwrapped branch-changed conflict during rewrite_data_files must be retryable")
@@ -74,8 +74,7 @@ func TestIsRetryableCommitError(t *testing.T) {
 func TestRewriteDataFilesRetriesUnwrappedBranchChange(t *testing.T) {
 	t.Parallel()
 
-	// Reproduce the rewrite_data_files commit conflict from PDAE-8353
-	// (lsq_pw.gold_prospect_activity_extension_base) and assert the outer rewrite
+	// Reproduce the rewrite_data_files commit conflict and assert the outer rewrite
 	// loop would retry rather than fail the first group.
 	commitErr := fmt.Errorf("commit rewrite_data_files group 0: %w", errUnwrappedHiveConflict)
 	if !isRetryableCommitError(commitErr, isRESTCatalog(&protocol.ExecuteRequest{})) {

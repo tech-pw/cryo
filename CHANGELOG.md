@@ -38,5 +38,5 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 Pre-release history predates this changelog. See `git log` for the full commit history.
 
-[Unreleased]: https://github.com/shelf-project/Cryo/compare/main...HEAD
-[0.0.0]: https://github.com/shelf-project/Cryo/releases/tag/v0.0.0
+[Unreleased]: https://github.com/tech-pw/cryo/compare/main...HEAD
+[0.0.0]: https://github.com/tech-pw/cryo/releases/tag/v0.0.0

@@ -868,7 +868,7 @@ export const ControlRoom = () => {
               <div className="flex flex-wrap gap-2">
                 <TargetedHold
                   destinationIds={destinationIds}
-            disabled={!canOperate || (row.original.scope_type === "global" && !canEmergencyStop)}
+                  disabled={!canOperate}
                   pending={pause.isPending}
                   onConfirm={(destinationId, reason) =>
                     pause.mutate({ scopeType: "destination", scopeId: destinationId, reason })

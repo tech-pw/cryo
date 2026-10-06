@@ -9,7 +9,7 @@
 # across minors. Iceberg 1.11.0 only publishes 4.0 and 4.1 runtimes (no 4.2 yet) --
 # pairing iceberg-spark-runtime-4.0 with a 4.2.0 base threw
 # IncompatibleClassChangeError: SparkView does not implement View (confirmed live against
-# data-platform-cluster, 2026-07-21). Keep both pinned to the same minor.
+# a production cluster, 2026-07-21). Keep both pinned to the same minor.
 FROM apache/spark:4.1.2-python3@sha256:e334db9626cb9c5a3e72928c2c2f0efc668769a0b605f116afe6ea7adb38f546
 
 ARG ICEBERG_VERSION=1.11.0

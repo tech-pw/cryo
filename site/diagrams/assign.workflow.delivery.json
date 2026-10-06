@@ -4,8 +4,8 @@
   "status": "current",
   "command": "deliver",
   "type": "workflow",
-  "input": "/Users/aamir/Projects/Cryo/site/diagrams/assign.workflow.json",
-  "output": "/Users/aamir/Projects/Cryo/site/diagrams/assign.workflow.html",
+  "input": "site/diagrams/assign.workflow.json",
+  "output": "site/diagrams/assign.workflow.html",
   "specification": {
     "sha256": "3e0cb5193e58aa459cb3a2e517105e95bb6d71ee8393bb6c003ee859f0c01fbd",
     "bytes": 3075

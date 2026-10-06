@@ -55,6 +55,7 @@ class _FakeSettings:
     trino_cost_pricing_lookback_days = 10
     cost_ceiling_cluster_name = "example-eks"
     grafana_base_url = "https://grafana.example.com"
+    grafana_athena_datasource_uid = "athena-cur-uid"
 
 
 class _DisabledSettings(_FakeSettings):
@@ -101,7 +102,7 @@ def _seed_query_cost_row(session, *, day: date, bytes_scanned: int) -> None:
             source_id=source.id,
             day=day,
             client="Metabase",
-            schema_name="cdp_revenue",
+            schema_name="revenue",
             query_count=10,
             failed_query_count=0,
             physical_bytes_scanned=bytes_scanned,

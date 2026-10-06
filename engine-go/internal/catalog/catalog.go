@@ -22,8 +22,8 @@ import (
 	"github.com/cryo-lake/cryo/engine-go/internal/testhook"
 )
 
-// catalogLoadAttempts/catalogLoadBackoff: real production data (data-platform-cluster,
-// 2026-07-11 through 2026-07-14) showed catalog.Load failing ~85-90% of the time with "connect:
+// catalogLoadAttempts/catalogLoadBackoff: a production cluster showed catalog.Load failing
+// ~85-90% of the time with "connect:
 // connection timed out" against a Hive Metastore, while raw TCP connectivity to the same host
 // tested 100% reliable under both sequential and concurrent load from the same pods -- the
 // failure isn't network/DNS, it's the metastore's own Thrift server-side thread pool

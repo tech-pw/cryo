@@ -84,7 +84,7 @@ MAX_CHUNK_GB = 500.0
 # run 3483a157 coalesced to 2 GiB groups under slack=4× → ~20 GiB RSS.
 _DEFAULT_TARGET_FILE_SIZE_BYTES = 256 * 1024 * 1024
 _MAX_BYTES_PER_GROUP_HARD = 8 * 1024 * 1024 * 1024  # 8 GiB
-# Peak RSS ≈ compressed_group_bytes × factor (resultsa-class tables ~10×).
+# Peak RSS ≈ compressed_group_bytes × factor (large tables ~10×).
 _PLANNING_MEMORY_EXPANSION = 8
 # Prefer groups that can fill this many target-sized outputs before a remainder.
 _PACKING_TARGETS_PER_GROUP = 2

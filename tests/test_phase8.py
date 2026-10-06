@@ -80,7 +80,7 @@ def test_rank_destinations_considers_capacity() -> None:
 
 
 def test_rank_destinations_excludes_destination_with_repeated_failures() -> None:
-    """Regression, 2026-08-10: unified_bq.gold_dbt_pw_bq failed on native 4 times in a row
+    """Regression, 2026-08-10: warehouse.gold_events failed on native 4 times in a row
     across 8 days -- adaptive routing's size/capacity/latency/cost scoring had no memory of
     that and would keep scoring native identically to a never-tried table. A destination
     with >= the failure threshold consecutive failures on THIS table must be excluded, even

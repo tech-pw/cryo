@@ -179,7 +179,7 @@ def test_unreadable_tables_roll_up_apart_from_failures(session) -> None:
 
 
 def test_a_run_of_only_unreadable_tables_succeeds(session) -> None:
-    """385 of cdp.central's 585 tables scan fine and 201 have lost their manifests. The run
+    """385 of demo.events's 585 tables scan fine and 201 have lost their manifests. The run
     reports what it accomplished; the unreadable list is the thing to act on."""
     run = _make_queued_scan(session, num_chunks=1)
     factory = _bound_session_factory(session)

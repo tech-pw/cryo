@@ -49,8 +49,8 @@ const POPULATED_CLUSTERS: SimilarityClustersResponse = {
       members: [
         {
           table_id: "t1",
-          table_name: "silver_infinite_practice_result_questions",
-          schema_name: "cdp_revenue",
+          table_name: "orders",
+          schema_name: "analytics",
           total_size_gb: 5187.9,
           role: "keep",
           keep_score: 1.2,
@@ -59,8 +59,8 @@ const POPULATED_CLUSTERS: SimilarityClustersResponse = {
         },
         {
           table_id: "t2",
-          table_name: "silver_infinite_practice_result_questions_temp",
-          schema_name: "cdp_revenue",
+          table_name: "orders_copy",
+          schema_name: "analytics",
           total_size_gb: 4969.4,
           role: "drop_candidate",
           keep_score: -0.1,
@@ -85,9 +85,9 @@ const POPULATED_PAIRS: SimilarityPairRead[] = [
   {
     id: "pair-1",
     table_a_id: "t1",
-    table_a_name: "cdp.cdp_revenue.silver_infinite_practice_result_questions",
+    table_a_name: "sample.analytics.orders",
     table_b_id: "t2",
-    table_b_name: "cdp.cdp_revenue.silver_infinite_practice_result_questions_temp",
+    table_b_name: "sample.analytics.orders_copy",
     stage: "scored",
     similarity_score: 0.91,
     schema_similarity: 1.0,
@@ -135,7 +135,7 @@ describe("TableSimilarity page", () => {
 
     await waitFor(() => {
       expect(
-        screen.getAllByText(/silver_infinite_practice_result_questions_temp/i).length
+        screen.getAllByText(/orders_copy/i).length
       ).toBeGreaterThan(0);
     });
 
@@ -192,7 +192,7 @@ describe("TableSimilarity page", () => {
     // button is present (disabled) during the initial loading state too, since
     // `clusters` defaults to [] before the query resolves.
     await waitFor(() => {
-      expect(screen.getAllByText(/silver_infinite_practice_result_questions_temp/i).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/orders_copy/i).length).toBeGreaterThan(0);
     });
     const downloadButton = screen.getByRole("button", { name: /download csv/i });
     expect(downloadButton).toBeEnabled();
@@ -221,8 +221,8 @@ describe("TableSimilarity page", () => {
     expect(rows).toHaveLength(2);
     expect(rows).toContainEqual([
       "cluster-1",
-      "cdp_revenue",
-      "silver_infinite_practice_result_questions",
+      "analytics",
+      "orders",
       "t1",
       "keep",
       5187.9,
@@ -234,8 +234,8 @@ describe("TableSimilarity page", () => {
     ]);
     expect(rows).toContainEqual([
       "cluster-1",
-      "cdp_revenue",
-      "silver_infinite_practice_result_questions_temp",
+      "analytics",
+      "orders_copy",
       "t2",
       "drop_candidate",
       4969.4,

@@ -4,7 +4,7 @@ Revision ID: 20260811_0039
 Revises: 20260804_0038
 Create Date: 2026-08-11 21:00:00.000000
 
-Part of the fix for PDAE-8352: _dispatch_fallback_operations used to submit a Spark
+_dispatch_fallback_operations used to submit a Spark
 fallback job (e.g. optimize_manifests, unsupported by the native engine) and block
 run_wave() until it finished -- confirmed live, 2026-08-11: with the fallback
 destination's own slot_cap=6 and each Spark submission+wait taking real wall-clock

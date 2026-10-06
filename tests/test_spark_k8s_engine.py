@@ -12,7 +12,7 @@ from cryo.engines.spark.k8s_engine import SparkK8sEngine, is_spark_retryable_cat
 
 def _plan() -> MaintenancePlan:
     return MaintenancePlan(
-        table_ref="lake.analytics.load_test_basefact",
+        table_ref="demo.mart.load_test_events",
         mode=Mode.DEEP,
         operations=(Operation(OperationType.OPTIMIZE_MANIFESTS, {}),),
     )
@@ -26,7 +26,7 @@ def test_render_produces_spark_sql() -> None:
 
 
 def test_execute_success_returns_ok_result() -> None:
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "sample"})
     mock_client = MagicMock()
     mock_client.submit_spark_sql.return_value = "cryo-spark-abc123"
     mock_client.wait_for_completion.return_value = JobRunResult(
@@ -39,12 +39,12 @@ def test_execute_success_returns_ok_result() -> None:
     assert results[0].ok
     assert results[0].engine_ref == "cryo-spark-abc123"
     mock_client.submit_spark_sql.assert_called_once()
-    assert mock_client.submit_spark_sql.call_args.kwargs["catalog"] == "cdp"
+    assert mock_client.submit_spark_sql.call_args.kwargs["catalog"] == "sample"
     mock_client.cleanup_after_run.assert_called_once_with("cryo-spark-abc123")
 
 
 def test_execute_cleans_up_driver_even_on_failure() -> None:
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "sample"})
     mock_client = MagicMock()
     mock_client.submit_spark_sql.return_value = "cryo-spark-fail1"
     mock_client.wait_for_completion.return_value = JobRunResult(
@@ -63,12 +63,12 @@ def test_execute_uses_the_statements_own_catalog_over_the_destination_default() 
     """Regression, 2026-07-24: a shared SQL-fallback destination's `catalog` config is only
     a static default (correct for whichever table it was tuned for), but execute() used to
     trust it unconditionally. Confirmed live: a table whose real catalog is "hive" fell back
-    to a destination statically configured for "cdp" -- Spark registered its Iceberg catalog
-    plugin under "cdp" while the rendered SQL referenced "hive.system.rewrite_data_files",
+    to a destination statically configured for "sample" -- Spark registered its Iceberg catalog
+    plugin under "sample" while the rendered SQL referenced "hive.system.rewrite_data_files",
     silently resolving against the builtin spark_catalog and failing with
     MISSING_CATALOG_ABILITY.PROCEDURES. The catalog actually used to render the SQL (carried
     on the statement's own metadata) must win over the destination's static default."""
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "sample"})
     mock_client = MagicMock()
     mock_client.submit_spark_sql.return_value = "cryo-spark-abc123"
     mock_client.wait_for_completion.return_value = JobRunResult(
@@ -88,13 +88,13 @@ def test_execute_uses_the_statements_own_catalog_over_the_destination_default() 
 
 
 def test_execute_retries_basemetastore_nosuchkey_then_succeeds(monkeypatch) -> None:
-    """PDAE-8347: after deepest_caused_by, gold-table Spark failures are NoSuchKey while
+    """: after deepest_caused_by, gold-table Spark failures are NoSuchKey while
     loading BaseMetastoreTableOperations.current -- a stale catalog pointer, not a drop.
     Retry the K8s Job instead of failing the first driver."""
     sleeps: list[float] = []
     monkeypatch.setattr("cryo.engines.spark.k8s_engine.time.sleep", sleeps.append)
 
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "sample"})
     mock_client = MagicMock()
     mock_client.submit_spark_sql.side_effect = ["cryo-spark-try0", "cryo-spark-try1"]
     mock_client.wait_for_completion.side_effect = [
@@ -212,7 +212,7 @@ def test_execute_truncates_runaway_error_messages() -> None:
     """Regression, 2026-07-27: no engine's except-block may store an unbounded exception
     message -- confirmed live on Trino (str(exc) landed a 2.96M-character error). Same
     truncate_error_message helper applies here for consistency."""
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "sample"})
     mock_client = MagicMock()
     mock_client.submit_spark_sql.side_effect = RuntimeError("x" * 20_000)
     engine._client = mock_client
@@ -232,7 +232,7 @@ def test_with_source_config_fills_in_missing_s3_credentials() -> None:
     s3.access-key-id/s3.secret-access-key configured (the operator's deliberate "keys, not
     IAM role" choice) still fell through to the pod's ambient node IAM role for Spark-K8s
     jobs, which lacked s3:GetObject on that table's bucket."""
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "sample"})
     assert engine._k8s_config.s3_access_key is None
 
     updated = engine.with_source_config(
@@ -251,7 +251,7 @@ def test_with_source_config_does_not_override_destinations_own_keys() -> None:
     source-configured read credentials."""
     engine = SparkK8sEngine(
         config={
-            "catalog": "cdp",
+            "catalog": "sample",
             "spark_k8s": {"s3_access_key": "dest-key", "s3_secret_key": "dest-secret"},
         }
     )
@@ -264,7 +264,7 @@ def test_with_source_config_does_not_override_destinations_own_keys() -> None:
 
 
 def test_with_source_config_no_op_when_source_has_no_keys() -> None:
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "sample"})
     updated = engine.with_source_config({"uri": "thrift://metastore:9083"})
     assert updated is engine
 
@@ -277,7 +277,7 @@ def test_with_table_stats_scales_executor_profile_down_for_small_tables() -> Non
     exactly this reason."""
     engine = SparkK8sEngine(
         config={
-            "catalog": "cdp",
+            "catalog": "sample",
             "spark_k8s": {
                 "executor_instances": 24,
                 "executor_cpu_milli": 3000,
@@ -296,20 +296,20 @@ def test_with_table_stats_scales_executor_profile_down_for_small_tables() -> Non
 
 
 def test_with_table_stats_keeps_full_profile_for_a_huge_table() -> None:
-    engine = SparkK8sEngine(config={"catalog": "cdp", "spark_k8s": {"executor_instances": 24}})
+    engine = SparkK8sEngine(config={"catalog": "sample", "spark_k8s": {"executor_instances": 24}})
     updated = engine.with_table_stats({"total_size_gb": 24_000.0})
     assert updated._k8s_config.executor_instances == 24
 
 
 def test_with_table_stats_no_op_without_stats() -> None:
-    engine = SparkK8sEngine(config={"catalog": "cdp", "spark_k8s": {"executor_instances": 24}})
+    engine = SparkK8sEngine(config={"catalog": "sample", "spark_k8s": {"executor_instances": 24}})
     assert engine.with_table_stats(None) is engine
 
 
 def test_with_table_stats_respects_dynamic_sizing_opt_out() -> None:
     engine = SparkK8sEngine(
         config={
-            "catalog": "cdp",
+            "catalog": "sample",
             "spark_k8s": {"executor_instances": 24, "dynamic_sizing": False},
         }
     )
@@ -320,7 +320,7 @@ def test_with_table_stats_respects_dynamic_sizing_opt_out() -> None:
 def test_with_table_stats_preserves_prior_with_source_config_state() -> None:
     """with_source_config runs before with_table_stats in the real dispatch path (see
     worker.py) -- chaining the two must not lose the first hook's changes."""
-    engine = SparkK8sEngine(config={"catalog": "cdp", "spark_k8s": {"executor_instances": 24}})
+    engine = SparkK8sEngine(config={"catalog": "sample", "spark_k8s": {"executor_instances": 24}})
     with_creds = engine.with_source_config(
         {"s3.access-key-id": "AKIAEXAMPLE", "s3.secret-access-key": "secret123"}
     )

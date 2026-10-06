@@ -39,7 +39,7 @@ const POPULATED: ScanCostAttributionResponse = {
   rows: [
     {
       client: "Metabase v0.60.0",
-      schema_name: "pw_bq",
+      schema_name: "sample",
       query_count: 1835,
       failed_query_count: 12,
       physical_bytes_scanned: 1500 * 1024 ** 3,
@@ -47,7 +47,7 @@ const POPULATED: ScanCostAttributionResponse = {
     },
     {
       client: "dbt-trino-1.9.2",
-      schema_name: "offline",
+      schema_name: "analytics",
       query_count: 500,
       failed_query_count: 0,
       physical_bytes_scanned: 50 * 1024 ** 3,

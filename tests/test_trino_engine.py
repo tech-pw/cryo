@@ -243,7 +243,7 @@ class SlowStartCursor(FakeCursor):
 def test_trino_engine_reports_engine_ref_before_query_completes() -> None:
     """Regression, 2026-09-10: a worker crash while blocked inside the old synchronous
     cursor.execute() left the job stuck at status='running', engine_ref=null forever --
-    recurred twice this session on cdp.unified_bq.gold_dbt_pw_bq, each requiring a manual
+    recurred twice this session on demo.warehouse.gold_events, each requiring a manual
     cancel since nothing could recover it. The fix must call ctx.on_engine_ref as soon as
     the query_id is known, well before the statement finishes -- this test fails against
     the old implementation (on_engine_ref would only ever fire after execute() returned,

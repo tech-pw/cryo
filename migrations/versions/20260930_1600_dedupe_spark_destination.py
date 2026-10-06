@@ -5,7 +5,7 @@ Revises: 20260929_1100
 Create Date: 2026-09-30 16:00:00.000000
 
 20260929_1100 seeded a `spark-k8s` destination for the fleet-wide default preset without
-checking for an existing Spark destination. Prod already had `spark-k8s-fallback` (the one
+checking for an existing Spark destination. One install already had another Spark destination (the one
 carrying the real catalog URI and pod sizing), and the batch coordinator requires exactly one
 enabled spark_emr destination -- so every nightly batch since has failed with "expected exactly
 one enabled Spark destination, found 2". Repoint the default preset at the pre-existing Spark

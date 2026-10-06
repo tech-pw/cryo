@@ -14,7 +14,7 @@ def render(*args: str) -> list[dict]:
     if shutil.which("helm") is None:
         pytest.skip("helm is required for chart rendering")
     result = subprocess.run(
-        ["helm", "template", "cryo", str(CHART), "-f", str(CHART / "values-prod.yaml"), *args],
+        ["helm", "template", "cryo", str(CHART), *args],
         check=True,
         capture_output=True,
         text=True,
@@ -40,7 +40,12 @@ def test_one_controller_owns_scanner_replicas(hpa: bool, keda: bool) -> None:
 
 
 def test_production_scanner_scales_to_zero_and_scale_down_is_bounded() -> None:
-    docs = render("-f", str(CHART / "values-prod.yaml"))
+    docs = render(
+        "--set",
+        "scannerWorker.autoscaling.enabled=false",
+        "--set",
+        "scannerWorker.autoscaling.keda.enabled=true",
+    )
     scanner = {d["kind"]: d for d in docs if d["metadata"]["name"] == "cryo-scanner-worker"}
     assert "HorizontalPodAutoscaler" not in scanner
     deployment = scanner["Deployment"]
@@ -63,7 +68,12 @@ def test_scanner_trigger_polls_a_service_that_survives_scaling_to_zero() -> None
     Deployment would never leave zero. Assert the URL resolves to the API Service instead,
     and that the API is not itself an autoscaled-to-zero target.
     """
-    docs = render("-f", str(CHART / "values-prod.yaml"))
+    docs = render(
+        "--set",
+        "scannerWorker.autoscaling.enabled=false",
+        "--set",
+        "scannerWorker.autoscaling.keda.enabled=true",
+    )
     by_name_kind = {(d["metadata"]["name"], d["kind"]): d for d in docs}
     trigger = by_name_kind[("cryo-scanner-worker", "ScaledObject")]["spec"]["triggers"][0]
     url = trigger["metadata"]["url"]

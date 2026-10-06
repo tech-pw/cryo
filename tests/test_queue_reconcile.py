@@ -835,7 +835,7 @@ def test_governor_wave_does_not_reap_spark_job_whose_driver_pod_is_still_running
         DestinationConfig(
             "spark-dest",
             engine=EngineType.SPARK_EMR,
-            config={"replicas": ["r1"], "catalog": "cdp"},
+            config={"replicas": ["r1"], "catalog": "sample"},
         )
     )
     store.add_job(
@@ -887,7 +887,7 @@ def test_governor_wave_reaps_spark_job_whose_driver_pod_is_gone(monkeypatch) -> 
         DestinationConfig(
             "spark-dest",
             engine=EngineType.SPARK_EMR,
-            config={"replicas": ["r1"], "catalog": "cdp"},
+            config={"replicas": ["r1"], "catalog": "sample"},
         )
     )
     store.add_job(

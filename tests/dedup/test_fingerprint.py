@@ -81,14 +81,14 @@ def test_candidate_generation_excludes_wildly_different_sizes_with_no_naming_hin
 
 def test_candidate_generation_rejects_moderate_size_gap_without_naming_hint() -> None:
     """Regression for the real production run, 2026-08-13: a single schema bucket of
-    1,667 tables spanning many unrelated source products (pw_bq, curiousjr_bq, xylem_bq,
+    1,667 tables spanning many unrelated source products (analytics, analytics_events, analytics_regions,
     ...) sharing a generic ingestion schema by coincidence produced 1.39M of 1.41M total
     candidate pairs at the original 0.02 ratio -- tightened to 0.9 (size must be within
     10% of the other side) specifically so two same-schema, unrelated tables with a
     moderate size gap (well short of "wildly different") are excluded without a naming
     hint to justify it."""
-    a = _fp("t1", "pw_bq", "bronze_page_view", size_gb=100.0)
-    b = _fp("t2", "curiousjr_bq", "bronze_widget_click", size_gb=60.0)  # 0.6 ratio -- below 0.9
+    a = _fp("t1", "analytics", "bronze_page_view", size_gb=100.0)
+    b = _fp("t2", "analytics_events", "bronze_widget_click", size_gb=60.0)  # 0.6 ratio -- below 0.9
     result = generate_candidate_pairs([a, b])
 
     assert result.candidates == []

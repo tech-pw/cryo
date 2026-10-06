@@ -39,17 +39,7 @@ Kubernetes. It replaces a set of Airflow DAGs + dbt macros (see `hld.md` §9 for
    components that must not ship to prod; **update in the same PR** when adding new dev-only scripts
    or compose services.
 
-The reference implementation being ported lives **outside this repo** (read-only, for parity).
-The maintainer team tracks these upstream files locally for behavior comparison; the exact
-paths are intentionally not committed here because they reference a private developer
-checkout. Files of interest when checking semantic parity:
-
-- `dags/data_team/trino_admin/dag_iceberg_auto_maintenance_with_trino.py`
-- `dags/data_team/iceberg_compaction_utils/iceberg_table_stats_batch.py`
-- `pw_dbt_trino/macros/iceberg_*.sql`
-- `dags/data_team/trino_admin/iceberg_maintenance_report.py`
-
-When in doubt about maintenance semantics, **match these files' behavior** unless `lld.md` says otherwise.
+When in doubt about maintenance semantics, match the planner and engine contracts in `lld.md`.
 
 ---
 
@@ -107,7 +97,7 @@ See `lld.md` §1 for the full tree. Quick map:
 - All tables in schema `cryo`. Every schema change = an Alembic migration (additive-first).
 - Prefer `jsonb` for forward-compatible blobs (`raw` stats, `plan`, `params`, `predicate`).
 
-### Git / MRs (see workspace rule `gitlab-workflow`)
+### Git / MRs
 - Conventional commits: `feat|fix|chore|docs|refactor|test`. Reference issues `#<id>`.
 - Small, focused MRs. Update docs (`docs/`, `plan/hld/lld/todo/README`) when behavior changes.
 - **Only commit when explicitly asked.**
@@ -201,7 +191,7 @@ Use the specialized editor tools for files; reserve the shell for git/build/test
   renderer exactly as the dbt macro does.
 - Leader-elected services (scheduler/governor): assume multiple replicas may start; guard with the
   Redis lease so only one is active.
-- Time zones: off-peak windows are **IST**; compute carefully (engine probes/Postgres are UTC).
+- Time zones: off-peak windows use the deployment timezone. Engine probes and Postgres are UTC.
 
 ---
 
@@ -213,102 +203,36 @@ Use the specialized editor tools for files; reserve the shell for git/build/test
   in settings or env-only wiring; S3 connections should offer IAM role / IRSA-style auth, not only
   static keys.
 - For research and Slack/report format work, ground recommendations in official docs and real
-  channel/data evidence — not impressions; land durable format guidance under `docs/`. Trust live
-  cluster/API/Grafana evidence over written docs when they disagree.
+  channel/data evidence — not impressions; land durable format guidance under `docs/`.
 - When a scoping or implementation doc marks items as **Scoped out**, leave those alone unless
   explicitly asked to expand scope.
 - Workload-aware research build order (when investing in that track): finish **AutoComp**
   (highest near-term ROI) → **PTO** (biggest net-new) → WAIR / Okolnychyi secondaries; master spec
   is `docs/implementation/workload-aware-optimization.md`. That track is backlog relative to
   making core maintenance actually run.
-- **Standing directive, added 2026-08-06: check Cryo's own infrastructure cost every day and keep
-  fixing until fully optimized — this is ongoing, not a one-time pass.** Don't wait to be asked;
-  proactively pull the numbers each session and investigate anything that looks off. See the
-  "Cost self-check" entry below for the concrete how-to and what's already been fixed.
-- Cryo is judged by whether it actually maintains Iceberg and moves Trino/S3 cost, not by new
-  features. Near-term: run `optimize`, `expire_snapshots`, `remove_orphan_files`,
-  `optimize_manifests` daily on the hottest Trino tables (top ~500). Prefer simplifying the
-  execution path (queue / scanner / governor) over adding intelligence or competitor-feature
-  work; the 2026-09-22 pass on those three is written up in
-  `docs/QUEUE_SCANNER_GOVERNOR_OVERHAUL_2026-09-22.md`.
+- Cryo is judged by whether it actually maintains Iceberg, not by new features. Prefer simplifying
+  the execution path (queue / scanner / governor) over adding intelligence.
 - Frontend should feel like premium operator SaaS: runs/scans like Airflow 3.x DAG/run debug
   (status, logs, a merged operations list); table detail like OpenMetadata.
 - When given a file path, read the file first — the filename is not the topic.
-- When editing Confluence pages, never strip existing images or charts.
-- On PDAE/Jira Cryo tickets: post evidence-backed progress comments as you go; do not close
-  tickets yourself (leave Dev Complete); do not silently expand scope onto a ticket another
-  session owns.
 
 ## Learned Workspace Facts
 
-- Public GitHub remote is `https://github.com/shelf-project/Cryo` (`origin`); GitLab remote
-  `gitlab` points at `example-org/data/data-engineering/cryo` (often worked on branch
-  `gitlab-main`).
-- Production Cryo: kubectl context **data-platform-cluster**, namespace **cryo**. Grafana
-  namespace-cost dashboards filter `var-cluster_name=data-platform-eks` (cost-allocation tag,
-  not the kube context) — do not guess a generic default cluster. Live API: `kubectl
-  port-forward -n cryo svc/cryo-api <local>:8000`, then `POST /api/v1/auth/token` with
-  `{"role":"admin"}` (`CRYO_ALLOW_DEV_TOKEN_IN_PROD=true`). Production deploys go through
-  `deploy/deploy.sh` (test gate → multi-arch push → pin **one** digest into all three
-  `values-prod.yaml` image fields → helm upgrade); do not hand-edit a single digest.
+- Public GitHub remote is `https://github.com/tech-pw/cryo`.
 - `EngineType` includes `trino`, `spark_emr`, `native`, and `flink`; **native** is the Go
-  compaction path — UI/run presets should expose it when configured, not Trino-only. In
-  current prod `values-prod.yaml`, `CRYO_NATIVE_ENGINE_ENABLED=false` (native K8s dispatch
-  off; Spark/Trino go through workers) and `CRYO_SCAN_ENGINE=go`.
+  compaction path — UI/run presets should expose it when configured, not Trino-only.
 - Slack daily-report structure guidance lives in `docs/SLACK_REPORT_FORMAT_GUIDE.md`; native-engine
   scope/gaps are tracked in `docs/native-engine-scoping-research.md`.
 - Job-store list methods (`list_queued_jobs` / `list_running_jobs` / `list_admitted_jobs`) must
   stay **bounded, oldest-first**. Unbounded scans of those lists, called on a timer from every
-  worker, OOMed the fleet (~1GB/5s heap). Governor reconcile has the same trap — never add a
-  new periodic full-table job-list.
+  worker, can OOM the fleet. Governor reconcile has the same trap — never add a new periodic
+  full-table job-list.
 - Governor engine-slot admission is not worker drain capacity. A worker runs one job at a time,
   so the fleet drains at roughly (replicas / job duration); admitting against engine capacity
   alone buries the claim queue under work no worker can reach. Scheduled runs need a table-count
   cap (`budget_hint` / `max_jobs_per_scheduled_run`), and a waiting-but-healthy backlog must
-  never be treated as a failed dispatch — inferring that from age alone is what recorded 5,952
-  of one run's 6,117 jobs as failures on 2026-09-21. Since 2026-09-22 the backpressure signal is
-  the admitted stream's undelivered depth and worker presence comes from the Redis Streams
-  consumer group, so `stuck_admitted_no_dispatch` no longer exists as an error.
+  never be treated as a failed dispatch. The backpressure signal is the admitted stream's
+  undelivered depth, and worker presence comes from the Redis Streams consumer group.
 - Trino "hot table" ranking should read `QueryLog` first, but a Source with
   `query_log.mode == "iceberg_table"` writes `table_query_activity` and **no** `query_logs` rows.
   Ranking must fall back to `table_query_activity` or the top-N preset silently unpins.
-- **Cost self-check, added 2026-08-06** (see the standing directive above): Cryo's own AWS EKS
-  spend for its `cryo` namespace on the `data-platform-eks` cluster is visible two ways —
-  - **Grafana dashboard**: `https://grafana.example.com`
-    (`var-cluster_name=data-platform-eks&var-namespace=cryo`). Shows `used_cost` vs `unused_cost`
-    (requested-but-idle capacity) split by workload.
-  - **Direct query**: the same numbers come from AWS's EKS Split Cost Allocation Data via the
-    `grafana-athena-datasource` Grafana datasource (uid `fe0bimj2kv9xca`), querying the `cur` table's
-    `split_line_item_split_cost` (used) / `split_line_item_unused_cost` (wasted) columns, filtered by
-    `resource_tags_aws_eks_namespace = 'cryo'`. Call it via Grafana's `/api/ds/query` proxy (see the
-    2026-08 session transcript for the exact `rawSQL` payload shape) so you don't need direct AWS
-    creds. **Gotcha**: ephemeral Kubernetes Jobs/Pods (Cryo's native + Spark dispatch pods) don't
-    carry the `eks:workload-name`/`eks:deployment` tags a Deployment gets, so their cost is invisible
-    in the normal per-service breakdown — it all lands in a `resource_tags_aws_eks_workload_name = ''`
-    bucket. Check that bucket specifically; don't conclude "no waste" just because the named-workload
-    rows look clean.
-  - **Ground-truth actual usage**: `kubectl top pods -n cryo` on live dispatch pods, compared against
-    their configured CPU/mem *requests* (not limits) — the gap between the two, multiplied across
-    however many pods run per day, is the real waste, and it's what the `unused_cost` column above
-    is billing for.
-  - **Already fixed this way (2026-08-06)**: native engine's rewrite "packing floor" was sizing every
-    table's pod to ~5.3GiB regardless of actual table size (`cryo/engines/native/resources.py`,
-    `packing_floor_bytes`/`mem_mib_for_group_packing` — now capped by `table_total_bytes`); Spark
-    fallback driver/executor static sizing was ~10x observed usage (`values-prod.yaml`); 3,276
-    orphaned Spark driver pods had no cleanup path (`cryo.engines.spark.k8s.cleanup_stale_driver_pods`,
-    wired into `GovernorRunner._tick`) — needed an RBAC fix too (`governor-rbac.yaml`, pods needed
-    `delete` not just `get`/`list`).
-  - **Not yet fixed, known gap**: Spark fallback sizing is still one static value for every table,
-    unlike the native engine's already-dynamic per-table sizing — doesn't generalize once Cryo runs
-    against a fleet shaped differently from this one. Extend `estimate_table_resources`-style sizing
-    (driven by `manifest_count`/`total_size_gb`/`total_snapshots`) to the Spark dispatch path next.
-  - **Success metric + daily tracking, added 2026-08-06**: the goal is this month's cost lower than
-    last month's, **with statistical significance** — not just a number that moved. Full methodology,
-    the daily log, and a zero-dependency month-over-month comparison script (Welch's t-test, refuses
-    to call anything significant with <7 days of current-month data) live in
-    `docs/cost-tracking/README.md` / `daily-cost-log.csv` / `compare_mom.py`. **Whenever you check
-    cost — asked or self-initiated — append the day's numbers to `daily-cost-log.csv` before
-    reporting them**; that's what makes "check daily" actually accumulate a real trend instead of
-    depending on a conversation's context.  Two namespaces tracked: `trino-db` (fleet query/compute
-    efficiency) and `cryo` (Cryo's own footprint — judge by *unused_cost ratio* trending down, not
-    raw total, since real fleet work legitimately costs more to run than doing nothing).

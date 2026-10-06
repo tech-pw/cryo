@@ -10,8 +10,8 @@ from cryo.db.repositories import presets
 def _scan_run(**summary_overrides: object) -> MaintenanceRun:
     summary = {
         "scope": "all",
-        "unreadable_tables": ["cdp.a.t1", "cdp.a.t2"],
-        "failed_tables": ["cdp.b.t3"],
+        "unreadable_tables": ["sample.a.t1", "sample.a.t2"],
+        "failed_tables": ["sample.b.t3"],
         "chunks_total": 4,
         "chunks_done": 4,
     }
@@ -42,5 +42,5 @@ def test_run_summary_detail_view_keeps_per_table_name_lists() -> None:
 
     payload = presets.run_summary(run, detail=True)
 
-    assert payload["summary"]["unreadable_tables"] == ["cdp.a.t1", "cdp.a.t2"]
-    assert payload["summary"]["failed_tables"] == ["cdp.b.t3"]
+    assert payload["summary"]["unreadable_tables"] == ["sample.a.t1", "sample.a.t2"]
+    assert payload["summary"]["failed_tables"] == ["sample.b.t3"]

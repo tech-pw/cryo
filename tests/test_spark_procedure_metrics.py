@@ -66,8 +66,8 @@ def test_log_parser_keeps_the_last_measured_result() -> None:
 
 def test_orphan_dry_run_is_appended_once() -> None:
     sql = (
-        "CALL cdp.system.remove_orphan_files("
-        "table => 'cdp.s.t', older_than => TIMESTAMP '2026-09-01 00:00:00')"
+        "CALL sample.system.remove_orphan_files("
+        "table => 'sample.s.t', older_than => TIMESTAMP '2026-09-01 00:00:00')"
     )
     once = with_orphan_dry_run(sql)
     assert once.endswith(", dry_run => true)")

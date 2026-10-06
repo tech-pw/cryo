@@ -56,12 +56,12 @@ def test_find_maintenance_by_table_and_action() -> None:
         (
             "q1",
             "RUNNING",
-            "ALTER TABLE cdp.reports.t EXECUTE optimize(file_size_threshold => '256MB')",
+            "ALTER TABLE sample.reports.t EXECUTE optimize(file_size_threshold => '256MB')",
         )
     ]
     state = find_maintenance_query_state(
         [coord],
-        "cdp.reports.t",
+        "sample.reports.t",
         OperationType.OPTIMIZE,
         connector=lambda _c: _Conn(rows),
     )
@@ -74,12 +74,12 @@ def test_no_match_is_uncertain() -> None:
         (
             "q1",
             "RUNNING",
-            "ALTER TABLE cdp.reports.t EXECUTE optimize(file_size_threshold => '256MB')",
+            "ALTER TABLE sample.reports.t EXECUTE optimize(file_size_threshold => '256MB')",
         )
     ]
     state = find_maintenance_query_state(
         [coord],
-        "cdp.reports.missing",
+        "sample.reports.missing",
         OperationType.OPTIMIZE,
         connector=lambda _c: _Conn(rows),
     )
@@ -149,7 +149,7 @@ class TestQueryStatusProbeFailureVisibility:
         with patch("cryo.engines.trino.query_status.logger.warning") as mock_warning:
             state = find_maintenance_query_state(
                 [coord],
-                "cdp.reports.t",
+                "sample.reports.t",
                 OperationType.OPTIMIZE,
                 connector=lambda _c: _RaisingConn(),
             )

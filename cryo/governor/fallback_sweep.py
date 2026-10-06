@@ -1,4 +1,4 @@
-"""Resolve async Spark fallback dispatches (PDAE-8352) to their real terminal outcome.
+"""Resolve async Spark fallback dispatches to their real terminal outcome.
 
 _dispatch_fallback_operations (cryo/governor/native_admit.py) submits a Spark fallback
 job (e.g. optimize_manifests, unsupported by the native engine) and returns immediately

@@ -24,7 +24,7 @@ def _destination(
         id=uuid.uuid4(),
         name="test-destination",
         engine="trino",
-        config=config or {"catalog": "cdp"},
+        config=config or {"catalog": "sample"},
         offpeak_start=offpeak_start,
         offpeak_end=offpeak_end,
     )
@@ -38,14 +38,14 @@ def test_destination_config_uses_db_offpeak_columns_when_config_json_omits_them(
     assert config == DestinationConfig(
         id=str(destination.id),
         engine="trino",
-        config={"catalog": "cdp", "offpeak_start_ist": 15, "offpeak_end_ist": 5},
+        config={"catalog": "sample", "offpeak_start_ist": 15, "offpeak_end_ist": 5},
     )
 
 
 def test_destination_config_prefers_explicit_config_json_offpeak_values() -> None:
     destination = _destination(
         config={
-            "catalog": "cdp",
+            "catalog": "sample",
             "offpeak_start_ist": 0,
             "offpeak_end_ist": 7,
         },

@@ -58,5 +58,5 @@ signed with HS256 (default) or RS256 (when OIDC is configured); see `cryo/securi
 
 If you find a flaw in our use of these primitives, treat it as a critical-severity report.
 
-[gh-sa]: https://github.com/shelf-project/Cryo/security/advisories/new
+[gh-sa]: https://github.com/tech-pw/cryo/security/advisories/new
 [fernet]: https://cryptography.io/en/latest/fernet/

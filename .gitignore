@@ -11,9 +11,9 @@
 .kilo/
 .cursor/plans/
 
-# PW-internal operational docs (Jira-ticket writeups, incident RCAs) —
+# Local operational docs (ticket writeups, incident notes) —
 # not part of the public OSS release; keep these out of history going forward.
-docs/_private-pw/
+docs/_private/
 
 __pycache__/
 *.pyc
@@ -36,12 +36,6 @@ node_modules/
 tmp/
 *.pprof
 
-# Environment-specific Helm value overlays contain real internal hostnames/bucket names --
-# keep these out of the public GitHub repo (this rule is only meant to apply on `main`).
-# On gitlab-main specifically, values-dev.yaml/values-stage.yaml/values-prod.yaml are
-# deliberately tracked (org-internal repo only) -- see the negations below.
-# The generic deploy/helm/cryo/values.yaml base chart is not affected by this rule.
+# Environment-specific Helm overlays. The public repo ships values.yaml only.
+# Local copies may still exist for an internal deploy; do not force-add them.
 deploy/helm/cryo/values-*.yaml
-!deploy/helm/cryo/values-dev.yaml
-!deploy/helm/cryo/values-stage.yaml
-!deploy/helm/cryo/values-prod.yaml

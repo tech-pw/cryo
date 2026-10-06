@@ -1,10 +1,6 @@
 # Operator Guide
 
-> Last reconciled: 2026-07-05. Sources (merged into this doc):
-> [`operator-guide.md`](https://github.com/shelf-project/Cryo/blob/main/docs/operator-guide.md) (production on-call),
-> [`operator-guide.md`](https://github.com/shelf-project/Cryo/blob/main/docs/operator-guide.md) (local dev),
-> [`operator-guide.md`](https://github.com/shelf-project/Cryo/blob/main/docs/operator-guide.md) (local stack setup),
-> [`operator-guide.md`](https://github.com/shelf-project/Cryo/blob/main/docs/operator-guide.md) (compose layout).
+> Last reconciled: 2026-07-05.
 > **Audience:** on-call engineers running Cryo in production. For local development setup,
 > jump to §3.
 
@@ -451,9 +447,8 @@ Log exploration (Loki via Grafana Explore):
 **What this means:** these tables resolve to no effective preset via
 `cryo.scheduler.rules.effective_preset()` — no pinned assignment, no matching rule, and
 either no fleet-wide catchall preset is enabled or its rule/priority doesn't reach them. They
-get zero recurring maintenance, silently, until someone notices. Real incident, 2026-08-12:
-1,267 `needs_compaction=True` tables unmatched, including a 24TB table pinned to a preset
-that had been disabled — found only by manual investigation before this alert existed.
+get zero recurring maintenance, silently, until someone notices. A disabled preset once
+left a large table unmatched until someone looked by hand.
 
 **Diagnosis:**
 1. `GET /api/v1/presets` — confirm the intended fleet-wide catchall (`default-native-deep` or
@@ -468,7 +463,7 @@ that had been disabled — found only by manual investigation before this alert 
 
 | Cause | Action |
 |-------|--------|
-| Fleet-wide catchall disabled | Re-enable it, or confirm the narrower preset set is the deliberate replacement (see PDAE-8540) |
+| Fleet-wide catchall disabled | Re-enable it, or confirm the narrower preset set is the deliberate replacement |
 | Rule priority/predicate regression | Fix the rule via `POST /api/v1/presets/{id}/rules`; re-run simulate to confirm `matched_count` |
 | Genuinely out-of-scope tables (temp/scratch/test) | Confirm via `cryo.scheduler.rules.is_ephemeral_maintenance_table` — these should stay unmatched, not force-matched |
 
@@ -503,7 +498,7 @@ catalog. Default API memory limit is 1Gi after the SQL rewrite.
 in 1253fe3 as a margin only. Spark-on-K8s already runs in a Job; the worker blow-up is
 holding a huge partition-aware plan / `table_data.partitions` while submitting SQL.
 
-**Code path (PDAE-8348):** outlier tables (≥500GB, ≥10k files, ≥2k partitions, or a
+**Code path:** outlier tables (≥500GB, ≥10k files, ≥2k partitions, or a
 plan JSON ≥256KiB) drop partition filters and run a full-table Spark CALL. Logs:
 `spark-k8s payload worker:pre_execute` / `execute_plan:before` with `plan_json_bytes`,
 partition/predicate counts, and RSS.
@@ -578,7 +573,7 @@ Check `cryo_anomaly_alerts_total` after dispatch.
 
 Distinct from the ML detector above. The **Anomalies** page (`/anomalies`) lists catalog
 tables whose warehouse locations are the same path or nested under another table — the
-failure mode in `docs/incidents/rca-cdp-catalog-evolving-shared-s3-drop.md`.
+failure mode of two tables sharing one warehouse path.
 
 - Harvest uses Hive Metastore Thrift `sd.location` and Glue `StorageDescriptor.Location`
   (not Iceberg `load_table`), so unreadable aliases still appear.
@@ -619,9 +614,8 @@ Production deploys **Cryo application pods only** via `deploy/helm/cryo/`. Do no
 External object storage, catalogs, and query engines are configured as Cryo sources and
 destinations in the database.
 
-See [`deployment.md`](./deployment.md) for the full Helm + production topology guide, including
-the `iceberg.target-max-file-size` catalog-property config, multi-tenancy, and the per-tenant
-schema layout.
+Helm install uses `deploy/helm/cryo/`. Set `iceberg.target-max-file-size` on the catalog,
+not in Cryo. Multi-tenancy is per source and destination in the database.
 
 Full inventory of local-only components (update when adding new ad-hoc dev tooling):
 [`local-dev-only-inventory.md`](./local-dev-only-inventory.md).

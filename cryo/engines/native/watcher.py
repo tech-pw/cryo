@@ -242,7 +242,7 @@ class NativeJobWatcher:
                     reason = "native_job_oom" if oom else "native_job_failed"
                     if stderr:
                         reason = f"{reason}: {stderr[:500]}"
-                    # PDAE-8546: no pods and no stderr is the DeadlineExceeded signature --
+                    # : no pods and no stderr is the DeadlineExceeded signature --
                     # K8s deletes the pod immediately on activeDeadlineSeconds, unlike a normal
                     # exit-code failure where it lingers for log collection, so _read_pod_logs
                     # above has nothing to read even when some batch members genuinely
@@ -358,7 +358,7 @@ class NativeJobWatcher:
 
         ``salvage`` (from ``_salvage_from_run_events``) maps job_id -> True for members whose
         incrementally-streamed run_events already showed a real success before the batch died
-        with no recoverable pod logs (PDAE-8546). A member not in ``salvage`` genuinely has no
+        with no recoverable pod logs (). A member not in ``salvage`` genuinely has no
         known outcome and stays FAILED with ``reason`` -- this only ever recovers jobs with
         positive evidence of success, never invents one for silence.
         """
@@ -832,7 +832,7 @@ def _native_operation_type(value: Any) -> OperationType | None:
         # Real incident, 2026-09-15/16: rewrite_position_deletes and compute_statistics were
         # missing from this map entirely, so their per-operation audit records were silently
         # dropped in _record_result_audits (action resolves to None -> skipped) -- the exact
-        # operation type in the gold_dbt_poll_dashboard_view silent-no-op incident had no audit
+        # operation type in the example_table silent-no-op incident had no audit
         # trail at all, which is part of why the no-op went unnoticed for 5 days.
         "rewrite_position_deletes": OperationType.REWRITE_POSITION_DELETES,
         "compute_statistics": OperationType.COMPUTE_STATISTICS,
@@ -843,7 +843,7 @@ def _native_operation_type(value: Any) -> OperationType | None:
     return aliases.get(str(value))
 
 
-# Real incident, 2026-09-15/16: gold_dbt_poll_dashboard_view's native-engine job reported
+# Real incident, 2026-09-15/16: example_table's native-engine job reported
 # status=succeeded with a real, correctly-planned operation list (rewrite_position_deletes,
 # optimize, compute_statistics, expire_snapshots, remove_orphan_files), ran for 25 minutes, but
 # the table's live Iceberg $snapshots history showed zero new commits -- the native binary

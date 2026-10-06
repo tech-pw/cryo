@@ -65,7 +65,7 @@ def test_restart_does_not_start_orphan_while_expire_started(monkeypatch) -> None
         "table-1",
         TableMaintenanceData(
             stats={
-                "catalog_name": "cdp",
+                "catalog_name": "sample",
                 "schema_name": "s",
                 "table_name": "t",
                 "total_files": 1,
@@ -83,7 +83,7 @@ def test_restart_does_not_start_orphan_while_expire_started(monkeypatch) -> None
             mode=Mode.STANDARD,
             status=JobStatus.RUNNING,
             started_at=datetime.now(UTC),
-            plan={"table_ref": "cdp.s.t"},
+            plan={"table_ref": "sample.s.t"},
             operations=(OperationType.EXPIRE_SNAPSHOTS, OperationType.REMOVE_ORPHAN_FILES),
         )
     )

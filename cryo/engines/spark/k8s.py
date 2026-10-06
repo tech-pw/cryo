@@ -255,11 +255,11 @@ class SparkK8sClient:
         """Dispatch cryo_spark_runner.py --repair-missing-files against table_ref.
 
         table_ref is the full catalog.namespace.table Spark identifier (e.g.
-        "lake.analytics.load_test_basefact"). Its first segment is also passed as the
+        "rest_catalog.db.sample_table"). Its first segment is also passed as the
         runner's --catalog (the Iceberg catalog plugin registration name) -- they must
         match, or Spark can't resolve the reference at all (confirmed live, 2026-07-21:
         omitting --catalog left it registered as the runner's "glue_catalog" default,
-        and querying "cdp.ns.table.files" against a catalog actually named "glue_catalog"
+        and querying "rest_catalog.ns.table.files" against a catalog actually named "glue_catalog"
         threw REQUIRES_SINGLE_PART_NAMESPACE from Spark's built-in session catalog).
         Defaults to a dry run (lists what's missing without committing) -- pass
         commit=True to actually remove the confirmed-missing manifest entries.
@@ -935,7 +935,7 @@ def _read_pod_log_tail(
     "Decommissioning not enabled, skipping shutdown script" spam. `tail_lines` is the
     correct parameter for "last N lines of a pod's log" and needs no byte-size guessing.
 
-    Regression, PDAE-8346, confirmed live 2026-08-18: 200 lines still wasn't enough. A
+    Regression, , confirmed live 2026-08-18: 200 lines still wasn't enough. A
     real sample: 19 of 47 truncated MaintenanceJob.error rows over 14 days had no exception
     message at all captured -- only bare `at org.apache.spark...` stack frames or trailing
     "Shutting down all executors" shutdown chatter, because the real `Exception: message`
