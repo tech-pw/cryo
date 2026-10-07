@@ -245,16 +245,11 @@
 }
 
 .cryo-shell__brand-mark {
-  display: inline-flex;
+  display: block;
+  flex: none;
   width: 32px;
   height: 32px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 10px;
-  background: var(--sidebar-accent);
-  color: #fff;
-  box-shadow: 0 8px 24px -12px rgba(61, 111, 212, 0.9);
+  --cryo-mark-core: var(--sidebar-bg);
 }
 
 .cryo-shell__brand-copy {
