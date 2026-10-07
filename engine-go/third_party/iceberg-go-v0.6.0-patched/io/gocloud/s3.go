@@ -118,18 +118,27 @@ func resolveUsePathStyle(endpoint string, props map[string]string) bool {
 	return usePathStyle
 }
 
+func awsConfigForS3(ctx context.Context, props map[string]string) (*aws.Config, error) {
+	if props[io.S3AccessKeyID] != "" && props[io.S3SecretAccessKey] != "" {
+		return ParseAWSConfig(ctx, props)
+	}
+	if v := utils.GetAwsConfig(ctx); v != nil {
+		return v, nil
+	}
+	return ParseAWSConfig(ctx, props)
+}
+
 func createS3Bucket(ctx context.Context, parsed *url.URL, props map[string]string) (*blob.Bucket, error) {
 	var (
 		awscfg *aws.Config
 		err    error
 	)
-	if v := utils.GetAwsConfig(ctx); v != nil {
-		awscfg = v
-	} else {
-		awscfg, err = ParseAWSConfig(ctx, props)
-		if err != nil {
-			return nil, err
-		}
+	// Table properties carry REST vended storage credentials. Those must win
+	// over the static source keys seeded on the context, or a catalog that
+	// hands out different warehouse credentials is ignored.
+	awscfg, err = awsConfigForS3(ctx, props)
+	if err != nil {
+		return nil, err
 	}
 
 	// Default HTTP client when not configured: use the SDK buildable client so

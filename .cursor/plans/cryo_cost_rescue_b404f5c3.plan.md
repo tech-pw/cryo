@@ -2,45 +2,45 @@
 name: Cryo cost rescue
 overview: Cryo is running but not winning the bill. Digest fbe2ee0e slowed worker OOM (42s → ~11min) but did not stop it — recover still materializes up to 3000 fat job records/tick. Native expire does not delete S3 objects. gold_dbt_pw_bq never plans OPTIMIZE because min_small_files=128 is per-partition (~1 small file/partition across 63k partitions). Fix slim recover, then spread-small-file rewrite + Spark expire-delete on hot GET tables, then admit-by-value and skip no-op Jobs.
 todos:
-  - id: wave0-bound-recover
-    content: "SHIPPED c4567244 / digest sha256:fbe2ee0e: recover caps running(500)+admitted(500)+queued(2000). Slowed OOM 42s→~11min, did not stop it."
-    status: completed
-  - id: wave0-soak-fbe2ee
-    content: "NOT FLAT. Workers on fbe2ee0e still OOMKilled (2–3 restarts, last kill 12:15–12:18 UTC, ~11–14min after start). Do not wait for a 4h soak of this digest. Do not revert maxReplicas=3 yet."
-    status: cancelled
-  - id: wave0-round2b-slim-recover
-    content: "SUPERSEDED — the actual root cause was not fat _job_record rows, it was refresh_cost_model_cache() running inline on every single job completion on every worker pod (cryo/ml/cost_integration.py, called from cryo/worker/worker.py's _process_claimed_job). Confirmed via kernel-level /proc/1/smaps_rollup polling (Anonymous heap climbing ~1GB/6-10s, always starting right after a job's last operation finished) AND independently reproduced by OOMKilling a cryo-api pod via one GET to /api/v1/ai/cost-model/evaluate (same build_outcome_dataset code path). Fixed: moved to CostModelRefreshRunner, a 6h scheduled daemon (cryo/cli.py + cryo/config.py's cost_model_refresh_interval_hours), commit 39f8123f, digest sha256:25dcfa32. Post-fix soak: 28+ min, 0 restarts, lastState={} across a 9-10 pod fleet. The _job_record N+1 pattern (TableAssignment/autocomp/MaintenanceIntent per row) this item described is real but confirmed non-blocking after the actual fix — worth a future efficiency pass, not urgent. Full writeup in docs/AGENT_HANDOFF.md."
-    status: completed
-  - id: wave0-round3-reconcile
-    content: "N/A — the OOM cascade is resolved (see wave0-round2b-slim-recover). Governor reconcile_stale_running_jobs/reconcile_stuck_admitted_jobs unbounded list_running()/list_admitted() calls are still real (queue/reconcile.py, unbounded every ~30s wave) but are not causing a live problem — governor has shown no OOM/instability all session. Revisit only if governor-side symptoms actually appear; do not preemptively bound this without live evidence, per this session's own lesson about chasing unconfirmed theories."
-    status: cancelled
-  - id: wave0-remaining-lock-keda-trino
-    content: "KEDA maxReplicas reverted 3→10 (values-prod.yaml, soak-confirmed clean) and worker.resources.limits.memory reverted 8Gi→6Gi (soak-confirmed clean) — both stopgaps now fully rolled back post-fix. Fail-closed table lock + job-owner (_ensure_table_lock, worker.py 1184-1187) and Trino on_engine_ref-before-cursor.execute-returns remain real, separate findings (not OOM-related) — moved to wave1-bytes/future work since they're correctness issues, not the active-outage item this todo was scoped to."
-    status: completed
-  - id: wave1-bytes
-    content: "PARTIALLY SHIPPED (commit ca4f6eac): cooldown-from-reclaim-actions-only is done -- two stacked bugs fixed (job_store._last_maintained_at counted any OK audit incl. expire-only/autopilot; presets.table_to_candidate never populated TableCandidate.last_maintained_at at all, so drop_recently_maintained's cooldown filter silently never dropped anything). 18 new tests, full suite green, deployed. Still open from this item: live preset audit (not yet done -- pull /api/v1/presets + /api/v1/vitals live and confirm default-native-deep's real config), PARTIAL-if-optimize-skipped status marking, native-fallback-must-fail-job, skip no-op native expire/orphan Jobs (snapshots<=retain_last, 0 reclaim)."
-    status: pending
-  - id: wave1-spread-optimize
-    content: "CODE SHIPPED (commit 299e87bd): new opt-in preset param min_partition_small_files overrides _candidate_partitions' per-partition gate independently of the table-level min_small_files check; defaults to min_small_files (unchanged behavior everywhere unless set). 2 planner tests + 1 validation test, deployed. NOT YET DONE: actually setting min_partition_small_files on gold_dbt_pw_bq's own preset (claude-spark-run-unified-bq-gold-dbt-pw-bq, id 4e8c66d2-2067-403a-b2fd-014bb0312e9f) via the admin API -- that's a live-data preset change, not a code deploy, do it deliberately with a value chosen from real partition data (median 4 small files/partition observed live -- min_partition_small_files=1 or similar low floor, not blindly copying the table-level 128). Pin retention_days=1 item (commits_per_day zeroing after maintenance) is separate, still pending."
-    status: pending
-  - id: wave1-native-expire-semantics
-    content: Native expire uses WithPostCommit(false) — metadata only. TimedStorage on native path only falls after orphan LIST or after Spark/Trino expire-delete following a rewrite. Do not enable fleet-wide native DEEP expecting storage $ to drop.
-    status: pending
-  - id: wave1-mor-get-tables
-    content: "Spark MOR delete rewrite for Slack GET spikes: mview.gold_dbt_test_results (7.8M GET DoD), gold_dbt_video_stats_v3, live *_evolving. If OPTIMIZE is skipped, convert_deletes is also skipped — neither runs. Do not native-route these."
-    status: pending
-  - id: wave1b-autopilot
-    content: Autopilot ON but re-SETs same props (does not refresh TableStats.raw), which starts cooldown. Skip no-ops; stop counting apply_table_properties OK as last_maintained_at. Drop 50-snapshot gate for query-hot previous-versions-max=10.
-    status: pending
-  - id: wave2-admit-unused
-    content: Admit by reclaim×query not FIFO. Force cost_full_scan / expire reclaim on top-N TB (heuristic zeros expire bytes if snapshots>200). Governor Spark with_table_stats + manifests-only small profile; cap 8-exec dest; native packing floor; skip low-manifest rewrite_manifests; skip tiny native Jobs; one orphan LIST no Stat-for-metrics; Trino task_min_writer_count sized to chunk; scanner HPA min 1.
-    status: pending
-  - id: wave3-intelligence
-    content: compute_statistics on query-hot presets; layout/PTO canary; MOOP in admit order; Amoro-style per-table slot quota; frequent-small vs weekly-DEEP cadence; bucket(N) predicates or small-table full rewrite; Yelp days_since_last_access for operator-gated cold-partition expire.
-    status: pending
-  - id: wave4-platform-proof
-    content: "IT on gold AFTER compact. Unique-location DROP/lifecycle for named copies (silver_infinite_practice_result_questions_temp ~5TB, gold_dbt_test_results_backup 749GB). Temp bucket ~27TB lifecycle. Ghost catalog deactivate (~106). CUR user-tags. Append daily-cost-log. Success = GB/day + gold files held + S3/Trino used down."
-    status: pending
+ - id: wave0-bound-recover
+ content: "SHIPPED c4567244 / digest sha256:fbe2ee0e: recover caps running(500)+admitted(500)+queued(2000). Slowed OOM 42s→~11min, did not stop it."
+ status: completed
+ - id: wave0-soak-fbe2ee
+ content: "NOT FLAT. Workers on fbe2ee0e still OOMKilled (2–3 restarts, last kill 12:15–12:18 UTC, ~11–14min after start). Do not wait for a 4h soak of this digest. Do not revert maxReplicas=3 yet."
+ status: cancelled
+ - id: wave0-round2b-slim-recover
+ content: "SUPERSEDED — the actual root cause was not fat _job_record rows, it was refresh_cost_model_cache running inline on every single job completion on every worker pod (cryo/ml/cost_integration.py, called from cryo/worker/worker.py's _process_claimed_job). Confirmed via kernel-level /proc/1/smaps_rollup polling (Anonymous heap climbing ~1GB/6-10s, always starting right after a job's last operation finished) AND independently reproduced by OOMKilling a cryo-api pod via one GET to /api/v1/ai/cost-model/evaluate (same build_outcome_dataset code path). Fixed: moved to CostModelRefreshRunner, a 6h scheduled daemon (cryo/cli.py + cryo/config.py's cost_model_refresh_interval_hours), commit 39f8123f, digest sha256:25dcfa32. Post-fix soak: 28+ min, 0 restarts, lastState={} across a 9-10 pod fleet. The _job_record N+1 pattern (TableAssignment/autocomp/MaintenanceIntent per row) this item described is real but confirmed non-blocking after the actual fix — worth a future efficiency pass, not urgent. Full writeup in docs/AGENT_HANDOFF.md."
+ status: completed
+ - id: wave0-round3-reconcile
+ content: "N/A — the OOM cascade is resolved (see wave0-round2b-slim-recover). Governor reconcile_stale_running_jobs/reconcile_stuck_admitted_jobs unbounded list_running/list_admitted calls are still real (queue/reconcile.py, unbounded every ~30s wave) but are not causing a live problem — governor has shown no OOM/instability all session. Revisit only if governor-side symptoms actually appear; do not preemptively bound this without live evidence, per this session's own lesson about chasing unconfirmed theories."
+ status: cancelled
+ - id: wave0-remaining-lock-keda-trino
+ content: "KEDA maxReplicas reverted 3→10 (values-prod.yaml, soak-confirmed clean) and worker.resources.limits.memory reverted 8Gi→6Gi (soak-confirmed clean) — both stopgaps now fully rolled back post-fix. Fail-closed table lock + job-owner (_ensure_table_lock, worker.py 1184-1187) and Trino on_engine_ref-before-cursor.execute-returns remain real, separate findings (not OOM-related) — moved to wave1-bytes/future work since they're correctness issues, not the active-outage item this todo was scoped to."
+ status: completed
+ - id: wave1-bytes
+ content: "PARTIALLY SHIPPED (commit ca4f6eac): cooldown-from-reclaim-actions-only is done -- two stacked bugs fixed (job_store._last_maintained_at counted any OK audit incl. expire-only/autopilot; presets.table_to_candidate never populated TableCandidate.last_maintained_at at all, so drop_recently_maintained's cooldown filter silently never dropped anything). 18 new tests, full suite green, deployed. Still open from this item: live preset audit (not yet done -- pull /api/v1/presets + /api/v1/vitals live and confirm default-native-deep's real config), PARTIAL-if-optimize-skipped status marking, native-fallback-must-fail-job, skip no-op native expire/orphan Jobs (snapshots<=retain_last, 0 reclaim)."
+ status: pending
+ - id: wave1-spread-optimize
+ content: "CODE SHIPPED (commit 299e87bd): new opt-in preset param min_partition_small_files overrides _candidate_partitions' per-partition gate independently of the table-level min_small_files check; defaults to min_small_files (unchanged behavior everywhere unless set). 2 planner tests + 1 validation test, deployed. NOT YET DONE: actually setting min_partition_small_files on gold_dbt_pw_bq's own preset (claude-spark-run-unified-bq-gold-dbt-pw-bq, id 4e8c66d2-2067-403a-b2fd-014bb0312e9f) via the admin API -- that's a live-data preset change, not a code deploy, do it deliberately with a value chosen from real partition data (median 4 small files/partition observed live -- min_partition_small_files=1 or similar low floor, not blindly copying the table-level 128). Pin retention_days=1 item (commits_per_day zeroing after maintenance) is separate, still pending."
+ status: pending
+ - id: wave1-native-expire-semantics
+ content: Native expire uses WithPostCommit(false) — metadata only. TimedStorage on native path only falls after orphan LIST or after Spark/Trino expire-delete following a rewrite. Do not enable fleet-wide native DEEP expecting storage $ to drop.
+ status: pending
+ - id: wave1-mor-get-tables
+ content: "Spark MOR delete rewrite for Slack GET spikes: mview.gold_dbt_test_results (7.8M GET DoD), gold_dbt_video_stats_v3, live *_evolving. If OPTIMIZE is skipped, convert_deletes is also skipped — neither runs. Do not native-route these."
+ status: pending
+ - id: wave1b-autopilot
+ content: Autopilot ON but re-SETs same props (does not refresh TableStats.raw), which starts cooldown. Skip no-ops; stop counting apply_table_properties OK as last_maintained_at. Drop 50-snapshot gate for query-hot previous-versions-max=10.
+ status: pending
+ - id: wave2-admit-unused
+ content: Admit by reclaim×query not FIFO. Force cost_full_scan / expire reclaim on top-N TB (heuristic zeros expire bytes if snapshots>200). Governor Spark with_table_stats + manifests-only small profile; cap 8-exec dest; native packing floor; skip low-manifest rewrite_manifests; skip tiny native Jobs; one orphan LIST no Stat-for-metrics; Trino task_min_writer_count sized to chunk; scanner HPA min 1.
+ status: pending
+ - id: wave3-intelligence
+ content: compute_statistics on query-hot presets; layout/PTO canary; MOOP in admit order; Amoro-style per-table slot quota; frequent-small vs weekly-DEEP cadence; bucket(N) predicates or small-table full rewrite; Yelp days_since_last_access for operator-gated cold-partition expire.
+ status: pending
+ - id: wave4-platform-proof
+ content: "IT on gold AFTER compact. Unique-location DROP/lifecycle for named copies (silver_infinite_practice_result_questions_temp ~5TB, gold_dbt_test_results_backup 749GB). Temp bucket ~27TB lifecycle. Ghost catalog deactivate (~106). CUR user-tags. Append daily-cost-log. Success = GB/day + gold files held + S3/Trino used down."
+ status: pending
 isProject: false
 ---
 
@@ -87,18 +87,18 @@ Cryo is running and still failing the north star.
 
 ```mermaid
 flowchart TD
-  cron[Cron burst 5k to 11k jobs] --> gov[Governor FIFO plus tenant RR]
-  gov --> native[Native expire WithPostCommit false]
-  native --> noDelete[S3 objects stay billed]
-  gov --> sparkFb[Spark fallback optimize_manifests]
-  sparkFb --> unused[8-exec pods 86 percent unused]
-  cron --> worker[Recover 3000 fat job records per 5s]
-  worker --> oom[OOMKilled in about 11 min]
-  oom --> keda[KEDA maxReplicas 3]
-  gold[gold_dbt_pw_bq 63k partitions] --> skipOpt[min_small_files 128 per partition]
-  skipOpt --> expireOnly[Expire orphan only about 4 min]
-  expireOnly --> cooldown[Any OK audit starts 24h cooldown]
-  cooldown --> noBytes[S3 TimedStorage flat]
+ cron[Cron burst 5k to 11k jobs] --> gov[Governor FIFO plus tenant RR]
+ gov --> native[Native expire WithPostCommit false]
+ native --> noDelete[S3 objects stay billed]
+ gov --> sparkFb[Spark fallback optimize_manifests]
+ sparkFb --> unused[8-exec pods 86 percent unused]
+ cron --> worker[Recover 3000 fat job records per 5s]
+ worker --> oom[OOMKilled in about 11 min]
+ oom --> keda[KEDA maxReplicas 3]
+ gold[gold_dbt_pw_bq 63k partitions] --> skipOpt[min_small_files 128 per partition]
+ skipOpt --> expireOnly[Expire orphan only about 4 min]
+ expireOnly --> cooldown[Any OK audit starts 24h cooldown]
+ cooldown --> noBytes[S3 TimedStorage flat]
 ```
 
 ## Dollar physics (what actually moves CUR)
@@ -107,7 +107,7 @@ CDP 7 buckets ~**$12k/30d**: TimedStorage **$8.1k** ($269/d) + GET/HEAD **$2.9k*
 
 - **Expire snapshots:** Unpins files from the snapshot graph. Native (`engine-go/internal/ops/expire.go` `WithPostCommit(false)`) does **not** delete objects. Spark/Trino expire **do**. TimedStorage does not fall on the native path until orphan LIST or a Spark/Trino expire-delete after rewrite.
 - **Remove orphan files:** Deletes objects **never in any snapshot** (failed writes). DEEP-only in planner. Full-prefix LIST (Tier-1). Native execute currently **preview LIST + execute LIST + Open/Stat every path** for byte metrics — extra HEAD/GET even when reclaim = 0. Confirmed 57.7% of tables got **more HEAD after maintenance**.
-- **Compact / rewrite data files:** Nearly **rewrite-neutral** for live TimedStorage. Net GB drop = merged deletes + later expire of replaced small files. PDAE-8269: ~258 GB from a 24 TB Spark rewrite. **Primary GET + Trino-used lever** (fewer splits). Compaction itself is a PUT burst. `gold_dbt_pw_bq` rebounded to hundreds of thousands of files / **378k–476k PUTs/day** after a one-off compact.
+- **Compact / rewrite data files:** Nearly **rewrite-neutral** for live TimedStorage. Net GB drop = merged deletes + later expire of replaced small files. : ~258 GB from a 24 TB Spark rewrite. **Primary GET + Trino-used lever** (fewer splits). Compaction itself is a PUT burst. `gold_dbt_pw_bq` rebounded to hundreds of thousands of files / **378k–476k PUTs/day** after a one-off compact.
 - **Rewrite manifests:** Tiny storage. Cuts planning GETs. Native cannot run it → Spark Job per DEEP table (the 44–101s 8-exec Jobs).
 - **Rewrite position deletes:** Tiny storage. Cuts MOR read GET + Trino CPU. Spark only; Trino raises. Native always fallback.
 - **Compute stats / Puffin:** Zero TimedStorage (adds blobs). Cuts GET/Trino via skip. Planner requires `params.compute_statistics` (default false). Global `compute_statistics_enabled` only refreshes benefit scores.
@@ -124,9 +124,9 @@ Official refs: [Iceberg maintenance](https://iceberg.apache.org/docs/latest/main
 
 Cryo’s product idea is ahead of Amoro on load-aware admission, partition planning, and explainable ROI. **Production proof is behind.** The failure is not “missing compaction SQL.” It is four compounding loops:
 
-1. **Control plane OOM under backlog (partially closed, not done).** Worker recover queued then running/admitted scans are **capped** (`68bc82eb`, `c4567244`) but still OOM at ~11 min because each tick materializes up to 3000 **fat** `_job_record`s. Governor [`cryo/queue/reconcile.py`](cryo/queue/reconcile.py) `list_running()` / `list_admitted()` remain unbounded. KEDA still counts native RUNNING.
+1. **Control plane OOM under backlog (partially closed, not done).** Worker recover queued then running/admitted scans are **capped** (`68bc82eb`, `c4567244`) but still OOM at ~11 min because each tick materializes up to 3000 **fat** `_job_record`s. Governor [`cryo/queue/reconcile.py`](cryo/queue/reconcile.py) `list_running` / `list_admitted` remain unbounded. KEDA still counts native RUNNING.
 2. **Native expire does not delete S3 bytes.** [`engine-go/internal/ops/expire.go`](engine-go/internal/ops/expire.go) `WithPostCommit(false)`. Planner still emits expire on LIGHT/STANDARD without orphan. Native STANDARD = metadata-only. Enabling `default-native-deep` without rewrite **and** without Spark expire-delete will LIST the fleet and not drop TimedStorage.
-3. **`gold_dbt_pw_bq` never plans OPTIMIZE.** Table has 58k small files so the **table-level** gate passes (`min_small_files=128`). [`_candidate_partitions`](cryo/planner/planner.py) then requires **each** partition ≥ 128 small files. 63,694 partitions → **~1 small file/partition** → `"Skipped optimize: no renderable partition candidates met the threshold."` Full-table OPTIMIZE blocked (24549 GB ≫ `chunk_size_gb` 100). PDAE-8542 “success” in ~244s is expire+orphan only. Adding `optimize` to the preset **does not rewrite this table**.
+3. **`gold_dbt_pw_bq` never plans OPTIMIZE.** Table has 58k small files so the **table-level** gate passes (`min_small_files=128`). [`_candidate_partitions`](cryo/planner/planner.py) then requires **each** partition ≥ 128 small files. 63,694 partitions → **~1 small file/partition** → `"Skipped optimize: no renderable partition candidates met the threshold."` Full-table OPTIMIZE blocked (24549 GB ≫ `chunk_size_gb` 100). “success” in ~244s is expire+orphan only. Adding `optimize` to the preset **does not rewrite this table**.
 4. **`commits_per_day` zeros after any maintenance job** ([`detect_streaming_from_history`](cryo/scanner/signals.py) lines 60–61). True velocity ~123 commits/day would retain 1 day; live path keeps **3 days**. Streaming-aware retention never fires on tables Cryo actually touches.
 5. **The expensive tables are not the ones getting rewrite.** Slack gold GET 2026-09-07: `mview.gold_dbt_test_results` (0→7.8M GET), `gold_dbt_video_stats_v3`, `*_evolving`. MOR: if OPTIMIZE is skipped, [`convert_deletes` is also skipped](cryo/planner/planner.py) (“planned optimize already rewrites”) — **neither runs**. Dark-table campaign does not touch these.
 6. **Intelligence is scored, then ignored at admit time.** Redis is run-age FIFO. `fleet_budget_gb` default `None`. Autopilot is ON but re-SETs the same properties (does not update `TableStats.raw`) and those OK audits start cooldown. `reclaimable_bytes` heuristic is **0** when `total_snapshots > 200` (`cost_scan_max_snapshots`) — so even reclaim×query ranking is blind on the biggest tables.
@@ -178,8 +178,8 @@ Tests: spy that recover listing does not call `_job_record` / does not load `pla
 
 Governor [`cryo/queue/reconcile.py`](cryo/queue/reconcile.py) still calls the **same** list methods unbounded every ~30s wave, while queued/deferred reconcile on this file was already capped 2026-09-02:
 
-- `reconcile_stale_running_jobs` line **188**: `for job in list_running():` — no `limit=`
-- `reconcile_stuck_admitted_jobs` line **275**: `for job in list_admitted():` — no `limit=`
+- `reconcile_stale_running_jobs` line **188**: `for job in list_running:` — no `limit=`
+- `reconcile_stuck_admitted_jobs` line **275**: `for job in list_admitted:` — no `limit=`
 
 Queued/deferred already use `_MAX_QUEUED_RECONCILE_PER_WAVE=2000` and `_MAX_DEFERRED_RECONCILE_PER_WAVE=500`. Round 3 copies that pattern onto running/admitted (500, oldest-first). Tests in [`tests/test_queue_reconcile.py`](tests/test_queue_reconcile.py) mirroring `TestReconcileQueuedJobsBounding`.
 
@@ -264,7 +264,7 @@ If OPTIMIZE is skipped, do **not** also skip convert_deletes. Fail the job if Sp
 Only after Waves 0–1. Scores without execute do not move CUR.
 
 - `params.compute_statistics: true` on query-hot presets **after** compact in the same plan (Puffin matching files). Spark/Trino fallback required.
-- Layout/PTO execute **canary** on high `query_count_30d` (PDAE-8357 class: wrong partition → TB/week scanned). Sort-order is a rewrite.
+- Layout/PTO execute **canary** on high `query_count_30d` ( class: wrong partition → TB/week scanned). Sort-order is a rewrite.
 - Wire AutoComp MOOP into Wave 2 admit order.
 - Amoro **per-table slot quota** inside a destination group ([`docs/amoro-evaluation.md`](docs/amoro-evaluation.md) §3.1) so `gold_dbt_pw_bq` cannot starve 10k expires and vice versa.
 - Generational **presets** (not a planner rewrite): hot writers → frequent OPTIMIZE; fleet → weekly DEEP orphan+manifests.
@@ -284,7 +284,7 @@ Only after Waves 0–1. Scores without execute do not move CUR.
 - Lifecycle on `pw-data-cdp-prod-temp` (~27 TB, **not Iceberg** — table maintenance will never touch it).
 - Finish ~106 ghost catalog deactivations (`location IS NULL` / 404) so they stop eating scan/expire slots. Deactivate ≠ S3 delete.
 - Glue table optimizers **only** for tables actually in Glue Catalog — not a parallel writer on `gold_dbt_pw_bq`.
-- Payer CUR user-tags `eks-workload-name` / `cryo-engine` (PDAE-8544).
+- Payer CUR user-tags `eks-workload-name` / `cryo-engine` .
 - Trino coordinator/gateway **request** trims — not Cryo.
 
 ---

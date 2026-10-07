@@ -35,6 +35,7 @@ export interface DestinationFormValues {
   auth_password?: string;
   /** True when the saved config already has a basic-auth password (not re-sent by the API — see redact.py). */
   auth_has_password?: boolean;
+  spark_submit_mode?: "emr" | "k8s";
   application_id?: string;
   execution_role_arn?: string;
   region?: string;
@@ -62,6 +63,7 @@ export const decomposeDestinationConfig = (engine: string, config: Record<string
   if (engine === "spark_emr") {
     const sparkParams = cfg.spark_submit_params;
     return {
+      spark_submit_mode: cfg.submit_mode === "k8s" ? "k8s" : "emr",
       application_id: typeof cfg.application_id === "string" ? cfg.application_id : "",
       execution_role_arn: typeof cfg.execution_role_arn === "string" ? cfg.execution_role_arn : "",
       region: typeof cfg.region === "string" ? cfg.region : "us-east-1",
@@ -135,9 +137,11 @@ export const decomposeDestinationConfig = (engine: string, config: Record<string
 
 export const buildDestinationConfig = (values: DestinationFormValues): Record<string, unknown> => {
   if (values.engine === "spark_emr") {
+    const submitMode = values.spark_submit_mode === "k8s" ? "k8s" : "emr";
     const config: Record<string, unknown> = {
-      application_id: values.application_id,
-      execution_role_arn: values.execution_role_arn,
+      submit_mode: submitMode,
+      application_id: submitMode === "k8s" ? values.application_id || null : values.application_id,
+      execution_role_arn: submitMode === "k8s" ? values.execution_role_arn || null : values.execution_role_arn,
       region: values.region || "us-east-1",
       s3_logs_prefix: values.s3_logs_prefix || "cryo-spark-logs",
       entry_point: values.entry_point || "s3://cryo-artifacts/cryo_spark_runner.py",

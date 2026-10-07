@@ -28,6 +28,9 @@ const money = (value: unknown) => {
   }
   return formatCurrency(amount);
 };
+const isS3Location = (location: string | null | undefined) =>
+  /^(s3|s3a|s3n):\/\//i.test(location ?? "");
+
 const bytes = (value: unknown) => {
   const amount = numberOrNull(value);
   return amount == null ? "Not measured" : formatBytesGb(amount);
@@ -55,9 +58,11 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
     queryKey: tableKeys.detail(tableId, token), queryFn: () => getTable(api, tableId),
     enabled: Boolean(tableId), retry: false
   });
+  const location = tableQuery.data?.location;
+  const s3Storage = tableQuery.isSuccess && isS3Location(location);
   const tiering = useQuery({
     queryKey: tableKeys.tiering(tableId, token), queryFn: () => getTableS3Tiering(api, tableId),
-    enabled: Boolean(tableId), retry: false
+    enabled: Boolean(tableId) && s3Storage, retry: false
   });
   const compaction = useQuery({
     queryKey: tableKeys.compactionCandidates(tableId, token),
@@ -66,6 +71,8 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
   });
 
   const cost = costQuery.isSuccess ? costQuery.data : undefined;
+  const storageDollars = s3Storage ? money(cost?.current_monthly_cost_usd) : "Not measured";
+  const modelledSavings = s3Storage ? money(cost?.projected_savings_usd_month) : "Not measured";
   const heuristic = cost?.precision === "heuristic";
   const parts = [
     { name: "Live data bytes", detail: "Data files referenced by the table", value: numberOrNull(cost?.live_bytes), tone: "live" },
@@ -96,16 +103,18 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
   return (
     <div className="td-tab-content td-cost-workspace">
       <CostCard id="cost-requests" title="What this table costs"
-        description="Storage is a monthly estimate. Request cost uses recorded S3 activity from the last 30 days."
+        description={s3Storage
+          ? "Storage is a monthly estimate at the AWS S3 Standard rate. Request cost uses recorded S3 activity from the last 30 days."
+          : "The configured storage rate is AWS S3 Standard, not this table's store. Storage dollars are not measured here."}
         className="td-cost-summary-card">
         {costQuery.isLoading ? <p className="td-cost-muted">Loading cost…</p> : null}
         <QueryErrorAlert error={costQuery.error} title="Failed to load table cost" />
         {costQuery.isSuccess ? (
           <>
             <dl className="td-cost-kpis">
-              <div><dt><Database size={15} aria-hidden /> Estimated storage / month</dt><dd>{money(cost?.current_monthly_cost_usd)}</dd><p>At the configured storage rate</p></div>
+              <div><dt><Database size={15} aria-hidden /> Estimated storage / month</dt><dd>{storageDollars}</dd><p>{s3Storage ? "At the AWS S3 Standard rate" : "Not this table's store"}</p></div>
               <div><dt>S3 request cost · 30 days</dt><dd>{money(cost?.request_cost_usd_month)}</dd><p>{requestCaption}</p></div>
-              <div className="td-cost-opportunity"><dt><TrendingDown size={15} aria-hidden /> Modelled savings / month</dt><dd>{money(cost?.projected_savings_usd_month)}</dd><p>Potential reduction, before execution costs</p></div>
+              <div className="td-cost-opportunity"><dt><TrendingDown size={15} aria-hidden /> Modelled savings / month</dt><dd>{modelledSavings}</dd><p>{s3Storage ? "Potential reduction, before execution costs" : "Not measured for this storage"}</p></div>
             </dl>
             <div className="td-cost-evidence">
               <CostPrecisionBadge precision={cost?.precision} lastFullCostScanAt={cost?.last_full_cost_scan_at}
@@ -160,10 +169,13 @@ export const TableCostPanel = ({ tableId }: { tableId: string }) => {
         <Link className="td-cost-link" to={`/tables/${tableId}?tab=maintenance`}>Review maintenance <ArrowRight size={15} aria-hidden /></Link>
       </CostCard>
 
-      <CostCard id="cost-tiering" title="Storage tiering" description="Intelligent-Tiering estimate for this table. The Usage archive section is a separate estimate and does not repeat this figure.">
-        <QueryErrorAlert error={tiering.error} title="Failed to load S3 tiering" />
+      <CostCard id="cost-tiering" title="Storage tiering" description={s3Storage
+        ? "Intelligent-Tiering estimate for this table. The Usage archive section is a separate estimate and does not repeat this figure."
+        : "S3 Intelligent-Tiering does not apply to this table's storage."}>
+        {tableQuery.isSuccess && !s3Storage ? <p className="td-cost-muted">Not available for this storage</p> : null}
+        {s3Storage ? <QueryErrorAlert error={tiering.error} title="Failed to load S3 tiering" /> : null}
         {tiering.isLoading ? <p className="td-cost-muted">Loading tiering…</p> : null}
-        {tiering.isSuccess ? <>
+        {s3Storage && tiering.isSuccess ? <>
           <p className="td-cost-recommendation">{tiering.data.recommendation}</p>
           <p className="td-cost-muted">{tiering.data.reason}</p>
           <p className="td-cost-secondary-value">
