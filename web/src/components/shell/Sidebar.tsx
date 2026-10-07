@@ -1,8 +1,9 @@
 import { NavLink } from "react-router-dom";
 
 import { useAuth } from "../../lib/auth";
+import { CryoMark } from "../brand/CryoMark";
 import { cn } from "../../lib/cn";
-import { BRAND_ICON, NAV_GROUPS, resolveActiveNavHref } from "./nav-config";
+import { NAV_GROUPS, resolveActiveNavHref } from "./nav-config";
 
 export interface SidebarProps {
   pathname: string;
@@ -13,7 +14,6 @@ export interface SidebarProps {
 export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
   const { role } = useAuth();
   const activeHref = resolveActiveNavHref(pathname);
-  const BrandIcon = BRAND_ICON;
 
   return (
     <aside
@@ -26,17 +26,7 @@ export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
       aria-label="Primary navigation"
     >
       <div className="cryo-shell__brand">
-        <span
-          className="cryo-shell__brand-mark"
-          style={{
-            background: "var(--color-primary)",
-            color: "var(--color-primary-foreground)",
-            borderColor: "transparent",
-            boxShadow: "none"
-          }}
-        >
-          <BrandIcon size={18} aria-hidden />
-        </span>
+        <CryoMark className="cryo-shell__brand-mark" aria-hidden />
         <span className="cryo-shell__brand-copy">
           <strong>Cryo</strong>
           <small style={{ color: "var(--sidebar-text)", letterSpacing: 0 }}>Iceberg control plane</small>
