@@ -88,9 +88,14 @@ def test_parse_s3_location_still_accepts_plain_s3_scheme() -> None:
 
 
 def test_parse_s3_location_rejects_unrelated_schemes() -> None:
-    bucket, prefix = parse_s3_location("hdfs://namenode/warehouse/db/table")
-    assert bucket is None
-    assert prefix == ""
+    for location in (
+        "hdfs://namenode/warehouse/db/table",
+        "gs://lake-bucket/events",
+        "file:///tmp/warehouse/events",
+    ):
+        bucket, prefix = parse_s3_location(location)
+        assert bucket is None
+        assert prefix == ""
 
 
 @patch("cryo.scanner.orphans.boto3.client")

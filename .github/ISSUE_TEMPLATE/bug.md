@@ -27,7 +27,10 @@ assignees: ""
 
 - Cryo version (tag or commit SHA):
 - Deployment mode (local docker compose / Helm / pip install):
-- Trino / Spark version (if maintenance-related):
+- Catalog type (rest / hive / glue / nessie / polaris / other):
+- Storage (s3 / gs / abfs / hdfs / file) and warehouse URI (no credentials):
+- Engine (trino / spark_emr / native / flink) and version:
+- Scrubbed source/destination config (redact keys, tokens, passwords):
 - Python version (if backend-related):
 - Browser (if UI-related):
 

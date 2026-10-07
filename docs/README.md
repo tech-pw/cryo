@@ -77,6 +77,8 @@ The authoritative architecture / contract docs live at the repo root:
   manifest and conformance contract.
 - [`PRIVACY_PRESERVING_BENCHMARKS.md`](./PRIVACY_PRESERVING_BENCHMARKS.md) —
   opt-in k-anonymous aggregate outcome export.
+- [`BENCHMARK_RESEARCH_AND_DESIGN_2026-10-06.md`](./BENCHMARK_RESEARCH_AND_DESIGN_2026-10-06.md) —
+  claim rules and CryoBench-Maint v1 design; no harness yet.
 
 ### UI / UX
 

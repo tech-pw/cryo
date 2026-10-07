@@ -58,6 +58,18 @@ def test_classifies_a_bare_http_403_as_permission_denied() -> None:
     assert scan_failure_is_permanent(error) is False
 
 
+def test_gs_permission_guidance_does_not_blame_aws_iam() -> None:
+    error = (
+        "failed to load table: gs://lake-bucket/events/metadata/x.metadata.json: "
+        "https response error StatusCode: 403"
+    )
+    assert classify_scan_failure(error) == "permission_denied"
+    guidance = failure_category_guidance("permission_denied", error)
+    assert guidance is not None
+    assert "Application Default Credentials" in guidance
+    assert "IAM policy" not in guidance
+
+
 def test_classifies_unrecognized_error_as_other() -> None:
     assert classify_scan_failure("connection reset by peer") == "other"
 

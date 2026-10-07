@@ -169,11 +169,12 @@ export const DestinationDrawer = ({
         return;
       }
     }
-    if (values.engine === "spark_emr" && !values.application_id?.trim()) {
+    const sparkOnK8s = values.engine === "spark_emr" && values.spark_submit_mode === "k8s";
+    if (values.engine === "spark_emr" && !sparkOnK8s && !values.application_id?.trim()) {
       form.setError("application_id", { message: "EMR application ID is required" });
       return;
     }
-    if (values.engine === "spark_emr" && !values.execution_role_arn?.trim()) {
+    if (values.engine === "spark_emr" && !sparkOnK8s && !values.execution_role_arn?.trim()) {
       form.setError("execution_role_arn", { message: "Execution role ARN is required" });
       return;
     }
@@ -467,6 +468,27 @@ export const DestinationDrawer = ({
               </>
             ) : engine === "spark_emr" ? (
               <>
+                <FormField name="spark_submit_mode" label="Spark submit mode">
+                  {(field) => (
+                    <Select
+                      value={String(field.value ?? "emr")}
+                      onChange={(next) => field.onChange(next ?? "emr")}
+                      options={[
+                        { label: "EMR Serverless", value: "emr" },
+                        { label: "Spark on Kubernetes", value: "k8s" }
+                      ]}
+                    />
+                  )}
+                </FormField>
+                {form.watch("spark_submit_mode") === "k8s" ? (
+                  <p className="text-xs text-muted-foreground">
+                    Runs Spark jobs in this cluster. Namespace and image come from the chart
+                    (CRYO_SPARK_K8S_*) unless you set them in Spark submit params. EMR application
+                    ID is not used.
+                  </p>
+                ) : null}
+                {form.watch("spark_submit_mode") === "k8s" ? null : (
+                <>
                 <FormField name="application_id" label="EMR Serverless application ID">
                   {(field) => (
                     <Input
@@ -491,6 +513,8 @@ export const DestinationDrawer = ({
                     />
                   )}
                 </FormField>
+                </>
+                )}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <FormField name="region" label="AWS region">
                     {(field) => (
@@ -785,13 +809,21 @@ export const DestinationDrawer = ({
 
             {engine === "trino" ? <QueryLogIngestionFields engine={engine} /> : null}
 
-            {!testPassed ? (
+            {engine === "trino" || engine === "native" ? (
+              !testPassed ? (
+                <Alert
+                  variant="warning"
+                  title="Test the connection before saving"
+                  description={'Click "Test connection" above with a passing result to enable Save.'}
+                />
+              ) : null
+            ) : (
               <Alert
                 variant="warning"
-                title="Test the connection before saving"
-                description={'Click "Test connection" above with a passing result to enable Save.'}
+                title="No live probe for this engine"
+                description="Saving stores the config. It does not mean the engine is reachable."
               />
-            ) : null}
+            )}
 
             <Separator />
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Review</p>
@@ -813,8 +845,12 @@ export const DestinationDrawer = ({
               {engine === "spark_emr" ? (
                 <>
                   <div className="flex justify-between gap-2 sm:block">
+                    <dt className="text-muted-foreground">Spark submit</dt>
+                    <dd className="font-medium">{form.watch("spark_submit_mode") === "k8s" ? "Kubernetes" : "EMR Serverless"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-2 sm:block">
                     <dt className="text-muted-foreground">EMR application ID</dt>
-                    <dd className="font-medium">{form.watch("application_id") || "—"}</dd>
+                    <dd className="font-medium">{form.watch("spark_submit_mode") === "k8s" ? "Not used" : form.watch("application_id") || "—"}</dd>
                   </div>
                   <div className="flex justify-between gap-2 sm:block">
                     <dt className="text-muted-foreground">AWS region</dt>
@@ -842,7 +878,7 @@ export const DestinationDrawer = ({
               </div>
             </dl>
 
-            <Button type="submit" loading={saving} disabled={!testPassed}>
+            <Button type="submit" loading={saving} disabled={(engine === "trino" || engine === "native") && !testPassed}>
               Save
             </Button>
           </form>

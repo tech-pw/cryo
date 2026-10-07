@@ -198,7 +198,7 @@ def test_submit_repair_missing_files_defaults_to_dry_run() -> None:
     # all -- regression: omitting this left the runner's "glue_catalog" default
     # registered, and querying "sample...." against it threw REQUIRES_SINGLE_PART_NAMESPACE.
     assert "--catalog" in command
-    assert command[command.index("--catalog") + 1] == "sample"
+    assert command[command.index("--catalog") + 1] == "demo"
     assert "--commit" not in command
 
 

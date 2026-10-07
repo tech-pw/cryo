@@ -310,7 +310,9 @@ def test_worker_uses_destination_catalog_in_plan_table_ref() -> None:
 
     assert result is not None
     assert result.plan is not None
-    assert result.plan["table_ref"] == "demo.ops.orphan_files_audit"
+    # Destination's config["catalog"] ("sample") replaces the stats-provided table_ref's own
+    # catalog segment, with the table's schema/table name kept as-is.
+    assert result.plan["table_ref"] == "sample.admin.orphan_files_removal_audit_log"
 
 
 def test_worker_uses_catalog_binding_override_in_plan_table_ref() -> None:

@@ -763,6 +763,7 @@ def _discover_candidates(
 
     candidates: list[ScanCandidate] = []
     discovery_errors: list[str] = []
+    discovery_timeout = get_settings().scan_table_timeout_seconds
     for source in session.scalars(stmt):
         try:
             allowed = source_allowed_schemas(source)
@@ -775,8 +776,18 @@ def _discover_candidates(
             else:
                 effective_schemas = set()
 
-            catalog = source_factory(source)
-            for schema_name, table_name in _list_candidate_tables(catalog, effective_schemas):
+            def _open_and_list(
+                source: Any = source, effective_schemas: set[str] = effective_schemas
+            ) -> tuple[list[tuple[str, str]], Any]:
+                catalog = source_factory(source)
+                return _list_candidate_tables(catalog, effective_schemas), catalog
+
+            listed, catalog = _run_bounded(
+                _open_and_list,
+                timeout_seconds=discovery_timeout,
+                description=f"discover tables({source.name})",
+            )
+            for schema_name, table_name in listed:
                 if effective_schemas and schema_name not in effective_schemas:
                     continue
                 if allowed is not None and schema_name not in allowed:

@@ -70,6 +70,38 @@ def test_factory_supports_polaris_and_nessie_as_rest() -> None:
     assert isinstance(nessie, RestSourceCatalog)
 
 
+def test_polaris_maps_catalog_name_to_warehouse_and_scope() -> None:
+    with patch("cryo.sources.pyiceberg_catalog.load_catalog") as load_catalog:
+        load_catalog.return_value = MagicMock()
+        catalog_from_config(
+            "polaris",
+            "polaris",
+            {"uri": "http://localhost:8181", "catalog_name": "open_catalog"},
+        )
+    properties = load_catalog.call_args.kwargs
+    assert properties["warehouse"] == "open_catalog"
+    assert properties["scope"] == "PRINCIPAL_ROLE:ALL"
+    assert "catalog_name" not in properties
+
+
+def test_polaris_does_not_overwrite_explicit_warehouse_or_scope() -> None:
+    with patch("cryo.sources.pyiceberg_catalog.load_catalog") as load_catalog:
+        load_catalog.return_value = MagicMock()
+        catalog_from_config(
+            "polaris",
+            "polaris",
+            {
+                "uri": "http://localhost:8181",
+                "catalog_name": "ignored",
+                "warehouse": "kept",
+                "scope": "PRINCIPAL_ROLE:custom",
+            },
+        )
+    properties = load_catalog.call_args.kwargs
+    assert properties["warehouse"] == "kept"
+    assert properties["scope"] == "PRINCIPAL_ROLE:custom"
+
+
 def test_factory_rejects_unknown_type() -> None:
     with pytest.raises(ValueError, match="Unsupported source type"):
         catalog_from_config("x", "made-up-catalog-type", {})

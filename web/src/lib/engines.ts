@@ -120,7 +120,9 @@ export const formatEngineLabel = (
 ): string => {
   if (!engine) return "—";
   if (engine === "trino") return "Trino";
-  if (engine === "spark_emr") return "Spark EMR";
+  if (engine === "spark_emr") {
+    return config?.submit_mode === "k8s" ? "Spark on Kubernetes" : "Spark EMR";
+  }
   if (engine === "flink") return "Flink (config only)";
   if (engine === "native") {
     const impl = resolveNativeEngineImpl(config);

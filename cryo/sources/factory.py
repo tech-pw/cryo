@@ -39,13 +39,29 @@ def monitored_source_catalog(source: Any) -> SourceCatalog:
 
 def catalog_from_config(name: str, source_type: str, config: Mapping[str, Any]) -> SourceCatalog:
     normalized = source_type.lower().replace("_", "-")
+    prepared = dict(config)
+    if normalized == "polaris":
+        prepared = _polaris_rest_properties(prepared)
     if normalized in REST_SOURCE_TYPES:
-        return RestSourceCatalog(name=name, config=config)
+        return RestSourceCatalog(name=name, config=prepared)
     if normalized in HIVE_SOURCE_TYPES:
         return HiveSourceCatalog(name=name, config=config)
     if normalized in GLUE_SOURCE_TYPES:
         return GlueSourceCatalog(name=name, config=config)
     raise ValueError(f"Unsupported source type {source_type!r}")
+
+
+def _polaris_rest_properties(config: dict[str, Any]) -> dict[str, Any]:
+    """PyIceberg treats warehouse as the Polaris catalog and requires PRINCIPAL_ROLE:ALL."""
+    warehouse = config.get("warehouse")
+    if warehouse is None or not str(warehouse).strip():
+        catalog = config.get("catalog_name") or config.get("catalog")
+        if catalog is not None and str(catalog).strip():
+            config["warehouse"] = str(catalog).strip()
+    scope = config.get("scope")
+    if scope is None or not str(scope).strip():
+        config["scope"] = "PRINCIPAL_ROLE:ALL"
+    return config
 
 
 def _source_value(source: Any, key: str) -> str:

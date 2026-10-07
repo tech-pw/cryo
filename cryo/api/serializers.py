@@ -38,7 +38,9 @@ def table_to_read(table: Table, *, include_raw: bool = True) -> TableRead:
         category = classify_scan_failure(table.last_scan_error)
         updates["failure_category"] = category
         updates["failure_category_label"] = failure_category_label(category)
-        updates["failure_category_guidance"] = failure_category_guidance(category)
+        updates["failure_category_guidance"] = failure_category_guidance(
+            category, table.last_scan_error
+        )
         updates["failure_category_actionable_from_cryo"] = failure_category_actionable_from_cryo(
             category
         )

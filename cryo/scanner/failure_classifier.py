@@ -45,21 +45,30 @@ _PERMANENTLY_UNREADABLE: frozenset[str] = frozenset({"metadata_not_found", "mani
 
 _CATEGORY_GUIDANCE: dict[FailureCategory, str] = {
     "permission_denied": (
-        "Cryo's AWS credentials were denied reading this table's current metadata file. "
-        "Check the IAM policy attached to the source's credentials covers this bucket/prefix."
+        "Cryo was denied reading this table's current metadata file. "
+        "For s3://, check the source credentials. For gs://, Cryo uses GCP Application "
+        "Default Credentials only — it does not accept GCS keys, does not price GCS, "
+        "and does not compact gs://."
     ),
     "metadata_not_found": (
-        "The table's catalog entry points at a metadata file that doesn't exist in S3. This "
-        "usually means the underlying data was deleted or moved outside Cryo, or the catalog's "
-        "pointer is stale -- investigate before assuming this table is safe to drop."
+        "The table's catalog entry points at a metadata file that doesn't exist in object "
+        "storage. This usually means the underlying data was deleted or moved outside Cryo, "
+        "or the catalog's pointer is stale -- investigate before assuming this table is safe "
+        "to drop."
     ),
     "manifest_missing": (
         "The table's metadata file was read, but the manifest list it points at is gone from "
-        "S3. Trino fails on these tables too, so this is a broken table in the lakehouse, not "
-        "a Cryo problem -- the owning team has to repoint the catalog or restore the table."
+        "object storage. Trino fails on these tables too, so this is a broken table in the "
+        "lakehouse, not a Cryo problem -- the owning team has to repoint the catalog or "
+        "restore the table."
     ),
     "other": "See the raw error below for detail.",
 }
+
+_GCS_PERMISSION_GUIDANCE = (
+    "gs:// metadata scan uses GCP Application Default Credentials only. Cryo does not "
+    "accept GCS keys, does not price GCS, and does not compact gs://."
+)
 
 
 def classify_scan_failure(error: str | None) -> FailureCategory | None:
@@ -145,5 +154,9 @@ def failure_category_actionable_from_cryo(category: FailureCategory | None) -> b
     return _ACTIONABLE_FROM_CRYO.get(category, False) if category else False
 
 
-def failure_category_guidance(category: FailureCategory | None) -> str | None:
+def failure_category_guidance(
+    category: FailureCategory | None, error: str | None = None
+) -> str | None:
+    if category == "permission_denied" and error and "gs://" in error:
+        return _GCS_PERMISSION_GUIDANCE
     return _CATEGORY_GUIDANCE.get(category) if category else None

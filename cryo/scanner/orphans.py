@@ -237,6 +237,8 @@ def parse_s3_location(location: str) -> tuple[str | None, str]:
     for every table) on any source using s3a://, with no error surfaced anywhere.
     """
     parsed = urlparse(location)
+    # gs://, abfs://, hdfs://, and file:// are not listed. Callers record
+    # skipped_reason=unsupported_location instead of reporting zero orphans.
     if parsed.scheme in _S3_SCHEMES:
         bucket = parsed.netloc
         prefix = parsed.path.lstrip("/")
