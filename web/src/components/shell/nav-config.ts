@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Cloud, Cog, DollarSign, LayoutDashboard, Plug, Zap, type LucideIcon } from "lucide-react";
+import { Activity, BarChart3, Cloud, DollarSign, LayoutDashboard, Plug, Zap, type LucideIcon } from "lucide-react";
 
 import { DESTINATIONS, destinationHrefForPath, type Destination } from "../../lib/routes";
 
@@ -36,5 +36,3 @@ export const NAV_GROUPS: NavGroup[] = [
 ];
 
 export const resolveActiveNavHref = (pathname: string): string => destinationHrefForPath(pathname);
-
-export const BRAND_ICON = Cog;

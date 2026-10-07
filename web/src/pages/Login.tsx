@@ -2,6 +2,7 @@ import { Lock, User } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import type { RoleToken } from "../api/types";
+import { CryoMark } from "../components/brand/CryoMark";
 import { Alert } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -46,6 +47,7 @@ export const Login = () => {
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-layout-bg)] p-6">
         <Card className="w-full max-w-[420px]">
           <CardHeader>
+            <CryoMark className="mb-3 size-11" title="Cryo" />
             <CardTitle>Sign in to Cryo</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
@@ -109,6 +111,7 @@ export const Login = () => {
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-layout-bg)] p-6">
       <Card className="w-full max-w-[420px]">
         <CardHeader>
+          <CryoMark className="mb-3 size-11" title="Cryo" />
           <CardTitle>Sign in to Cryo</CardTitle>
         </CardHeader>
         <CardContent>
