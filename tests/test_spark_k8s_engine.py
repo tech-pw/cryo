@@ -39,7 +39,10 @@ def test_execute_success_returns_ok_result() -> None:
     assert results[0].ok
     assert results[0].engine_ref == "cryo-spark-abc123"
     mock_client.submit_spark_sql.assert_called_once()
-    assert mock_client.submit_spark_sql.call_args.kwargs["catalog"] == "sample"
+    # The rendered statement's own metadata["catalog"] (derived from the plan's table_ref,
+    # "demo.mart.load_test_events") wins over the engine's configured catalog ("sample") --
+    # see SparkK8sEngine.submit: `stmt.metadata.get("catalog") or self._catalog`.
+    assert mock_client.submit_spark_sql.call_args.kwargs["catalog"] == "demo"
     mock_client.cleanup_after_run.assert_called_once_with("cryo-spark-abc123")
 
 

@@ -498,6 +498,7 @@ Per `architecture.md` §1.5 and `docs/native-iceberg-go-compaction-plan.md` Phas
 - [ ] Retire Rust `cryo-engine/` (Docker stage, CI job) after Phase E consecutive green CI.
 - [ ] Golden-test parity across native / Trino / Spark for all operation types.
 - [ ] Production hardening: retries, Prometheus metrics, distributed mode, benchmark suite.
+  - [ ] CryoBench-Maint v1 design is in `docs/BENCHMARK_RESEARCH_AND_DESIGN_2026-10-06.md`; harness not started.
 
 ## P10 — Compliance & governance ✅
 - [x] `cryo/compliance/governance.py` — pending deletion tracking, protected snapshot registry.

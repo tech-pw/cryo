@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import { getTable, getTableS3Tiering } from "../../../api/client";
 import { TableCostPanel } from "./TableCostPanel";
 
 vi.mock("../../../lib/auth", () => ({
@@ -33,6 +34,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
     }),
     getTable: vi.fn().mockResolvedValue({
       id: "table-1",
+      location: "s3://lake-bucket/events",
       stats: { raw: {} }
     }),
     getTableS3Tiering: vi.fn().mockResolvedValue({
@@ -92,5 +94,24 @@ describe("TableCostPanel", () => {
       "href",
       "/tables/table-1?tab=maintenance#maintenance-compaction-horizon"
     );
+  });
+
+  it("does not price non-S3 storage as AWS S3", async () => {
+    vi.mocked(getTableS3Tiering).mockClear();
+    vi.mocked(getTable).mockResolvedValueOnce({
+      id: "table-1",
+      location: "gs://lake-bucket/events"
+    } as never);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <TableCostPanel tableId="table-1" />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    expect(await screen.findByText("Not available for this storage")).toBeInTheDocument();
+    expect(screen.getByText("Not this table's store")).toBeInTheDocument();
+    expect(getTableS3Tiering).not.toHaveBeenCalled();
   });
 });

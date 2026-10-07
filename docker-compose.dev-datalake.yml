@@ -5,7 +5,8 @@ name: cryo
 
 services:
   minio:
-    image: minio/minio:latest
+    # Docker Hub removed minio/minio. This is a public mirror of the official image.
+    image: rancher/mirrored-minio-minio:RELEASE.2023-07-07T07-13-57Z
     container_name: cryo-minio
     command: server /data --console-address ":9001"
     environment:
@@ -25,7 +26,7 @@ services:
       retries: 5
 
   minio-init:
-    image: minio/mc:latest
+    image: rancher/mirrored-minio-mc:RELEASE.2023-06-28T21-54-17Z
     container_name: cryo-minio-init
     depends_on:
       minio:
