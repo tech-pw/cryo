@@ -8,12 +8,34 @@ from cryo.sources.pyiceberg_catalog import PyIcebergSourceCatalog
 
 logger = logging.getLogger(__name__)
 
+_GLUE_KEY_FALLBACKS = {
+    "s3.access-key-id": ("glue.access-key-id", "client.access-key-id"),
+    "s3.secret-access-key": ("glue.secret-access-key", "client.secret-access-key"),
+    "s3.session-token": ("glue.session-token", "client.session-token"),
+    "s3.region": ("glue.region", "client.region"),
+}
+
+
+def _glue_client_keys(config: Mapping[str, object]) -> dict[str, object]:
+    """PyIceberg Glue reads glue.* / client.*, not the s3.* keys Cryo stores."""
+    prepared = dict(config)
+    for source_key, destinations in _GLUE_KEY_FALLBACKS.items():
+        value = prepared.get(source_key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        for destination in destinations:
+            current = prepared.get(destination)
+            if not isinstance(current, str) or not current.strip():
+                prepared[destination] = value
+    return prepared
+
 
 class GlueSourceCatalog(PyIcebergSourceCatalog):
     """PyIceberg Glue catalog wrapper."""
 
     def __init__(self, name: str, config: Mapping[str, object]) -> None:
-        super().__init__(name=name, config=config, default_catalog_type="glue")
+        prepared = _glue_client_keys(config)
+        super().__init__(name=name, config=prepared, default_catalog_type="glue")
 
     def list_table_locations(self) -> list[CatalogTableLocation]:
         """Read Glue ``StorageDescriptor.Location`` without loading Iceberg metadata."""

@@ -154,8 +154,8 @@ def test_flink_engine_execute():
     statements = engine.render(plan)
     result = engine.execute(statements[0])
 
-    assert result.ok is True
-    assert "not executed" in result.detail.lower() or "config generated" in result.detail.lower()
+    assert result.ok is False
+    assert "config-only" in result.detail.lower()
     assert result.duration_ms >= 0
 
 

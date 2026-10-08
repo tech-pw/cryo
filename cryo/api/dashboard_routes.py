@@ -107,7 +107,7 @@ class MultiCatalogResponse(BaseModel):
     catalogs: list[CatalogStatsRead]
     total_catalogs: int
     total_tables: int
-    total_cost_usd: float
+    total_cost_usd: float | None = None
 
 
 @router.get("/multi-catalog", response_model=MultiCatalogResponse, tags=["dashboards"])
@@ -182,7 +182,7 @@ def get_multi_catalog_stats(
         catalogs=catalogs,
         total_catalogs=len(catalogs),
         total_tables=total_tables,
-        total_cost_usd=total_cost_usd,
+        total_cost_usd=total_cost_usd if catalogs else None,
     )
 
 

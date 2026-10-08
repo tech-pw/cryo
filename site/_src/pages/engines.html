@@ -52,7 +52,7 @@ CALL prod.system.rewrite_data_files(
 </callout>
 
 <h2 id="native-compaction">Native compaction</h2>
-<p>Native Go compaction is a configured engine path and is not assumed to be on. The planner does not change shape for it. It receives the same plan as Trino and Spark, and runs the rewrite itself.</p>
+<p>Native Go compaction is a configured engine path and is not assumed to be on. The planner does not change shape for it. It receives the same plan as Trino and Spark, and runs the rewrite itself. Flink is not on this page. Cryo can emit a Flink maintenance config and does not submit the job.</p>
 
 <h2 id="read-next">Where to go next</h2>
 <linkcards>

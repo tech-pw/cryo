@@ -76,6 +76,9 @@ export const decomposeDestinationConfig = (engine: string, config: Record<string
       spark_submit_params_json: sparkParams ? JSON.stringify(sparkParams, null, 2) : ""
     };
   }
+  if (engine === "flink") {
+    return { engine_virtual: "flink" as const };
+  }
   if (engine === "native") {
     const engine_impl = resolveNativeEngineImpl(cfg);
     return {
@@ -163,6 +166,12 @@ export const buildDestinationConfig = (values: DestinationFormValues): Record<st
     };
     config.binary_path = values.binary_path?.trim() || null;
     return config;
+  }
+  if (values.engine === "flink") {
+    return {
+      config_only: true,
+      note: "Flink generates a TableMaintenance config. Cryo does not submit the job."
+    };
   }
 
   const config: Record<string, unknown> = {

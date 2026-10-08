@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from unittest.mock import MagicMock, patch
 
 from cryo.sources.pyiceberg_catalog import PyIcebergSourceCatalog
@@ -92,6 +93,13 @@ def test_list_all_namespaces_skips_failing_subtrees() -> None:
     assert "ok" in result
     assert "ok.inner" in result
     assert "bad" in result
+
+
+def test_list_all_namespaces_raises_when_root_list_fails() -> None:
+    catalog, fake = _make_catalog()
+    fake.list_namespaces.side_effect = RuntimeError("401 Unauthorized")
+    with pytest.raises(RuntimeError, match="401"):
+        catalog.list_all_namespaces()
 
 
 def test_list_all_namespaces_skips_empty_children() -> None:

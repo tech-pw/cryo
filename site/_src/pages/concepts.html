@@ -8,11 +8,11 @@ updated: 2026-10-05
 <p>Cryo keeps reading and writing apart, down to separate database tables, configs and code. A catalog connection never carries engine credentials, and an engine never learns how to read a catalog.</p>
 <dl>
   <dt>Source (read side)</dt>
-  <dd>Answers where a table lives and how to read its metadata. Iceberg REST, Hive and Glue catalogs are sources.</dd>
+  <dd>Answers where a table lives and how to read its metadata. Supported catalogs are Iceberg REST, Hive, Glue, Apache Polaris, and Project Nessie. Unity Catalog and JDBC are not supported. Polaris and Nessie use the REST adapter. Branch and tag operations are not exposed.</dd>
   <dt>Preset (binding)</dt>
   <dd>Binds what to do, on which destination, when, and to which tables. A preset never holds raw SQL.</dd>
   <dt>Destination (write side)</dt>
-  <dd>Answers where to submit maintenance work. Trino and Spark are destinations.</dd>
+  <dd>Answers where to submit maintenance work. Trino and Spark execute. Native Go executes when enabled. Flink generates a config and does not submit a job.</dd>
 </dl>
 <diagram name="readbindwrite" caption="Sources feed the scanner. Presets bind tables to destinations. Cryo schedules and admits the work." />
 <p>The split shows up in the UI too. Under <strong>Settings → Connections</strong>, catalogs live on the <strong>Lakehouses</strong> tab and engines on the <strong>Engines</strong> tab, each with its own credentials.</p>
@@ -29,7 +29,7 @@ updated: 2026-10-05
 <p>Many tables need work, fewer are eligible once cooldowns, locks and off-peak windows are applied, and fewer still are admitted while the engine is loaded. A table that is not admitted waits for the next window. It is not treated as a failure.</p>
 
 <h2 id="grades">Grades come from stored metadata</h2>
-<p>Each scan ends with an A to F health grade per table, computed from the stored shape. <a href="@/health/">Health and cost</a> lists the thresholds, the deductions and a worked example.</p>
+<p>Each scan ends with an A to F health grade per table, computed from the stored shape. <a href="@/health/">Health and cost</a> lists the letter bands and the 8 and 20 point deductions. Trigger thresholds live in the scanner, not on that page.</p>
 
 <h2 id="read-next">Where to go next</h2>
 <linkcards>

@@ -58,3 +58,21 @@ describe("buildDestinationConfig (trino auth)", () => {
     expect((config.auth as Record<string, unknown>).password).toBe("brand-new-password");
   });
 });
+
+describe("buildDestinationConfig (flink and spark)", () => {
+  it("does not write a Trino coordinator blob for Flink", () => {
+    const config = buildDestinationConfig({ engine: "flink", name: "flink" });
+    expect(config.coordinators).toBeUndefined();
+    expect(config.config_only).toBe(true);
+  });
+
+  it("writes submit_mode k8s without requiring an EMR application id", () => {
+    const config = buildDestinationConfig({
+      engine: "spark_emr",
+      name: "spark",
+      spark_submit_mode: "k8s"
+    });
+    expect(config.submit_mode).toBe("k8s");
+    expect(config.application_id).toBeNull();
+  });
+});

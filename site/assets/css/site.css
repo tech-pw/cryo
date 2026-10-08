@@ -527,6 +527,11 @@ html[data-theme="dark"] .theme-toggle .i-moon {
     align-items: start;
 }
 
+body.home-page > .side,
+body.notfound > .side {
+    display: none;
+}
+
 .side {
     position: sticky;
     top: var(--hdr);
@@ -5639,6 +5644,10 @@ html[data-theme="dark"] .shot-dark {
     }
     .shell {
         grid-template-columns: minmax(0, 1fr);
+    }
+    body.home-page > .side,
+    body.notfound > .side {
+        display: block;
     }
     .side {
         position: fixed;

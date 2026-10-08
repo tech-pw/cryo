@@ -95,4 +95,4 @@ def downgrade() -> None:
     op.execute(f"DELETE FROM cryo.presets WHERE name = '{DEFAULT_PRESET_NAME}'")
     op.execute(f"DELETE FROM cryo.destinations WHERE name = '{DEFAULT_DESTINATION_NAME}'")
     op.execute("DROP INDEX IF EXISTS cryo.uq_presets_one_default_per_tenant")
-    op.drop_column("presets", "is_default", schema="cryo")
+    op.execute("ALTER TABLE cryo.presets DROP COLUMN IF EXISTS is_default")

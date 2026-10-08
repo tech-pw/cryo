@@ -6,6 +6,10 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/docs-pages.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - ".github/workflows/docs-pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -18,7 +22,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    name: Check generated pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify generated pages match the sources
+        run: node site/scripts/build.mjs --check
+
   deploy:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: check
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -28,8 +46,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Verify generated pages match the sources
-        run: node site/scripts/build.mjs --check
       - name: Stage the publishable tree
         run: |
           mkdir _site

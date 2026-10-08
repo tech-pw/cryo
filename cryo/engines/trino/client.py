@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from trino.auth import BasicAuthentication
+from trino.auth import BasicAuthentication, JWTAuthentication
 
 import trino
 from cryo.config import get_settings
@@ -16,9 +16,10 @@ class TrinoCoordinator:
     port: int = 8080
     http_scheme: str = "http"
     user: str = "cryo"
-    catalog: str = "iceberg"
+    catalog: str | None = None
     schema: str | None = None
-    auth: BasicAuthentication | None = None
+    auth: BasicAuthentication | JWTAuthentication | None = None
+    verify: bool | str = True
 
     @property
     def label(self) -> str:
@@ -54,17 +55,21 @@ def connect(coordinator: TrinoCoordinator) -> Any:
     immediately and the governor can route around the dead coordinator.
     """
     timeout = _connect_timeout()
-    return trino.dbapi.connect(
-        host=coordinator.host,
-        port=coordinator.port,
-        user=coordinator.user,
-        catalog=coordinator.catalog,
-        schema=coordinator.schema,
-        http_scheme=coordinator.http_scheme,
-        auth=coordinator.auth,
-        request_timeout=timeout,
-        max_attempts=1,
-    )
+    kwargs: dict[str, Any] = {
+        "host": coordinator.host,
+        "port": coordinator.port,
+        "user": coordinator.user,
+        "http_scheme": coordinator.http_scheme,
+        "auth": coordinator.auth,
+        "request_timeout": timeout,
+        "max_attempts": 1,
+        "verify": coordinator.verify,
+    }
+    if coordinator.catalog:
+        kwargs["catalog"] = coordinator.catalog
+    if coordinator.schema:
+        kwargs["schema"] = coordinator.schema
+    return trino.dbapi.connect(**kwargs)
 
 
 def _coordinator_from_raw(raw: object, defaults: Mapping[str, Any]) -> TrinoCoordinator:
@@ -80,18 +85,34 @@ def _coordinator_from_raw(raw: object, defaults: Mapping[str, Any]) -> TrinoCoor
         port=int(config.get("port") or 8080),
         http_scheme=str(config.get("http_scheme") or config.get("scheme") or "http"),
         user=str(config.get("user") or config.get("username") or "cryo"),
-        catalog=str(config.get("catalog") or "iceberg"),
+        catalog=str(config["catalog"]) if config.get("catalog") else None,
         schema=str(config["schema"]) if config.get("schema") else None,
         auth=auth,
+        verify=_verify_from_config(config),
     )
 
 
-def _auth_from_config(config: Mapping[str, Any]) -> BasicAuthentication | None:
+def _verify_from_config(config: Mapping[str, Any]) -> bool | str:
+    raw = config.get("verify_ssl", config.get("verify", True))
+    if isinstance(raw, str):
+        lowered = raw.strip().lower()
+        if lowered in {"0", "false", "no"}:
+            return False
+        if lowered in {"1", "true", "yes"}:
+            return True
+        return raw
+    return bool(raw)
+
+
+def _auth_from_config(config: Mapping[str, Any]) -> BasicAuthentication | JWTAuthentication | None:
     auth_config = config.get("auth")
     if isinstance(auth_config, Mapping):
         auth_type = str(auth_config.get("type") or "").lower()
         password = auth_config.get("password")
         username = auth_config.get("username") or config.get("user") or config.get("username")
+        token = auth_config.get("token") or auth_config.get("access_token")
+        if auth_type == "jwt" and token:
+            return JWTAuthentication(str(token))
         if auth_type == "basic" and username and password:
             return BasicAuthentication(str(username), str(password))
 
