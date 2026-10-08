@@ -22,7 +22,11 @@ from cryo.engines.spark.k8s import (
     SparkK8sClient,
     SparkK8sConfig,
 )
-from cryo.engines.spark.sizing import scale_executor_profile, spark_slot_ceiling
+from cryo.engines.spark.sizing import (
+    cap_deadline_seconds_for_table,
+    scale_executor_profile,
+    spark_slot_ceiling,
+)
 from cryo.engines.spark.sql import render
 from cryo.engines.spark.worker_guard import (
     footprint as spark_payload_footprint,
@@ -233,12 +237,14 @@ class SparkK8sEngine:
                 duration_ms=_elapsed_ms(start),
             )
         try:
+            table_size_gb = (self._table_stats or {}).get("total_size_gb")
             job_id = self.k8s_client.submit_spark_sql(
                 stmt.sql,
                 job_name=job_name,
                 catalog=str(catalog),
                 destination_id=self._destination_id,
                 operation=stmt.action.value,
+                total_size_gb=float(table_size_gb) if table_size_gb is not None else None,
             )
             if ctx is not None and ctx.on_engine_ref is not None:
                 ctx.on_engine_ref(job_id)
@@ -294,16 +300,27 @@ class SparkK8sEngine:
                     process_rss_mib(),
                     attempt + 1,
                 )
+                raw_table_size_gb = (self._table_stats or {}).get("total_size_gb")
+                table_size_gb = float(raw_table_size_gb) if raw_table_size_gb is not None else None
                 job_id = self.k8s_client.submit_spark_sql(
                     stmt.sql,
                     job_name=attempt_name,
                     catalog=str(catalog),
                     destination_id=self._destination_id,
                     operation=stmt.action.value,
+                    total_size_gb=table_size_gb,
                 )
                 if ctx is not None and ctx.on_engine_ref is not None:
                     ctx.on_engine_ref(job_id)
-                result = self.k8s_client.wait_for_completion(job_id)
+                # Same cap submit_spark_sql applied to the Job's own activeDeadlineSeconds --
+                # must match, or this poll loop times out at a different wall-clock point than
+                # Kubernetes will actually kill the Job at. See wait_for_completion's docstring.
+                deadline_seconds = cap_deadline_seconds_for_table(
+                    self._k8s_config.active_deadline_seconds, total_size_gb=table_size_gb
+                )
+                result = self.k8s_client.wait_for_completion(
+                    job_id, deadline_seconds=deadline_seconds
+                )
 
                 duration_ms = _elapsed_ms(start)
                 if result.state in SUCCESS_STATES:
