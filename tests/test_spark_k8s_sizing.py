@@ -9,7 +9,9 @@ of the cryo namespace's cost as "unused" (reserved, not utilized) for exactly th
 from __future__ import annotations
 
 from cryo.engines.spark.sizing import (
+    DISPATCH_DEADLINE_SECONDS,
     ExecutorProfile,
+    cap_deadline_seconds_for_table,
     cap_dispatch_profile,
     scale_executor_profile,
     spark_slot_ceiling,
@@ -117,3 +119,35 @@ def test_slot_ceiling_caps_a_destination_slot_cap(monkeypatch) -> None:
     monkeypatch.setenv("CRYO_SPARK_K8S_SLOT_CAP", "2")
     assert spark_slot_ceiling(12) == 2
     assert spark_slot_ceiling(1) == 1
+
+
+def test_deadline_small_table_stays_at_the_base_cap() -> None:
+    # Confirmed live, 2026-10-07: 50 tables dispatched on spark-k8s-fallback, 22 timed out,
+    # every one of the 10 largest was 500GB-2TB -- the flat 7200s deadline applied to every
+    # job regardless of size, same blind spot CPU/memory scaling was built to fix. Small
+    # tables keep the original cap unchanged; this is purely additive for large ones.
+    assert cap_deadline_seconds_for_table(14_400, total_size_gb=0.5) == DISPATCH_DEADLINE_SECONDS
+    assert cap_deadline_seconds_for_table(14_400, total_size_gb=299.9) == DISPATCH_DEADLINE_SECONDS
+
+
+def test_deadline_mid_size_table_gets_three_hours() -> None:
+    assert cap_deadline_seconds_for_table(14_400, total_size_gb=300.0) == 10_800
+    assert cap_deadline_seconds_for_table(14_400, total_size_gb=999.9) == 10_800
+
+
+def test_deadline_large_table_gets_the_full_four_hour_ceiling() -> None:
+    # 14400s matches this destination's own pre-cost-fix deadline (sizing.py's own comment
+    # above DISPATCH_DEADLINE_SECONDS) -- a real, previously-run value, not a new invented one.
+    assert cap_deadline_seconds_for_table(99_999, total_size_gb=1_000.0) == 14_400
+    assert cap_deadline_seconds_for_table(99_999, total_size_gb=2_700.0) == 14_400
+
+
+def test_deadline_still_caps_a_lower_configured_value() -> None:
+    # The destination's own config can only ever shrink the window, same as
+    # cap_dispatch_profile's min() behavior for CPU/memory -- a destination configured for
+    # 1800s on a 2TB table should not get bumped up to 14400s.
+    assert cap_deadline_seconds_for_table(1_800, total_size_gb=2_700.0) == 1_800
+
+
+def test_deadline_unknown_size_falls_back_to_the_flat_cap() -> None:
+    assert cap_deadline_seconds_for_table(14_400, total_size_gb=None) == DISPATCH_DEADLINE_SECONDS
