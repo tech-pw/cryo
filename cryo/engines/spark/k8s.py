@@ -35,7 +35,7 @@ from cryo.engines.k8s_cost_labels import cost_attribution_labels
 from cryo.engines.native.job_state import current_k8s_namespace
 from cryo.engines.spark.sizing import (
     ExecutorProfile,
-    cap_deadline_seconds,
+    cap_deadline_seconds_for_table,
     cap_dispatch_profile,
 )
 
@@ -219,6 +219,7 @@ class SparkK8sClient:
         job_name: str = "cryo-spark",
         destination_id: str | None = None,
         operation: str | None = None,
+        total_size_gb: float | None = None,
     ) -> str:
         cfg = self._config
         runner_args = [
@@ -241,6 +242,7 @@ class SparkK8sClient:
             destination_id=destination_id,
             operation=operation,
             extra_confs=catalog_io_confs(catalog, cfg.catalog_warehouse),
+            total_size_gb=total_size_gb,
         )
 
     def submit_repair_missing_files(
@@ -292,8 +294,9 @@ class SparkK8sClient:
         destination_id: str | None = None,
         operation: str | None = None,
         extra_confs: Mapping[str, str] | None = None,
+        total_size_gb: float | None = None,
     ) -> str:
-        cfg = _capped_submit_config(self._config, operation=operation)
+        cfg = _capped_submit_config(self._config, operation=operation, total_size_gb=total_size_gb)
         k8s_job_name = f"cryo-spark-{uuid.uuid4().hex[:10]}"
         driver_pod_name = f"{k8s_job_name}-driver"
 
@@ -594,17 +597,30 @@ class SparkK8sClient:
             )
         return JobRunResult(job_run_id=job_id, state=JobRunState.RUNNING)
 
-    def wait_for_completion(self, job_id: str) -> JobRunResult:
-        deadline = time.monotonic() + self._config.active_deadline_seconds
+    def wait_for_completion(
+        self, job_id: str, *, deadline_seconds: int | None = None
+    ) -> JobRunResult:
+        """Poll until the Job reaches a terminal state or this deadline passes.
+
+        ``deadline_seconds`` should be the same capped, table-size-aware value used to
+        submit the Job (see _capped_submit_config) -- without it, this falls back to the
+        client's own uncapped config.active_deadline_seconds, which is NOT what governs
+        the Kubernetes Job's actual activeDeadlineSeconds once submit_spark_sql capped it.
+        Confirmed live, 2026-10-07: this fallback silently diverged from the real Job
+        deadline whenever config and the cap happened to differ, raising TimeoutError at
+        the wrong wall-clock point relative to when Kubernetes would actually kill the Job.
+        """
+        effective_deadline = (
+            deadline_seconds if deadline_seconds is not None else self._config.active_deadline_seconds
+        )
+        deadline = time.monotonic() + effective_deadline
         poll_interval = 10.0
         while time.monotonic() < deadline:
             result = self.get_job_run(job_id)
             if result.state in TERMINAL_STATES:
                 return result
             time.sleep(poll_interval)
-        raise TimeoutError(
-            f"Spark Job {job_id} did not complete within {self._config.active_deadline_seconds}s"
-        )
+        raise TimeoutError(f"Spark Job {job_id} did not complete within {effective_deadline}s")
 
     def cancel_job_run(self, job_id: str) -> None:
         batch_api = self._batch_client()
@@ -702,7 +718,9 @@ def catalog_io_confs(catalog: str, warehouse: str | None) -> dict[str, str]:
     return {f"{prefix}.s3.delete.batch-size": "1000", f"{prefix}.s3.retry.num-retries": "32"}
 
 
-def _capped_submit_config(cfg: SparkK8sConfig, *, operation: str | None) -> SparkK8sConfig:
+def _capped_submit_config(
+    cfg: SparkK8sConfig, *, operation: str | None, total_size_gb: float | None = None
+) -> SparkK8sConfig:
     profile = cap_dispatch_profile(
         ExecutorProfile(
             executor_instances=cfg.executor_instances,
@@ -720,7 +738,9 @@ def _capped_submit_config(cfg: SparkK8sConfig, *, operation: str | None) -> Spar
         executor_mem_mib=profile.executor_mem_mib,
         driver_cpu_milli=profile.driver_cpu_milli,
         driver_mem_mib=profile.driver_mem_mib,
-        active_deadline_seconds=cap_deadline_seconds(cfg.active_deadline_seconds),
+        active_deadline_seconds=cap_deadline_seconds_for_table(
+            cfg.active_deadline_seconds, total_size_gb=total_size_gb
+        ),
     )
 
 

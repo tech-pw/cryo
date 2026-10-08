@@ -91,6 +91,35 @@ DISPATCH_DRIVER_CPU_MILLI = 1000
 DISPATCH_DRIVER_MEM_MIB = 2048
 DISPATCH_DEADLINE_SECONDS = 7200
 
+# Confirmed live, 2026-10-07: a flat 7200s ceiling (below) correctly stopped small jobs
+# from holding capacity forever, but applies to every job regardless of table size, same
+# blind spot CPU/memory scaling above was built to fix. Of 50 tables dispatched on
+# spark-k8s-fallback, 22 hit this exact deadline -- every one of the 10 largest was
+# 500GB-2TB. Tiers below are deliberately coarser than _SIZE_TIERS: a table only needs
+# more wall-clock time once it's genuinely large enough that compaction can't finish in
+# 2h even with full executor capacity, not at every size break CPU/memory scale on.
+# Ceiling (14400s / 4h) matches this destination's own pre-cost-fix deadline (comment
+# above) -- a real, previously-run value, not an arbitrary new one.
+_DEADLINE_SIZE_TIERS: tuple[tuple[float, int], ...] = (
+    (300.0, DISPATCH_DEADLINE_SECONDS),
+    (1_000.0, 10_800),
+)
+_DEADLINE_CEILING_SECONDS = 14_400
+
+
+def cap_deadline_seconds_for_table(seconds: int, *, total_size_gb: float | None) -> int:
+    """Same intent as cap_deadline_seconds, scaled by table size.
+
+    Unknown size takes the base (smallest) tier -- same fail-safe-small choice
+    _tier_fraction makes for CPU/memory when size isn't known yet.
+    """
+    if total_size_gb is not None:
+        for upper_bound, ceiling in _DEADLINE_SIZE_TIERS:
+            if total_size_gb < upper_bound:
+                return min(seconds, ceiling)
+        return min(seconds, _DEADLINE_CEILING_SECONDS)
+    return cap_deadline_seconds(seconds)
+
 _LIGHTWEIGHT_OPS = frozenset(
     {
         "expire_snapshots",
