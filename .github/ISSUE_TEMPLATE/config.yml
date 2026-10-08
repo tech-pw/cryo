@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://tech-pw.github.io/cryo/
+    about: Read the docs before opening an issue.
+  - name: Questions
+    url: https://github.com/tech-pw/cryo/blob/main/docs/SUPPORT_POLICY.md
+    about: Support policy. GitHub Discussions 404s while this repository is private.
+  - name: Security
+    url: https://github.com/tech-pw/cryo/blob/main/SECURITY.md
+    about: Do not file a public issue for a vulnerability. No mailbox is published. The advisory form 404s while the repository is private.

@@ -102,6 +102,32 @@ def test_polaris_does_not_overwrite_explicit_warehouse_or_scope() -> None:
     assert properties["scope"] == "PRINCIPAL_ROLE:custom"
 
 
+def test_glue_source_copies_s3_keys_for_pyiceberg() -> None:
+    from cryo.sources.glue import GlueSourceCatalog
+
+    with patch("cryo.sources.pyiceberg_catalog.load_catalog") as load_catalog:
+        load_catalog.return_value = MagicMock()
+        GlueSourceCatalog(
+            "glue",
+            {
+                "s3.access-key-id": "AKIAEXAMPLE",
+                "s3.secret-access-key": "secret",
+                "s3.region": "eu-west-1",
+            },
+        )
+    properties = load_catalog.call_args.kwargs
+    assert properties["glue.access-key-id"] == "AKIAEXAMPLE"
+    assert properties["glue.region"] == "eu-west-1"
+
+
+def test_unsupported_catalog_names_unity_and_jdbc() -> None:
+    from cryo.sources.factory import assert_supported_source_type
+
+    for source_type in ("unity", "jdbc"):
+        with pytest.raises(ValueError, match="not supported"):
+            assert_supported_source_type(source_type)
+
+
 def test_factory_rejects_unknown_type() -> None:
     with pytest.raises(ValueError, match="Unsupported source type"):
         catalog_from_config("x", "made-up-catalog-type", {})

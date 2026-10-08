@@ -16,6 +16,21 @@ HIVE_SOURCE_TYPES = {"hive", "hms", "hive-metastore", "hive_metastore"}
 GLUE_SOURCE_TYPES = {"glue", "aws-glue", "aws_glue"}
 
 
+def supported_source_types() -> frozenset[str]:
+    return frozenset(REST_SOURCE_TYPES | HIVE_SOURCE_TYPES | GLUE_SOURCE_TYPES)
+
+
+def assert_supported_source_type(source_type: str) -> None:
+    normalized = source_type.lower().replace("_", "-")
+    known = {item.lower().replace("_", "-") for item in supported_source_types()}
+    if normalized not in known:
+        raise ValueError(
+            f"Unsupported source type {source_type!r}. "
+            "Supported: rest, hive, glue, polaris, nessie. "
+            "Unity Catalog and JDBC are not supported."
+        )
+
+
 def is_hive_source_type(source_type: str) -> bool:
     normalized = source_type.lower().replace("_", "-")
     return normalized in {item.lower().replace("_", "-") for item in HIVE_SOURCE_TYPES}

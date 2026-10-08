@@ -5,7 +5,7 @@ description: How Cryo grades tables from A to F, how deductions work with a work
 updated: 2026-10-06
 ---
 <h2 id="grades">Grades</h2>
-<p>Every table starts at 100 points and loses points for each problem the scan finds. The grade is the letter for the final score. At fleet level the headline is the median grade, weighted by table size.</p>
+<p>Every table starts at 100 points and loses points for each problem the scan finds. The grade is the letter for the final score. The home chart counts tables per grade. It is not a size-weighted median. UI words map to letters: A Excellent, B Good, C Fair, D Poor, F Critical.</p>
 <div class="tbl">
 <table>
   <thead><tr><th>Grade</th><th>Score</th></tr></thead>
@@ -29,9 +29,9 @@ updated: 2026-10-06
   <thead><tr><th>Step</th><th class="num">Points</th><th class="num">Running score</th></tr></thead>
   <tbody>
     <tr><td>Start</td><td class="num"></td><td class="num">100</td></tr>
-    <tr><td>Small-file warning</td><td class="num">−8</td><td class="num">92</td></tr>
-    <tr><td>Missing-statistics warning</td><td class="num">−8</td><td class="num">84</td></tr>
-    <tr><td>Stale-manifest critical</td><td class="num">−20</td><td class="num">64</td></tr>
+    <tr><td>Small-file fragmentation (warning)</td><td class="num">−8</td><td class="num">92</td></tr>
+    <tr><td>Manifest files bloat (warning)</td><td class="num">−8</td><td class="num">84</td></tr>
+    <tr><td>Position delete file buildup (critical)</td><td class="num">−20</td><td class="num">64</td></tr>
   </tbody>
   <tfoot><tr><td>Final score and grade</td><td class="num"></td><td class="num"><span class="grade grade-c"><b>C</b>&nbsp;64</span></td></tr></tfoot>
 </table>
@@ -63,7 +63,7 @@ updated: 2026-10-06
 
 <h2 id="read-next">Where to go next</h2>
 <linkcards>
-  <linkcard href="@/maintenance/" title="Maintenance">The fixed order that turns a low grade back into a high one.</linkcard>
+  <linkcard href="@/maintenance/" title="Maintenance">The fixed operation order. It does not clear every cause of a low grade, including format upgrades, streaming velocity, property settings, and partition skew.</linkcard>
   <linkcard href="@/concepts/" title="How Cryo fits">Why the scan path never touches a data file.</linkcard>
   <linkcard href="@/architecture/" title="Architecture">Where the scanner and cost estimator sit in the running system.</linkcard>
   <linkcard href="@/reference/" title="Reference">How Cryo's health grading compares with adjacent tools.</linkcard>

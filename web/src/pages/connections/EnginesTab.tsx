@@ -96,7 +96,7 @@ export const EnginesTab = () => {
           row.original.offpeak_end == null ||
           row.original.offpeak_start === row.original.offpeak_end
             ? "Any time"
-            : `${row.original.offpeak_start}:00–${row.original.offpeak_end}:00 IST`
+            : `${row.original.offpeak_start}:00–${row.original.offpeak_end}:00 Asia/Kolkata`
       },
       {
         id: "actions",

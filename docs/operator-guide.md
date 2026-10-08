@@ -386,8 +386,8 @@ Log exploration (Loki via Grafana Explore):
    Query Trino: `SELECT state, count(*) FROM system.runtime.queries GROUP BY 1`
 3. Redis leader lock — multiple Governor pods; only the leader admits:
    `redis-cli GET cryo:leader:governor`
-4. Off-peak window — admissions may defer heavy (standard/deep) jobs outside a configured IST
-   window. If the engine has no off-peak set, or start and end are both `0` (or equal), there is
+4. Off-peak window — admissions may defer heavy (standard/deep) jobs outside a configured
+   Asia/Kolkata window, not the browser timezone. If the engine has no off-peak set, or start and end are both `0` (or equal), there is
    no gate and maintenance may run anytime.
 5. Per-replica caps — `default_per_replica_optimize_cap` may be saturated.
 
@@ -577,7 +577,7 @@ failure mode of two tables sharing one warehouse path.
 
 - Harvest uses Hive Metastore Thrift `sd.location` and Glue `StorageDescriptor.Location`
   (not Iceberg `load_table`), so unreadable aliases still appear.
-- Slack fires at **10:00 IST** only when overlapping groups exist (`ReportScheduler`).
+- Slack fires at **10:00 Asia/Kolkata (04:30 UTC)** only when overlapping groups exist (`ReportScheduler`).
 - Manual: `make shared-s3-anomalies` / `POST /api/v1/anomalies/shared-s3/refresh`.
 
 See [`docs/shared-s3-anomalies.md`](./shared-s3-anomalies.md).
@@ -618,4 +618,4 @@ Helm install uses `deploy/helm/cryo/`. Set `iceberg.target-max-file-size` on the
 not in Cryo. Multi-tenancy is per source and destination in the database.
 
 Full inventory of local-only components (update when adding new ad-hoc dev tooling):
-[`local-dev-only-inventory.md`](./local-dev-only-inventory.md).
+[`LOCAL_DEV_ONLY_INVENTORY.md`](./LOCAL_DEV_ONLY_INVENTORY.md).

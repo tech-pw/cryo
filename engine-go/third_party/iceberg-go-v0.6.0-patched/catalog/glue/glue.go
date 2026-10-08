@@ -115,13 +115,33 @@ func toAwsConfig(ctx context.Context, p iceberg.Properties) (aws.Config, error) 
 		}
 	}
 
-	key, secret, token := p[AccessKeyID], p[SecretAccessKey], p[SessionToken]
+	if p[Region] == "" {
+		if region := firstNonEmpty(p["s3.region"], p["client.region"]); region != "" {
+			opts = append(opts, config.WithRegion(region))
+		}
+	}
+	key, secret, token := glueCredentials(p)
 	if key != "" || secret != "" || token != "" {
 		opts = append(opts, config.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(key, secret, token)))
 	}
 
 	return config.LoadDefaultConfig(ctx, opts...)
+}
+
+func glueCredentials(p iceberg.Properties) (string, string, string) {
+	return firstNonEmpty(p[AccessKeyID], p["s3.access-key-id"], p["client.access-key-id"]),
+		firstNonEmpty(p[SecretAccessKey], p["s3.secret-access-key"], p["client.secret-access-key"]),
+		firstNonEmpty(p[SessionToken], p["s3.session-token"], p["client.session-token"])
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 type glueAPI interface {
@@ -291,7 +311,7 @@ func (c *Catalog) RegisterTable(ctx context.Context, identifier table.Identifier
 		ctx,
 		[]string{tableName},
 		metadataLocation,
-		io.LoadFSFunc(nil, metadataLocation),
+		io.LoadFSFunc(map[string]string(c.props), metadataLocation),
 		c,
 	)
 	if err != nil {
@@ -700,7 +720,7 @@ func (c *Catalog) convertGlueToIceberg(ctx context.Context, glueTable *types.Tab
 		utils.WithAwsConfig(ctx, c.awsCfg),
 		TableIdentifier(database, tableName),
 		metadataLocation,
-		io.LoadFSFunc(nil, metadataLocation),
+		io.LoadFSFunc(map[string]string(c.props), metadataLocation),
 		c,
 	)
 	if err != nil {

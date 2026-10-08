@@ -14,11 +14,11 @@ A source answers where an Apache Iceberg table lives. A destination answers wher
 Cryo keeps reading and writing apart, down to separate database tables, configs and code. A catalog connection never carries engine credentials, and an engine never learns how to read a catalog.
 
 Source (read side)
-Answers where a table lives and how to read its metadata. Iceberg REST, Hive and Glue catalogs are sources.
+Answers where a table lives and how to read its metadata. Supported catalogs are Iceberg REST, Hive, Glue, Apache Polaris, and Project Nessie. Unity Catalog and JDBC are not supported. Polaris and Nessie use the REST adapter. Branch and tag operations are not exposed.
 Preset (binding)
 Binds what to do, on which destination, when, and to which tables. A preset never holds raw SQL.
 Destination (write side)
-Answers where to submit maintenance work. Trino and Spark are destinations.
+Answers where to submit maintenance work. Trino and Spark execute. Native Go executes when enabled. Flink generates a config and does not submit a job.
 
 Figure 1Read from a source, bind with a preset, write through a destination
 
@@ -90,7 +90,7 @@ Many tables need work, fewer are eligible once cooldowns, locks and off-peak win
 
 ## Grades come from stored metadata
 
-Each scan ends with an A to F health grade per table, computed from the stored shape. [Health and cost](https://tech-pw.github.io/cryo/health/) lists the thresholds, the deductions and a worked example.
+Each scan ends with an A to F health grade per table, computed from the stored shape. [Health and cost](https://tech-pw.github.io/cryo/health/) lists the letter bands and the 8 and 20 point deductions. Trigger thresholds live in the scanner, not on that page.
 
 ## Where to go next
 

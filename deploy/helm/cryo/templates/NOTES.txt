@@ -1,0 +1,17 @@
+Cryo is installed in {{ .Release.Namespace }}.
+
+The API is not a production install until you set:
+  image.repository (and a tag or digest you published)
+  global.envFromSecret to a Secret with CRYO_DATABASE_URL and CRYO_SECRET_KEY
+  global.env.CRYO_ENVIRONMENT to prod
+
+The chart default CRYO_ENVIRONMENT is dev. That leaves POST /api/v1/auth/token open.
+OIDC does not close that route.
+
+Web UI: {{ if .Values.web.enabled }}enabled{{ else }}off (web.enabled is false){{ end }}.
+
+helm upgrade reruns the pre-upgrade migration Job (alembic upgrade head).
+helm uninstall does not delete external Postgres or the warehouse.
+
+Render locally with: helm template {{ .Release.Name }} <chart>
+That command does not need a cluster.

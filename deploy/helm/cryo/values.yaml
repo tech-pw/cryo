@@ -183,7 +183,7 @@ scanner:
 # Requires spark.k8s.enabled for the Spark image and ServiceAccounts.
 maintenance:
   enabled: false
-  # 19:00 UTC = 00:30 IST, the start of the Trino off-peak window.
+  # Kubernetes CronJob times are UTC unless a timeZone is set.
   schedule: "0 19 * * *"
   suspend: false
   topN: 500

@@ -1,40 +1,40 @@
 ---
 title: Quickstart
-lede: Run a local lake with deliberate maintenance problems, then watch Cryo scan it, grade it and plan the work.
-description: Install Cryo locally with Docker. Clone, start the stack, seed demo Iceberg tables and open the UI in about five minutes.
+lede: Start the local control plane. The UI comes up empty. Screenshots on this site are synthetic demo data, not the result of these commands.
+description: Clone Cryo and start the local stack. Migrations run. The UI does not show a graded lake until you add a source and scan.
 updated: 2026-10-06
 ---
 <callout type="note" title="Before you start">
-  <p>You need Docker, Python 3.12 or newer, and Node 22 or newer. The local stack is a demo lake. It is not the production topology.</p>
+  <p>You need Docker, Python 3.12 or newer, Node 22 or newer, and curl. This is a local control plane, not the production topology. The repository is private until the public flip, so this clone is not an anonymous download.</p>
 </callout>
 
 <h2 id="install">Install and start</h2>
 
 <steps>
   <step title="Clone the repository">
-    <p>The default branch is stable. You are in the repo when the next prompt is inside <code>Cryo/</code>.</p>
+    <p>The clone directory is <code>cryo</code>, lowercase.</p>
     <codeblock lang="bash" title="terminal">
 $ git clone https://github.com/tech-pw/cryo.git
-$ cd Cryo
+$ cd cryo
     </codeblock>
   </step>
   <step title="Start the local stack">
-    <p>This starts the API, the web UI, PostgreSQL, Redis and a demo Trino. The stack is up when the API and PostgreSQL report healthy.</p>
+    <p><code>./start-local.sh start</code> creates the venv, starts Postgres, Redis, and the local datalake, runs Alembic, and starts the API and UI on the host. <code>make up</code> only starts containers. It does not migrate. <code>/healthz</code> does not touch Postgres.</p>
     <codeblock lang="bash" title="terminal">
-$ make up
+$ ./start-local.sh start
     </codeblock>
-    <p class="expect">Done when <code>docker compose ps</code> shows the API and PostgreSQL as <code>healthy</code>.</p>
+    <p class="expect">Done when the script prints a dev sign-in role. The UI is empty. No preset is marked default, so a later scan does not schedule maintenance until you assign one.</p>
   </step>
   <step title="Seed demo tables">
-    <p>This creates five Iceberg tables in the local REST catalog: small files, stale manifests and expirable snapshots, so there is something to find.</p>
+    <p>Optional. This writes five small tables (<code>rest.demo.customers</code>, <code>products</code>, <code>orders</code>, <code>order_items</code>, <code>shipments</code>). It does not create small files, stale manifests, or expirable snapshots, and it does not register a Cryo source or scan. It needs host PySpark, which <code>make install</code> does not install.</p>
     <codeblock lang="bash" title="terminal">
 $ make seed
     </codeblock>
-    <p class="expect">Done when the log prints <code>Created rest.demo.customers</code>, <code>products</code>, <code>orders</code>, <code>order_items</code> and <code>shipments</code>.</p>
+    <p class="expect">Done when the log prints those five table names. The dashboard still does not show them until a source exists and a scan runs.</p>
   </step>
   <step title="Open the UI">
     <p>Open <a href="http://localhost:5173">http://localhost:5173</a>. On macOS, <code>open http://localhost:5173</code> does the same thing.</p>
-    <p class="expect">Done when the home screen loads at <code>http://localhost:5173</code>.</p>
+    <p class="expect">Done when the login screen loads. Dev sign-in is a role (<code>viewer</code>, <code>operator</code>, or <code>admin</code>), not an arbitrary username.</p>
   </step>
 </steps>
 
@@ -44,9 +44,9 @@ $ make seed
 
 <h2 id="next">What to try first</h2>
 <ul>
-  <li><strong>Home</strong> shows the whole lake: how many tables sit at each grade, and how much storage maintenance could reclaim.</li>
-  <li>Open <strong>Tables</strong>. The seeded tables already show a health grade and their small-file counts.</li>
-  <li>Open <strong>Runs</strong>. The scheduler queues jobs for tables that need work, and the governor admits them as the demo Trino has headroom.</li>
+  <li><strong>Home</strong> is empty until a scan has stored grades. The screenshots below are synthetic demo data, not this quickstart.</li>
+  <li>Open <strong>Tables</strong> after you add a source and run a scan. <code>make seed</code> alone does not put rows here.</li>
+  <li>Open <strong>Runs</strong> after a preset is assigned. Nothing in this quickstart enqueues maintenance.</li>
   <li>Open any run to see its jobs and receipts: operation, engine, status and duration.</li>
 </ul>
 

@@ -203,10 +203,10 @@ FIRST VIEWPORT: Type-first hero, tally, actions, stack. No product graphic.
 <section class="sect try-line reveal" aria-labelledby="try">
     <div class="wrap">
         <h2 id="try">See it on a demo lake</h2>
-        <p class="sub">The seeded tables have small files, stale manifests and expirable snapshots, so there is something for Cryo to find.</p>
+        <p class="sub">The local UI comes up empty. <code>make seed</code> writes five small tables and does not scan them. The screenshots on this site are synthetic demo data.</p>
         <codeblock lang="bash" title="terminal">
-$ git clone https://github.com/tech-pw/cryo.git && cd Cryo
-$ make up && make seed
+$ git clone https://github.com/tech-pw/cryo.git && cd cryo
+$ ./start-local.sh start
         </codeblock>
         <p><a class="btn btn-primary" href="@/quickstart/">Open the quickstart</a></p>
     </div>

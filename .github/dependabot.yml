@@ -12,3 +12,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  - package-ecosystem: gomod
+    directory: /engine-go
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /cryo-engine
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /cryo-native
+    schedule:
+      interval: weekly
