@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+title: Cryo
+message: If you use Cryo, cite it as below.
+type: software
+license: Apache-2.0
+repository-code: https://github.com/tech-pw/cryo
+url: https://tech-pw.github.io/cryo
+version: 0.1.0
+authors:
+  - name: tech-pw

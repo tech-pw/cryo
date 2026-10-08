@@ -70,6 +70,19 @@ func TestWithSourceAWSConfigStaticCredentials(t *testing.T) {
 	}
 }
 
+func TestWithSourceAWSConfigStaticKeysDefaultRegion(t *testing.T) {
+	req := &protocol.ExecuteRequest{
+		CatalogURI:  "thrift://hms:9083",
+		S3AccessKey: strptr("AKIAEXAMPLE"),
+		S3SecretKey: strptr("secretExample"),
+	}
+	ctx := catalog.WithSourceAWSConfig(context.Background(), req)
+	cfg := utils.GetAwsConfig(ctx)
+	if cfg == nil || cfg.Region != "us-east-1" {
+		t.Fatalf("empty region should fall back to us-east-1, got %#v", cfg)
+	}
+}
+
 func TestWithSourceAWSConfigNoCredentialsLeavesContext(t *testing.T) {
 	req := &protocol.ExecuteRequest{CatalogURI: "thrift://hms:9083"}
 	ctx := catalog.WithSourceAWSConfig(context.Background(), req)

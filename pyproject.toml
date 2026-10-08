@@ -9,6 +9,13 @@ description = "Cryo backend for Apache Iceberg maintenance and health."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
+authors = [{ name = "tech-pw" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+]
 dependencies = [
     "alembic",
     "boto3>=1.34.0,<2",
@@ -50,6 +57,12 @@ dev = [
     "pytest-cov",
     "ruff",
 ]
+
+[project.urls]
+Homepage = "https://tech-pw.github.io/cryo"
+Repository = "https://github.com/tech-pw/cryo"
+Issues = "https://github.com/tech-pw/cryo/issues"
+Changelog = "https://github.com/tech-pw/cryo/blob/main/CHANGELOG.md"
 
 [project.scripts]
 cryo = "cryo.cli:main"

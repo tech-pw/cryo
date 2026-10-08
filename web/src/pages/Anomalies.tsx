@@ -156,7 +156,7 @@ export const Anomalies = () => {
 
       <p className="mb-4 text-xs text-muted-foreground">
         {hasSnapshot
-          ? `Last harvest ${formatTime(report?.generated_at)}. Slack alert fires at 10:00 IST only when groups exist.`
+          ? `Last harvest ${formatTime(report?.generated_at)}. Slack alert fires at 10:00 Asia/Kolkata (04:30 UTC) only when groups exist.`
           : "No harvest yet. Refresh to list warehouse locations from every enabled catalog (Hive, Glue, REST)."}
       </p>
 

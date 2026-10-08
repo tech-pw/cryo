@@ -94,4 +94,17 @@ describe("CatalogDashboard", () => {
     expect(fleet).toHaveTextContent("Cost data unavailable");
     expect(fleet).not.toHaveTextContent("$0");
   });
+
+  it("does not show $0 when no tables have been scanned", async () => {
+    vi.mocked(getMultiCatalogDashboard).mockResolvedValue({
+      catalogs: [],
+      total_catalogs: 1,
+      total_tables: 0,
+      total_cost_usd: 0
+    });
+    renderPage();
+    const fleet = await screen.findByText(/Fleet cost/);
+    expect(fleet).toHaveTextContent("Cost data unavailable");
+    expect(fleet).not.toHaveTextContent("$0");
+  });
 });

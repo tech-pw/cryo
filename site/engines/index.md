@@ -79,7 +79,7 @@ On Trino the target file size is set on the Iceberg catalog with `iceberg.target
 
 ## Native compaction
 
-Native Go compaction is a configured engine path and is not assumed to be on. The planner does not change shape for it. It receives the same plan as Trino and Spark, and runs the rewrite itself.
+Native Go compaction is a configured engine path and is not assumed to be on. The planner does not change shape for it. It receives the same plan as Trino and Spark, and runs the rewrite itself. Flink is not on this page. Cryo can emit a Flink maintenance config and does not submit the job.
 
 ## Where to go next
 

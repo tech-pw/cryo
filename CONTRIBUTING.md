@@ -15,16 +15,19 @@ and information for the contributor.
 
 ## Code of Conduct
 
-This project follows standard open-source conduct expectations described in the
-[docs/GOVERNANCE.md](docs/GOVERNANCE.md). Please report unacceptable behavior to the maintainers.
+This project follows [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Enforcement contact is not
+published yet. See [SECURITY.md](SECURITY.md). Process notes are in
+[docs/GOVERNANCE.md](docs/GOVERNANCE.md).
 
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.12+
+- Node 22+ (UI only; CI pins 22)
 - Docker and Docker Compose
-- Java 17+ (for PySpark/local testing)
+- Go 1.25.5 (`engine-go/go.mod`) if you touch the native compactor
+- Java 17+ only if you run PySpark. `make test` does not need it
 - Git
 
 ### Quick Start
@@ -34,10 +37,8 @@ This project follows standard open-source conduct expectations described in the
 git clone https://github.com/tech-pw/cryo.git
 cd cryo
 
-# Start the local development stack
-./start.sh
-
-# Run tests
+# Install dev dependencies, then run tests
+make install
 make test
 ```
 
@@ -49,7 +50,6 @@ make test
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
 pip install -e ".[dev]"
 ```
 
@@ -57,8 +57,14 @@ pip install -e ".[dev]"
 
 ```bash
 ./start-local.sh start
-# or: make up
 ```
+
+`make up` starts containers only. It does not migrate or seed. `./start-local.sh start` runs
+Alembic. Default pytest uses in-memory SQLite and does not need that stack.
+
+UI and API without the datalake: `START_DATALAKE=0 SEED_CONFIG=0 START_SERVE=0 ./start-local.sh start`,
+or `make api` plus `make web-dev` against local Postgres and Redis. Login, empty dashboards,
+tables, and runs still render. Scan and maintenance need a catalog or engine.
 
 This starts three compose stacks — see [`docs/local-docker-compose.md`](docs/local-docker-compose.md):
 
@@ -72,15 +78,24 @@ When adding new local-only scripts or compose services, update
 ### 3. Run Tests
 
 ```bash
-# All tests
+# Python unit tests. Not Go, Rust, or the UI.
 make test
 
-# Specific test file
-pytest tests/test_scanner.py -v
+# One test
+pytest tests/test_scanner.py -k test_name -v
 
-# With coverage
-make test-cov
+# Coverage
+pytest --cov=cryo
+
+# Go engine (matches CI, except CI also runs -race)
+make test-engine-go
+
+# One Go test
+cd engine-go && CGO_ENABLED=0 go test -v ./internal/ops -run TestName
 ```
+
+`make test` is not "all tests". CI also runs `cargo test` and `make web-test`.
+Opt-in stacks: `make test-hms-integration`, `make test-native-e2e-local-go`.
 
 ### 4. Code Quality
 
@@ -213,7 +228,7 @@ def analyze_table(
 
 ### TypeScript (Frontend)
 
-- **Style:** ESLint + Prettier
+- **Style:** 2-space indent, double quotes, semicolons. This package has no ESLint or Prettier script. `npm run typecheck` is the check.
 - **Components:** Functional components with hooks
 - **State:** TanStack Query for server state
 
@@ -271,7 +286,8 @@ cryo/
 │   ├── planner/          # Maintenance planning
 │   ├── scanner/          # Table health scanning
 │   └── scheduler/        # Job scheduling
-├── web/                  # React frontend
+├── engine-go/            # Default native compactor (Go)
+├── web/                  # React frontend. See web/README.md
 ├── tests/                # Test suite
 ├── docs/                 # Documentation
 ├── scripts/              # Utility scripts
@@ -280,14 +296,14 @@ cryo/
 
 ## Community
 
-- **GitHub Issues** — Bug reports, feature requests
-- **GitHub Discussions** — Questions, ideas, general discussion
+- **GitHub Issues** — Bug reports and feature requests. Use the forms.
+- **GitHub Discussions** — Questions, after the repository is public. The URL 404s while it is private.
 - **Pull Requests** — Code contributions
+- **Security** — [SECURITY.md](SECURITY.md). Do not open a public issue.
 
 ## Recognition
 
 Contributors are recognized in:
-- The [CONTRIBUTORS.md](CONTRIBUTORS.md) file
 - Release notes for significant contributions
 - The project README for major contributors
 

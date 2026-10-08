@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "image": { "type": "object", "additionalProperties": true },
+    "global": { "type": "object", "additionalProperties": true },
+    "web": { "type": "object", "additionalProperties": true },
+    "api": { "type": "object", "additionalProperties": true },
+    "worker": { "type": "object", "additionalProperties": true },
+    "governor": { "type": "object", "additionalProperties": true },
+    "scheduler": { "type": "object", "additionalProperties": true },
+    "scanner": { "type": "object", "additionalProperties": true },
+    "redis": { "type": "object", "additionalProperties": true }
+  }
+}

@@ -153,13 +153,13 @@ audit log · live example
 
 ## See it on a demo lake
 
-The seeded tables have small files, stale manifests and expirable snapshots, so there is something for Cryo to find.
+The local UI comes up empty. `make seed` writes five small tables and does not scan them. The screenshots on this site are synthetic demo data.
 
 **terminal**
 
 ```
-$ git clone https://github.com/tech-pw/cryo.git && cd Cryo
-$ make up && make seed
+$ git clone https://github.com/tech-pw/cryo.git && cd cryo
+$ ./start-local.sh start
 ```
 
 [Open the quickstart](https://tech-pw.github.io/cryo/quickstart/)

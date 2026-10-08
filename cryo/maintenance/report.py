@@ -26,9 +26,13 @@ logger = logging.getLogger(__name__)
 _IST = timezone(timedelta(hours=5, minutes=30))
 
 
-def _ist(value: datetime) -> str:
+def _clock(value: datetime, zone: timezone) -> str:
     aware = value if value.tzinfo else value.replace(tzinfo=UTC)
-    return aware.astimezone(_IST).strftime("%H:%M")
+    return aware.astimezone(zone).strftime("%H:%M")
+
+
+def _ist(value: datetime) -> str:
+    return _clock(value, _IST)
 
 
 def _duration(start: datetime, end: datetime) -> str:
@@ -60,7 +64,9 @@ def build_blocks(
 ) -> tuple[str, list[SlackBlock]]:
     finished = report.finished_at or report.started_at
     window = (
-        f"{_ist(report.started_at)}–{_ist(finished)} IST, {_duration(report.started_at, finished)}"
+        f"{_clock(report.started_at, UTC)}–{_clock(finished, UTC)} UTC "
+        f"({_ist(report.started_at)}–{_ist(finished)} Asia/Kolkata), "
+        f"{_duration(report.started_at, finished)}"
     )
     attempted = report.succeeded + report.partial + report.failed
     if report.failed == 0 and report.partial == 0 and report.skipped == 0:

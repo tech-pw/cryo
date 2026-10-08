@@ -166,7 +166,11 @@ from cryo.planner.guardrails import (
 from cryo.planner.planner import build_plan
 from cryo.scanner.orphans import estimate_orphan_scan_cost
 from cryo.security.crypto import encrypt_secret
-from cryo.sources.factory import catalog_from_config, source_catalog_for
+from cryo.sources.factory import (
+    assert_supported_source_type,
+    catalog_from_config,
+    source_catalog_for,
+)
 
 router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger(__name__)
@@ -331,6 +335,10 @@ def get_source_namespace_tables(
     dependencies=[Depends(require_admin)],
 )
 def create_source(payload: SourceCreate, session: SessionDep) -> Source:
+    try:
+        assert_supported_source_type(payload.type)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     data = payload.model_dump()
     tenant_id = tenant_id_for_create(session)
     if tenant_id is not None:
@@ -398,6 +406,11 @@ def test_source(payload: SourceTestRequest, session: SessionDep) -> SourceTestRe
 def patch_source(source_id: uuid.UUID, payload: SourcePatch, session: SessionDep) -> Source:
     source = get_scoped_resource(session, Source, source_id, resource_type="Source")
     values = payload.model_dump(exclude_unset=True)
+    if values.get("type"):
+        try:
+            assert_supported_source_type(str(values["type"]))
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if "secret_ref" in values and values["secret_ref"]:
         values["secret_ref"] = encrypt_secret(values["secret_ref"])
     if "config" in values and values["config"] is not None:

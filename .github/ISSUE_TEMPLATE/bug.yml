@@ -1,0 +1,86 @@
+name: Bug report
+description: Report something that is broken or behaves incorrectly
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. Security reports do not belong here — use SECURITY.md.
+        Unvalidated scanner or LLM write-ups will be closed. Paste logs as text, not screenshots.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Short factual description.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: regression
+    attributes:
+      label: Did this work before?
+      description: Version or commit where it last worked, or "unknown".
+  - type: input
+    id: version
+    attributes:
+      label: Cryo version
+      description: Tag or commit SHA. Latest tag only is supported until 1.0.
+      placeholder: v0.1.0 or a commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: Deployment
+      options:
+        - local docker compose
+        - Helm
+        - other
+    validations:
+      required: true
+  - type: input
+    id: chart
+    attributes:
+      label: Helm chart version
+      description: Chart `version` from Chart.yaml, or "not applicable".
+  - type: input
+    id: catalog
+    attributes:
+      label: Catalog type
+      placeholder: rest, hive, glue, polaris, or nessie
+  - type: input
+    id: storage
+    attributes:
+      label: Storage and warehouse URI
+      description: No credentials.
+  - type: input
+    id: engine
+    attributes:
+      label: Engine
+      placeholder: trino, spark_emr, native, or flink
+  - type: textarea
+    id: config
+    attributes:
+      label: Scrubbed config
+      description: Redact keys, tokens, and passwords.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Text, not a screenshot. Include a correlation id if you have one.

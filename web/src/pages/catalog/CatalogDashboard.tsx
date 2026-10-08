@@ -40,8 +40,15 @@ const NOT_MEASURED = "Not measured";
 const displayCount = (value: number | null | undefined): string | number =>
   value == null || Number.isNaN(value) ? NOT_MEASURED : value;
 
-const displayModeledCost = (value: number | null | undefined): string =>
-  value == null || Number.isNaN(value) ? COST_UNAVAILABLE : `${formatCurrency(value)}/mo`;
+const displayModeledCost = (
+  value: number | null | undefined,
+  tablesWithStats: number | null | undefined
+): string => {
+  if (tablesWithStats == null || tablesWithStats === 0 || value == null || Number.isNaN(value)) {
+    return COST_UNAVAILABLE;
+  }
+  return `${formatCurrency(value)}/mo`;
+};
 
 const KpiSkeleton = () => (
   <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -241,7 +248,7 @@ export const CatalogDashboard = () => {
         actions={
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <span title={CATALOG_FLEET_COST_TOOLTIP} className="cursor-help">
-              Fleet cost · Modeled {displayModeledCost(data?.total_cost_usd)}
+              Fleet cost · Modeled {displayModeledCost(data?.total_cost_usd, data?.total_tables)}
             </span>
             <Link to="/cost">
               <Button size="sm" variant="ghost">

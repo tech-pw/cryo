@@ -38,4 +38,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # The unique index from 20260706_0011 depends on this column. Drop it first
+    # or downgrade fails before that revision's own DROP INDEX runs.
+    op.execute("DROP INDEX IF EXISTS cryo.uq_presets_one_default_per_tenant")
     op.execute("ALTER TABLE cryo.presets DROP COLUMN IF EXISTS is_default")

@@ -28,8 +28,14 @@ def start_maintenance_run(
     # routes.MaintenanceRun / _resolve_selection / build_runtime_wiring still apply.
     from cryo.api import routes as api_routes
 
-    if session.get(api_routes.Destination, payload.destination_id) is None:
+    destination = session.get(api_routes.Destination, payload.destination_id)
+    if destination is None:
         raise HTTPException(status_code=400, detail="Destination does not exist")
+    if str(getattr(destination, "engine", "") or "") == "flink":
+        raise HTTPException(
+            status_code=422,
+            detail="Flink is config-only. Cryo does not run maintenance on this destination.",
+        )
     preset = session.get(api_routes.Preset, payload.preset_id)
     if preset is None:
         raise HTTPException(status_code=400, detail="Preset does not exist")

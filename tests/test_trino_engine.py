@@ -62,6 +62,21 @@ def test_coordinators_from_config_supports_shared_defaults() -> None:
     assert all(coordinator.user == "maintainer" for coordinator in coordinators)
 
 
+def test_coordinator_omits_catalog_and_honors_jwt_and_verify() -> None:
+    coordinator = coordinators_from_config(
+        {
+            "coordinators": ["coordinator"],
+            "http_scheme": "https",
+            "verify_ssl": False,
+            "auth": {"type": "jwt", "token": "header.payload.sig"},
+        }
+    )[0]
+    assert coordinator.catalog is None
+    assert coordinator.verify is False
+    assert coordinator.auth is not None
+    assert coordinator.auth.token == "header.payload.sig"
+
+
 def test_probe_capacity_sums_live_optimizes() -> None:
     cursors = [FakeCursor([(2,)]), FakeCursor([(1,)])]
 

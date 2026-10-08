@@ -79,6 +79,8 @@ class PyIcebergSourceCatalog:
                         else self._catalog.list_namespaces()
                     )
                 except Exception:
+                    if not parent:
+                        raise
                     logger.warning(
                         "list_namespaces failed for parent=%r at level=%d; skipping subtree",
                         parent,

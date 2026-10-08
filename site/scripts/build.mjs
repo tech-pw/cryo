@@ -338,6 +338,16 @@ function header(root, activeGroup) {
   return `<header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side">${MENU}</button><a class="logo" href="${root}" aria-label="Cryo home">${logoMark(root)}${LOGO_WORD}</a><nav class="hdr-tabs" aria-label="Sections">${tabs}</nav><div class="hdr-end"><button class="search-open" type="button" aria-label="Search the docs" aria-haspopup="dialog">${SEARCH_ICON}<span class="so-text">Search</span><kbd class="so-kbd">⌘K</kbd></button><a class="icon-btn" href="${cfg.repo}" aria-label="Cryo on GitHub">${GH_ICON}</a><button class="icon-btn theme-toggle" type="button" aria-label="Toggle colour theme">${SUN}${MOON}</button></div></div></header>`;
 }
 
+function searchKeys(url, headingId, group, title) {
+  const keys = [group, title, url.replaceAll("/", " ").replaceAll("-", " ")];
+  if (url.startsWith("quickstart") || url === "") keys.push("get started");
+  if (url.startsWith("concepts") || group === "Concepts") keys.push("concepts");
+  if (headingId === "maintenance-wave") keys.push("off-peak");
+  if (headingId === "scan-path") keys.push("$files");
+  if (headingId === "three-parts") keys.push("lakehouses connections");
+  return keys.join(" ");
+}
+
 function sidebar(root, slug) {
   const groups = cfg.groups
     .map((g) => {
@@ -415,11 +425,11 @@ function renderDoc(entry) {
   // search entries: one per h2/h3 section plus the page itself
   const plain = (frag) => stripTags(frag.replace(/<svg[\s\S]*?<\/svg>/g, " ").replace(/<button[\s\S]*?<\/button>/g, " ").replace(/<div class="fig-bar">[\s\S]*?<\/div>/g, " ")).slice(0, 420);
   const secs = content.split(/(?=<h[23] id=")/);
-  searchDocs.push({ t: title, h: "", u: urlOf(slug), x: stripTags(meta.lede), g: entry.group.label });
+  searchDocs.push({ t: title, h: "", u: urlOf(slug), x: stripTags(meta.lede), g: entry.group.label, k: searchKeys(urlOf(slug), "", entry.group.label, title) });
   for (const sec of secs) {
     const m = /^<h([23]) id="([^"]+)"[^>]*>([\s\S]*?)<a class="anchor"/.exec(sec);
     if (!m) continue;
-    searchDocs.push({ t: title, h: stripTags(m[3]), u: `${urlOf(slug)}#${m[2]}`, x: plain(sec.replace(/^<h[23][\s\S]*?<\/h[23]>/, "")), g: entry.group.label });
+    searchDocs.push({ t: title, h: stripTags(m[3]), u: `${urlOf(slug)}#${m[2]}`, x: plain(sec.replace(/^<h[23][\s\S]*?<\/h[23]>/, "")), g: entry.group.label, k: searchKeys(urlOf(slug), m[2], entry.group.label, title) });
   }
   sitemap.push({ loc: canonical, lastmod: updated });
   const markdown = pageMarkdown({ title, lede: meta.lede, description: meta.description, updated, canonical, mdUrl, html: rewriteLinks(restore(hd.html, ex.holds), `${cfg.url}/`) });
@@ -439,11 +449,11 @@ function renderHome(entry) {
   const content = rewriteLinks(restore(hd.html, ex.holds), root);
   const canonical = `${cfg.url}/`;
   const mdHref = `${root}index.md`;
-  const html = `<!doctype html><html lang="en">${head({ root, title: meta.title, desc: meta.description, canonical, slug: "", markdown: mdHref })}<body class="home-page" data-page="home" data-root="${root}"><a class="skip" href="#main">Skip to content</a>${header(root, "")}<main class="home" id="main">${content}</main>${footer(root)}${SEARCH_DIALOG}<script src="${root}assets/js/site.js?v=${JS_REV}" defer></script></body></html>`;
-  searchDocs.push({ t: "Overview", h: "", u: "", x: stripTags(meta.description), g: "Get started" });
+  const html = `<!doctype html><html lang="en">${head({ root, title: meta.title, desc: meta.description, canonical, slug: "", markdown: mdHref })}<body class="home-page" data-page="home" data-root="${root}"><a class="skip" href="#main">Skip to content</a>${header(root, "")}${sidebar(root, "")}<main class="home" id="main">${content}</main>${footer(root)}${SEARCH_DIALOG}<script src="${root}assets/js/site.js?v=${JS_REV}" defer></script></body></html>`;
+  searchDocs.push({ t: "Overview", h: "", u: "", x: stripTags(meta.description), g: "Get started", k: searchKeys("", "", "Get started", "Overview") });
   for (const sec of content.split(/(?=<h2 id=")/)) {
     const m = /^<h2 id="([^"]+)"[^>]*>([\s\S]*?)<a class="anchor"/.exec(sec);
-    if (m) searchDocs.push({ t: "Overview", h: stripTags(m[2]), u: `#${m[1]}`, x: stripTags(sec.replace(/^<h2[\s\S]*?<\/h2>/, "")).slice(0, 420), g: "Get started" });
+    if (m) searchDocs.push({ t: "Overview", h: stripTags(m[2]), u: `#${m[1]}`, x: stripTags(sec.replace(/^<h2[\s\S]*?<\/h2>/, "")).slice(0, 420), g: "Get started", k: searchKeys("", m[1], "Get started", "Overview") });
   }
   sitemap.push({ loc: canonical, lastmod: meta.updated || "2026-10-05" });
   const markdown = pageMarkdown({ title: meta.title, lede: meta.lede, description: meta.description, updated: meta.updated, canonical, mdUrl: `${canonical}index.md`, html: rewriteLinks(restore(hd.html, ex.holds), `${cfg.url}/`) });
@@ -457,7 +467,7 @@ function renderHome(entry) {
 function render404() {
   const abs = cfg.url + "/";
   const root = abs;
-  const html = `<!doctype html><html lang="en">${head({ root, title: "Page not found", desc: "This page does not exist.", canonical: `${cfg.url}/404.html`, slug: "404", abs: true })}<body class="docs notfound" data-page="404" data-root="${root}">${header(root, "")}<main class="main nf" id="main"><p class="nf-code">404</p><h1>This page is not in the core sample.</h1><p class="lede">The link may be old, or the page moved. Try search, or start from the overview.</p><p class="nf-actions"><a class="btn btn-primary" href="${root}">Go to the overview</a><a class="btn" href="${root}quickstart/">Open the quickstart</a></p></main>${footer(root)}${SEARCH_DIALOG}<script src="${root}assets/js/site.js?v=${JS_REV}" defer></script></body></html>`;
+  const html = `<!doctype html><html lang="en">${head({ root, title: "Page not found", desc: "This page does not exist.", canonical: `${cfg.url}/404.html`, slug: "404", abs: true })}<body class="docs notfound" data-page="404" data-root="${root}">${header(root, "")}${sidebar(root, "404")}<main class="main nf" id="main"><p class="nf-code">404</p><h1>This page is not in the core sample.</h1><p class="lede">The link may be old, or the page moved. Try search, or start from the overview.</p><p class="nf-actions"><a class="btn btn-primary" href="${root}">Go to the overview</a><a class="btn" href="${root}quickstart/">Open the quickstart</a></p></main>${footer(root)}${SEARCH_DIALOG}<script src="${root}assets/js/site.js?v=${JS_REV}" defer></script></body></html>`;
   return { path: join(SITE, "404.html"), html };
 }
 

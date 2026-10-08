@@ -7,6 +7,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 ## [Unreleased]
 
 ### Added
+- Public chart README, NOTES, and a permissive values schema. Issue forms, CodeQL, labeler, and zizmor workflows. Contributor install no longer pulls the notebook `requirements.txt`.
 - Open-source license metadata: `LICENSE` (Apache-2.0) at repo root, README license badge
   corrected from the `TBD` to Apache-2.0.
 - `SECURITY.md` with GitHub Security Advisory routing and supported-versions table.
@@ -38,5 +39,5 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 Pre-release history predates this changelog. See `git log` for the full commit history.
 
-[Unreleased]: https://github.com/tech-pw/cryo/compare/main...HEAD
-[0.0.0]: https://github.com/tech-pw/cryo/releases/tag/v0.0.0
+[Unreleased]: https://github.com/tech-pw/cryo/blob/main/CHANGELOG.md
+[0.0.0]: https://github.com/tech-pw/cryo/blob/main/CHANGELOG.md

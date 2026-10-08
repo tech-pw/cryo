@@ -1,0 +1,21 @@
+backend:
+  - changed-files:
+      - any-glob-to-any-file: cryo/**/*
+frontend:
+  - changed-files:
+      - any-glob-to-any-file: web/**/*
+engine-go:
+  - changed-files:
+      - any-glob-to-any-file: engine-go/**/*
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**/*
+          - site/**/*
+          - "**/*.md"
+helm:
+  - changed-files:
+      - any-glob-to-any-file: deploy/helm/**/*
+ci:
+  - changed-files:
+      - any-glob-to-any-file: .github/**/*

@@ -12,6 +12,7 @@ import (
 	"github.com/apache/iceberg-go/table"
 	"github.com/apache/iceberg-go/utils"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 
 	_ "github.com/apache/iceberg-go/catalog/hive"
@@ -136,20 +137,22 @@ func loadCatalogWithRetry(
 func WithSourceAWSConfig(ctx context.Context, req *protocol.ExecuteRequest) context.Context {
 	accessKey := firstNonEmpty(deref(req.S3AccessKey), req.CatalogProperties["s3.access-key-id"])
 	secretKey := firstNonEmpty(deref(req.S3SecretKey), req.CatalogProperties["s3.secret-access-key"])
+	region := sourceRegion(req)
 	if accessKey == "" || secretKey == "" {
-		return ctx
+		if region == "" {
+			return ctx
+		}
+		cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+		if err != nil {
+			return ctx
+		}
+		return utils.WithAwsConfig(ctx, &cfg)
 	}
 	sessionToken := req.CatalogProperties["s3.session-token"]
 
 	cfg := aws.Config{
 		Credentials: credentials.NewStaticCredentialsProvider(accessKey, secretKey, sessionToken),
-	}
-	if region := firstNonEmpty(
-		req.CatalogProperties["s3.region"],
-		os.Getenv("AWS_REGION"),
-		os.Getenv("AWS_DEFAULT_REGION"),
-	); region != "" {
-		cfg.Region = region
+		Region:      firstNonEmpty(region, "us-east-1"),
 	}
 	if endpoint := firstNonEmpty(deref(req.S3Endpoint), req.CatalogProperties["s3.endpoint"]); endpoint != "" {
 		// The commit write path has no s3.endpoint in table properties; gocloud falls back to
@@ -157,6 +160,16 @@ func WithSourceAWSConfig(ctx context.Context, req *protocol.ExecuteRequest) cont
 		_ = os.Setenv("AWS_S3_ENDPOINT", endpoint)
 	}
 	return utils.WithAwsConfig(ctx, &cfg)
+}
+
+func sourceRegion(req *protocol.ExecuteRequest) string {
+	return firstNonEmpty(
+		req.CatalogProperties["s3.region"],
+		req.CatalogProperties["glue.region"],
+		req.CatalogProperties["client.region"],
+		os.Getenv("AWS_REGION"),
+		os.Getenv("AWS_DEFAULT_REGION"),
+	)
 }
 
 func deref(value *string) string {

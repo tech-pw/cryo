@@ -67,6 +67,8 @@
         var t = d.t.toLowerCase(),
             h = d.h.toLowerCase(),
             x = d.x.toLowerCase(),
+            g = (d.g || "").toLowerCase(),
+            k = (d.k || "").toLowerCase(),
             s = 0;
         for (var i = 0; i < terms.length; i++) {
             var q = terms[i],
@@ -74,6 +76,8 @@
             if (h.indexOf(q) === 0) hit = 12;
             else if (h.indexOf(q) > -1) hit = 9;
             else if (t.indexOf(q) > -1) hit = 6;
+            else if (g.indexOf(q) > -1) hit = 5;
+            else if (k.indexOf(q) > -1) hit = 4;
             else if (x.indexOf(q) > -1) hit = 3;
             if (!hit) return 0;
             s += hit;

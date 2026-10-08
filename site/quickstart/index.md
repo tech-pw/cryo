@@ -1,46 +1,46 @@
 ---
 title: Quickstart
-description: Install Cryo locally with Docker. Clone, start the stack, seed demo Iceberg tables and open the UI in about five minutes.
+description: Clone Cryo and start the local stack. Migrations run. The UI does not show a graded lake until you add a source and scan.
 canonical: https://tech-pw.github.io/cryo/quickstart/
 updated: 2026-10-06
 ---
 
 # Quickstart
 
-Run a local lake with deliberate maintenance problems, then watch Cryo scan it, grade it and plan the work.
+Start the local control plane. The UI comes up empty. Screenshots on this site are synthetic demo data, not the result of these commands.
 
 Before you start
 
-You need Docker, Python 3.12 or newer, and Node 22 or newer. The local stack is a demo lake. It is not the production topology.
+You need Docker, Python 3.12 or newer, Node 22 or newer, and curl. This is a local control plane, not the production topology. The repository is private until the public flip, so this clone is not an anonymous download.
 
 ## Install and start
 
 ### Clone the repository
 
-The default branch is stable. You are in the repo when the next prompt is inside `Cryo/`.
+The clone directory is `cryo`, lowercase.
 
 **terminal**
 
 ```
 $ git clone https://github.com/tech-pw/cryo.git
-$ cd Cryo
+$ cd cryo
 ```
 
 ### Start the local stack
 
-This starts the API, the web UI, PostgreSQL, Redis and a demo Trino. The stack is up when the API and PostgreSQL report healthy.
+`./start-local.sh start` creates the venv, starts Postgres, Redis, and the local datalake, runs Alembic, and starts the API and UI on the host. `make up` only starts containers. It does not migrate. `/healthz` does not touch Postgres.
 
 **terminal**
 
 ```
-$ make up
+$ ./start-local.sh start
 ```
 
-Done when `docker compose ps` shows the API and PostgreSQL as `healthy`.
+Done when the script prints a dev sign-in role. The UI is empty. No preset is marked default, so a later scan does not schedule maintenance until you assign one.
 
 ### Seed demo tables
 
-This creates five Iceberg tables in the local REST catalog: small files, stale manifests and expirable snapshots, so there is something to find.
+Optional. This writes five small tables (`rest.demo.customers`, `products`, `orders`, `order_items`, `shipments`). It does not create small files, stale manifests, or expirable snapshots, and it does not register a Cryo source or scan. It needs host PySpark, which `make install` does not install.
 
 **terminal**
 
@@ -48,7 +48,7 @@ This creates five Iceberg tables in the local REST catalog: small files, stale m
 $ make seed
 ```
 
-Done when the log prints `Created rest.demo.customers`, `products`, `orders`, `order_items` and `shipments`.
+Done when the log prints those five table names. The dashboard still does not show them until a source exists and a scan runs.
 
 - [http://localhost:5173](http://localhost:5173): Open the UI
 
@@ -70,11 +70,11 @@ Text description
 
 ## What to try first
 
-- **Home** shows the whole lake: how many tables sit at each grade, and how much storage maintenance could reclaim.
+- **Home** is empty until a scan has stored grades. The screenshots below are synthetic demo data, not this quickstart.
 
-- Open **Tables**. The seeded tables already show a health grade and their small-file counts.
+- Open **Tables** after you add a source and run a scan. `make seed` alone does not put rows here.
 
-- Open **Runs**. The scheduler queues jobs for tables that need work, and the governor admits them as the demo Trino has headroom.
+- Open **Runs** after a preset is assigned. Nothing in this quickstart enqueues maintenance.
 
 - Open any run to see its jobs and receipts: operation, engine, status and duration.
 

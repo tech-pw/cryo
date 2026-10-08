@@ -45,7 +45,45 @@ def _resolve_catalog_impl(value: str) -> str:
     return _CATALOG_IMPL_SHORTHAND.get(value.strip().lower(), value)
 
 
-def _repair_missing_files(spark: SparkSession, table_ref: str, *, dry_run: bool) -> int:
+def _repair_s3_client(
+    *,
+    endpoint: str | None = None,
+    path_style: bool = False,
+) -> Any:
+    """S3 client for repair HEAD checks. A custom endpoint is not AWS."""
+    import os
+
+    import boto3
+    from botocore.config import Config
+
+    endpoint_url = endpoint or os.environ.get("AWS_S3_ENDPOINT") or os.environ.get("S3_ENDPOINT")
+    style = path_style or os.environ.get("S3_PATH_STYLE_ACCESS", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if endpoint_url and endpoint_url.startswith("http://"):
+        style = True
+    if endpoint_url:
+        # R2 and some Ceph gateways reject AWS default checksums.
+        os.environ.setdefault("AWS_REQUEST_CHECKSUM_CALCULATION", "when_required")
+        os.environ.setdefault("AWS_RESPONSE_CHECKSUM_VALIDATION", "when_required")
+    kwargs: dict[str, Any] = {}
+    if endpoint_url:
+        kwargs["endpoint_url"] = endpoint_url
+    if style:
+        kwargs["config"] = Config(s3={"addressing_style": "path"})
+    return boto3.client("s3", **kwargs)
+
+
+def _repair_missing_files(
+    spark: SparkSession,
+    table_ref: str,
+    *,
+    dry_run: bool,
+    s3_endpoint: str | None = None,
+    s3_path_style: bool = False,
+) -> int:
     """Remove manifest entries whose data file no longer exists in storage.
 
     rewrite_manifests does NOT do this -- it only reorganizes manifest pointer files,
@@ -57,7 +95,6 @@ def _repair_missing_files(spark: SparkSession, table_ref: str, *, dry_run: bool)
     and for confirmed-missing paths only, commits a DeleteFiles transaction that drops
     just those entries. Never touches a path it hasn't itself verified is gone.
     """
-    import boto3
     from urllib.parse import urlparse
 
     print(f"[cryo] Listing current data files for {table_ref} via metadata table...")
@@ -66,7 +103,7 @@ def _repair_missing_files(spark: SparkSession, table_ref: str, *, dry_run: bool)
     ]
     print(f"[cryo] {len(paths)} data files in current snapshot")
 
-    s3 = boto3.client("s3")
+    s3 = _repair_s3_client(endpoint=s3_endpoint, path_style=s3_path_style)
     missing: list[str] = []
     for path in paths:
         parsed = urlparse(path.replace("s3a://", "s3://").replace("s3n://", "s3://"))
@@ -466,6 +503,11 @@ def main() -> int | NoReturn:
     parser.add_argument("--catalog-uri", default=None, help="REST/Hive/JDBC catalog URI")
     parser.add_argument("--catalog-warehouse", default=None, help="Warehouse location")
     parser.add_argument("--s3-endpoint", default=None, help="S3-compatible endpoint (MinIO, etc.)")
+    parser.add_argument(
+        "--s3-path-style",
+        action="store_true",
+        help="Use path-style S3 addressing (required by MinIO and some Ceph gateways)",
+    )
     args = parser.parse_args()
 
     if args.repair_missing_files:
@@ -515,6 +557,10 @@ def main() -> int | NoReturn:
             )
     if args.s3_endpoint:
         builder = builder.config(f"spark.sql.catalog.{args.catalog}.s3.endpoint", args.s3_endpoint)
+        builder = builder.config(
+            f"spark.sql.catalog.{args.catalog}.s3.path-style-access",
+            "true" if args.s3_path_style or args.s3_endpoint.startswith("http://") else "false",
+        )
     # Hive metastore catalogs need Hive support enabled; harmless no-op for REST/Glue/JDBC.
     if _resolve_catalog_impl(args.catalog_impl) == _CATALOG_IMPL_SHORTHAND["hive"]:
         builder = builder.enableHiveSupport()
@@ -524,7 +570,13 @@ def main() -> int | NoReturn:
 
     try:
         if args.repair_missing_files:
-            return _repair_missing_files(spark, args.table, dry_run=not args.commit)
+            return _repair_missing_files(
+                spark,
+                args.table,
+                dry_run=not args.commit,
+                s3_endpoint=args.s3_endpoint,
+                s3_path_style=args.s3_path_style,
+            )
         if args.manifest:
             # Result lines are parsed from the pod log; INFO-level Spark chatter would push
             # them past the kubelet's log rotation on a long lane.

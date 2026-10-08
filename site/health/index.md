@@ -11,7 +11,7 @@ The scanner grades a table from stored metadata. It does not scan data files on 
 
 ## Grades
 
-Every table starts at 100 points and loses points for each problem the scan finds. The grade is the letter for the final score. At fleet level the headline is the median grade, weighted by table size.
+Every table starts at 100 points and loses points for each problem the scan finds. The grade is the letter for the final score. The home chart counts tables per grade. It is not a size-weighted median. UI words map to letters: A Excellent, B Good, C Fair, D Poor, F Critical.
 
 | Grade | Score |
 | --- | --- |
@@ -43,11 +43,11 @@ Worked example: how a table reaches 64.
 
 | Start |  | 100 |
 
-| Small-file warning | −8 | 92 |
+| Small-file fragmentation (warning) | −8 | 92 |
 
-| Missing-statistics warning | −8 | 84 |
+| Manifest files bloat (warning) | −8 | 84 |
 
-| Stale-manifest critical | −20 | 64 |
+| Position delete file buildup (critical) | −20 | 64 |
 
 | Final score and grade |  | **C** 64 |
 
@@ -98,7 +98,7 @@ A modelled saving is not shown as money anywhere in Cryo or on this site. Projec
 
 ## Where to go next
 
-MaintenanceThe fixed order that turns a low grade back into a high one.How Cryo fitsWhy the scan path never touches a data file.ArchitectureWhere the scanner and cost estimator sit in the running system.ReferenceHow Cryo's health grading compares with adjacent tools.
+MaintenanceThe fixed operation order. It does not clear every cause of a low grade, including format upgrades, streaming velocity, property settings, and partition skew.How Cryo fitsWhy the scan path never touches a data file.ArchitectureWhere the scanner and cost estimator sit in the running system.ReferenceHow Cryo's health grading compares with adjacent tools.
 
 Source: https://tech-pw.github.io/cryo/health/
 Markdown: https://tech-pw.github.io/cryo/health/index.md

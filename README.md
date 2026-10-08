@@ -1,6 +1,6 @@
 # Cryo
 
-**Self-hosted Apache Iceberg maintenance and health platform.**
+**Open-source, self-hosted Apache Iceberg lakehouse maintenance and health platform.**
 
 Cryo scans every table in your lake, grades it A–F, tells you exactly what maintenance will cost
 and save, and lets you run that maintenance — on Trino or Spark, from a UI or an API — without
@@ -55,7 +55,7 @@ against.
 | | Cryo | DIY (Airflow + dbt) | Apache Amoro | LakeOps | Granica Crunch | Managed cloud (Databricks / S3 Tables / Snowflake) |
 |---|---|---|---|---|---|---|
 | Deployment | Self-hosted (Kubernetes) | Self-hosted, hand-rolled | Self-hosted | SaaS | SaaS, hybrid, or on-prem/air-gapped | Fully managed |
-| Engines | Trino **and** Spark/EMR | Whatever you wired up | Flink/Spark, Mixed-Iceberg | Own Rust engine + telemetry from Trino/Spark/Snowflake/DuckDB/Flink | Own engine; coexists with Trino/Spark/Airflow/dbt | Locked to the platform |
+| Engines | Trino, Spark/EMR, and a beta native Go compactor | Whatever you wired up | Flink/Spark, Mixed-Iceberg | Own Rust engine + telemetry from Trino/Spark/Snowflake/DuckDB/Flink | Own engine; coexists with Trino/Spark/Airflow/dbt | Locked to the platform |
 | Table formats | Iceberg | Whatever you wired up | Iceberg, Mixed-Iceberg | Iceberg, Delta | Iceberg, Delta, Hive | Varies by platform |
 | Maintenance ops (compaction, snapshot expiry, orphan cleanup) | Yes | Only if you built it | Yes | Yes | Yes | Yes |
 | Sorting / curve clustering | Sort + Z-order (Spark only; Hilbert capability-gated) | Only if you built it | Sort + Z-order | Yes | Sort, Z-order, Hilbert | Varies by platform |
@@ -109,9 +109,9 @@ come with a reproducible public benchmark; Cryo's inputs are published as
   submit jobs to a cluster (see `cryo/engines/flink/engine.py` module docstring).
 - **Teams wanting a zero-config managed product.** This is a thing you operate — Kubernetes,
   Postgres, Redis, an Iceberg catalog — not a SaaS you sign up for.
-- **Anyone needing the native Rust engine for production.** It's experimental, off by default,
-   and not exercised by CI (see [`architecture.md` §1.5](./docs/architecture.md) and
-   `cryo/engines/native/engine.py`). Use Trino or Spark.
+- **Anyone needing an unattended native compactor.** The default native path is Go
+  (`engine-go/`, `CRYO_ENGINE_IMPL=go`) and is beta. The Rust trees are not the default.
+  Use Trino or Spark unless native Go is explicitly configured.
 - **Heavy "advanced" / AI / FinOps / tiering / anomaly dashboards out of the box.** These are
   partially implemented and become useful only once query-log ingestion is enabled (`Settings`
   → `telemetry_*`). Until then, expect empty charts, not broken ones.
@@ -119,10 +119,12 @@ come with a reproducible public benchmark; Cryo's inputs are published as
 ## Features
 
 ### Maintenance
-- **Sources (read)** connect Iceberg catalogs — REST, Hive Metastore, or Glue — and discover
-  tables via PyIceberg, configured independently of write engines.
-- **Destinations (write)** submit maintenance to **Trino** or **Spark on EMR**, each with its own
-  SQL renderer. The planner itself emits no SQL — it stays engine-agnostic.
+- **Sources (read)** connect Iceberg catalogs — REST, Hive Metastore, Glue, Apache Polaris, and
+  Project Nessie — and discover tables via PyIceberg, configured independently of write engines.
+  Unity Catalog and JDBC are rejected.
+- **Destinations (write)** submit maintenance to **Trino**, **Spark on EMR**, or the **native Go**
+  compactor when it is enabled. Flink generates a config and does not submit a job. Each SQL
+  engine has its own renderer. The planner itself emits no SQL.
 - **Planner** walks pre-computed scan data (no live `$files` reads on hot paths), GB-budgets
   chunks, caps partitions-per-chunk to avoid Trino `FilterNode` blowups, and applies cooldowns,
   off-peak windows, adaptive budgets, and deadlines.
@@ -155,8 +157,11 @@ come with a reproducible public benchmark; Cryo's inputs are published as
   `consecutive_scan_failures` streak and last error tracked per table.
 - **Audit log** captures every action: table, action, status, detail, engine, duration, file
   counts, actor.
-- **Auth** is JWT-based with optional RS256 OIDC, ABAC enforcement, and per-tenant isolation.
-  Every API route is wired to a role decorator (`viewer` / `operator` / `admin` / `editor`).
+- **Auth** is a signed JWT. Code roles are `evidence_collector`, `viewer`, `operator`, and
+  `admin`. `editor` is an alias of `operator`. The chart default `CRYO_ENVIRONMENT=dev` leaves
+  `POST /api/v1/auth/token` open, which self-issues a role with no identity check. Production
+  must set `prod`, leave the dev token off, and configure OIDC before the API is reachable.
+  OIDC does not close the dev token by itself.
 
 ## Status (read this before adopting)
 
@@ -173,22 +178,27 @@ production-readiness reasoning backing this `v0.x` floor, see
 
 ## Quick start
 
-Requires Docker, Python 3.12+, and Node 22+.
+Requires Docker, Python 3.12+, Node 22+, and curl. The UI comes up empty. `make seed` writes five
+small Iceberg tables and does not register a source, scan, or enqueue maintenance.
 
 ```bash
 git clone https://github.com/tech-pw/cryo.git
 cd cryo
-
-make up      # Postgres, Redis, MinIO, Iceberg REST/HMS catalogs, Trino, Cryo API + web
-make seed    # create demo Iceberg tables with intentional maintenance issues
+./start-local.sh start
 ```
 
-Open **http://localhost:5173**, sign in with any username (dev auth issues a JWT locally; real
-deployments wire up OIDC — see [`docs/operator-guide.md`](./docs/operator-guide.md)), and you'll land on
-the datalake health dashboard for the tables `make seed` just created.
+Open **http://localhost:5173**. Dev sign-in is a role (`viewer`, `operator`, or `admin`), not an
+arbitrary username, and only after migrations. `./start-local.sh` runs Alembic. `make up` does not.
+Production auth is OIDC with `CRYO_ENVIRONMENT=prod`. See [SECURITY.md](./SECURITY.md).
 
-From there: **Tables** to explore the fleet and filter/assign presets, **Scanner** to trigger a
-scan on demand, **Runs** to watch maintenance execute live.
+Illustrated walkthrough: [quickstart](https://tech-pw.github.io/cryo/quickstart/). Those screenshots
+are synthetic demo data, not the result of `make seed`.
+
+```bash
+curl -s http://localhost:8000/healthz
+```
+
+`/healthz` does not touch Postgres. Signed-in API calls use a bearer JWT. See [`docs/api.md`](./docs/api.md).
 
 ## Architecture
 
@@ -233,12 +243,19 @@ tests" means there is at least one test exercising the core logic of each paper'
 | [`todo.md`](./todo.md) | Phased, checkbox task breakdown (P0–P7) |
 | [`docs/`](./docs/) | Execution plan, recommendations, competitive analysis — start at [`docs/EXECUTION_PLAN.md`](./docs/EXECUTION_PLAN.md). Full index in [`docs/README.md`](./docs/README.md) |
 | [`docs/local-docker-compose.md`](./docs/local-docker-compose.md) | Three-file Compose layout (Cryo / dev datalake / observability) |
+| [`CHANGELOG.md`](./CHANGELOG.md) | Release notes. The only version heading today is `0.0.0` |
+| [`SECURITY.md`](./SECURITY.md) | Disclosure. No mailbox. Advisory form 404s while the repo is private |
+| [`docs/CAPABILITIES.md`](./docs/CAPABILITIES.md) | Catalog, engine, and operation matrix |
+| [`docs/operator-guide.md`](./docs/operator-guide.md) | Local operator notes. Not an OIDC runbook |
 | [`docs/SUPPORT_POLICY.md`](./docs/SUPPORT_POLICY.md) | Supported releases, triage severity, channels, and safe diagnostic bundle |
+| [`docs/VERSIONING.md`](./docs/VERSIONING.md) | What pre-1.0 does and does not promise |
 | [`docs/EXTERNAL_EVIDENCE_ATTESTATION.md`](./docs/EXTERNAL_EVIDENCE_ATTESTATION.md) | Signed external gate evidence and release-dossier trust boundary |
 | [`docs/ECOSYSTEM_CONNECTORS.md`](./docs/ECOSYSTEM_CONNECTORS.md) | Versioned ecosystem source/engine conformance contract |
 | [`docs/RATING_2026.md`](./docs/RATING_2026.md) | 2026-07-07 deep rating of the codebase across 25 attributes (UI / a11y / usability / engineering / experience) |
 
 ## Tech stack
+
+This repo is three trees: Python `cryo/`, Go `engine-go/` (default native compactor), and TypeScript `web/`.
 
 - **Backend** — Python 3.12, FastAPI, SQLAlchemy 2.0 + Alembic (PostgreSQL + pgvector),
   PyIceberg, trino-python-client, boto3 (EMR Serverless), Redis, structlog.
@@ -262,7 +279,7 @@ make down                # stop full local stack
 make seed                # create demo Iceberg tables (scripts/)
 
 # Backend
-make install             # uv/pip install -e .[dev]
+make install             # python3.12 -m pip install -e ".[dev]"
 make migrate             # alembic upgrade head
 make scan                # run scanner once against the local source
 make api                 # run FastAPI (uvicorn) locally
@@ -292,11 +309,8 @@ Service endpoints once `make up` is running:
 | Postgres | localhost:5432 (`cryo` / `cryo` / `cryo`) |
 | Grafana | http://localhost:3000 (admin / admin) |
 
-```bash
-# Query the demo lake directly
-docker exec -it cryo-trino trino --execute "SHOW SCHEMAS FROM iceberg"
-docker exec -it cryo-trino trino --execute "SELECT * FROM iceberg.demo.customers"
-```
+`iceberg.demo.customers` exists only after a successful `make seed`. That target needs host
+PySpark, which `make install` does not provide. Do not treat the query as part of quick start.
 
 ## Contributing
 

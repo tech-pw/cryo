@@ -52,6 +52,21 @@ issues (after triage, not before):
 - Theoretical concerns without a reproducible attack path — open an Issue for discussion.
 - Reports about scan noise, false positives, or alert spam.
 
+## Dev token and the platform key
+
+`POST /api/v1/auth/token` self-issues `viewer`, `operator`, or `admin` with no identity check
+while the dev token is on. That route stays on unless `CRYO_ENVIRONMENT=prod`. Configuring OIDC
+does not turn it off. `CRYO_ALLOW_DEV_TOKEN_IN_PROD` reopens it on `environment=prod`.
+
+The chart default is `CRYO_ENVIRONMENT: dev`. A default `helm install` is not an OIDC install.
+A public install must set `prod`, leave the dev-token override false, and set an issuer before
+the API is reachable.
+
+`CRYO_SECRET_KEY` defaults to `dev-only-change-me` when unset. HS256 API tokens fall back to that
+key. A deployment that omits the secret accepts tokens signed with the published default.
+
+Issued tokens expire in 24 hours. There is no published revocation list.
+
 ## Cryptography
 
 Cryo uses [Fernet][fernet] (AES-128-CBC + HMAC-SHA256) from the `cryptography` library for
