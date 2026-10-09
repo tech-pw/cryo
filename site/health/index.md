@@ -26,11 +26,7 @@ Every table starts at 100 points and loses points for each problem the scan find
 
 | **F** | Below 40 |
 
-The home screen rolls those grades up across the lake, so you can see at a glance how many tables need work and how much storage maintenance could give back.
-
-cryo.local/
-
-*Lake health on the home screen. Each slice is a grade; the panel on the right is Cryo's own platform health, not a table grade.*
+The home screen rolls those grades up across the lake, so you can see at a glance how many tables need work and how much storage maintenance could give back. The [quickstart](https://tech-pw.github.io/cryo/quickstart/#next) shows that screen after the first scan of the seeded lake.
 
 ## Deductions
 

@@ -164,13 +164,25 @@ $ ./start-local.sh start
 
 [Open the quickstart](https://tech-pw.github.io/cryo/quickstart/)
 
-## Built at Physics Wallah, by the Data Platform team.
+Thirty seconds
 
-- 01 Name to come Data Platform, Physics Wallah
+## Compaction. Visibility. Cost control.
 
-- 02 Name to come Data Platform, Physics Wallah
+0:00
 
-- 03 Name to come Data Platform, Physics Wallah
+0:30
+
+*Sound is on. The lines on screen stand alone if you mute it.*
+
+## Built & run by engineers at *Physics Wallah*
+
+The same people who keep the lake write the tool that maintains it.
+
+- 01 Name to come Data Platform
+
+- 02 Name to come Data Platform
+
+- 03 Name to come Data Platform
 
 Source: https://tech-pw.github.io/cryo/
 Markdown: https://tech-pw.github.io/cryo/index.md

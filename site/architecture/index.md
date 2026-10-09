@@ -132,11 +132,7 @@ Text description
 
 - Running to Failed (recorded)
 
-The run view groups jobs by how they ended. This one shows 9 jobs: 8 completed, 1 failed and 1 skipped. The failed job stays on its table.
-
-cryo.local/runs/7f3c9a21
-
-*Seeded demo lake, not a production fleet. The failed job is isolated to its table.*
+The run view groups jobs by how they ended. The [seeded demo run](https://tech-pw.github.io/cryo/maintenance/#canonical-order) shows 9 jobs: 8 completed, 1 failed and 1 skipped, and the failed job stays on its table.
 
 ## Assignment
 

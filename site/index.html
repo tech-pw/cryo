@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cryo: Apache Iceberg maintenance, with receipts</title><meta name="description" content="Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. It reads your catalogs, plans maintenance, admits the work to Trino or Spark, and leaves a receipt for every decision."><link rel="canonical" href="https://tech-pw.github.io/cryo/"><link rel="alternate" type="text/markdown" href="./index.md" title="Markdown version"><meta name="theme-color" content="#F5FAFD" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0F16" media="(prefers-color-scheme: dark)"><meta property="og:type" content="website"><meta property="og:site_name" content="Cryo"><meta property="og:title" content="Cryo: Apache Iceberg maintenance, with receipts"><meta property="og:description" content="Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. It reads your catalogs, plans maintenance, admits the work to Trino or Spark, and leaves a receipt for every decision."><meta property="og:url" content="https://tech-pw.github.io/cryo/"><meta property="og:image" content="https://tech-pw.github.io/cryo/assets/img/og.png"><meta name="twitter:card" content="summary_large_image"><link rel="icon" href="./assets/svg/favicon.svg" type="image/svg+xml"><link rel="preload" href="./assets/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="./assets/fonts/ibm-plex-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin><script>(function(){try{var t=localStorage.getItem("cryo-site-theme");if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}})()</script><link rel="stylesheet" href="./assets/css/site.css?v=7bdaea7e87"></head><body class="home-page" data-page="home" data-root="./"><a class="skip" href="#main">Skip to content</a><header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><a class="logo" href="./" aria-label="Cryo home"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 512 512" aria-hidden="true"><g transform="translate(0 -10)">
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cryo: Apache Iceberg maintenance, with receipts</title><meta name="description" content="Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. It reads your catalogs, plans maintenance, admits the work to Trino or Spark, and leaves a receipt for every decision."><link rel="canonical" href="https://tech-pw.github.io/cryo/"><link rel="alternate" type="text/markdown" href="./index.md" title="Markdown version"><meta name="theme-color" content="#F5FAFD" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0F16" media="(prefers-color-scheme: dark)"><meta property="og:type" content="website"><meta property="og:site_name" content="Cryo"><meta property="og:title" content="Cryo: Apache Iceberg maintenance, with receipts"><meta property="og:description" content="Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. It reads your catalogs, plans maintenance, admits the work to Trino or Spark, and leaves a receipt for every decision."><meta property="og:url" content="https://tech-pw.github.io/cryo/"><meta property="og:image" content="https://tech-pw.github.io/cryo/assets/img/og.png"><meta name="twitter:card" content="summary_large_image"><link rel="icon" href="./assets/svg/favicon.svg" type="image/svg+xml"><link rel="preload" href="./assets/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="./assets/fonts/ibm-plex-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin><script>(function(){try{var t=localStorage.getItem("cryo-site-theme");if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}})()</script><link rel="stylesheet" href="./assets/css/site.css?v=3054692113"></head><body class="home-page" data-page="home" data-root="./"><a class="skip" href="#main">Skip to content</a><header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><a class="logo" href="./" aria-label="Cryo home"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 512 512" aria-hidden="true"><g transform="translate(0 -10)">
     <g stroke-width="1" stroke-linejoin="round">
       <path d="M92 206 L268 206 L186 300 L104 262 Z" fill="#3A8FD2" stroke="#3A8FD2"/>
       <path d="M268 206 L262 340 L186 300 Z" fill="#277ABE" stroke="#277ABE"/>
@@ -513,26 +513,60 @@ FIRST VIEWPORT: Type-first hero, tally, actions, stack. No product graphic.
     </div>
 </section>
 
-<section class="sect reveal" aria-labelledby="contributors">
+<section class="sect film-close reveal" aria-labelledby="watch">
     <div class="wrap">
-        <h2 id="contributors">Built at Physics&nbsp;Wallah, by the Data Platform team.<a class="anchor" href="#contributors" aria-label="Link to Built at Physics Wallah, by the Data Platform team.">#</a></h2>
-        <ul class="contributors">
-            <li>
-                <span class="contrib-mark" aria-hidden="true">01</span>
-                <span class="contrib-name">Name to come</span>
-                <span class="contrib-role">Data Platform, Physics Wallah</span>
-            </li>
-            <li>
-                <span class="contrib-mark" aria-hidden="true">02</span>
-                <span class="contrib-name">Name to come</span>
-                <span class="contrib-role">Data Platform, Physics Wallah</span>
-            </li>
-            <li>
-                <span class="contrib-mark" aria-hidden="true">03</span>
-                <span class="contrib-name">Name to come</span>
-                <span class="contrib-role">Data Platform, Physics Wallah</span>
-            </li>
-        </ul>
+        <p class="eyebrow">Thirty seconds</p>
+        <h2 id="watch">Compaction. Visibility. Cost&nbsp;control.<a class="anchor" href="#watch" aria-label="Link to Compaction. Visibility. Cost control.">#</a></h2>
+        <figure class="film">
+            <div class="film-stage">
+                <video playsinline preload="metadata" controlslist="nodownload nofullscreen noremoteplayback" disablepictureinpicture disableremoteplayback width="1920" height="1080" poster="assets/video/homepage-intro-video-poster.jpg" aria-label="Cryo in 30 seconds: read, plan, admit, receipt">
+                    <source src="assets/video/homepage-intro-video.mp4" type="video/mp4">
+                </video>
+                <button class="film-play" type="button" aria-label="Play">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7.2v9.6L17 12 9 7.2z"/></svg>
+                </button>
+                <div class="film-bar">
+                    <button class="film-toggle" type="button" aria-label="Play">
+                        <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7.2v9.6L17 12 9 7.2z"/></svg>
+                        <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 7h2.4v10H8.5V7zm4.6 0h2.4v10h-2.4V7z"/></svg>
+                    </button>
+                    <span class="film-time">0:00</span>
+                    <input class="film-scrub" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek" aria-valuemin="0" aria-valuemax="30" aria-valuenow="0" aria-valuetext="0:00">
+                    <span class="film-dur">0:30</span>
+                    <button class="film-mute" type="button" aria-label="Mute" aria-pressed="false">
+                        <svg class="i-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.2L11 6.2v11.6L7.2 14.5H4v-5zm9.2-2.3 1.3 1.3a3.2 3.2 0 0 1 0 4.5l-1.3 1.3a5 5 0 0 0 0-7.1zm2.4-2.4 1.3 1.3a6.6 6.6 0 0 1 0 9.3l-1.3 1.3a8.4 8.4 0 0 0 0-11.9z"/></svg>
+                        <svg class="i-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.2L11 6.2v11.6L7.2 14.5H4v-5zm11.2-1.7 1.4 1.4 1.4-1.4 1.1 1.1-1.4 1.4 1.4 1.4-1.1 1.1-1.4-1.4-1.4 1.4-1.1-1.1 1.4-1.4-1.4-1.4 1.1-1.1z"/></svg>
+                    </button>
+                </div>
+            </div>
+            <figcaption>Sound is on. The lines on screen stand alone if you mute it.</figcaption>
+        </figure>
+    </div>
+</section>
+
+<section class="sect credit reveal" aria-labelledby="contributors">
+    <div class="wrap">
+        <div class="credit-plate">
+            <h2 id="contributors">Built &amp; run<br> by engineers at<br> <em>Physics&nbsp;Wallah</em><a class="anchor" href="#contributors" aria-label="Link to Built &amp; run by engineers at Physics Wallah">#</a></h2>
+            <p class="credit-note">The same people who keep the lake write the tool that maintains it.</p>
+            <ol class="contributors">
+                <li>
+                    <span class="contrib-mark" aria-hidden="true">01</span>
+                    <span class="contrib-name">Name to come</span>
+                    <span class="contrib-role">Data Platform</span>
+                </li>
+                <li>
+                    <span class="contrib-mark" aria-hidden="true">02</span>
+                    <span class="contrib-name">Name to come</span>
+                    <span class="contrib-role">Data Platform</span>
+                </li>
+                <li>
+                    <span class="contrib-mark" aria-hidden="true">03</span>
+                    <span class="contrib-name">Name to come</span>
+                    <span class="contrib-role">Data Platform</span>
+                </li>
+            </ol>
+        </div>
     </div>
 </section></main><footer class="foot"><div class="foot-in"><div class="foot-brand"><a class="logo" href="./"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 512 512" aria-hidden="true"><g transform="translate(0 -10)">
     <g stroke-width="1" stroke-linejoin="round">
@@ -556,4 +590,4 @@ FIRST VIEWPORT: Type-first hero, tally, actions, stack. No product graphic.
     <path d="M64 202 Q256 188 448 202 Q256 216 64 202 Z" fill="#68C1EA"/>
     <path transform="translate(285 212) rotate(22)" fill="#0B0F16"
       d="M26 -54.1 A60 60 0 0 1 23 55.4 L20 205 A20 20 0 0 1 -20 205 L-23 55.4 A60 60 0 0 1 -26 -54.1 L-26 -11 Q-26 -3 -18 -3 L18 -3 Q26 -3 26 -11 Z"/>
-  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><p>Apache-2.0, self-hosted Iceberg maintenance with a receipt for every decision.</p></div><div><p class="foot-h">Docs</p><ul><li><a href="./quickstart/">Quickstart</a></li><li><a href="./concepts/">Concepts</a></li><li><a href="./architecture/">Architecture</a></li><li><a href="./reference/">Reference</a></li></ul></div><div><p class="foot-h">Operate</p><ul><li><a href="./maintenance/">Maintenance</a></li><li><a href="./health/">Health and cost</a></li><li><a href="./engines/">Engines</a></li><li><a href="./deployment/">Deployment</a></li></ul></div><div><p class="foot-h">Project</p><ul><li><a href="https://github.com/tech-pw/cryo">GitHub</a></li><li><a href="https://github.com/tech-pw/cryo/issues">Issues</a></li><li><a href="./llms.txt">llms.txt</a></li><li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 licence</a></li></ul></div></div><p class="foot-fine">Apache, Apache Iceberg, Iceberg and Apache Spark are trademarks of The Apache Software Foundation. Other names may be trademarks of their respective owners.</p></footer><dialog class="search" id="search" aria-label="Search the docs"><form method="dialog" class="search-box"><div class="search-field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="search-input" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="search-list"><kbd>Esc</kbd></div><ul class="search-list" id="search-list" role="listbox"></ul><p class="search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to open</span></p></form></dialog><script src="./assets/js/site.js?v=88dc7eb5a2" defer></script></body></html>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><p>Apache-2.0, self-hosted Iceberg maintenance with a receipt for every decision.</p></div><div><p class="foot-h">Docs</p><ul><li><a href="./quickstart/">Quickstart</a></li><li><a href="./concepts/">Concepts</a></li><li><a href="./architecture/">Architecture</a></li><li><a href="./reference/">Reference</a></li></ul></div><div><p class="foot-h">Operate</p><ul><li><a href="./maintenance/">Maintenance</a></li><li><a href="./health/">Health and cost</a></li><li><a href="./engines/">Engines</a></li><li><a href="./deployment/">Deployment</a></li></ul></div><div><p class="foot-h">Project</p><ul><li><a href="https://github.com/tech-pw/cryo">GitHub</a></li><li><a href="https://github.com/tech-pw/cryo/issues">Issues</a></li><li><a href="./llms.txt">llms.txt</a></li><li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 licence</a></li></ul></div></div><p class="foot-fine">Apache, Apache Iceberg, Iceberg and Apache Spark are trademarks of The Apache Software Foundation. Other names may be trademarks of their respective owners.</p></footer><dialog class="search" id="search" aria-label="Search the docs"><form method="dialog" class="search-box"><div class="search-field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="search-input" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="search-list"><kbd>Esc</kbd></div><ul class="search-list" id="search-list" role="listbox"></ul><p class="search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to open</span></p></form></dialog><script src="./assets/js/site.js?v=bced71b664" defer></script></body></html>

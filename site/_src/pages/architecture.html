@@ -19,8 +19,7 @@ updated: 2026-10-06
 <h2 id="job-lifecycle">Job lifecycle</h2>
 <p>Nothing runs until the governor admits the job. A failure stays on that table and the run continues. A deferred job goes back to the queue and is retried when its window opens.</p>
 <diagram name="lifecycle" caption="A job ends as recorded, whether it succeeded, failed or was skipped." />
-<p>The run view groups jobs by how they ended. This one shows 9 jobs: 8 completed, 1 failed and 1 skipped. The failed job stays on its table.</p>
-<screenshot name="run-detail" url="cryo.local/runs/7f3c9a21" alt="A completed maintenance run on the seeded demo lake: 9 jobs, 8 completed, 1 failed, 1 skipped, 38.4 GB freed in 83 minutes. The filter bar shows All, Running, Completed and Failed." caption="Seeded demo lake, not a production fleet. The failed job is isolated to its table." />
+<p>The run view groups jobs by how they ended. The <a href="@/maintenance/#canonical-order">seeded demo run</a> shows 9 jobs: 8 completed, 1 failed and 1 skipped, and the failed job stays on its table.</p>
 
 <h2 id="assignment">Assignment</h2>
 <p>Assigning a preset to many tables sends a filter spec, never a page of table ids. The API resolves the filter, shows a preview, and only then creates the binding.</p>

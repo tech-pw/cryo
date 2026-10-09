@@ -255,7 +255,7 @@
     });
 
     /* ---------- table of contents scrollspy ---------- */
-    var tocLinks = $$(".toc a");
+    var tocLinks = $$(".toc li a");
     if (tocLinks.length) {
         var heads = tocLinks.map(function(a) { return doc.getElementById(a.getAttribute("href").slice(1)); });
         var ticking = false;
@@ -709,6 +709,89 @@
         window.addEventListener("scroll", onScroll, { passive: true });
         onScroll();
     }
+
+    /* ---------- film: page chrome, click the picture to play, pause offscreen ---------- */
+    $$(".film").forEach(function(figure) {
+        var stage = $(".film-stage", figure);
+        var video = $("video", figure);
+        var play = $(".film-play", figure);
+        var toggle = $(".film-toggle", figure);
+        var mute = $(".film-mute", figure);
+        var scrub = $(".film-scrub", figure);
+        var time = $(".film-time", figure);
+        var dur = $(".film-dur", figure);
+        if (!stage || !video || !play || !toggle || !mute || !scrub || !time || !dur) return;
+        video.controls = false;
+
+        var clock = function(s) {
+            s = Math.max(0, Math.floor(s || 0));
+            return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+        };
+        var paint = function() {
+            var length = video.duration || 30;
+            var at = video.currentTime || 0;
+            var playing = !video.paused && !video.ended;
+            stage.classList.toggle("is-playing", playing);
+            stage.classList.toggle("is-muted", video.muted);
+            play.hidden = playing;
+            play.setAttribute("aria-label", video.ended ? "Replay" : "Play");
+            toggle.setAttribute("aria-label", playing ? "Pause" : "Play");
+            mute.setAttribute("aria-label", video.muted ? "Unmute" : "Mute");
+            mute.setAttribute("aria-pressed", String(video.muted));
+            time.textContent = clock(at);
+            dur.textContent = clock(length);
+            scrub.max = "1000";
+            if (document.activeElement !== scrub) scrub.value = String(Math.round((at / length) * 1000));
+            scrub.style.setProperty("--p", ((at / length) * 100) + "%");
+            scrub.setAttribute("aria-valuemax", String(Math.round(length)));
+            scrub.setAttribute("aria-valuenow", String(Math.round(at)));
+            scrub.setAttribute("aria-valuetext", clock(at) + " of " + clock(length));
+        };
+        var start = function() {
+            var pending = video.play();
+            if (pending && pending.catch) pending.catch(function() {});
+        };
+        play.addEventListener("click", function() { if (video.ended) video.currentTime = 0; start(); });
+        toggle.addEventListener("click", function() {
+            if (!video.paused && !video.ended) video.pause();
+            else { if (video.ended) video.currentTime = 0; start(); }
+        });
+        mute.addEventListener("click", function() { video.muted = !video.muted; paint(); });
+        video.addEventListener("click", function() {
+            if (!video.paused && !video.ended) video.pause();
+            else { if (video.ended) video.currentTime = 0; start(); }
+        });
+        scrub.addEventListener("pointerdown", function() { stage.classList.add("is-scrubbing"); });
+        var endScrub = function() { stage.classList.remove("is-scrubbing"); };
+        scrub.addEventListener("pointerup", endScrub);
+        scrub.addEventListener("pointercancel", endScrub);
+        scrub.addEventListener("blur", endScrub);
+        scrub.addEventListener("input", function() {
+            var length = video.duration || 30;
+            video.currentTime = (Number(scrub.value) / 1000) * length;
+            paint();
+        });
+        ["play", "pause", "ended", "timeupdate", "loadedmetadata", "volumechange"].forEach(function(name) {
+            video.addEventListener(name, paint);
+        });
+        stage.addEventListener("keydown", function(e) {
+            if (e.target === scrub) return;
+            if (e.key === " " || e.key === "k") { e.preventDefault(); toggle.click(); }
+            else if (e.key === "m") mute.click();
+            else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                e.preventDefault();
+                video.currentTime = Math.max(0, Math.min(video.duration || 30, video.currentTime + (e.key === "ArrowRight" ? 5 : -5)));
+            }
+        });
+        paint();
+        if (!window.IntersectionObserver) return;
+        new IntersectionObserver(function(es) {
+            es.forEach(function(e) { if (!e.isIntersecting && !video.paused) video.pause(); });
+        }, { threshold: 0.25 }).observe(stage);
+        document.addEventListener("visibilitychange", function() {
+            if (document.hidden && !video.paused) video.pause();
+        });
+    });
 
     /* ---------- home: maintenance flow ---------- */
     var maintenanceFlow = $("[data-maintenance-flow]");
