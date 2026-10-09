@@ -1,0 +1,22 @@
+# Keeps the public tech-pw/cryo GitHub mirror in sync with this repo's main branch.
+# Build/deploy still goes through Jenkins (see Jenkinsfile) -- this pipeline exists only
+# for the OSS mirror and is otherwise unrelated to shipping the app.
+#
+# Runs on a schedule (configure in GitLab > CI/CD > Schedules, targeting main) rather than
+# on every push, since a filter-repo + force-push is expensive and OSS consumers don't need
+# sub-hour freshness. Can also be run manually via "Run pipeline".
+oss-mirror-sync:
+  stage: sync
+  image: python:3.12-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq git curl > /dev/null
+    - pip install --quiet git-filter-repo
+    - curl -sSL https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_8.18.4_linux_x64.tar.gz | tar -xz -C /usr/local/bin gitleaks
+  script:
+    - bash scripts/sync_oss_mirror.sh
+
+stages:
+  - sync

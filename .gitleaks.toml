@@ -34,4 +34,13 @@ regexes = [
   '''GF_SECURITY_ADMIN_PASSWORD:\s*admin''',
   '''POSTGRES_PASSWORD:\s*cryo(?:-dev-password|-test)?''',
   '''postgresql\+psycopg://cryo:cryo@''',
+  # tests/test_assistant_actions.py's Slack-signature test fixture -- literal placeholder,
+  # not a real secret.
+  '''8f742231b10e8888abcd99yyyzzz85a5''',
+]
+
+[[allowlists]]
+description = "Upstream iceberg-go vendored code, not our secrets"
+paths = [
+  '''(?i)(?:^|/)engine-go/third_party/.*''',
 ]
