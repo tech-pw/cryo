@@ -189,19 +189,16 @@ native:
     digest: "sha256:51413648a5aa3bd0008f7d0755e1f4268e3a66fe05bbfd8940872e4eaca0cdef"
   keda:
     enabled: true
-    # Temporary 2026-09-29 mitigation: all 433 active jobs were batch-coordinator owned,
-    # but the deployed scale metric counted them and held 10 idle workers. Keep one for
-    # ad-hoc work. Restore 10 after deploying/testing the pipeline-aware scale metric.
-    maxReplicas: 1
-    # Stopgap maxReplicas: 3 removed 2026-09-10 after the real root cause was found and
-    # fixed: refresh_cost_model_cache() was running inline on every job completion, on
-    # every worker pod (see cryo/worker/worker.py and cryo/cli.py's CostModelRefreshRunner,
-    # digest sha256:25dcfa32, commit 39f8123f) -- confirmed live via kernel-level /proc/1/
-    # smaps_rollup and independently reproduced by OOMKilling a cryo-api pod via one call to
-    # /api/v1/ai/cost-model/evaluate (same code path). Post-fix soak: 12+ min, 0 restarts,
-    # lastState={} on every pod (vs. 40-90s pre-fix, 11-14min on the intermediate partial
-    # fix). Back to the template default (10) -- the earlier maxReplicas: 3 cap was a
-    # concurrency-reduction stopgap that slowed admission throughput fleet-wide, not a fix.
+    # Restored to the template default, 2026-10-09. The 2026-09-29 mitigation (maxReplicas: 1)
+    # was for batch-coordinator-owned jobs inflating the scale metric; _worker_scale_metric
+    # (cryo/cli.py) already excludes MaintenanceRun.summary["pipeline"] == "batch" jobs via a
+    # join on cryo.runs -- confirmed live in the deployed worker image. That fix shipped but
+    # this cap was never reverted, silently pinning the whole worker fleet at 1-2 replicas for
+    # 10 days and throttling admission for every destination that drains through the worker
+    # queue (see _worker_drain_headroom's `workers * worker_dispatch_backlog_per_replica`
+    # allowance in cryo/governor/governor.py) -- confirmed live, 2026-10-09: a 4,489-table
+    # batch stalled at ~0.35 jobs/min with only 2 live worker replicas.
+    maxReplicas: 10
 
 # Enabled 2026-07-29 for a controlled prod test (see cost-driven-autoscaling plan): the
 # always-on 8-replica scannerWorker Deployment is temporarily scaled to 0 for the duration
