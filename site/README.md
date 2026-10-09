@@ -43,6 +43,18 @@ $ make up
 <screenshot name="runs" url="cryo.local/runs" alt="What the image shows, with its numbers." caption="One sentence." />
 ```
 
+The homepage closer is a native `<video>` in `site/_src/pages/index.html`, not a component. It plays
+`assets/video/homepage-intro-video.mp4`, a byte copy of `videos/cryo-showreel-30s/renders/16x9.mp4` (1080p, 60 fps,
+H.264 High, faststart already set), from a poster, with `preload="none"`. Do not re-encode it. A second
+pass, even at CRF 18, drops the frame rate and softens the type. Copy when the film changes:
+
+```bash
+cp videos/cryo-showreel-30s/renders/16x9.mp4 site/assets/video/homepage-intro-video.mp4
+# Poster is a designed title card (page fonts + cryo-mark), not a film frame.
+# The native control bar covers the bottom fifth, so keep type in the upper half.
+# Source lives with the film; re-screenshot at 1280×720 if the line changes.
+```
+
 Rules: no invented numbers in prose or fake dashboards (screenshots are the real UI on synthetic demo data, and every frame is badged "Demo data"), sentence-case headings, no uppercase eyebrows.
 Brand and layout rationale: `docs/DOCS_SITE_DESIGN_RESEARCH_2026-10-05.md`.
 Current working state: `docs/DOCS_SITE_REDESIGN_HANDOFF_2026-10-05.md`.
