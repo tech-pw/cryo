@@ -12,7 +12,6 @@ requires-python = ">=3.12"
 authors = [{ name = "tech-pw" }]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.12",
     "Topic :: Database",
 ]
