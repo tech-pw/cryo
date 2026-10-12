@@ -194,6 +194,3 @@ def _publish_realized(session: Session, now: datetime) -> None:
     )
     m.realized_bytes_freed.labels(window="30d").set(realized)
     m.realized_vs_projected_ratio.set(realized / projected if projected else 0.0)
-
-
-

@@ -30,15 +30,11 @@ def _seed_deferred_job(
     destination = Destination(
         id=uuid4(), name=f"dest-{uuid4()}", engine="native", config={"slot_cap": 5}
     )
-    table = Table(
-        id=uuid4(), source_id=source.id, schema_name="s", table_name=name, is_active=True
-    )
+    table = Table(id=uuid4(), source_id=source.id, schema_name="s", table_name=name, is_active=True)
     session.add_all([source, destination, table])
     session.flush()
 
-    run = MaintenanceRun(
-        id=uuid4(), kind="adhoc", trigger="api", status=run_status, summary={}
-    )
+    run = MaintenanceRun(id=uuid4(), kind="adhoc", trigger="api", status=run_status, summary={})
     session.add(run)
     session.flush()
 
@@ -117,9 +113,7 @@ def test_run_status_is_surfaced_from_the_parent_run(session):
     still_running = _seed_deferred_job(
         session, finished_at=now, name="still-running", run_status="running"
     )
-    orphaned = _seed_deferred_job(
-        session, finished_at=now, name="orphaned", run_status="partial"
-    )
+    orphaned = _seed_deferred_job(session, finished_at=now, name="orphaned", run_status="partial")
 
     store = SQLJobStore(lambda: session)
     records = {r.id: r for r in store.list_deferred_jobs()}

@@ -89,7 +89,9 @@ def test_passed_checks_render_in_a_table() -> None:
     found = False
     for tb in table_blocks:
         row_texts = {
-            row[0]["elements"][0]["elements"][0]["text"] for row in tb.rows[1:] if row[0].get("elements")
+            row[0]["elements"][0]["elements"][0]["text"]
+            for row in tb.rows[1:]
+            if row[0].get("elements")
         }
         if any(name in " ".join(row_texts) for name in passed_names):
             found = True

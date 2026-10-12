@@ -68,10 +68,26 @@ def test_totals_for_day_none_with_no_rows(session) -> None:
 def test_totals_for_day_sums_across_clients_and_schemas(session) -> None:
     source = _seed_source(session)
     day = (NOW - timedelta(days=1)).date()
-    _seed_row(session, source, day=day, client="Metabase", schema_name="gold", query_count=10,
-              physical_bytes_scanned=5 * 1024**3, estimated_scan_cost_usd=2.0)
-    _seed_row(session, source, day=day, client="dbt-trino", schema_name="silver", query_count=20,
-              physical_bytes_scanned=10 * 1024**3, estimated_scan_cost_usd=4.0)
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="Metabase",
+        schema_name="gold",
+        query_count=10,
+        physical_bytes_scanned=5 * 1024**3,
+        estimated_scan_cost_usd=2.0,
+    )
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="dbt-trino",
+        schema_name="silver",
+        query_count=20,
+        physical_bytes_scanned=10 * 1024**3,
+        estimated_scan_cost_usd=4.0,
+    )
     session.commit()
 
     totals = _totals_for_day(session, day)
@@ -104,10 +120,22 @@ def test_totals_for_day_handles_null_cost(session) -> None:
 def test_top_clients_ranks_priced_clients_by_cost(session) -> None:
     source = _seed_source(session)
     day = (NOW - timedelta(days=1)).date()
-    _seed_row(session, source, day=day, client="Metabase", estimated_scan_cost_usd=1.0,
-              physical_bytes_scanned=100 * 1024**3)
-    _seed_row(session, source, day=day, client="dbt-trino", estimated_scan_cost_usd=5.0,
-              physical_bytes_scanned=1 * 1024**3)
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="Metabase",
+        estimated_scan_cost_usd=1.0,
+        physical_bytes_scanned=100 * 1024**3,
+    )
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="dbt-trino",
+        estimated_scan_cost_usd=5.0,
+        physical_bytes_scanned=1 * 1024**3,
+    )
     session.commit()
 
     clients = _top_clients_for_day(session, day)
@@ -118,10 +146,22 @@ def test_top_clients_ranks_priced_clients_by_cost(session) -> None:
 def test_top_clients_unpriced_ranked_below_priced(session) -> None:
     source = _seed_source(session)
     day = (NOW - timedelta(days=1)).date()
-    _seed_row(session, source, day=day, client="huge-unpriced", estimated_scan_cost_usd=None,
-              physical_bytes_scanned=1000 * 1024**3)
-    _seed_row(session, source, day=day, client="tiny-priced", estimated_scan_cost_usd=0.01,
-              physical_bytes_scanned=1 * 1024**3)
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="huge-unpriced",
+        estimated_scan_cost_usd=None,
+        physical_bytes_scanned=1000 * 1024**3,
+    )
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="tiny-priced",
+        estimated_scan_cost_usd=0.01,
+        physical_bytes_scanned=1 * 1024**3,
+    )
     session.commit()
 
     clients = _top_clients_for_day(session, day)
@@ -132,10 +172,24 @@ def test_top_clients_unpriced_ranked_below_priced(session) -> None:
 def test_top_clients_merges_multiple_schemas_per_client(session) -> None:
     source = _seed_source(session)
     day = (NOW - timedelta(days=1)).date()
-    _seed_row(session, source, day=day, client="Metabase", schema_name="gold",
-              query_count=5, estimated_scan_cost_usd=1.0)
-    _seed_row(session, source, day=day, client="Metabase", schema_name="silver",
-              query_count=7, estimated_scan_cost_usd=2.0)
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="Metabase",
+        schema_name="gold",
+        query_count=5,
+        estimated_scan_cost_usd=1.0,
+    )
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="Metabase",
+        schema_name="silver",
+        query_count=7,
+        estimated_scan_cost_usd=2.0,
+    )
     session.commit()
 
     clients = _top_clients_for_day(session, day)
@@ -153,10 +207,24 @@ def test_top_clients_merges_multiple_schemas_per_client(session) -> None:
 def test_top_users_ranks_priced_users_by_cost(session) -> None:
     source = _seed_source(session)
     day = (NOW - timedelta(days=1)).date()
-    _seed_row(session, source, day=day, client="c", user_name="alice",
-              estimated_scan_cost_usd=1.0, physical_bytes_scanned=100 * 1024**3)
-    _seed_row(session, source, day=day, client="c", user_name="bob",
-              estimated_scan_cost_usd=5.0, physical_bytes_scanned=1 * 1024**3)
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="c",
+        user_name="alice",
+        estimated_scan_cost_usd=1.0,
+        physical_bytes_scanned=100 * 1024**3,
+    )
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="c",
+        user_name="bob",
+        estimated_scan_cost_usd=5.0,
+        physical_bytes_scanned=1 * 1024**3,
+    )
     session.commit()
 
     users = _top_users_for_day(session, day)
@@ -167,10 +235,24 @@ def test_top_users_ranks_priced_users_by_cost(session) -> None:
 def test_top_users_unpriced_ranked_below_priced(session) -> None:
     source = _seed_source(session)
     day = (NOW - timedelta(days=1)).date()
-    _seed_row(session, source, day=day, client="c", user_name="huge-unpriced",
-              estimated_scan_cost_usd=None, physical_bytes_scanned=1000 * 1024**3)
-    _seed_row(session, source, day=day, client="c", user_name="tiny-priced",
-              estimated_scan_cost_usd=0.01, physical_bytes_scanned=1 * 1024**3)
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="c",
+        user_name="huge-unpriced",
+        estimated_scan_cost_usd=None,
+        physical_bytes_scanned=1000 * 1024**3,
+    )
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="c",
+        user_name="tiny-priced",
+        estimated_scan_cost_usd=0.01,
+        physical_bytes_scanned=1 * 1024**3,
+    )
     session.commit()
 
     users = _top_users_for_day(session, day)
@@ -183,10 +265,26 @@ def test_top_users_merges_multiple_schemas_and_clients_per_user(session) -> None
     merge behavior _top_clients_for_day already has for a client across schemas."""
     source = _seed_source(session)
     day = (NOW - timedelta(days=1)).date()
-    _seed_row(session, source, day=day, client="Metabase", schema_name="gold",
-              user_name="alice", query_count=5, estimated_scan_cost_usd=1.0)
-    _seed_row(session, source, day=day, client="dbt-trino", schema_name="silver",
-              user_name="alice", query_count=7, estimated_scan_cost_usd=2.0)
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="Metabase",
+        schema_name="gold",
+        user_name="alice",
+        query_count=5,
+        estimated_scan_cost_usd=1.0,
+    )
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="dbt-trino",
+        schema_name="silver",
+        user_name="alice",
+        query_count=7,
+        estimated_scan_cost_usd=2.0,
+    )
     session.commit()
 
     users = _top_users_for_day(session, day)
@@ -201,10 +299,22 @@ def test_top_users_rows_predating_migration_roll_up_under_unknown(session) -> No
     disabled) all land under 'unknown' -- a real, single large bucket, not an error."""
     source = _seed_source(session)
     day = (NOW - timedelta(days=1)).date()
-    _seed_row(session, source, day=day, client="Metabase", user_name="unknown",
-              estimated_scan_cost_usd=10.0)
-    _seed_row(session, source, day=day, client="dbt-trino", user_name="unknown",
-              estimated_scan_cost_usd=5.0)
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="Metabase",
+        user_name="unknown",
+        estimated_scan_cost_usd=10.0,
+    )
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="dbt-trino",
+        user_name="unknown",
+        estimated_scan_cost_usd=5.0,
+    )
     session.commit()
 
     users = _top_users_for_day(session, day)
@@ -223,8 +333,11 @@ def test_compute_query_cost_signal_stable_when_flat(session) -> None:
     source = _seed_source(session)
     for delta in (1, 2, 8):
         _seed_row(
-            session, source, day=(NOW - timedelta(days=delta)).date(),
-            client="Metabase", estimated_scan_cost_usd=10.0,
+            session,
+            source,
+            day=(NOW - timedelta(days=delta)).date(),
+            client="Metabase",
+            estimated_scan_cost_usd=10.0,
         )
     session.commit()
 
@@ -237,12 +350,27 @@ def test_compute_query_cost_signal_stable_when_flat(session) -> None:
 def test_compute_query_cost_signal_dod_spike(session) -> None:
     source = _seed_source(session)
     # yesterday (day -1) well above day -2's baseline -- default DoD spike threshold is 15%.
-    _seed_row(session, source, day=(NOW - timedelta(days=1)).date(), client="Metabase",
-              estimated_scan_cost_usd=200.0)
-    _seed_row(session, source, day=(NOW - timedelta(days=2)).date(), client="Metabase",
-              estimated_scan_cost_usd=100.0)
-    _seed_row(session, source, day=(NOW - timedelta(days=8)).date(), client="Metabase",
-              estimated_scan_cost_usd=190.0)
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=1)).date(),
+        client="Metabase",
+        estimated_scan_cost_usd=200.0,
+    )
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=2)).date(),
+        client="Metabase",
+        estimated_scan_cost_usd=100.0,
+    )
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=8)).date(),
+        client="Metabase",
+        estimated_scan_cost_usd=190.0,
+    )
     session.commit()
 
     signal = compute_query_cost_signal(session, now=NOW)
@@ -257,10 +385,20 @@ def test_compute_query_cost_signal_dod_spike(session) -> None:
 
 def test_compute_query_cost_signal_dod_decline(session) -> None:
     source = _seed_source(session)
-    _seed_row(session, source, day=(NOW - timedelta(days=1)).date(), client="Metabase",
-              estimated_scan_cost_usd=50.0)
-    _seed_row(session, source, day=(NOW - timedelta(days=2)).date(), client="Metabase",
-              estimated_scan_cost_usd=100.0)
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=1)).date(),
+        client="Metabase",
+        estimated_scan_cost_usd=50.0,
+    )
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=2)).date(),
+        client="Metabase",
+        estimated_scan_cost_usd=100.0,
+    )
     session.commit()
 
     signal = compute_query_cost_signal(session, now=NOW)
@@ -272,12 +410,27 @@ def test_compute_query_cost_signal_dod_decline(session) -> None:
 def test_compute_query_cost_signal_wow_only_fires_when_dod_is_stable(session) -> None:
     source = _seed_source(session)
     # DoD flat (day -1 vs day -2), but well above day -8 -- WoW should catch this, DoD should not.
-    _seed_row(session, source, day=(NOW - timedelta(days=1)).date(), client="Metabase",
-              estimated_scan_cost_usd=120.0)
-    _seed_row(session, source, day=(NOW - timedelta(days=2)).date(), client="Metabase",
-              estimated_scan_cost_usd=119.0)
-    _seed_row(session, source, day=(NOW - timedelta(days=8)).date(), client="Metabase",
-              estimated_scan_cost_usd=90.0)
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=1)).date(),
+        client="Metabase",
+        estimated_scan_cost_usd=120.0,
+    )
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=2)).date(),
+        client="Metabase",
+        estimated_scan_cost_usd=119.0,
+    )
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=8)).date(),
+        client="Metabase",
+        estimated_scan_cost_usd=90.0,
+    )
     session.commit()
 
     signal = compute_query_cost_signal(session, now=NOW)
@@ -289,8 +442,13 @@ def test_compute_query_cost_signal_wow_only_fires_when_dod_is_stable(session) ->
 def test_compute_query_cost_signal_no_baseline_stays_stable(session) -> None:
     source = _seed_source(session)
     # Only "yesterday" has data -- no DoD/WoW baseline to compare against.
-    _seed_row(session, source, day=(NOW - timedelta(days=1)).date(), client="Metabase",
-              estimated_scan_cost_usd=100.0)
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=1)).date(),
+        client="Metabase",
+        estimated_scan_cost_usd=100.0,
+    )
     session.commit()
 
     signal = compute_query_cost_signal(session, now=NOW)
@@ -304,10 +462,22 @@ def test_compute_query_cost_signal_falls_back_to_bytes_when_unpriced(session) ->
     """Neither day in the comparison has been priced yet (cost_ceiling ingestion lag) -- the
     signal must still fire off a real bytes-scanned move rather than reporting stable."""
     source = _seed_source(session)
-    _seed_row(session, source, day=(NOW - timedelta(days=1)).date(), client="Metabase",
-              estimated_scan_cost_usd=None, physical_bytes_scanned=200 * 1024**3)
-    _seed_row(session, source, day=(NOW - timedelta(days=2)).date(), client="Metabase",
-              estimated_scan_cost_usd=None, physical_bytes_scanned=100 * 1024**3)
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=1)).date(),
+        client="Metabase",
+        estimated_scan_cost_usd=None,
+        physical_bytes_scanned=200 * 1024**3,
+    )
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=2)).date(),
+        client="Metabase",
+        estimated_scan_cost_usd=None,
+        physical_bytes_scanned=100 * 1024**3,
+    )
     session.commit()
 
     signal = compute_query_cost_signal(session, now=NOW)
@@ -320,10 +490,21 @@ def test_compute_query_cost_signal_falls_back_to_bytes_when_unpriced(session) ->
 
 def test_compute_query_cost_signal_includes_top_clients(session) -> None:
     source = _seed_source(session)
-    _seed_row(session, source, day=(NOW - timedelta(days=1)).date(), client="Metabase",
-              estimated_scan_cost_usd=10.0)
-    _seed_row(session, source, day=(NOW - timedelta(days=1)).date(), client="dbt-trino",
-              schema_name="silver", estimated_scan_cost_usd=5.0)
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=1)).date(),
+        client="Metabase",
+        estimated_scan_cost_usd=10.0,
+    )
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=1)).date(),
+        client="dbt-trino",
+        schema_name="silver",
+        estimated_scan_cost_usd=5.0,
+    )
     session.commit()
 
     signal = compute_query_cost_signal(session, now=NOW)
@@ -333,10 +514,23 @@ def test_compute_query_cost_signal_includes_top_clients(session) -> None:
 
 def test_compute_query_cost_signal_includes_top_users(session) -> None:
     source = _seed_source(session)
-    _seed_row(session, source, day=(NOW - timedelta(days=1)).date(), client="Metabase",
-              user_name="alice", estimated_scan_cost_usd=10.0)
-    _seed_row(session, source, day=(NOW - timedelta(days=1)).date(), client="dbt-trino",
-              user_name="bob", schema_name="silver", estimated_scan_cost_usd=5.0)
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=1)).date(),
+        client="Metabase",
+        user_name="alice",
+        estimated_scan_cost_usd=10.0,
+    )
+    _seed_row(
+        session,
+        source,
+        day=(NOW - timedelta(days=1)).date(),
+        client="dbt-trino",
+        user_name="bob",
+        schema_name="silver",
+        estimated_scan_cost_usd=5.0,
+    )
     session.commit()
 
     signal = compute_query_cost_signal(session, now=NOW)
@@ -351,16 +545,22 @@ def test_compute_query_cost_signal_includes_top_users(session) -> None:
 
 def test_failure_rate_pct_none_with_zero_queries() -> None:
     totals = DailyQueryCostTotals(
-        day=NOW.date(), query_count=0, failed_query_count=0,
-        physical_bytes_scanned=0, estimated_scan_cost_usd=None,
+        day=NOW.date(),
+        query_count=0,
+        failed_query_count=0,
+        physical_bytes_scanned=0,
+        estimated_scan_cost_usd=None,
     )
     assert totals.failure_rate_pct is None
 
 
 def test_failure_rate_pct_computed() -> None:
     totals = DailyQueryCostTotals(
-        day=NOW.date(), query_count=100, failed_query_count=25,
-        physical_bytes_scanned=0, estimated_scan_cost_usd=None,
+        day=NOW.date(),
+        query_count=100,
+        failed_query_count=25,
+        physical_bytes_scanned=0,
+        estimated_scan_cost_usd=None,
     )
     assert totals.failure_rate_pct == 25.0
 
@@ -372,8 +572,11 @@ def test_failure_rate_pct_computed() -> None:
 
 def _totals(*, query_count: int, failed_query_count: int, day=None) -> DailyQueryCostTotals:
     return DailyQueryCostTotals(
-        day=day or NOW.date(), query_count=query_count, failed_query_count=failed_query_count,
-        physical_bytes_scanned=1024**3, estimated_scan_cost_usd=1.0,
+        day=day or NOW.date(),
+        query_count=query_count,
+        failed_query_count=failed_query_count,
+        physical_bytes_scanned=1024**3,
+        estimated_scan_cost_usd=1.0,
     )
 
 
@@ -462,10 +665,22 @@ def test_unknown_client_share_computed_against_true_total_not_truncated_list(ses
 def test_unknown_client_share_falls_back_to_bytes_when_unpriced(session) -> None:
     source = _seed_source(session)
     day = (NOW - timedelta(days=1)).date()
-    _seed_row(session, source, day=day, client=UNKNOWN_CLIENT, estimated_scan_cost_usd=None,
-              physical_bytes_scanned=10 * 1024**3)
-    _seed_row(session, source, day=day, client="Metabase", estimated_scan_cost_usd=None,
-              physical_bytes_scanned=90 * 1024**3)
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client=UNKNOWN_CLIENT,
+        estimated_scan_cost_usd=None,
+        physical_bytes_scanned=10 * 1024**3,
+    )
+    _seed_row(
+        session,
+        source,
+        day=day,
+        client="Metabase",
+        estimated_scan_cost_usd=None,
+        physical_bytes_scanned=90 * 1024**3,
+    )
     session.commit()
     totals = _totals_for_day(session, day)
 

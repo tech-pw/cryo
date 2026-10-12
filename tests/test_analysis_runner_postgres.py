@@ -45,7 +45,9 @@ def _clean_up():
             session.execute(
                 text("DELETE FROM cryo.table_partitions WHERE table_id = :id"), {"id": table_id}
             )
-            session.execute(text("DELETE FROM cryo.table_stats WHERE table_id = :id"), {"id": table_id})
+            session.execute(
+                text("DELETE FROM cryo.table_stats WHERE table_id = :id"), {"id": table_id}
+            )
             session.execute(text("DELETE FROM cryo.tables WHERE id = :id"), {"id": table_id})
             session.execute(
                 text(
@@ -57,8 +59,12 @@ def _clean_up():
         session.commit()
 
 
-def _seed_table_with_partition(session, created_table_ids: list[uuid.UUID], *, name: str) -> uuid.UUID:
-    source = Source(id=uuid.uuid4(), name=f"test-src-{uuid.uuid4().hex[:8]}", type="rest", config={})
+def _seed_table_with_partition(
+    session, created_table_ids: list[uuid.UUID], *, name: str
+) -> uuid.UUID:
+    source = Source(
+        id=uuid.uuid4(), name=f"test-src-{uuid.uuid4().hex[:8]}", type="rest", config={}
+    )
     session.add(source)
     session.flush()
     table = Table(
@@ -134,12 +140,16 @@ def test_run_benefit_score_sweep_task_yields_to_pending_on_bounded_exit(_clean_u
     monkeypatch.setattr(
         runner_module,
         "update_all_benefit_scores_batch",
-        lambda session, *, cursor=None, **kw: real_batch_fn(session, cursor=cursor, batch_size=1, **kw),
+        lambda session, *, cursor=None, **kw: real_batch_fn(
+            session, cursor=cursor, batch_size=1, **kw
+        ),
     )
 
     with SessionLocal() as session:
         for i in range(3):
-            _seed_table_with_partition(session, _clean_up, name=f"yield_test_{uuid.uuid4().hex[:8]}_{i}")
+            _seed_table_with_partition(
+                session, _clean_up, name=f"yield_test_{uuid.uuid4().hex[:8]}_{i}"
+            )
 
     with SessionLocal() as session:
         existing = get_active_task(session, task_type=_BENEFIT_SCORE_SWEEP, scope="fleet")
@@ -153,7 +163,9 @@ def test_run_benefit_score_sweep_task_yields_to_pending_on_bounded_exit(_clean_u
         with SessionLocal() as session:
             task = get_active_task(session, task_type=_BENEFIT_SCORE_SWEEP, scope="fleet")
             assert task is not None, "task must still be active (fleet not yet complete)"
-            assert task.status == "pending", "bounded exit must yield back to pending, not strand at running"
+            assert task.status == "pending", (
+                "bounded exit must yield back to pending, not strand at running"
+            )
             assert task.lease_owner is None
             assert task.processed_count == 2, "2 batches of 1 table each ran before the bound hit"
 
@@ -172,7 +184,9 @@ def test_run_benefit_score_sweep_task_yields_to_pending_on_bounded_exit(_clean_u
             session.commit()
 
 
-def test_run_benefit_score_sweep_task_tracks_refresh_budget_across_invocations(_clean_up, monkeypatch):
+def test_run_benefit_score_sweep_task_tracks_refresh_budget_across_invocations(
+    _clean_up, monkeypatch
+):
     """Review finding F08, end-to-end through the real runner + persistence layer: the
     realized-value refresh budget must survive a process restart (this test calls
     run_benefit_score_sweep_task() twice, simulating two separate K8s Job pods for the same
@@ -185,7 +199,9 @@ def test_run_benefit_score_sweep_task_tracks_refresh_budget_across_invocations(_
     monkeypatch.setattr(
         runner_module,
         "update_all_benefit_scores_batch",
-        lambda session, *, cursor=None, **kw: real_batch_fn(session, cursor=cursor, batch_size=1, **kw),
+        lambda session, *, cursor=None, **kw: real_batch_fn(
+            session, cursor=cursor, batch_size=1, **kw
+        ),
     )
     # Deliberately > 1: a bugged "reset to default every invocation" implementation would spend
     # up to 1 MORE on batch 2's still-eligible table, landing at remaining=1 (2-1) after the
@@ -269,7 +285,9 @@ def test_coordinator_tick_dispatches_a_job_and_records_external_job_ref(monkeypa
 
     task_type = "benefit_score_sweep"
     with SessionLocal() as session:
-        session.execute(text("DELETE FROM cryo.analysis_tasks WHERE task_type = :t"), {"t": task_type})
+        session.execute(
+            text("DELETE FROM cryo.analysis_tasks WHERE task_type = :t"), {"t": task_type}
+        )
         session.commit()
 
     monkeypatch.setattr(dispatch_module, "k8s_dispatch_available", lambda: True)
@@ -295,5 +313,7 @@ def test_coordinator_tick_dispatches_a_job_and_records_external_job_ref(monkeypa
     runner._tick_via_k8s_job()
 
     with SessionLocal() as session:
-        session.execute(text("DELETE FROM cryo.analysis_tasks WHERE task_type = :t"), {"t": task_type})
+        session.execute(
+            text("DELETE FROM cryo.analysis_tasks WHERE task_type = :t"), {"t": task_type}
+        )
         session.commit()

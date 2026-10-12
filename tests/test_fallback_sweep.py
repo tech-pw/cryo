@@ -74,9 +74,7 @@ def test_sweep_resolves_submitted_row_to_ok_when_job_succeeded(session, monkeypa
     mock_client.get_job_run.return_value = JobRunResult(
         job_run_id="cryo-spark-abc123", state=JobRunState.SUCCESS
     )
-    monkeypatch.setattr(
-        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
-    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
 
     result = sweep_pending_fallback_dispatches(session)
 
@@ -99,9 +97,7 @@ def test_sweep_resolves_submitted_row_to_failed_when_job_failed(session, monkeyp
         state=JobRunState.FAILED,
         state_details="NoSuchTableException",
     )
-    monkeypatch.setattr(
-        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
-    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
 
     result = sweep_pending_fallback_dispatches(session)
 
@@ -129,9 +125,7 @@ def test_sweep_resolves_submitted_row_to_unknown_when_job_ttl_expired(session, m
         state=JobRunState.UNKNOWN,
         state_details="Dispatch Job and driver pod both gone (TTL-expired)",
     )
-    monkeypatch.setattr(
-        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
-    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
 
     result = sweep_pending_fallback_dispatches(session)
 
@@ -161,9 +155,7 @@ def test_sweep_cleans_up_driver_pod_and_secret_on_resolution(session, monkeypatc
     mock_client.get_job_run.return_value = JobRunResult(
         job_run_id="cryo-spark-abc123", state=JobRunState.SUCCESS
     )
-    monkeypatch.setattr(
-        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
-    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
 
     sweep_pending_fallback_dispatches(session)
 
@@ -183,9 +175,7 @@ def test_sweep_cleanup_failure_does_not_block_resolution(session, monkeypatch) -
         job_run_id="cryo-spark-abc123", state=JobRunState.SUCCESS
     )
     mock_client.cleanup_after_run.side_effect = RuntimeError("K8s API error")
-    monkeypatch.setattr(
-        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
-    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
 
     result = sweep_pending_fallback_dispatches(session)
 
@@ -205,9 +195,7 @@ def test_sweep_leaves_still_running_job_pending(session, monkeypatch) -> None:
     mock_client.get_job_run.return_value = JobRunResult(
         job_run_id="cryo-spark-still-going", state=JobRunState.RUNNING
     )
-    monkeypatch.setattr(
-        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
-    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
 
     result = sweep_pending_fallback_dispatches(session)
 
@@ -255,9 +243,7 @@ def test_sweep_lookup_failure_on_one_row_does_not_block_the_rest(session, monkey
         return JobRunResult(job_run_id=engine_ref, state=JobRunState.SUCCESS)
 
     mock_client.get_job_run.side_effect = _get_job_run
-    monkeypatch.setattr(
-        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
-    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
 
     result = sweep_pending_fallback_dispatches(session)
 
@@ -352,9 +338,7 @@ class TestJobRowFinalization:
     def test_still_running_does_not_touch_job_row(self, session, monkeypatch) -> None:
         destination = _seed_spark_destination(session)
         job = _seed_running_job(session, destination_id=destination.id)
-        row = _audit_row(
-            status="SUBMITTED", engine_ref="cryo-spark-still-going", job_id=job.id
-        )
+        row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-still-going", job_id=job.id)
         session.add(row)
         session.commit()
 

@@ -27,7 +27,6 @@ edge cases — the precise area where cross-engine friction lives per
 from __future__ import annotations
 
 import os
-import time
 
 import pytest
 from pyiceberg.catalog import load_catalog

@@ -61,7 +61,9 @@ def _seed_job(
     error: str | None,
     finished_at: datetime | None,
 ) -> MaintenanceJob:
-    destination = Destination(id=uuid.uuid4(), name=f"dest-{uuid.uuid4()}", engine="native", config={})
+    destination = Destination(
+        id=uuid.uuid4(), name=f"dest-{uuid.uuid4()}", engine="native", config={}
+    )
     run = MaintenanceRun(id=uuid.uuid4(), kind="scheduled", status="succeeded", trigger="cron")
     job = MaintenanceJob(
         id=uuid.uuid4(),
@@ -136,7 +138,11 @@ class TestUnderRetryCap:
         long_ago = datetime.now(UTC) - timedelta(hours=48)
         for _ in range(_METASTORE_RETRY_CAP):
             _seed_job(
-                session, table=table, status="deferred", error=_TRANSIENT_ERROR, finished_at=long_ago
+                session,
+                table=table,
+                status="deferred",
+                error=_TRANSIENT_ERROR,
+                finished_at=long_ago,
             )
         session.commit()
         assert _under_retry_cap(session, table_id=table.id)
@@ -165,7 +171,9 @@ class TestFinalizeSuccessRetryClassification:
     """End-to-end through NativeJobWatcher._finalize_success, same call shape as the existing
     test_watcher_preserves_partial_batch_success_and_audits in test_native_batch_and_dispatch.py."""
 
-    def _make_watcher(self, statuses: list, audits: list, locks: InMemoryLockStore) -> NativeJobWatcher:
+    def _make_watcher(
+        self, statuses: list, audits: list, locks: InMemoryLockStore
+    ) -> NativeJobWatcher:
         return NativeJobWatcher(
             session_factory=MagicMock(),
             lock_store=locks,

@@ -79,7 +79,9 @@ def test_ensure_task_due_allows_a_new_row_after_the_prior_one_is_terminal():
         first = ensure_task_due(session, task_type=task_type, scope="fleet")
         claimed = claim_due_task(session, task_type=task_type, owner="test-owner")
         assert claimed is not None
-        finish_task(session, first.id, lease_generation=claimed.lease_generation, status="succeeded")
+        finish_task(
+            session, first.id, lease_generation=claimed.lease_generation, status="succeeded"
+        )
 
         second = ensure_task_due(session, task_type=task_type, scope="fleet")
         assert second.id != first.id
@@ -89,7 +91,10 @@ def test_claim_due_task_returns_none_when_nothing_is_due_yet():
     task_type = _unique_type()
     with SessionLocal() as session:
         ensure_task_due(
-            session, task_type=task_type, scope="fleet", due_at=datetime.now(UTC) + timedelta(hours=1)
+            session,
+            task_type=task_type,
+            scope="fleet",
+            due_at=datetime.now(UTC) + timedelta(hours=1),
         )
         claimed = claim_due_task(session, task_type=task_type, owner="test-owner")
         assert claimed is None
@@ -114,9 +119,7 @@ def test_claim_due_task_reclaims_after_lease_expiry():
     task_type = _unique_type()
     with SessionLocal() as session:
         ensure_task_due(session, task_type=task_type, scope="fleet")
-        first_claim = claim_due_task(
-            session, task_type=task_type, owner="owner-a", lease_seconds=1
-        )
+        first_claim = claim_due_task(session, task_type=task_type, owner="owner-a", lease_seconds=1)
         assert first_claim is not None
 
         # Simulate lease expiry via the `now` parameter rather than sleeping in a test.
@@ -154,9 +157,7 @@ def test_commit_progress_raises_lease_conflict_when_superseded():
     task_type = _unique_type()
     with SessionLocal() as session:
         ensure_task_due(session, task_type=task_type, scope="fleet")
-        stale_claim = claim_due_task(
-            session, task_type=task_type, owner="owner-a", lease_seconds=1
-        )
+        stale_claim = claim_due_task(session, task_type=task_type, owner="owner-a", lease_seconds=1)
         assert stale_claim is not None
 
         later = datetime.now(UTC) + timedelta(seconds=5)
@@ -179,9 +180,7 @@ def test_heartbeat_returns_none_when_superseded_rather_than_raising():
     task_type = _unique_type()
     with SessionLocal() as session:
         ensure_task_due(session, task_type=task_type, scope="fleet")
-        stale_claim = claim_due_task(
-            session, task_type=task_type, owner="owner-a", lease_seconds=1
-        )
+        stale_claim = claim_due_task(session, task_type=task_type, owner="owner-a", lease_seconds=1)
         assert stale_claim is not None
         later = datetime.now(UTC) + timedelta(seconds=5)
         claim_due_task(session, task_type=task_type, owner="owner-b", now=later)
@@ -219,7 +218,9 @@ def test_finish_task_requires_terminal_status():
         claimed = claim_due_task(session, task_type=task_type, owner="owner-a")
         assert claimed is not None
         with pytest.raises(ValueError):
-            finish_task(session, claimed.id, lease_generation=claimed.lease_generation, status="running")
+            finish_task(
+                session, claimed.id, lease_generation=claimed.lease_generation, status="running"
+            )
 
 
 def test_start_new_generation_bumps_generation_and_invalidates_the_old_lease():
@@ -227,7 +228,9 @@ def test_start_new_generation_bumps_generation_and_invalidates_the_old_lease():
     old generation must be detected and rejected the next time it tries to commit_progress."""
     task_type = _unique_type()
     with SessionLocal() as session:
-        task = ensure_task_due(session, task_type=task_type, scope="fleet", input_watermark="scan-v1")
+        task = ensure_task_due(
+            session, task_type=task_type, scope="fleet", input_watermark="scan-v1"
+        )
         old_claim = claim_due_task(session, task_type=task_type, owner="owner-a")
         assert old_claim is not None
         commit_progress(
@@ -318,7 +321,9 @@ def test_heartbeat_cannot_revive_a_task_finished_concurrently():
         claimed = claim_due_task(session, task_type=task_type, owner="owner-a")
         assert claimed is not None
 
-        finish_task(session, claimed.id, lease_generation=claimed.lease_generation, status="succeeded")
+        finish_task(
+            session, claimed.id, lease_generation=claimed.lease_generation, status="succeeded"
+        )
 
         result = heartbeat(session, claimed.id, lease_generation=claimed.lease_generation)
         assert result is None
@@ -338,7 +343,9 @@ def test_finish_task_cannot_be_called_twice():
         claimed = claim_due_task(session, task_type=task_type, owner="owner-a")
         assert claimed is not None
 
-        finish_task(session, claimed.id, lease_generation=claimed.lease_generation, status="succeeded")
+        finish_task(
+            session, claimed.id, lease_generation=claimed.lease_generation, status="succeeded"
+        )
 
         with pytest.raises(LeaseConflict):
             finish_task(

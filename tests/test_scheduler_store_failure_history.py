@@ -64,7 +64,9 @@ def test_consecutive_engine_failures_counts_most_recent_streak(session) -> None:
     base = datetime(2026, 8, 1, tzinfo=UTC)
 
     # Oldest -> newest: succeeded, then 3 failures in a row (the most recent 3).
-    _seed_job(session, table_id=table_id, destination_id=native, status="succeeded", started_at=base)
+    _seed_job(
+        session, table_id=table_id, destination_id=native, status="succeeded", started_at=base
+    )
     _seed_job(
         session,
         table_id=table_id,
@@ -129,9 +131,7 @@ def test_consecutive_engine_failures_tracks_multiple_destinations_independently(
             status="failed",
             started_at=base + timedelta(days=i * 2),
         )
-    _seed_job(
-        session, table_id=table_id, destination_id=spark, status="succeeded", started_at=base
-    )
+    _seed_job(session, table_id=table_id, destination_id=spark, status="succeeded", started_at=base)
 
     store = SQLSchedulerStore(session_factory=lambda: session, redis_client=None)
     result = store.consecutive_engine_failures([str(table_id)])

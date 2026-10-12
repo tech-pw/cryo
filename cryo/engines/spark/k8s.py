@@ -611,7 +611,9 @@ class SparkK8sClient:
         the wrong wall-clock point relative to when Kubernetes would actually kill the Job.
         """
         effective_deadline = (
-            deadline_seconds if deadline_seconds is not None else self._config.active_deadline_seconds
+            deadline_seconds
+            if deadline_seconds is not None
+            else self._config.active_deadline_seconds
         )
         deadline = time.monotonic() + effective_deadline
         poll_interval = 10.0

@@ -196,8 +196,8 @@ def _dispatch_heartbeat(
         )
 
     last_activity = max(candidates)
-    last_activity_aware = last_activity if last_activity.tzinfo is not None else last_activity.replace(
-        tzinfo=UTC
+    last_activity_aware = (
+        last_activity if last_activity.tzinfo is not None else last_activity.replace(tzinfo=UTC)
     )
     minutes_since = (now - last_activity_aware).total_seconds() / 60.0
     return DispatchHeartbeat(
@@ -259,7 +259,10 @@ def compute_cryo_vitals(session: Session, *, now: datetime | None = None) -> Cry
     if heartbeat.is_stalled:
         score -= _DISPATCH_HEARTBEAT_DEDUCTION
         deductions.append(
-            VitalsDeduction(reason=f"dispatch_heartbeat: {heartbeat.summary}", points=_DISPATCH_HEARTBEAT_DEDUCTION)
+            VitalsDeduction(
+                reason=f"dispatch_heartbeat: {heartbeat.summary}",
+                points=_DISPATCH_HEARTBEAT_DEDUCTION,
+            )
         )
 
     work_hits = work_picture_deductions(work)
@@ -304,8 +307,13 @@ def compute_cryo_vitals(session: Session, *, now: datetime | None = None) -> Cry
         )
     ):
         status = "CRITICAL"
-    elif health.warning_count > 0 or work_hits or (
-        success_rate.has_enough_signal and (success_rate.success_rate_pct or 0.0) < _SUCCESS_RATE_WARN_PCT
+    elif (
+        health.warning_count > 0
+        or work_hits
+        or (
+            success_rate.has_enough_signal
+            and (success_rate.success_rate_pct or 0.0) < _SUCCESS_RATE_WARN_PCT
+        )
     ):
         status = "DEGRADED"
     else:

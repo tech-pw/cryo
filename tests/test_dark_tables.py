@@ -78,9 +78,7 @@ class TestDetectDarkTableCandidates:
         assert session.query(DarkTableCandidate).count() == 0
 
     def test_below_size_floor_is_not_tracked(self, session) -> None:
-        _seed_table_with_stats(
-            session, query_count_30d=0, total_size_gb=MIN_SIZE_GB_TO_TRACK - 0.1
-        )
+        _seed_table_with_stats(session, query_count_30d=0, total_size_gb=MIN_SIZE_GB_TO_TRACK - 0.1)
 
         result = detect_dark_table_candidates(session, now=datetime(2026, 1, 2, tzinfo=UTC))
 

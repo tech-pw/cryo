@@ -53,4 +53,6 @@ def test_unsaved_provider_test_is_not_captured_by_the_id_route() -> None:
         for path, methods, _endpoint in _routes(app)
         if "POST" in methods and path.startswith("/api/v1/ai/providers/")
     ]
-    assert paths.index("/api/v1/ai/providers/test") < paths.index("/api/v1/ai/providers/{provider_id}/test")
+    assert paths.index("/api/v1/ai/providers/test") < paths.index(
+        "/api/v1/ai/providers/{provider_id}/test"
+    )

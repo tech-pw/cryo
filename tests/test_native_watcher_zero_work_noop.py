@@ -36,7 +36,10 @@ class TestNativeOperationTypeAliases:
     def test_rewrite_position_deletes_maps_to_its_own_operation_type(self) -> None:
         """Regression: this alias was missing entirely before the fix, so audit records for
         rewrite_position_deletes (the exact operation in the incident) were silently dropped."""
-        assert _native_operation_type("rewrite_position_deletes") == OperationType.REWRITE_POSITION_DELETES
+        assert (
+            _native_operation_type("rewrite_position_deletes")
+            == OperationType.REWRITE_POSITION_DELETES
+        )
 
     def test_compute_statistics_maps_to_its_own_operation_type(self) -> None:
         assert _native_operation_type("compute_statistics") == OperationType.COMPUTE_STATISTICS
@@ -75,9 +78,7 @@ class TestReportedZeroWorkOperations:
     def test_expire_snapshots_with_zero_snapshots_expired_is_flagged(self) -> None:
         entry = {
             "ok": True,
-            "results": [
-                {"operation": "expire_snapshots", "success": True, "snapshots_expired": 0}
-            ],
+            "results": [{"operation": "expire_snapshots", "success": True, "snapshots_expired": 0}],
         }
         assert _reported_zero_work_operations(entry) == ["expire_snapshots"]
 
@@ -117,7 +118,9 @@ class TestFinalizeSuccessZeroWorkDowngrade:
     """End-to-end through NativeJobWatcher._finalize_success, same call shape as
     test_native_watcher_transient_metastore_retry.py's TestFinalizeSuccessRetryClassification."""
 
-    def _make_watcher(self, statuses: list, audits: list, locks: InMemoryLockStore) -> NativeJobWatcher:
+    def _make_watcher(
+        self, statuses: list, audits: list, locks: InMemoryLockStore
+    ) -> NativeJobWatcher:
         return NativeJobWatcher(
             session_factory=MagicMock(),
             lock_store=locks,
@@ -127,7 +130,9 @@ class TestFinalizeSuccessZeroWorkDowngrade:
             record_audit=audits.append,
         )
 
-    def test_gold_dbt_poll_dashboard_view_shape_is_marked_failed_not_succeeded(self, session) -> None:
+    def test_gold_dbt_poll_dashboard_view_shape_is_marked_failed_not_succeeded(
+        self, session
+    ) -> None:
         """Direct regression test for the live incident: a batch-success job_id-level report
         (ok=true) whose per-operation results all report success=true but zero actual file/
         snapshot mutation must not be marked SUCCEEDED."""
@@ -148,7 +153,7 @@ class TestFinalizeSuccessZeroWorkDowngrade:
             '{"operation":"compute_statistics","success":true},'
             '{"operation":"expire_snapshots","success":true,"snapshots_expired":0},'
             '{"operation":"remove_orphan_files","success":true,"bytes_removed":0}'
-            ']}]}' % job.id
+            "]}]}" % job.id
         )
         dispatch_id = uuid.uuid4()
         with (
@@ -166,7 +171,10 @@ class TestFinalizeSuccessZeroWorkDowngrade:
         assert "expire_snapshots" in error
         assert "remove_orphan_files" in error
         # compute_statistics never mutates state -- must not appear as a flagged no-op.
-        assert "compute_statistics" not in error.split("native_job_reported_success_with_zero_work: ")[1]
+        assert (
+            "compute_statistics"
+            not in error.split("native_job_reported_success_with_zero_work: ")[1]
+        )
         assert finish.call_args.kwargs["status"] == "failed"
 
     def test_real_rewrite_with_actual_files_still_succeeds(self, session) -> None:
@@ -186,7 +194,7 @@ class TestFinalizeSuccessZeroWorkDowngrade:
             '{"batch":true,"results":[{"job_id":"%s","ok":true,"results":['
             '{"operation":"rewrite_position_deletes","success":true,"files_rewritten":53,'
             '"bytes_removed":12000000}'
-            ']}]}' % job.id
+            "]}]}" % job.id
         )
         dispatch_id = uuid.uuid4()
         with (
@@ -214,7 +222,7 @@ class TestFinalizeSuccessZeroWorkDowngrade:
         stdout = (
             '{"batch":true,"results":[{"job_id":"%s","ok":true,"results":['
             '{"operation":"compute_statistics","success":true}'
-            ']}]}' % job.id
+            "]}]}" % job.id
         )
         dispatch_id = uuid.uuid4()
         with (

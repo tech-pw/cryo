@@ -18,7 +18,11 @@ def _preset(**guardrails) -> PresetConfig:
         id="p1",
         name="adaptive",
         destination_id="native-1",
-        guardrails={"adaptive_routing": True, "engine_pool": ["native-1", "spark-large"], **guardrails},
+        guardrails={
+            "adaptive_routing": True,
+            "engine_pool": ["native-1", "spark-large"],
+            **guardrails,
+        },
     )
 
 

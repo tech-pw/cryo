@@ -79,9 +79,7 @@ def test_list_dark_tables_excludes_unconfirmed_candidates(session: Session) -> N
 
 
 def test_list_dark_tables_returns_confirmed_candidates_with_table_names(session: Session) -> None:
-    table = _make_table(
-        session, schema_name="analytics", table_name="old_report", size_gb=100.0
-    )
+    table = _make_table(session, schema_name="analytics", table_name="old_report", size_gb=100.0)
     _confirm(session)
 
     result = list_dark_tables(session)

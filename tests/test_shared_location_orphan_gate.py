@@ -108,6 +108,4 @@ def test_build_execution_plan_plans_orphan_removal_without_an_overlap() -> None:
         has_shared_location=False,
     )
 
-    assert any(
-        operation.type is OperationType.REMOVE_ORPHAN_FILES for operation in plan.operations
-    )
+    assert any(operation.type is OperationType.REMOVE_ORPHAN_FILES for operation in plan.operations)

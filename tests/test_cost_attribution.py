@@ -379,9 +379,10 @@ class TestAggregateQueryCostAttribution:
 
         session.refresh(source)
         # query_log's own watermark must be untouched by this call.
-        assert source.config["query_log"]["last_aggregated_at"] == (
-            now - timedelta(hours=1)
-        ).isoformat()
+        assert (
+            source.config["query_log"]["last_aggregated_at"]
+            == (now - timedelta(hours=1)).isoformat()
+        )
         assert len(calls) == 1
 
     def test_read_failure_stops_without_advancing_watermark_for_that_window(

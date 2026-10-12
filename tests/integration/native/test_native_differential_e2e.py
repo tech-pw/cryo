@@ -81,9 +81,7 @@ def _trino_count(cursor, table_name: str) -> int:
 
 
 def _trino_optimize(cursor, table_name: str) -> None:
-    cursor.execute(
-        f'ALTER TABLE "{COMPACTION_NAMESPACE}"."{table_name}" EXECUTE optimize'
-    )
+    cursor.execute(f'ALTER TABLE "{COMPACTION_NAMESPACE}"."{table_name}" EXECUTE optimize')
     cursor.fetchall()
 
 

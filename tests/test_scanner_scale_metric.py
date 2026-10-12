@@ -42,7 +42,8 @@ def test_sums_pending_and_running_chunks_across_active_scan_runs(session, monkey
     )
 
     monkeypatch.setattr(
-        "cryo.db.session.SessionLocal", sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+        "cryo.db.session.SessionLocal",
+        sessionmaker(bind=session.get_bind(), expire_on_commit=False),
     )
 
     assert _scanner_scale_metric() == 8  # (2+1) + (5+0)
@@ -63,7 +64,8 @@ def test_finished_scan_runs_do_not_count(session, monkeypatch) -> None:
     )
 
     monkeypatch.setattr(
-        "cryo.db.session.SessionLocal", sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+        "cryo.db.session.SessionLocal",
+        sessionmaker(bind=session.get_bind(), expire_on_commit=False),
     )
 
     assert _scanner_scale_metric() == 0
@@ -88,7 +90,8 @@ def test_non_scan_runs_do_not_count(session, monkeypatch) -> None:
     session.commit()
 
     monkeypatch.setattr(
-        "cryo.db.session.SessionLocal", sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+        "cryo.db.session.SessionLocal",
+        sessionmaker(bind=session.get_bind(), expire_on_commit=False),
     )
 
     assert _scanner_scale_metric() == 3  # only the kind="scan" run's (2+1)
@@ -96,7 +99,8 @@ def test_non_scan_runs_do_not_count(session, monkeypatch) -> None:
 
 def test_zero_when_no_active_scan_runs(session, monkeypatch) -> None:
     monkeypatch.setattr(
-        "cryo.db.session.SessionLocal", sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+        "cryo.db.session.SessionLocal",
+        sessionmaker(bind=session.get_bind(), expire_on_commit=False),
     )
     assert _scanner_scale_metric() == 0
 
@@ -105,7 +109,8 @@ def test_missing_or_non_dict_summary_does_not_crash(session, monkeypatch) -> Non
     _seed_scan_run(session, status="accepted", summary=None)
 
     monkeypatch.setattr(
-        "cryo.db.session.SessionLocal", sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+        "cryo.db.session.SessionLocal",
+        sessionmaker(bind=session.get_bind(), expire_on_commit=False),
     )
 
     assert _scanner_scale_metric() == 0

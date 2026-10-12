@@ -139,7 +139,7 @@ def test_reclaimable_weight_log_scaled_not_linear() -> None:
 def test_reclaimable_weight_ignores_negative_values() -> None:
     """reclaimable_bytes has no business being negative, but a stray bad value must not push
     a table's weight below the true-zero baseline via log of a negative number."""
-    table = _table("weird", reclaimable_bytes=-1024**3)
+    table = _table("weird", reclaimable_bytes=-(1024**3))
     assert _reclaimable_weight(table) == 0.0
 
 
@@ -163,7 +163,10 @@ def test_apply_priority_order_reclaimable_bytes_outranks_mildly_hot_table_within
     for every hot table. A few hundred queries/30d is nowhere near enough to out-blend a
     2,000GB backlog."""
     large_cold = _table(
-        "large_cold", compaction_priority="LOW", reclaimable_bytes=2_000 * 1024**3, query_count_30d=0
+        "large_cold",
+        compaction_priority="LOW",
+        reclaimable_bytes=2_000 * 1024**3,
+        query_count_30d=0,
     )
     small_warm = _table(
         "small_warm", compaction_priority="LOW", reclaimable_bytes=1024**2, query_count_30d=500
@@ -184,7 +187,10 @@ def test_apply_priority_order_extreme_hotness_can_outrank_a_large_backlog_within
     never got a turn. An extremely hot table must now be able to outrank a merely-larger-backlog
     one, not just tie-break against an exactly-equal one."""
     large_cold = _table(
-        "large_cold", compaction_priority="LOW", reclaimable_bytes=2_000 * 1024**3, query_count_30d=0
+        "large_cold",
+        compaction_priority="LOW",
+        reclaimable_bytes=2_000 * 1024**3,
+        query_count_30d=0,
     )
     extremely_hot = _table(
         "extremely_hot",
@@ -215,7 +221,12 @@ def test_apply_priority_order_hot_small_table_now_outranks_146x_bigger_cold_back
         query_count_30d=2610,  # real crm value
     )
     cold_medium_tables = [
-        _table(f"cold_{i}", compaction_priority="HIGH", reclaimable_bytes=15 * 1024**3, query_count_30d=0)
+        _table(
+            f"cold_{i}",
+            compaction_priority="HIGH",
+            reclaimable_bytes=15 * 1024**3,
+            query_count_30d=0,
+        )
         for i in range(5)
     ]
 
@@ -225,9 +236,7 @@ def test_apply_priority_order_hot_small_table_now_outranks_146x_bigger_cold_back
 
 
 def test_apply_priority_order_query_weight_breaks_ties_when_reclaimable_bytes_equal() -> None:
-    cold = _table(
-        "cold", compaction_priority="LOW", reclaimable_bytes=1024**3, query_count_30d=0
-    )
+    cold = _table("cold", compaction_priority="LOW", reclaimable_bytes=1024**3, query_count_30d=0)
     hot = _table(
         "hot", compaction_priority="LOW", reclaimable_bytes=1024**3, query_count_30d=50_000
     )
@@ -243,9 +252,7 @@ def test_apply_priority_order_still_respects_compaction_priority_first_over_recl
     """An operator-set HIGH priority must still outrank a MEDIUM table sitting on a huge
     reclaimable backlog -- reclaimable-bytes weighting only breaks ties within a tier, same
     invariant query_weight already had to preserve."""
-    high_priority_tiny = _table(
-        "a", compaction_priority="HIGH", reclaimable_bytes=1024**2
-    )
+    high_priority_tiny = _table("a", compaction_priority="HIGH", reclaimable_bytes=1024**2)
     medium_priority_huge = _table(
         "b", compaction_priority="MEDIUM", reclaimable_bytes=4_500 * 1024**3
     )

@@ -101,9 +101,7 @@ class SQLSchedulerStore:
                 ).all()
             )
             return [
-                table_to_candidate(
-                    table, last_maintained_at=last_maintained_by_table.get(table.id)
-                )
+                table_to_candidate(table, last_maintained_at=last_maintained_by_table.get(table.id))
                 for table in tables
                 if table.source is not None and table_in_source_scope(table, table.source)
             ]

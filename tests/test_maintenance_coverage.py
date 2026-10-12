@@ -137,9 +137,7 @@ def test_audit_rows_outside_the_window_do_not_count(session):
         _audit(session, table, operation, "OK", ago_hours=48)
     session.commit()
 
-    coverage = measure_cohort_coverage(
-        session, preset_name=PRESET_NAME, window_hours=24, now=NOW
-    )
+    coverage = measure_cohort_coverage(session, preset_name=PRESET_NAME, window_hours=24, now=NOW)
 
     assert coverage.fully_covered_pct == 0.0
     assert coverage.untouched_tables == 1

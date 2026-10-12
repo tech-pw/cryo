@@ -108,9 +108,7 @@ class TestUseNativeK8sRespectsGlobalDisable:
         from cryo.config import Settings
         from cryo.governor.native_admit import destination_uses_k8s_dispatch
 
-        destination = SimpleNamespace(
-            engine="native", config={"k8s_dispatch": True}
-        )
+        destination = SimpleNamespace(engine="native", config={"k8s_dispatch": True})
         assert destination_uses_k8s_dispatch(destination) is True
 
         disabled_settings = Settings(native_engine_enabled=False)
@@ -128,9 +126,6 @@ class TestWorkerRedirectsToSqlFallbackWhenDisabled:
         when the flag is off -- this test pins that baseline so the worker-level redirect (which
         needs a real store/session to resolve the fallback destination, exercised via the
         routing-level tests above) is understood as strictly additive, not a replacement."""
-        from cryo.domain.enums import EngineType
-        from cryo.engines.factory import create_engine
-
         # get_settings() is @lru_cache'd (cryo/config.py) -- a real, intentional production
         # behavior (settings are read once per process; changing CRYO_NATIVE_ENGINE_ENABLED
         # requires a pod restart/redeploy, same as every other env-driven setting here). A
@@ -150,6 +145,8 @@ class TestWorkerRedirectsToSqlFallbackWhenDisabled:
         # tests' auth headers depend on staying resolved.
         import cryo.config
         from cryo.config import Settings
+        from cryo.domain.enums import EngineType
+        from cryo.engines.factory import create_engine
 
         monkeypatch.setattr(
             cryo.config, "get_settings", lambda: Settings(native_engine_enabled=False)

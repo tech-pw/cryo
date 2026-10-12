@@ -207,7 +207,9 @@ class QueryLogIcebergWriter:
 
         try:
             arrow_table = _rows_to_arrow_table(cleaned)
-            table.append(arrow_table)  # PyIceberg's Table.append returns None; snapshot is on the table
+            table.append(
+                arrow_table
+            )  # PyIceberg's Table.append returns None; snapshot is on the table
         except Exception as exc:  # noqa: BLE001 - PyIceberg + catalog errors vary widely
             logger.warning(
                 "Append to %s failed (%s rows attempted): %s",
@@ -593,7 +595,9 @@ def rows_from_trino_queries(
     return rows
 
 
-def enrich_row_with_query_stats(row: dict[str, Any], query_detail: dict[str, Any]) -> dict[str, Any]:
+def enrich_row_with_query_stats(
+    row: dict[str, Any], query_detail: dict[str, Any]
+) -> dict[str, Any]:
     """Fill bytes_read/rows_read/files_read on a row (from rows_from_trino_queries) using
     the real per-query stats from TrinoQueryIngester.fetch_query_stats's response.
 

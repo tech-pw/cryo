@@ -27,7 +27,9 @@ def _sample(exception_type: str) -> float:
 
 def test_watcher_tick_failure_is_logged_and_counted_not_swallowed() -> None:
     runner = GovernorRunner()
-    wiring = SimpleNamespace(lock_store=None, job_store=SimpleNamespace(mark_status=None, record_audit=None))
+    wiring = SimpleNamespace(
+        lock_store=None, job_store=SimpleNamespace(mark_status=None, record_audit=None)
+    )
     before = _sample("RuntimeError")
 
     with patch("cryo.engines.native.watcher.NativeJobWatcher") as mock_watcher_cls:
@@ -35,7 +37,9 @@ def test_watcher_tick_failure_is_logged_and_counted_not_swallowed() -> None:
         with patch.object(runner._logger, "warning") as mock_warning:
             runner._tick_native_watcher(wiring)
 
-    assert mock_warning.called, "a tick failure must be logged at warning (visible in prod), not debug"
+    assert mock_warning.called, (
+        "a tick failure must be logged at warning (visible in prod), not debug"
+    )
     assert runner._consecutive_native_watcher_failures == 1
     assert _sample("RuntimeError") == before + 1.0
 
@@ -45,13 +49,16 @@ def test_repeated_watcher_tick_failures_escalate_to_error() -> None:
     hours of transient K8s API errors during metastore congestion) must escalate to error so it
     surfaces above routine noise."""
     runner = GovernorRunner()
-    wiring = SimpleNamespace(lock_store=None, job_store=SimpleNamespace(mark_status=None, record_audit=None))
+    wiring = SimpleNamespace(
+        lock_store=None, job_store=SimpleNamespace(mark_status=None, record_audit=None)
+    )
 
     with patch("cryo.engines.native.watcher.NativeJobWatcher") as mock_watcher_cls:
         mock_watcher_cls.return_value.tick.side_effect = RuntimeError("k8s api unreachable")
-        with patch.object(runner._logger, "warning") as mock_warning, patch.object(
-            runner._logger, "error"
-        ) as mock_error:
+        with (
+            patch.object(runner._logger, "warning") as mock_warning,
+            patch.object(runner._logger, "error") as mock_error,
+        ):
             for _ in range(5):
                 runner._tick_native_watcher(wiring)
 
@@ -63,7 +70,9 @@ def test_repeated_watcher_tick_failures_escalate_to_error() -> None:
 
 def test_watcher_tick_success_resets_the_consecutive_failure_counter() -> None:
     runner = GovernorRunner()
-    wiring = SimpleNamespace(lock_store=None, job_store=SimpleNamespace(mark_status=None, record_audit=None))
+    wiring = SimpleNamespace(
+        lock_store=None, job_store=SimpleNamespace(mark_status=None, record_audit=None)
+    )
     runner._consecutive_native_watcher_failures = 3
 
     with patch("cryo.engines.native.watcher.NativeJobWatcher") as mock_watcher_cls:

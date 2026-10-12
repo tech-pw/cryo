@@ -588,7 +588,9 @@ class TestReconcileDeferredJobsBounding:
                 )
             )
 
-        requeued = reconcile_deferred_jobs(store, queue, now=datetime(2026, 9, 2, 12, 0, tzinfo=UTC))
+        requeued = reconcile_deferred_jobs(
+            store, queue, now=datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
+        )
 
         assert requeued == 5
         for i in range(5):
@@ -599,9 +601,7 @@ class TestReconcileDeferredJobsBounding:
         one call -- confirms the fix actually caps per-wave work instead of just being wired
         up with no effect. Uses a small monkeypatched bound so the test doesn't need to seed
         thousands of jobs to exercise the cap."""
-        monkeypatch.setattr(
-            "cryo.queue.reconcile._MAX_DEFERRED_RECONCILE_PER_WAVE", 3
-        )
+        monkeypatch.setattr("cryo.queue.reconcile._MAX_DEFERRED_RECONCILE_PER_WAVE", 3)
         queue = InMemoryMaintenanceQueue()
         store = InMemoryJobStore()
         store.add_destination(
@@ -619,7 +619,9 @@ class TestReconcileDeferredJobsBounding:
                 )
             )
 
-        requeued = reconcile_deferred_jobs(store, queue, now=datetime(2026, 9, 2, 12, 0, tzinfo=UTC))
+        requeued = reconcile_deferred_jobs(
+            store, queue, now=datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
+        )
 
         assert requeued == 3
         still_deferred = sum(
@@ -662,11 +664,15 @@ class TestReconcileDeferredJobsOrphanedRunCleanup:
             )
         )
 
-        requeued = reconcile_deferred_jobs(store, queue, now=datetime(2026, 9, 3, 12, 0, tzinfo=UTC))
+        requeued = reconcile_deferred_jobs(
+            store, queue, now=datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+        )
 
         assert requeued == 0
         assert store.get_job("job-orphaned").status is JobStatus.FAILED
-        assert store.get_job("job-orphaned").error == "orphaned_deferred: parent run already finalized"
+        assert (
+            store.get_job("job-orphaned").error == "orphaned_deferred: parent run already finalized"
+        )
 
     def test_deferred_job_with_running_run_status_is_still_reconsidered(self) -> None:
         """The safety boundary: a job whose run is genuinely still in flight (status=
@@ -689,7 +695,9 @@ class TestReconcileDeferredJobsOrphanedRunCleanup:
             )
         )
 
-        requeued = reconcile_deferred_jobs(store, queue, now=datetime(2026, 9, 3, 12, 0, tzinfo=UTC))
+        requeued = reconcile_deferred_jobs(
+            store, queue, now=datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+        )
 
         assert requeued == 1
         assert store.get_job("job-in-flight").status is JobStatus.QUEUED
@@ -737,7 +745,9 @@ class TestReconcileDeferredJobsOrphanedRunCleanup:
         # immediately (not "still using up admission-decision budget slowly"), so real per-wave
         # capacity is still spent, but this test's real point is that dead jobs are correctly
         # identified and removed rather than silently re-deferred.
-        requeued = reconcile_deferred_jobs(store, queue, now=datetime(2026, 9, 3, 12, 0, tzinfo=UTC))
+        requeued = reconcile_deferred_jobs(
+            store, queue, now=datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+        )
 
         for i in range(3):
             assert store.get_job(f"job-dead-{i}").status is JobStatus.FAILED
@@ -855,9 +865,7 @@ def test_governor_wave_does_not_reap_spark_job_whose_driver_pod_is_still_running
     mock_client.get_job_run.return_value = JobRunResult(
         job_run_id="cryo-spark-17449de5c7", state=JobRunState.RUNNING
     )
-    monkeypatch.setattr(
-        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
-    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
 
     governor = Governor(
         queue,
@@ -907,9 +915,7 @@ def test_governor_wave_reaps_spark_job_whose_driver_pod_is_gone(monkeypatch) -> 
     mock_client.get_job_run.return_value = JobRunResult(
         job_run_id="cryo-spark-dead", state=JobRunState.FAILED
     )
-    monkeypatch.setattr(
-        "cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client
-    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
 
     governor = Governor(
         queue,

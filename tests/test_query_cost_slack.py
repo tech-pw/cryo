@@ -98,9 +98,13 @@ def test_top_users_block_renders_when_present() -> None:
     assert any("Top users by scan cost" in t for t in texts)
     # The table block itself is a "table" type, not a section -- confirm it exists and carries
     # both rows via its rows attribute rather than text.
-    table_blocks = [b for b in blocks if b.type == "table" and b.rows and b.rows[0][0].get(
-        "elements", [{}]
-    )[0].get("elements", [{}])[0].get("text") == "User"]
+    table_blocks = [
+        b
+        for b in blocks
+        if b.type == "table"
+        and b.rows
+        and b.rows[0][0].get("elements", [{}])[0].get("elements", [{}])[0].get("text") == "User"
+    ]
     assert table_blocks
     rendered_users = [
         row[0]["elements"][0]["elements"][0]["text"] for row in table_blocks[0].rows[1:]

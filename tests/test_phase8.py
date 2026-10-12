@@ -177,7 +177,9 @@ def test_rank_destinations_fails_open_when_every_destination_is_excluded() -> No
     route = resolve_destination_adaptive(
         table,
         PresetConfig(
-            id="p1", name="escalate", destination_id="native-1",
+            id="p1",
+            name="escalate",
+            destination_id="native-1",
             guardrails={"adaptive_routing": True, "engine_pool": ["native-1"]},
         ),
         destinations,

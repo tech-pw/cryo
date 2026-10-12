@@ -18,7 +18,6 @@ real maintenance dispatch on its very first tick, not after clearing 11 other st
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -45,9 +44,7 @@ class _OneDuePresetStore:
             guardrails={},
         )
         self._table = TableCandidate(id="table-1", schema_name="s", table_name="t", stats={})
-        self._assignment = TableAssignment(
-            table_id="table-1", preset_id="preset-1", pinned=True
-        )
+        self._assignment = TableAssignment(table_id="table-1", preset_id="preset-1", pinned=True)
 
     def list_due_presets(self, now):
         return [(self._preset, None)]
@@ -136,12 +133,12 @@ def test_diagnostic_steps_still_all_run_every_tick(monkeypatch) -> None:
         "_sweep_pending_fallback_dispatches",
     ]
     for name in step_names:
-        monkeypatch.setattr(
-            service, name, lambda *a, name=name, **k: called.append(name)
-        )
-    monkeypatch.setattr(service, "_dispatch_scheduled_runs", lambda *a, **k: called.append(
-        "_dispatch_scheduled_runs"
-    ))
+        monkeypatch.setattr(service, name, lambda *a, name=name, **k: called.append(name))
+    monkeypatch.setattr(
+        service,
+        "_dispatch_scheduled_runs",
+        lambda *a, **k: called.append("_dispatch_scheduled_runs"),
+    )
 
     service.tick(now=datetime(2026, 8, 31, 20, 0, tzinfo=UTC))
 

@@ -111,7 +111,9 @@ def test_two_concurrent_finalize_calls_never_both_finalize_the_same_run(_clean_u
     # (either both report 0 except one reporting 1, or -- if they didn't actually overlap in
     # time due to scheduling -- one reports 1 and the other reports 0 because the run was
     # already terminal by the time it ran). Never both reporting a finalize for the same run.
-    assert sum(results) == 1, f"expected exactly one finalize across both racing calls, got {results}"
+    assert sum(results) == 1, (
+        f"expected exactly one finalize across both racing calls, got {results}"
+    )
 
     with SessionLocal() as session:
         run = session.get(MaintenanceRun, run_id)

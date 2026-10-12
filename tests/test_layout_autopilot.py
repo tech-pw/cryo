@@ -50,9 +50,7 @@ def _seed_destination(session) -> Destination:
 
 
 def _fake_settings(max_tables: int = 20):
-    return type(
-        "FakeSettings", (), {"layout_autopilot_max_tables_per_tick": max_tables}
-    )()
+    return type("FakeSettings", (), {"layout_autopilot_max_tables_per_tick": max_tables})()
 
 
 def test_layout_autopilot_skips_tables_whose_preset_has_not_opted_in(session, monkeypatch) -> None:

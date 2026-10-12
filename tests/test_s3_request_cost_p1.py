@@ -298,12 +298,12 @@ def test_parse_log_line_handles_multi_word_quoted_user_agent() -> None:
 
 
 def test_parse_log_line_returns_none_requester_for_anonymous_dash() -> None:
-    """"-" is AWS's placeholder for "not applicable" -- unlike a missing operation/key, a
+    """ "-" is AWS's placeholder for "not applicable" -- unlike a missing operation/key, a
     missing requester doesn't invalidate the line (anonymous/unsigned requests are routine),
     it just means the requester is unknown."""
-    line = _SAMPLE_LOG_LINE.replace(
-        "arn:aws:iam::123456789012:user/test", "-"
-    ).format(operation="REST.GET.OBJECT", key="warehouse/db1/table_a/data/file1.parquet")
+    line = _SAMPLE_LOG_LINE.replace("arn:aws:iam::123456789012:user/test", "-").format(
+        operation="REST.GET.OBJECT", key="warehouse/db1/table_a/data/file1.parquet"
+    )
     assert ingest_mod._parse_log_line(line) == (
         "REST.GET.OBJECT",
         "warehouse/db1/table_a/data/file1.parquet",
@@ -905,9 +905,7 @@ def test_ingest_bucket_caps_catchup_window_when_watermark_is_badly_stuck(
         ),
     )
 
-    result = ingest_mod.ingest_bucket(
-        session, config, now=datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
-    )
+    result = ingest_mod.ingest_bucket(session, config, now=datetime(2026, 9, 8, 12, 0, tzinfo=UTC))
 
     assert result.error is None
     expected_through = stuck_since + timedelta(days=ingest_mod._MAX_CATCHUP_DAYS)
@@ -1065,13 +1063,23 @@ def test_recompute_table_cost_rollup_separates_head_from_get(session) -> None:
     session.add_all(
         [
             S3RequestCostDaily(
-                source_id=source.id, bucket="lake-bucket", table_id=table.id, day=now.date(),
-                operation_tier="get", request_count=100, cost_usd=0.04,
+                source_id=source.id,
+                bucket="lake-bucket",
+                table_id=table.id,
+                day=now.date(),
+                operation_tier="get",
+                request_count=100,
+                cost_usd=0.04,
                 pricing_source="aws_price_list_api",
             ),
             S3RequestCostDaily(
-                source_id=source.id, bucket="lake-bucket", table_id=table.id, day=now.date(),
-                operation_tier="head", request_count=25, cost_usd=0.01,
+                source_id=source.id,
+                bucket="lake-bucket",
+                table_id=table.id,
+                day=now.date(),
+                operation_tier="head",
+                request_count=25,
+                cost_usd=0.01,
                 pricing_source="aws_price_list_api",
             ),
         ]
@@ -1107,8 +1115,13 @@ def test_recompute_table_cost_rollup_tracks_delete_requests_separately(session) 
     now = datetime(2026, 7, 7, tzinfo=UTC)
     session.add(
         S3RequestCostDaily(
-            source_id=source.id, bucket="lake-bucket", table_id=table.id, day=now.date(),
-            operation_tier="delete", request_count=500, cost_usd=0.0,
+            source_id=source.id,
+            bucket="lake-bucket",
+            table_id=table.id,
+            day=now.date(),
+            operation_tier="delete",
+            request_count=500,
+            cost_usd=0.0,
             pricing_source="aws_price_list_api",
         )
     )

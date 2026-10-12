@@ -413,7 +413,11 @@ def _check_admission_stalls(session: Session, *, now: datetime) -> CheckResult:
             severity="info",
             summary=f"Admission intentionally paused ({control.reason or 'no reason recorded'}) "
             f"-- {backlog}-deep queue is expected to be static, not stalled",
-            evidence={"backlog": backlog, "paused_reason": control.reason, "changed_by": control.changed_by},
+            evidence={
+                "backlog": backlog,
+                "paused_reason": control.reason,
+                "changed_by": control.changed_by,
+            },
         )
 
     recent_completions = int(
@@ -508,7 +512,11 @@ def _check_approval_match_rate(session: Session, *, now: datetime) -> CheckResul
         "excluding valid rows). expire_snapshots/remove_orphan_files admission will silently "
         "defer on 'destructive operation requires approval' for every table whose approval "
         "doesn't match, with no other symptom until someone notices storage isn't shrinking.",
-        evidence={"total_approved": total, "matched": matched_rows, "match_rate_pct": match_rate_pct},
+        evidence={
+            "total_approved": total,
+            "matched": matched_rows,
+            "match_rate_pct": match_rate_pct,
+        },
     )
 
 
@@ -664,9 +672,7 @@ def _check_queue_growth(session: Session, *, now: datetime) -> CheckResult:
     # any nonzero trickle -- a queue could finish a handful of jobs an hour while still being
     # completely stuck on the rest. Require finished-in-window to be a meaningful fraction of
     # today's depth, or a healthy number of jobs actually in flight right now.
-    is_converging = (
-        recently_finished >= today_depth * 0.1 or recently_running_or_admitted >= 50
-    )
+    is_converging = recently_finished >= today_depth * 0.1 or recently_running_or_admitted >= 50
     if is_converging:
         return CheckResult(
             name="queue_growth",
@@ -755,7 +761,11 @@ def _check_scan_freshness(session: Session, *, now: datetime) -> CheckResult:
         "tables) usually means the scanner's own cron/queue stopped feeding it, not that "
         "these specific tables are broken -- check scan_queue depth and go_scan's own liveness "
         "before assuming a per-table problem.",
-        evidence={"active_total": active_total, "fresh_count": fresh_count, "stale_count": stale_count},
+        evidence={
+            "active_total": active_total,
+            "fresh_count": fresh_count,
+            "stale_count": stale_count,
+        },
     )
 
 
@@ -800,7 +810,9 @@ def _check_scan_failures(session: Session, *, now: datetime) -> CheckResult:
             )
         ).scalar_one()
     )
-    examples = [f"{r.schema_name}.{r.table_name} ({r.consecutive_scan_failures} failures)" for r in rows[:3]]
+    examples = [
+        f"{r.schema_name}.{r.table_name} ({r.consecutive_scan_failures} failures)" for r in rows[:3]
+    ]
     passed = real_total < _SCAN_FAILING_TABLES_MIN_COUNT
     return CheckResult(
         name="scan_failures",
@@ -879,7 +891,11 @@ def _check_cost_ingestion_freshness(session: Session, *, now: datetime) -> Check
         detail="Cost ingestion feeds both the north-star S3-cost reporting and the cost-"
         "ceiling admission gate -- when this goes stale, both keep reporting old numbers "
         "without any error, which reads as 'nothing changed' rather than 'ingestion stopped'.",
-        evidence={"priced_total": priced_total, "fresh_count": fresh_count, "stale_count": stale_count},
+        evidence={
+            "priced_total": priced_total,
+            "fresh_count": fresh_count,
+            "stale_count": stale_count,
+        },
     )
 
 
@@ -943,8 +959,7 @@ def _check_namespace_unused_cost(session: Session, *, now: datetime) -> CheckRes
             name="namespace_unused_cost",
             passed=True,
             severity="info",
-            summary=f"{check.day}: used cost is ${check.used_cost_usd:.2f} -- ratio not "
-            f"meaningful",
+            summary=f"{check.day}: used cost is ${check.used_cost_usd:.2f} -- ratio not meaningful",
         )
 
     ratio = check.unused_cost_usd / check.used_cost_usd

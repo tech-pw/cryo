@@ -146,7 +146,9 @@ def reconcile_deferred_jobs(
     failed_orphaned = 0
     for job in list_deferred(limit=_MAX_DEFERRED_RECONCILE_PER_WAVE):
         if job.run_status in _TERMINAL_RUN_STATUSES:
-            store.mark_status(job.id, JobStatus.FAILED, error="orphaned_deferred: parent run already finalized")
+            store.mark_status(
+                job.id, JobStatus.FAILED, error="orphaned_deferred: parent run already finalized"
+            )
             failed_orphaned += 1
             continue
         destination = _try_get_destination(store, job.destination_id)

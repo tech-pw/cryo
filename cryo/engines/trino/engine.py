@@ -107,7 +107,7 @@ class TrinoEngine:
             # polling loop that blocks for actual completion, but that assignment happens
             # deep inside the same synchronous call this function makes, so there was no
             # earlier point to capture it from without changing execution shape. Recurred
-             # twice on catalog.schema.example_table (15h+, then 23h+) before this fix --
+            # twice on catalog.schema.example_table (15h+, then 23h+) before this fix --
             # each time required a manual /runs/{id}/cancel, and nothing could auto-recover
             # it (unlike the Spark path, which has a real K8s Job to probe). Run the
             # blocking call on a background thread and poll cursor.query_id from here; as

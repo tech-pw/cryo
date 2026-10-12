@@ -146,9 +146,7 @@ def _totals_for_day(session: Session, day: date) -> DailyQueryCostTotals | None:
     )
 
 
-def _top_clients_for_day(
-    session: Session, day: date, *, limit: int = 8
-) -> list[ClientQueryCost]:
+def _top_clients_for_day(session: Session, day: date, *, limit: int = 8) -> list[ClientQueryCost]:
     """Per-client rollup for one day, summed across schemas/sources, ranked by scan cost when
     priced (real $ is the more actionable ranking) and falling back to bytes scanned for days
     the $/GiB price hasn't been derived for yet (see ``derive_trino_scan_cost_prices`` --
@@ -334,9 +332,7 @@ def _unknown_client_share(
     return None
 
 
-def compute_query_cost_signal(
-    session: Session, *, now: datetime | None = None
-) -> QueryCostSignal:
+def compute_query_cost_signal(session: Session, *, now: datetime | None = None) -> QueryCostSignal:
     """Compute the DoD and WoW Trino query-cost change and classify it against thresholds.
 
     Ranks by estimated_scan_cost_usd when available (real $, the actionable number); falls

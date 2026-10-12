@@ -80,9 +80,7 @@ class TestGetPartitionAccess:
         table = _seed_table(session, source)
         today = datetime.now(UTC).date()
         _seed_row(session, table, day=today, partition_path="dt=2026-08-19/", request_count=10)
-        _seed_row(
-            session, table, day=today, partition_path="dt=2026-08-18/", request_count=3
-        )
+        _seed_row(session, table, day=today, partition_path="dt=2026-08-18/", request_count=3)
 
         result = get_partition_access(session, table.id, days=7)
 

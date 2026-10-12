@@ -13,9 +13,7 @@ def _picture(**overrides: object) -> WorkPicture:
         byte_actions_succeeded=1500,
         byte_actions_measured=0,
         measured_bytes=0,
-        by_action=(
-            ActionPicture("remove_orphan_files", 1500, 2, 0, 0),
-        ),
+        by_action=(ActionPicture("remove_orphan_files", 1500, 2, 0, 0),),
         by_engine=(("spark_emr", 1500),),
     )
     base.update(overrides)

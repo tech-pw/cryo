@@ -95,9 +95,7 @@ def test_compute_property_recommendations_without_stats_defaults_target_file_siz
     items = compute_property_recommendations(session, table_id)
     session.close()
 
-    target = next(
-        item for item in items if item.property_key == "write.target-file-size-bytes"
-    )
+    target = next(item for item in items if item.property_key == "write.target-file-size-bytes")
     assert target.action == "apply"
     assert target.tier == "tier1"
     assert target.recommended_value == str(256 * 1024 * 1024)

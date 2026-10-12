@@ -160,8 +160,7 @@ def test_native_compaction_throughput_local_minio() -> None:
     if baseline_rss and label.startswith("tuned"):
         cap = int(baseline_rss)
         assert metrics.peak_rss_bytes <= cap, (
-            f"peak RSS {metrics.peak_rss_bytes} exceeds baseline cap {cap} "
-            f"(label={label})"
+            f"peak RSS {metrics.peak_rss_bytes} exceeds baseline cap {cap} (label={label})"
         )
     # Soft gate for small fixtures: only enforce 20 min when input ≥ 1 GiB.
     if metrics.input_bytes >= 1024 * 1024 * 1024:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from cryo.api.extensions import _sample_file_paths
-from cryo.scanner.analyze import _PartitionAccum, _partition_raw
+from cryo.scanner.analyze import _partition_raw, _PartitionAccum
 from cryo.scanner.go_scan import _partition_raw_from_go
 
 

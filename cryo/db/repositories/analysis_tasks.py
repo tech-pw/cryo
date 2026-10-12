@@ -148,9 +148,7 @@ def claim_due_task(
             AnalysisTask.status.in_(("pending", "leased")),
             AnalysisTask.due_at <= current,
         )
-        .where(
-            (AnalysisTask.lease_until.is_(None)) | (AnalysisTask.lease_until <= current)
-        )
+        .where((AnalysisTask.lease_until.is_(None)) | (AnalysisTask.lease_until <= current))
         .order_by(AnalysisTask.due_at.asc())
         .limit(1)
         .with_for_update(skip_locked=True)

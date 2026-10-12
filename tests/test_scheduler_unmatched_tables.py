@@ -77,9 +77,7 @@ def test_unmatched_tables_sweep_counts_needs_compaction_separately() -> None:
 
     # No presets/rules at all -- every table is unmatched, split by needs_compaction.
     tables = [
-        TableCandidate(
-            "t1", "demo", "hot_table", {"total_size_gb": 300, "needs_compaction": True}
-        ),
+        TableCandidate("t1", "demo", "hot_table", {"total_size_gb": 300, "needs_compaction": True}),
         TableCandidate(
             "t2", "demo", "cold_table", {"total_size_gb": 10, "needs_compaction": False}
         ),
@@ -98,9 +96,7 @@ def test_unmatched_tables_sweep_counts_needs_compaction_separately() -> None:
 def test_unmatched_tables_sweep_respects_interval_gate() -> None:
     from cryo.config import get_settings
 
-    tables = [
-        TableCandidate("t1", "demo", "hot", {"total_size_gb": 300, "needs_compaction": True})
-    ]
+    tables = [TableCandidate("t1", "demo", "hot", {"total_size_gb": 300, "needs_compaction": True})]
     service = _service(_FakeStore(tables, [], []))
 
     interval_hours = get_settings().unmatched_tables_check_interval_hours

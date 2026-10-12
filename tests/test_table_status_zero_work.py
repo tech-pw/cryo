@@ -18,7 +18,9 @@ TABLE_ID = uuid.uuid4()
 JOB_ID = uuid.uuid4()
 
 
-def _outcome(results: dict[int, StatementResult], statement_count: int | None = None) -> TableOutcome:
+def _outcome(
+    results: dict[int, StatementResult], statement_count: int | None = None
+) -> TableOutcome:
     return TableOutcome(
         table_id=TABLE_ID,
         name="demo.table",
@@ -31,7 +33,9 @@ def _outcome(results: dict[int, StatementResult], statement_count: int | None = 
     )
 
 
-def _result(seq: int, action: str, *, ok: bool, metrics: dict | None = None, rows: int | None = None) -> StatementResult:
+def _result(
+    seq: int, action: str, *, ok: bool, metrics: dict | None = None, rows: int | None = None
+) -> StatementResult:
     return StatementResult(
         table_id=TABLE_ID,
         seq=seq,
@@ -44,7 +48,11 @@ def _result(seq: int, action: str, *, ok: bool, metrics: dict | None = None, row
 
 def test_optimize_with_real_rewrite_count_succeeds() -> None:
     outcome = _outcome(
-        {0: _result(0, OperationType.OPTIMIZE.value, ok=True, metrics={"rewritten_data_files_count": 42})}
+        {
+            0: _result(
+                0, OperationType.OPTIMIZE.value, ok=True, metrics={"rewritten_data_files_count": 42}
+            )
+        }
     )
     status, error = table_status(outcome)
     assert status is JobStatus.SUCCEEDED
@@ -53,7 +61,11 @@ def test_optimize_with_real_rewrite_count_succeeds() -> None:
 
 def test_optimize_reporting_ok_with_zero_rewritten_files_is_flagged_failed() -> None:
     outcome = _outcome(
-        {0: _result(0, OperationType.OPTIMIZE.value, ok=True, metrics={"rewritten_data_files_count": 0})}
+        {
+            0: _result(
+                0, OperationType.OPTIMIZE.value, ok=True, metrics={"rewritten_data_files_count": 0}
+            )
+        }
     )
     status, error = table_status(outcome)
     assert status is JobStatus.FAILED
@@ -72,7 +84,9 @@ def test_optimize_with_missing_metrics_key_is_treated_as_zero_work() -> None:
 def test_optimize_zero_work_alongside_another_real_success_is_partial() -> None:
     outcome = _outcome(
         {
-            0: _result(0, OperationType.OPTIMIZE.value, ok=True, metrics={"rewritten_data_files_count": 0}),
+            0: _result(
+                0, OperationType.OPTIMIZE.value, ok=True, metrics={"rewritten_data_files_count": 0}
+            ),
             1: _result(1, OperationType.EXPIRE_SNAPSHOTS.value, ok=True, rows=3),
         }
     )
@@ -85,9 +99,7 @@ def test_optimize_zero_work_alongside_another_real_success_is_partial() -> None:
 def test_optimize_manifests_zero_rewrite_is_not_flagged() -> None:
     # optimize_manifests legitimately can report ok=True with no metrics -- it isn't in the
     # scoped action list (only optimize/convert_deletes are), so this must NOT be downgraded.
-    outcome = _outcome(
-        {0: _result(0, OperationType.OPTIMIZE_MANIFESTS.value, ok=True, metrics={})}
-    )
+    outcome = _outcome({0: _result(0, OperationType.OPTIMIZE_MANIFESTS.value, ok=True, metrics={})})
     status, error = table_status(outcome)
     assert status is JobStatus.SUCCEEDED
     assert error is None
@@ -103,7 +115,14 @@ def test_expire_snapshots_without_metrics_is_unaffected() -> None:
 
 def test_convert_deletes_zero_work_is_flagged_same_as_optimize() -> None:
     outcome = _outcome(
-        {0: _result(0, OperationType.CONVERT_DELETES.value, ok=True, metrics={"added_data_files_count": 0})}
+        {
+            0: _result(
+                0,
+                OperationType.CONVERT_DELETES.value,
+                ok=True,
+                metrics={"added_data_files_count": 0},
+            )
+        }
     )
     status, error = table_status(outcome)
     assert status is JobStatus.FAILED
@@ -112,9 +131,7 @@ def test_convert_deletes_zero_work_is_flagged_same_as_optimize() -> None:
 
 
 def test_real_failure_still_reported_normally_when_no_zero_work() -> None:
-    outcome = _outcome(
-        {0: _result(0, OperationType.OPTIMIZE.value, ok=False, metrics={})}
-    )
+    outcome = _outcome({0: _result(0, OperationType.OPTIMIZE.value, ok=False, metrics={})})
     outcome.results[0] = StatementResult(
         table_id=TABLE_ID, seq=0, action=OperationType.OPTIMIZE.value, ok=False, error="boom"
     )
@@ -125,7 +142,16 @@ def test_real_failure_still_reported_normally_when_no_zero_work() -> None:
 
 def test_skipped_statements_still_report_skipped() -> None:
     outcome = _outcome(
-        {0: StatementResult(table_id=TABLE_ID, seq=0, action=OperationType.OPTIMIZE.value, ok=False, skipped=True, error="not started")}
+        {
+            0: StatementResult(
+                table_id=TABLE_ID,
+                seq=0,
+                action=OperationType.OPTIMIZE.value,
+                ok=False,
+                skipped=True,
+                error="not started",
+            )
+        }
     )
     status, error = table_status(outcome)
     assert status is JobStatus.SKIPPED

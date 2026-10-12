@@ -373,8 +373,7 @@ def test_trino_engine_measures_bytes_freed_via_files_diff_for_optimize() -> None
     files_queries = [sql for sql in cursor.executed if '"$files"' in sql]
     assert len(files_queries) == 2
     assert all(
-        sql.startswith("SELECT COALESCE(SUM(file_size_in_bytes), 0) FROM")
-        for sql in files_queries
+        sql.startswith("SELECT COALESCE(SUM(file_size_in_bytes), 0) FROM") for sql in files_queries
     )
 
 

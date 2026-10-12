@@ -116,9 +116,7 @@ def _build_action_items(signal: QueryCostSignal) -> list[dict[str, Any]]:
             else ""
         )
         rate_text = f"Failure rate worsened to {fsig.current_rate_pct:.1f}%{points_str}{count_str}."
-        items.append(
-            {"severity": "high", "text": rate_text, "owner": "no owner assigned"}
-        )
+        items.append({"severity": "high", "text": rate_text, "owner": "no owner assigned"})
 
     if (
         signal.unknown_client_share_pct is not None
