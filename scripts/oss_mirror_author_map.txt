@@ -1,0 +1,12 @@
+# git-filter-repo --mailmap format: each line maps a (name, email) pair on the left to the
+# identity on the right. Only accounts already confirmed as real tech-pw/cryo GitHub
+# collaborators are mapped here -- see the OSS readiness review, 2026-10-12. Anyone not
+# listed keeps their original commit identity (their real @pw.live email stays visible);
+# add a line here once their GitHub account is confirmed, rather than guessing.
+Aamir Siddiqui <aamir2march@gmail.com> <cryo@local>
+Aamir Siddiqui <aamir2march@gmail.com> <aamir.siddiqui@pw.live>
+Shubham Maurya <87921809+ShubhamMaurya9@users.noreply.github.com> <shubham.maurya@pw.live>
+Shubham Maurya <87921809+ShubhamMaurya9@users.noreply.github.com> <shubham.maurya.yt@gmail.com>
+Piyush Kumar <171055309+piyush-kumar20@users.noreply.github.com> <piyush.kumar2@pw.live>
+Niteesh Kumar Pandey <194899982+niteesh-pw@users.noreply.github.com> <niteesh.pandey@pw.live>
+Niteesh Kumar Pandey <194899982+niteesh-pw@users.noreply.github.com> <niteeshkumarpandey@PWG9RMQYC61W.local>

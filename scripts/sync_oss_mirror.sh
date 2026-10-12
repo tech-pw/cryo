@@ -18,9 +18,15 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 GITHUB_REPO="github.com/tech-pw/cryo.git"
 EXCLUDE_FILE="$REPO_ROOT/scripts/oss_mirror_exclude_paths.txt"
+MAILMAP_FILE="$REPO_ROOT/scripts/oss_mirror_author_map.txt"
 
 if [[ ! -f "$EXCLUDE_FILE" ]]; then
   echo "error: $EXCLUDE_FILE not found" >&2
+  exit 1
+fi
+
+if [[ ! -f "$MAILMAP_FILE" ]]; then
+  echo "error: $MAILMAP_FILE not found" >&2
   exit 1
 fi
 
@@ -34,8 +40,8 @@ git clone --no-local --origin gitlab "$REPO_ROOT" "$WORK_DIR/cryo"
 cd "$WORK_DIR/cryo"
 git checkout -B oss-sync gitlab/main
 
-echo "==> Stripping excluded paths from full history ($(wc -l < "$EXCLUDE_FILE") entries)"
-git filter-repo --force --invert-paths --paths-from-file "$EXCLUDE_FILE" --refs oss-sync
+echo "==> Stripping excluded paths and remapping known internal emails to public GitHub identities ($(wc -l < "$EXCLUDE_FILE") paths, $(wc -l < "$MAILMAP_FILE") author lines)"
+git filter-repo --force --invert-paths --paths-from-file "$EXCLUDE_FILE" --mailmap "$MAILMAP_FILE" --refs oss-sync
 
 echo "==> Scanning filtered history for leaked secrets before pushing"
 if command -v gitleaks >/dev/null 2>&1; then
