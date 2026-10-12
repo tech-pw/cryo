@@ -12,8 +12,8 @@ permissions:
   attestations: write
 
 jobs:
-  release-image:
-    name: Build, scan, attest, and sign
+  release-evidence:
+    name: Build migration + release evidence
     runs-on: ubuntu-latest
     # requirements.lock is dependencies-only (--require-hashes can't cover an editable
     # local install), so `cryo` itself is never pip-installed below -- both evidence
@@ -55,8 +55,38 @@ jobs:
           path: "cryo-${{ github.ref_name }}-evidence.json"
           retention-days: 90
 
+  release-image:
+    name: Build, scan, attest, and sign (${{ matrix.component }})
+    needs: release-evidence
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The main app image: api/worker/governor/scheduler, plus the native (Go)
+          # engine built as a stage in the same Dockerfile -- see values.yaml's
+          # native.image comment ("Same repo/tag/digest as image: above").
+          - component: cryo
+            dockerfile: Dockerfile
+            context: .
+            image-suffix: ""
+          # Frontend. web/Dockerfile.prod (not web/Dockerfile, the dev-server one) is
+          # the nginx-unprivileged production build this chart's web.image expects.
+          - component: cryo-web
+            dockerfile: web/Dockerfile.prod
+            context: web
+            image-suffix: "-web"
+          # Self-hosted Spark+Iceberg runner (cryo/engines/spark/k8s.py's spark-submit
+          # target). Large image (full Spark distribution) -- expect a longer build.
+          - component: cryo-spark
+            dockerfile: Dockerfile.spark
+            context: .
+            image-suffix: "-spark"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
       - name: Normalize image name
-        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}${{ matrix.image-suffix }}" >> "$GITHUB_ENV"
 
       - name: Authenticate to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -69,7 +99,8 @@ jobs:
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: .
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
@@ -90,8 +121,8 @@ jobs:
         with:
           image: "${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
           format: spdx-json
-          artifact-name: "cryo-${{ github.ref_name }}.spdx.json"
-          output-file: "cryo-${{ github.ref_name }}.spdx.json"
+          artifact-name: "${{ matrix.component }}-${{ github.ref_name }}.spdx.json"
+          output-file: "${{ matrix.component }}-${{ github.ref_name }}.spdx.json"
           upload-artifact: true
           upload-artifact-retention: 90
           upload-release-assets: false
