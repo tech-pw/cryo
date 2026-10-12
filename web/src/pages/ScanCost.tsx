@@ -37,7 +37,7 @@ export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
     <div className="flex flex-col gap-6">
       {embedded ? (
         <div className="mb-3 flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">Bytes scanned, from the query log. This is not a dollar cost.</p>
+          <p className="text-sm text-muted-foreground">Bytes scanned, not dollars.</p>
           <Select
             className="w-40"
             value={days}
@@ -54,7 +54,7 @@ export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
       ) : (
         <PageHeader
           title="Reads"
-          subtitle="Bytes scanned per client and schema, from the query log. This is not a dollar cost."
+          subtitle="Bytes scanned, not dollars."
           actions={
           <Select
             className="w-40"
@@ -74,6 +74,7 @@ export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
 
       {query.isError ? <QueryErrorAlert error={query.error} /> : null}
 
+      {isLoading || byClient.length > 0 || rows.length > 0 ? (
       <MetricGrid columns={2}>
         <MetricTile
           label="Total queries"
@@ -87,13 +88,14 @@ export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
           loading={isLoading}
         />
       </MetricGrid>
+      ) : null}
 
       <Card>
         <CardHeader>
           <CardTitle>Bytes scanned by client</CardTitle>
           <CardDescription>
-            Which tool is generating the most read cost — Metabase dashboards, dbt runs, ad-hoc
-            SQL clients, and anything else that queried through Trino.
+            Which tool scanned the most bytes — Metabase dashboards, dbt runs, ad-hoc SQL clients,
+            and anything else that queried through Trino.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">

@@ -3,7 +3,7 @@ import { PageHeader, QueryErrorAlert } from "../common";
 import { Skeleton } from "../ui/skeleton";
 
 interface OverviewPageProps {
-  title: string;
+  title?: string;
   subtitle?: ReactNode;
   actions?: ReactNode;
   loading?: boolean;
@@ -26,7 +26,7 @@ export const OverviewPage = ({
   children
 }: OverviewPageProps) => (
   <div>
-    <PageHeader title={title} subtitle={subtitle} actions={actions} />
+    {title ? <PageHeader title={title} subtitle={subtitle} actions={actions} /> : actions ? <div className="mb-3 flex justify-end">{actions}</div> : null}
     <QueryErrorAlert error={error} title={errorTitle ?? "Failed to load page data"} />
     {loading ? (
       <Skeleton className="mt-4 h-40 w-full" />

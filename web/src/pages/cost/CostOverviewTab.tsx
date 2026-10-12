@@ -1,6 +1,6 @@
 import type { ColumnDef, RowSelectionState } from "@tanstack/react-table";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bar,
   BarChart,
@@ -60,7 +60,6 @@ const OPPORTUNITY_PAGE_SIZE = 50;
 const EMPTY_TABLES: TableRead[] = [];
 const COST_UNAVAILABLE = "Cost data unavailable";
 const NOT_MEASURED = "Not measured";
-
 const displayCost = (value: number | null | undefined): string =>
   value == null || Number.isNaN(value) ? COST_UNAVAILABLE : formatCurrency(value);
 
@@ -104,23 +103,29 @@ const opportunityColumns: ColumnDef<TableRead, unknown>[] = [
     id: "table",
     header: "Table",
     cell: ({ row }) => (
-      <div className="flex items-center gap-1.5">
-        <Link to={`/tables/${row.original.id}`} className="font-medium text-foreground hover:text-primary">
-          {qualifiedTableName(row.original)}
-        </Link>
-        <GradePill grade={row.original.stats?.grade} />
-      </div>
+      <Link to={`/tables/${row.original.id}`} className="font-medium text-foreground hover:text-primary">
+        {qualifiedTableName(row.original)}
+      </Link>
+    )
+  },
+  {
+    id: "grade",
+    header: "Grade",
+    cell: ({ row }) => <GradePill grade={row.original.stats?.grade} />
+  },
+  {
+    id: "reclaim",
+    header: () => <span className="block text-right">Reclaimable</span>,
+    cell: ({ row }) => (
+      <span className="block text-right tabular-nums">{displayMeasuredBytes(row.original.stats?.reclaimable_bytes)}</span>
     )
   },
   {
     id: "size",
-    header: "Size",
-    cell: ({ row }) => displayMeasuredGb(row.original.stats?.total_size_gb)
-  },
-  {
-    id: "reclaim",
-    header: "Reclaimable",
-    cell: ({ row }) => displayMeasuredBytes(row.original.stats?.reclaimable_bytes)
+    header: () => <span className="block text-right">Size</span>,
+    cell: ({ row }) => (
+      <span className="block text-right tabular-nums">{displayMeasuredGb(row.original.stats?.total_size_gb)}</span>
+    )
   },
   {
     id: "scan_at",
@@ -133,7 +138,13 @@ const opportunityColumns: ColumnDef<TableRead, unknown>[] = [
  * Overview tab of the consolidated Cost page. Wraps the body of the legacy
  * CostSavings page so the same chart + tables + planner flows live in one tab.
  */
-export const CostOverviewTab = () => {
+export const CostOverviewTab = ({
+  active = true,
+  onHeaderActions
+}: {
+  active?: boolean;
+  onHeaderActions?: (actions: ReactNode) => void;
+}) => {
   const { api, token } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const oppOffset = offsetFromSearch(searchParams.get("oppOffset"));
@@ -283,6 +294,21 @@ export const CostOverviewTab = () => {
     onSuccess: (result) => toastScanResult(result),
     onError: (error) => toast.error((error as Error).message)
   });
+
+  useEffect(() => {
+    if (!active) return;
+    onHeaderActions?.(
+      <Button
+        size="sm"
+        disabled={!scanAccess.allowed || fullCostScan.isPending}
+        title={scanAccess.reason ?? undefined}
+        onClick={() => fullCostScan.mutate()}
+      >
+        {fullCostScan.isPending ? "Starting scan…" : "Run full cost scan"}
+      </Button>
+    );
+    return () => onHeaderActions?.(null);
+  }, [active, fullCostScan.isPending, fullCostScan.mutate, onHeaderActions, scanAccess.allowed]);
   const bulkManifestRewrite = useMutation({
     mutationFn: (args: { destinationId: UUID; presetId: UUID }) => {
       if (!manifestAccess.allowed) throw new Error(manifestAccess.reason ?? "Not allowed");
@@ -360,27 +386,34 @@ export const CostOverviewTab = () => {
         </div>
       ) : data ? (
         <>
-          <div className="mb-3 flex flex-wrap items-center gap-3">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
             <CostPrecisionBadge
               precision={dominantPrecision}
               lastFullCostScanAt={data.totals.last_full_cost_scan_at}
               orphanScanStale={data.totals.orphan_scan_stale}
             />
-            <Link to="/scan-cost" className="text-xs text-primary hover:underline">
-              Scan cost
-            </Link>
-            <span className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               {data.totals.last_full_cost_scan_at
-                ? `Last full storage-truth scan: ${formatTime(data.totals.last_full_cost_scan_at)}`
-                : "No full storage-truth cost scan recorded yet -- figures below use metadata estimates."}
-            </span>
-            {data.totals.orphan_scan_stale ? (
-              <p className="text-sm text-muted-foreground">
-                Orphan estimates may be stale — run a full cost scan for storage-truth accuracy.
-              </p>
-            ) : null}
+                ? `Last full storage-truth scan: ${formatTime(data.totals.last_full_cost_scan_at)}. ${metadataCoverage}% of tables have a metadata or storage-truth figure.`
+                : "Metadata estimates. No storage-truth scan yet."}
+              {data.totals.orphan_scan_stale
+                ? " Orphan estimates may be stale — run a full cost scan for storage-truth accuracy."
+                : ""}
+            </p>
           </div>
-          <MetricGrid columns={4} className="mb-3">
+          {!onHeaderActions ? (
+            <div className="mb-3 flex justify-end">
+              <Button
+                size="sm"
+                disabled={!scanAccess.allowed || fullCostScan.isPending}
+                title={scanAccess.reason ?? undefined}
+                onClick={() => fullCostScan.mutate()}
+              >
+                {fullCostScan.isPending ? "Starting scan…" : "Run full cost scan"}
+              </Button>
+            </div>
+          ) : null}
+          <MetricGrid columns={3} className="mb-4">
             <MetricTile
               metricId="modeled_s3_storage_cost"
               value={displayCost(data.totals.current_monthly_cost_usd)}
@@ -390,78 +423,56 @@ export const CostOverviewTab = () => {
             <MetricTile
               label="After maintenance"
               value={displayCost(data.totals.projected_monthly_cost_usd)}
-              hint={
-                <span title="Projected S3 storage cost if all recommended maintenance ran today." className="cursor-help">
-                  ⓘ
-                </span>
-              }
-            />
-            <MetricTile metricId="modeled_savings" value={displayCost(data.totals.projected_savings_usd_month)} />
-            <MetricTile
-              label="Saved to date"
-              value={displayCost(data.totals.total_realized_savings_usd)}
-              hint={
-                <span title="Cumulative savings from completed maintenance runs." className="cursor-help">
-                  ⓘ
-                </span>
-              }
-            />
-          </MetricGrid>
-          <MetricGrid columns={2} className="mb-4">
-            <MetricTile
-              label="Reclaimable storage"
-              value={displayBytes(data.totals.reclaimable_bytes)}
-              hint={
-                <span title="Disk space maintenance would free up." className="cursor-help">
-                  ⓘ
-                </span>
-              }
+              hint={<span className="text-xs text-muted-foreground">If every recommendation ran today.</span>}
             />
             <MetricTile
-              label="Precision coverage"
-              value={`${metadataCoverage}%`}
+              metricId="modeled_savings"
+              value={displayCost(data.totals.projected_savings_usd_month)}
               hint={
-                <span title="Share of tables with metadata or storage-truth cost figures." className="cursor-help">
-                  ⓘ
+                <span className="text-xs text-muted-foreground">
+                  {displayBytes(data.totals.reclaimable_bytes)} reclaimable if those recommendations ran.
                 </span>
               }
             />
           </MetricGrid>
           {costModel.data ? (
             <Card className="mb-3">
-              <CardHeader className="pb-2">
-                <CardTitle>Learned cost model (holdout)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap items-center gap-4 text-sm">
-                  <span>
+              <CardContent className="flex flex-wrap items-center gap-3 py-3 text-sm">
+                <span>
+                  {costModel.data.beats_heuristic
+                    ? `Learned model beats the heuristic by ${formatCurrency(
+                        Math.max(0, costModel.data.mae_heuristic - costModel.data.mae_learned)
+                      )}/mo on holdout.`
+                    : "Learned model does not beat the heuristic on holdout."}
+                </span>
+                <Badge variant={costModel.data.beats_heuristic ? "success" : "secondary"}>
+                  {costModel.data.beats_heuristic ? "Learned wins" : "Heuristic competitive"}
+                </Badge>
+                <details className="text-xs text-muted-foreground">
+                  <summary className="cursor-pointer select-none hover:text-foreground">Holdout details</summary>
+                  <p className="mt-2 max-w-prose leading-5">
                     MAE learned {formatCurrency(costModel.data.mae_learned)}/mo vs heuristic{" "}
-                    {formatCurrency(costModel.data.mae_heuristic)}/mo
-                  </span>
-                  <Badge variant={costModel.data.beats_heuristic ? "success" : "secondary"}>
-                    {costModel.data.beats_heuristic ? "Learned wins" : "Heuristic competitive"}
-                  </Badge>
-                  <span className="text-muted-foreground">
-                    {costModel.data.n_evaluated}/{costModel.data.n_samples} holdout outcomes evaluated ·{" "}
-                    {(costModel.data.band_coverage * 100).toFixed(0)}% conformal coverage
-                  </span>
-                  <span className="text-muted-foreground">
-                    {(costModel.data.lineage_completeness * 100).toFixed(0)}% complete lineage
-                  </span>
-                  <span className="text-muted-foreground">
-                    {(costModel.data.abstention_rate * 100).toFixed(0)}% outside training domain
-                  </span>
-                  <Link to="/ai" className="text-primary hover:underline">
-                    Governor & copilot →
-                  </Link>
-                </div>
+                    {formatCurrency(costModel.data.mae_heuristic)}/mo. {costModel.data.n_evaluated}/
+                    {costModel.data.n_samples} holdout outcomes evaluated,{" "}
+                    {(costModel.data.band_coverage * 100).toFixed(0)}% conformal coverage,{" "}
+                    {(costModel.data.lineage_completeness * 100).toFixed(0)}% complete lineage,{" "}
+                    {(costModel.data.abstention_rate * 100).toFixed(0)}% outside the training domain.{" "}
+                    <Link to="/ai" className="text-primary hover:underline">
+                      Governor & copilot
+                    </Link>
+                  </p>
+                </details>
               </CardContent>
             </Card>
           ) : null}
           <div className="mb-3 grid gap-3 xl:grid-cols-12">
             <Card className="xl:col-span-8">
               <CardHeader className="pb-2">
-                <CardTitle>Current to projected</CardTitle>
+                <CardTitle>
+                  {data.totals.projected_savings_usd_month != null && data.totals.projected_savings_usd_month > 0
+                    ? `Where the ${formatCurrency(data.totals.projected_savings_usd_month)} comes from`
+                    : "Where the modelled savings come from"}
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <CostSavingsWaterfall
@@ -503,12 +514,12 @@ export const CostOverviewTab = () => {
                 <SavingsByOperation items={data.savings_by_operation} />
               </CardContent>
             </Card>
+            {hasRealizedTrend ? (
             <Card className="xl:col-span-7">
               <CardHeader className="pb-2">
                 <CardTitle>Monthly trend</CardTitle>
               </CardHeader>
               <CardContent>
-                {hasRealizedTrend ? (
                   <>
                     <div
                       role="img"
@@ -569,14 +580,9 @@ export const CostOverviewTab = () => {
                       getRowKey={(row, index) => row.scan_at ?? `trend-${index}`}
                     />
                   </>
-                ) : (
-                  <EmptyState
-                    title="No realized savings history yet"
-                    description="Realized savings appear here after maintenance runs complete."
-                  />
-                )}
               </CardContent>
             </Card>
+            ) : null}
             <Card className="xl:col-span-5">
               <CardHeader className="pb-2">
                 <CardTitle>Cost by schema</CardTitle>
@@ -588,23 +594,24 @@ export const CostOverviewTab = () => {
                       role="img"
                       aria-label={`Estimated monthly cost for the top ${Math.min((schemaCost.data ?? []).length, 8)} schemas.`}
                     >
-                    <ResponsiveContainer width="100%" height={220}>
+                    <ResponsiveContainer width="100%" height={Math.max(160, Math.min((schemaCost.data ?? []).length, 8) * 32)}>
                     <BarChart
+                      layout="vertical"
                       data={(schemaCost.data ?? []).slice(0, 8)}
-                      margin={{ top: 8, right: 16, bottom: 24, left: 0 }}
+                      margin={{ top: 4, right: 48, bottom: 4, left: 8 }}
                     >
-                      <CartesianGrid stroke={cryoColors.chartGrid} />
-                      <XAxis
+                      <CartesianGrid stroke={cryoColors.chartGrid} horizontal={false} />
+                      <XAxis type="number" stroke={cryoColors.inkFaint} tick={chartAxisTick} />
+                      <YAxis
+                        type="category"
                         dataKey="schema_name"
+                        width={120}
                         stroke={cryoColors.inkFaint}
                         tick={chartAxisTick}
-                        angle={-20}
-                        textAnchor="end"
                         interval={0}
                       />
-                      <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
                       <RechartsTooltip {...chartTooltipProps} />
-                      <Bar dataKey="cost_usd" fill={cryoColors.primary} name="$ / mo" />
+                      <Bar dataKey="cost_usd" fill={cryoColors.primary} name="$ / mo" label={{ position: "right", fontSize: 11 }} />
                     </BarChart>
                     </ResponsiveContainer>
                     </div>
@@ -651,29 +658,6 @@ export const CostOverviewTab = () => {
                     <TooltipContent>Ranked by reclaimable bytes — biggest wins first.</TooltipContent>
                   </Tooltip>
                 ) : null}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex">
-                      <Button
-                        size="sm"
-                        type="button"
-                        loading={fullCostScan.isPending}
-                        disabled={!scanAccess.allowed}
-                        title={scanAccess.reason ?? undefined}
-                        onClick={() => {
-                          if (!scanAccess.allowed) return;
-                          fullCostScan.mutate();
-                        }}
-                      >
-                        Run full cost scan
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {scanAccess.reason ??
-                      "Runs a Tier-2 storage scan (bounded S3 LIST) to refresh orphan-byte estimates."}
-                  </TooltipContent>
-                </Tooltip>
                 {deniedReason ? <span className="text-xs text-muted-foreground">{deniedReason}</span> : null}
               </div>
             </CardHeader>

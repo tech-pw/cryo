@@ -1,5 +1,4 @@
-import { BarChart3, Cloud, Database, LineChart, ScanSearch } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/common";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
@@ -42,13 +41,33 @@ const TAB_ALIASES: Record<string, CostTabKey> = {
 const TABS: Array<{
   key: CostTabKey;
   label: string;
-  icon: React.ReactNode;
+  subtitle: string;
 }> = [
-  { key: "storage", label: "Storage", icon: <BarChart3 className="size-3.5" aria-hidden="true" /> },
-  { key: "requests", label: "Requests", icon: <Database className="size-3.5" aria-hidden="true" /> },
-  { key: "impact", label: "Impact", icon: <LineChart className="size-3.5" aria-hidden="true" /> },
-  { key: "reads", label: "Reads", icon: <ScanSearch className="size-3.5" aria-hidden="true" /> },
-  { key: "aws", label: "AWS", icon: <Cloud className="size-3.5" aria-hidden="true" /> }
+  {
+    key: "storage",
+    label: "Storage",
+    subtitle: "What we pay for storage, and what maintenance would change."
+  },
+  {
+    key: "impact",
+    label: "Impact",
+    subtitle: "What maintenance already changed."
+  },
+  {
+    key: "reads",
+    label: "Reads",
+    subtitle: "Who is scanning data. Bytes, not dollars."
+  },
+  {
+    key: "requests",
+    label: "Requests",
+    subtitle: "What S3 API calls cost."
+  },
+  {
+    key: "aws",
+    label: "AWS",
+    subtitle: "Which lakehouses have a storage-metrics connection."
+  }
 ];
 
 const isTabKey = (value: string | null): value is CostTabKey => value != null && value in TAB_ALIASES;
@@ -58,6 +77,7 @@ export const Cost = () => {
   const urlTab = searchParams.get("tab");
   const tabFromUrl: CostTabKey = isTabKey(urlTab) ? TAB_ALIASES[urlTab] : DEFAULT_TAB;
   const [activeTab, setActiveTab] = useState<CostTabKey>(tabFromUrl);
+  const [headerActions, setHeaderActions] = useState<ReactNode>(null);
 
   useEffect(() => {
     setActiveTab(tabFromUrl);
@@ -67,6 +87,7 @@ export const Cost = () => {
     (key: string) => {
       if (!isTabKey(key)) return;
       setActiveTab(key);
+      setHeaderActions(null);
       const next = new URLSearchParams(searchParams);
       if (key === DEFAULT_TAB) {
         next.delete("tab");
@@ -78,23 +99,21 @@ export const Cost = () => {
     [searchParams, setSearchParams]
   );
 
+  const active = TABS.find((tab) => tab.key === activeTab) ?? TABS[0];
+
   return (
     <div>
-      <PageHeader
-        title="Cost"
-        subtitle="What do we pay, what did maintenance change, and who is reading?"
-      />
+      <PageHeader title="Cost" subtitle={active.subtitle} actions={headerActions} />
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
           {TABS.map((tab) => (
-            <TabsTrigger key={tab.key} value={tab.key} className="gap-1.5">
-              {tab.icon}
+            <TabsTrigger key={tab.key} value={tab.key}>
               {tab.label}
             </TabsTrigger>
           ))}
         </TabsList>
         <TabsContent value="storage">
-          <CostOverviewTab />
+          <CostOverviewTab active={activeTab === "storage"} onHeaderActions={setHeaderActions} />
         </TabsContent>
         <TabsContent value="requests">
           <S3RequestsTab />
@@ -106,7 +125,7 @@ export const Cost = () => {
           <ScanCost embedded />
         </TabsContent>
         <TabsContent value="aws">
-          <AwsIntegrationsTab />
+          <AwsIntegrationsTab active={activeTab === "aws"} onHeaderActions={setHeaderActions} />
         </TabsContent>
       </Tabs>
     </div>

@@ -8,6 +8,13 @@ import { Segmented } from "./ui/segmented";
 
 type Measure = "cost" | "storage";
 
+const MEASURE_KEY = "cryo.cost.waterfall-measure";
+
+const readMeasure = (): Measure => {
+  if (typeof sessionStorage === "undefined") return "cost";
+  return sessionStorage.getItem(MEASURE_KEY) === "storage" ? "storage" : "cost";
+};
+
 export interface WaterfallRow {
   name: string;
   base: number;
@@ -58,7 +65,16 @@ export const CostSavingsWaterfall = ({
   currentStorageBytes: number;
   byOperation: CostByOperation[];
 }) => {
-  const [measure, setMeasure] = useState<Measure>("cost");
+  const [measure, setMeasure] = useState<Measure>(readMeasure);
+  const chooseMeasure = (next: string) => {
+    const value: Measure = next === "storage" ? "storage" : "cost";
+    setMeasure(value);
+    try {
+      sessionStorage.setItem(MEASURE_KEY, value);
+    } catch {
+      // Private mode can reject storage; the toggle still works for this view.
+    }
+  };
   const fmt = measure === "cost" ? formatCurrency : (value: number) => formatGb(value);
 
   const rows = useMemo(() => {
@@ -83,7 +99,7 @@ export const CostSavingsWaterfall = ({
       <div className="mb-2 flex justify-end">
         <Segmented
           value={measure}
-          onChange={setMeasure}
+          onChange={chooseMeasure}
           options={[
             { label: "Cost / mo", value: "cost" },
             { label: "Storage", value: "storage" }

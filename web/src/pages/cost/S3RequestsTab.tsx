@@ -1,5 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { useAuth } from "../../lib/auth";
 import {
   getSourceS3RequestCostRollup,
@@ -235,10 +236,20 @@ export const S3RequestsTab = () => {
           variant="warning"
           className="page-alert mb-3"
           title="Some request costs are estimated using the default rate"
-          description="One or more buckets used the per-call default rate because the AWS Price List API returned no usable results for their region/storage class. Grant pricing:GetProducts for live regional pricing."
+          description={
+            <>
+              One or more buckets used the per-call default rate because the AWS Price List API returned no usable
+              results. Grant <span className="font-mono">pricing:GetProducts</span> on the lakehouse connection for live
+              regional pricing.{" "}
+              <Link to="/connections" className="underline underline-offset-2">
+                Open Connections
+              </Link>
+            </>
+          }
         />
       ) : null}
 
+      {rollups.isLoading || barData.length > 0 || measuredCosts.length > 0 ? (
       <MetricGrid columns={3} className="mb-3">
         <MetricTile
           label="Buckets with tracking enabled"
@@ -257,6 +268,7 @@ export const S3RequestsTab = () => {
           emphasis={fleetApproximate}
         />
       </MetricGrid>
+      ) : null}
 
       <Card className="mb-3">
         <CardHeader className="pb-2">

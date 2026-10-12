@@ -54,7 +54,7 @@ const renderTab = (initialEntry = "/cost") => {
     <QueryClientProvider client={client}>
       <CryoTooltipProvider>
         <MemoryRouter initialEntries={[initialEntry]}>
-          <CostOverviewTab />
+          <CostOverviewTab active />
         </MemoryRouter>
       </CryoTooltipProvider>
     </QueryClientProvider>
@@ -110,7 +110,7 @@ describe("CostOverviewTab", () => {
     expect(screen.queryByText("$0")).not.toBeInTheDocument();
   });
 
-  it("labels a missing saved-to-date figure instead of $0", async () => {
+  it("does not invent a saved-to-date dollar on Storage", async () => {
     vi.mocked(getCostDashboard).mockResolvedValue({
       totals: {
         current_monthly_cost_usd: 80,
@@ -137,10 +137,9 @@ describe("CostOverviewTab", () => {
     });
     renderTab();
 
-    const saved = (await screen.findByText("Saved to date")).closest(".cryo-metric-tile");
-    expect(saved).toHaveTextContent("Cost data unavailable");
-    expect(saved).not.toHaveTextContent("$0");
-    expect(await screen.findAllByText("Cost data unavailable")).not.toHaveLength(0);
+    expect(await screen.findByText("Estimated storage cost")).toBeInTheDocument();
+    expect(screen.queryByText("Saved to date")).not.toBeInTheDocument();
+    expect(screen.queryByText("$0")).not.toBeInTheDocument();
   });
 
   it("renders the opportunity page from the same filter as the candidate count", async () => {
