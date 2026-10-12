@@ -113,13 +113,27 @@ def create_parser() -> argparse.ArgumentParser:
 
 
 class DaemonRunner:
-    """Base class for daemon loops with graceful shutdown."""
+    """Base class for daemon loops with graceful shutdown.
+
+    run() deliberately swallows every tick exception (a daemon that exits on one bad tick
+    would be worse than one that logs and retries) -- but that means a daemon stuck
+    failing every tick forever (e.g. a stale pooled connection throwing on every call)
+    looks identical to a healthy one from the outside: the process stays alive, _stop
+    never gets set. Confirmed live twice, 2026-10 (cryo-governor): a stale Redis
+    connection after a CoreDNS blip failed every tick with the same
+    "Temporary failure in name resolution" for the rest of the pod's life, with no probe
+    wired to notice -- it took a human spotting zero admissions and manually restarting
+    the pod, both times. consecutive_tick_failures lets a caller's readiness_check (see
+    _run_with_signal) report unhealthy after N in a row, so Kubernetes can restart the
+    pod itself instead of waiting for someone to notice.
+    """
 
     def __init__(self, name: str, interval: int) -> None:
         self.name = name
         self.interval = interval
         self._stop = Event()
         self._logger = logging.getLogger(f"cryo.{name}")
+        self.consecutive_tick_failures = 0
 
     def stop(self) -> None:
         self._stop.set()
@@ -129,8 +143,14 @@ class DaemonRunner:
         while not self._stop.is_set():
             try:
                 self._tick()
+                self.consecutive_tick_failures = 0
             except Exception:
-                self._logger.exception("Error in %s tick", self.name)
+                self.consecutive_tick_failures += 1
+                self._logger.exception(
+                    "Error in %s tick (%d consecutive)",
+                    self.name,
+                    self.consecutive_tick_failures,
+                )
             self._stop.wait(self.interval)
         self._logger.info("Stopped %s", self.name)
 
@@ -1156,10 +1176,20 @@ def _run_with_signal(runner: DaemonRunner, *, service_name: str | None = None) -
             "worker": _worker_scale_metric,
             "scanner": _scanner_scale_metric,
         }
+
+        def _readiness(r: DaemonRunner = runner) -> bool:
+            # "not stopped" alone isn't enough -- a runner stuck failing every tick (stale
+            # pooled connection, etc.) never sets _stop, so this previously reported healthy
+            # for the rest of the pod's life. See DaemonRunner.run's docstring for the two
+            # live incidents this is closing. No Deployment template wires a readinessProbe
+            # at /healthz today (also see that same docstring) -- this is the code-side half;
+            # the probe itself still needs wiring in deploy/helm/cryo and helm-repos/cryo.
+            return not r._stop.is_set() and r.consecutive_tick_failures < 5
+
         start_health_server(
             port=settings.health_port,
             service_name=service_name,
-            readiness_check=lambda: not runner._stop.is_set(),
+            readiness_check=_readiness,
             scale_metric_provider=scale_metric_providers.get(service_name),
         )
 

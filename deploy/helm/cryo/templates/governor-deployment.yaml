@@ -118,3 +118,23 @@ spec:
             {{- include "cryo.envFrom" . | nindent 12 }}
           resources:
             {{- toYaml .Values.governor.resources | nindent 12 }}
+          # /healthz reports unhealthy once DaemonRunner.consecutive_tick_failures crosses 5
+          # (cryo/cli.py's _run_with_signal) -- without this probe wired, a governor stuck
+          # failing every admission wave (e.g. a stale pooled Redis connection after a
+          # CoreDNS blip) stays Running/Ready forever: the process itself never crashes,
+          # it just silently stops admitting jobs. Confirmed live twice, 2026-10 -- both
+          # times needed a human to notice zero admissions and manually restart the pod.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.observability.metricsPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.observability.metricsPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
