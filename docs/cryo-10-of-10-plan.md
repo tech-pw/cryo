@@ -134,11 +134,11 @@ write-frequency and retention debt, not just size or staleness.
 
 - `kubectl`, `aws`, and `infra` CLIs may not be on `PATH` in a fresh shell in this environment even
   though they are installed — check `/usr/local/bin` explicitly before concluding they are missing.
-- Grafana (`platform-grafana.example.com`) has two datasources that both surface under a "cost"
+- The internal Grafana has two datasources that both surface under a "cost"
   search; only one is reachable (`ef75vmxq6mnswf`, Postgres). The other (`bdtp4f7ymy8zkd`, MySQL,
   found via an older dashboard's panel JSON) hangs indefinitely on every query, tested up to 100
   seconds. Full detail and a working query pattern are in `docs/s3-cost-investigation-2026-08.md` §1.
-- `infra.example.com` (an external auth service `infra use` depends on) has shown transient timeout
+- The external auth service `infra use` depends on has shown transient timeout
   failures independent of cluster health — retry `infra use data-platform-cluster` once or twice
   before concluding the cluster itself is unreachable.
 

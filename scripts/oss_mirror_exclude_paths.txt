@@ -1,6 +1,6 @@
 .claude
 .cursor
-.impeccable
+.impeccable/live/
 .impeccable.md
 deploy/helm/cryo/values-dev.yaml
 deploy/helm/cryo/values-stage.yaml
@@ -36,3 +36,26 @@ websocket
 websocket-nginx
 websocket-nginx-private
 secret-provider-class.yaml
+# Mirror config that names internal hosts and work emails.
+scripts/oss_mirror_replacements.txt
+scripts/oss_mirror_author_map.txt
+# Internal working docs, long since removed from the tree but still in history.
+.kilo/
+docs/_private-pw/
+docs/incidents/
+docs/cost-tracking/
+docs/assets/confluence/
+glob:docs/PDAE-*
+glob:docs/pdae-*
+glob:docs/CRYO_UNUSED_COST_*
+glob:docs/CRYO_CAPACITY_CHECK_*
+glob:docs/TOP_25_*
+glob:docs/COMPETITIVE_*
+glob:docs/PREMORTEM*
+docs/6_MONTH_PREMORTEM_ANALYSIS.md
+docs/S3_STORAGE_COST_GAP_ANALYSIS_2026-08.md
+docs/s3-cost-investigation-2026-08.md
+docs/open-items-2026-08-10.md
+docs/chat-b413e9e0-build-log.md
+docs/cryo_fix.md
+docs/AGENT_HANDOFF.md

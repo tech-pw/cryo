@@ -87,7 +87,7 @@ ORDER BY CAST(p.lastmodifiedon AS TIMESTAMP) DESC LIMIT 1
 
 **Root cause, confirmed via `EXPLAIN (TYPE IO)` and `trino_analyze_query_performance` (not assumed):** both source tables (`silver_prospect_activity_base`, 2.04B rows; `silver_prospect_base`, 400M rows) are partitioned **only by `ingest_date`**. The query filters/joins on `ProspectActivityAutoId`/`prospectid` — neither is the partition column. Trino's own cost-based optimizer was already doing everything right at the SQL level (broadcast join, dynamic filtering, filter pushdown, minimal projection — `trino_analyze_query_performance`'s own `insights`/`recommendations` arrays came back **empty**, meaning no SQL rewrite could fix this). The problem was structural: **a point-lookup workload against a table partitioned for date-range scans.**
 
-**The fix** (implemented, not yet merged — see `gold_dbt_lsq_pw_prospect_activity_phone_lookup.sql` in `internal-dbt-repo`): a purpose-built dbt-managed Iceberg table, precomputing the same "latest row wins" join once per incremental build instead of once per call, and — critically — using Iceberg's **`bucket()` partition transform** on the lookup key instead of a date transform:
+**The fix** (implemented, not yet merged — a dbt model in the internal analytics repo): a purpose-built dbt-managed Iceberg table, precomputing the same "latest row wins" join once per incremental build instead of once per call, and — critically — using Iceberg's **`bucket()` partition transform** on the lookup key instead of a date transform:
 
 ```sql
 properties = {
@@ -96,7 +96,7 @@ properties = {
 }
 ```
 
-This is precisely the pattern Iceberg's own partitioning guidance recommends for "non-temporal tables with high-cardinality filter columns" ([Starburst's Iceberg partitioning guide](https://starburst.io/blog/iceberg-partitioning); reflected in `internal-dbt-repo` §3's own partition decision tree, which routes exactly this shape of table to `bucket(high_card_col, N)`).
+This is precisely the pattern Iceberg's own partitioning guidance recommends for "non-temporal tables with high-cardinality filter columns" ([Starburst's Iceberg partitioning guide](https://starburst.io/blog/iceberg-partitioning); reflected in the internal dbt Iceberg best-practices guide's partition decision tree, which routes exactly this shape of table to `bucket(high_card_col, N)`).
 
 **What this demonstrates for Cryo:** the entire multi-hour diagnostic process — read `EXPLAIN (TYPE IO)`, notice the scan estimate is ~100% of table size for both sides, check the `CREATE TABLE` DDL, notice the filter/join columns aren't the partition column, conclude the partition strategy is wrong for the workload — is a **mechanical, repeatable procedure**, not something that inherently required a human. §3 (Feature 1) proposes automating it.
 
@@ -394,6 +394,6 @@ Build order was executed as planned (3 → 1 → 4 → 2). Shared infrastructure
 - [AWS Builder Center — Amazon S3 Tables vs Self-Managed Apache Iceberg on S3](https://builder.aws.com/content/39n7WU54TBsV3OlKwtJsnL54PVL/amazon-s3-tables-vs-self-managed-apache-iceberg-on-s3-a-technical-deep-dive-for-startups)
 - [Starburst — Iceberg Partitioning Guide](https://starburst.io/blog/iceberg-partitioning)
 - **[AutoComp: Automated Data Compaction Framework (arXiv:2504.04186)](https://arxiv.org/html/2504.04186v1)** — LinkedIn production research paper; the direct lineage source for Cryo's existing AutoComp-named compaction-candidate ranking.
-- Internal: `internal-dbt-repo` — the mandatory house standards this session's  fix and this RFC's targets (100MB–1GB partitions, 128MB–1GB files, delete+insert-over-merge guidance) are both drawn from.
+- Internal: the dbt Iceberg best-practices guide — the mandatory house standards this session's  fix and this RFC's targets (100MB–1GB partitions, 128MB–1GB files, delete+insert-over-merge guidance) are both drawn from.
 - Internal: Jira  (parent , "S3 and Trino Cost Reduction Initiative") — full ticket, root-cause writeup, and the original query pattern.
 - Internal: live measurements against `cdp.lsq_pw.gold_dbt_lsq_pw_prospect_activity_phone_lookup`, taken 2026-08-19 via the `mcp-trino` connection (§1.2) — row count, wall-clock timing, and `$files` metadata, all directly queried, not estimated.

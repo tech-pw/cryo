@@ -19,16 +19,16 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 GITHUB_REPO="github.com/tech-pw/cryo.git"
 EXCLUDE_FILE="$REPO_ROOT/scripts/oss_mirror_exclude_paths.txt"
 MAILMAP_FILE="$REPO_ROOT/scripts/oss_mirror_author_map.txt"
+# One rule per line, no comments: filter-repo treats every non-blank line here as a
+# pattern, so a "#" line would redact that literal text across the whole history.
+REPLACE_FILE="$REPO_ROOT/scripts/oss_mirror_replacements.txt"
 
-if [[ ! -f "$EXCLUDE_FILE" ]]; then
-  echo "error: $EXCLUDE_FILE not found" >&2
-  exit 1
-fi
-
-if [[ ! -f "$MAILMAP_FILE" ]]; then
-  echo "error: $MAILMAP_FILE not found" >&2
-  exit 1
-fi
+for f in "$EXCLUDE_FILE" "$MAILMAP_FILE" "$REPLACE_FILE"; do
+  if [[ ! -f "$f" ]]; then
+    echo "error: $f not found" >&2
+    exit 1
+  fi
+done
 
 if [[ -z "${OSS_SYNC_GITHUB_TOKEN:-}" ]]; then
   echo "error: OSS_SYNC_GITHUB_TOKEN is not set" >&2
@@ -40,8 +40,10 @@ git clone --no-local --origin gitlab "$REPO_ROOT" "$WORK_DIR/cryo"
 cd "$WORK_DIR/cryo"
 git checkout -B oss-sync gitlab/main
 
-echo "==> Stripping excluded paths and remapping known internal emails to public GitHub identities ($(wc -l < "$EXCLUDE_FILE") paths, $(wc -l < "$MAILMAP_FILE") author lines)"
-git filter-repo --force --invert-paths --paths-from-file "$EXCLUDE_FILE" --mailmap "$MAILMAP_FILE" --refs oss-sync
+echo "==> Stripping excluded paths, scrubbing internal hostnames/IDs from file contents and commit messages, and remapping internal emails to public GitHub identities"
+git filter-repo --force --invert-paths --paths-from-file "$EXCLUDE_FILE" \
+  --replace-text "$REPLACE_FILE" --replace-message "$REPLACE_FILE" \
+  --mailmap "$MAILMAP_FILE" --refs oss-sync
 
 echo "==> Scanning filtered history for leaked secrets before pushing"
 if command -v gitleaks >/dev/null 2>&1; then
