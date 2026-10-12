@@ -1,6 +1,7 @@
 {{- define "cryo.workerPod" -}}
 image: {{ include "cryo.imageRef" .root.Values.image | quote }}
 imagePullPolicy: {{ .root.Values.image.pullPolicy }}
+{{ include "cryo.containerSecurityContext" .root }}
 env:
   {{- range $k, $v := .root.Values.global.env }}
   - name: {{ $k }}
@@ -109,6 +110,7 @@ spec:
       # not this one.
       serviceAccountName: {{ include "cryo.fullname" . }}-native
       {{- end }}
+      {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 6 }}
       containers:
         - name: worker
           command: ["cryo", "worker"]

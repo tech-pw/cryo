@@ -32,10 +32,12 @@ spec:
           restartPolicy: OnFailure
           {{- include "cryo.imagePullSecrets" . | nindent 10 }}
           {{- include "cryo.nodeSelector" . | nindent 10 }}
+          {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 10 }}
           containers:
             - name: scanner
               image: {{ include "cryo.imageRef" .Values.image | quote }}
               imagePullPolicy: {{ .Values.image.pullPolicy }}
+              {{- include "cryo.containerSecurityContext" $ | nindent 14 }}
               command: ["python", "-m", "cryo.scanner.run"]
               args:
                 - "--chunk-id"

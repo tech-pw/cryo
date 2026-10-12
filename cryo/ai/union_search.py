@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from cryo.ai.runtime import LLMInvokeContext, complete_with_budget_and_observation
 from cryo.db.models import Source, Table
+from cryo.engines.trino.sql import quote_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -97,12 +98,12 @@ def _format_qualified(identifier: str) -> str:
     """Return a SQL-safe ``schema.table`` literal (double-quoted)."""
     if "." in identifier:
         schema_part, _, table_part = identifier.partition(".")
-        return f'"{schema_part}"."{table_part}"'
-    return f'"{identifier}"'
+        return f"{quote_identifier(schema_part)}.{quote_identifier(table_part)}"
+    return quote_identifier(identifier)
 
 
 def _select_list(target_cols: list[tuple[str, str]]) -> str:
-    return ", ".join(f'"{name}"' for name, _ in target_cols)
+    return ", ".join(quote_identifier(name) for name, _ in target_cols)
 
 
 def _build_union_sql(
@@ -120,16 +121,17 @@ def _build_union_sql(
 
     other_select_parts: list[str] = []
     for name, ttype in target_cols:
+        quoted = quote_identifier(name)
         if name in other_by_name:
             other_ttype = other_by_name[name]
             if ttype == other_ttype:
-                other_select_parts.append(f'"{name}"')
+                other_select_parts.append(quoted)
             elif name in overlap_set and name in cast_set:
-                other_select_parts.append(f'CAST("{name}" AS {ttype})')
+                other_select_parts.append(f"CAST({quoted} AS {ttype})")
             else:
-                other_select_parts.append(f'CAST(NULL AS {ttype or "VARCHAR"}) AS "{name}"')
+                other_select_parts.append(f"CAST(NULL AS {ttype or 'VARCHAR'}) AS {quoted}")
         else:
-            other_select_parts.append(f'CAST(NULL AS {ttype or "VARCHAR"}) AS "{name}"')
+            other_select_parts.append(f"CAST(NULL AS {ttype or 'VARCHAR'}) AS {quoted}")
     other_select = ", ".join(other_select_parts)
 
     return (

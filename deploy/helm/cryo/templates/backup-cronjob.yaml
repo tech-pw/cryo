@@ -27,10 +27,12 @@ spec:
           serviceAccountName: {{ .Values.backup.serviceAccount | quote }}
           {{- include "cryo.imagePullSecrets" . | nindent 10 }}
           {{- include "cryo.nodeSelector" . | nindent 10 }}
+          {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 10 }}
           containers:
             - name: backup
               image: {{ include "cryo.imageRef" .Values.image | quote }}
               imagePullPolicy: {{ .Values.image.pullPolicy }}
+              {{- include "cryo.containerSecurityContext" $ | nindent 14 }}
               command: ["python", "-m", "cryo.operations.backup"]
               args:
                 - create-offsite

@@ -31,10 +31,12 @@ spec:
     spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
+      {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 6 }}
       containers:
         - name: scanner-worker
           image: {{ include "cryo.imageRef" .Values.image | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "cryo.containerSecurityContext" $ | nindent 10 }}
           command: ["cryo", "scanner"]
           ports:
             - name: metrics

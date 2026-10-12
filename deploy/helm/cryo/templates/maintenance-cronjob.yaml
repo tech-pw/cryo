@@ -46,10 +46,12 @@ spec:
           serviceAccountName: {{ include "cryo.fullname" . }}-native
           {{- include "cryo.imagePullSecrets" . | nindent 10 }}
           {{- include "cryo.nodeSelector" . | nindent 10 }}
+          {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 10 }}
           containers:
             - name: maintenance
               image: {{ include "cryo.imageRef" .Values.image | quote }}
               imagePullPolicy: {{ .Values.image.pullPolicy }}
+              {{- include "cryo.containerSecurityContext" $ | nindent 14 }}
               command: ["python", "-m", "cryo.maintenance.run"]
               env:
                 {{- range $k, $v := .Values.global.env }}

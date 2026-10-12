@@ -256,3 +256,13 @@ def _quote_identifier(identifier: str) -> str:
     if identifier.replace("_", "").isalnum() and not identifier[0].isdigit():
         return identifier
     return '"' + identifier.replace('"', '""') + '"'
+
+
+def quote_identifier(identifier: str) -> str:
+    """Always double-quote a Trino identifier, escaping embedded quotes."""
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def quote_qualified_name(*parts: str) -> str:
+    """Quote each part of a dotted Trino name (catalog.schema.table) independently."""
+    return ".".join(_quote_identifier(part) for part in parts)

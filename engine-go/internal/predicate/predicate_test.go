@@ -80,6 +80,30 @@ func TestDayRangeBuildsAndExpression(t *testing.T) {
 	}
 }
 
+func TestIdentityIntRejectsInt32Overflow(t *testing.T) {
+	colType := "int"
+	for _, raw := range []string{`2147483648`, `-2147483649`} {
+		term := protocol.PredicateTermRequest{
+			BaseColumn: "shard",
+			Transform:  "identity",
+			Value:      json.RawMessage(raw),
+			ColType:    &colType,
+		}
+		if _, err := buildTermExpr(term); err == nil {
+			t.Fatalf("expected overflow error for %s", raw)
+		}
+	}
+	term := protocol.PredicateTermRequest{
+		BaseColumn: "shard",
+		Transform:  "identity",
+		Value:      json.RawMessage(`2147483647`),
+		ColType:    &colType,
+	}
+	if _, err := buildTermExpr(term); err != nil {
+		t.Fatalf("max int32 must still build: %v", err)
+	}
+}
+
 func TestIdentityDateEpochDayBuildsExpression(t *testing.T) {
 	colType := "date"
 	for _, raw := range []string{`20643`, `"20643"`} {

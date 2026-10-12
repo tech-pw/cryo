@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from cryo.engines.k8s_cost_labels import cost_attribution_labels
+from cryo.engines.k8s_security import container_security_context, pod_security_context
 from cryo.engines.spark.k8s import (
     SparkK8sConfig,
     _new_k8s_batch_client,
@@ -277,11 +278,13 @@ def build_lane_objects(
         "serviceAccountName": cfg.service_account,
         "nodeSelector": node_selector,
         "imagePullSecrets": [{"name": s} for s in cfg.image_pull_secrets],
+        "securityContext": pod_security_context(),
         "containers": [
             {
                 "name": "spark",
                 "image": cfg.image,
                 "imagePullPolicy": cfg.image_pull_policy,
+                "securityContext": container_security_context(),
                 "command": spark_submit_command(
                     spec, cfg, catalog=catalog, deadline_epoch=deadline_epoch
                 ),

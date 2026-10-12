@@ -14,7 +14,7 @@ FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     curl \
@@ -37,6 +37,14 @@ RUN chmod +x /app/engine-go/bin/cryo-engine-go
 
 # Install Cryo without re-resolving the locked dependency graph.
 RUN pip install --no-cache-dir --no-deps .
+
+# UID/GID 10001 must match securityContext.runAsUser/runAsGroup in the Helm chart.
+# .local/ holds the relative-path defaults (puffin, observation lakehouse) under WORKDIR.
+RUN groupadd --system --gid 10001 cryo \
+    && useradd --system --uid 10001 --gid cryo --create-home --home-dir /home/cryo cryo \
+    && mkdir -p /app/.local \
+    && chown cryo:cryo /app/.local
+USER 10001:10001
 
 # Default command (can be overridden in docker-compose)
 CMD ["uvicorn", "cryo.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

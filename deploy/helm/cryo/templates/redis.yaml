@@ -28,10 +28,12 @@ spec:
         {{- include "cryo.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redis
     spec:
+      {{- include "cryo.podSecurityContext" (list $ $.Values.redis.podSecurityContext) | nindent 6 }}
       containers:
         - name: redis
           image: {{ include "cryo.imageRef" .Values.redis.image | quote }}
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          {{- include "cryo.containerSecurityContext" $ | nindent 10 }}
           args:
             - --maxmemory
             - {{ .Values.redis.maxmemory | quote }}

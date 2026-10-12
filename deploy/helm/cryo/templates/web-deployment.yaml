@@ -20,13 +20,15 @@ spec:
     spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
+      {{- include "cryo.podSecurityContext" (list $ $.Values.web.podSecurityContext) | nindent 6 }}
       containers:
         - name: web
           image: {{ include "cryo.imageRef" .Values.web.image | quote }}
           imagePullPolicy: {{ .Values.web.image.pullPolicy }}
+          {{- include "cryo.containerSecurityContext" $ | nindent 10 }}
           ports:
             - name: http
-              containerPort: 80
+              containerPort: {{ .Values.web.port }}
           livenessProbe:
             httpGet:
               path: /

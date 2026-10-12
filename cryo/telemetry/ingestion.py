@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -14,6 +15,15 @@ from cryo.db.models import QueryLog, Source, Table
 from cryo.telemetry.parser import extract_query_ranges, parse_query_predicates
 
 logger = logging.getLogger(__name__)
+
+_DOTTED_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*")
+
+
+def _require_identifier(name: str, *, what: str) -> str:
+    """Reject config-supplied names that can't be interpolated into SQL as bare identifiers."""
+    if not _DOTTED_IDENTIFIER_RE.fullmatch(name):
+        raise ValueError(f"invalid {what} identifier: {name!r}")
+    return name
 
 
 class TrinoQueryError(RuntimeError):
@@ -51,8 +61,8 @@ class TrinoQueryIngester:
         # original bug: telemetry_trino_user/password were documented and Field()-defined in
         # config.py but never actually passed to this class) needs real HTTP Basic Auth too.
         self.auth = (user, password) if password else None
-        self.catalog = catalog
-        self.schema = schema
+        self.catalog = _require_identifier(catalog, what="catalog")
+        self.schema = _require_identifier(schema, what="schema")
         self.headers = headers or {}
         self.verify_ssl = verify_ssl
 
@@ -103,7 +113,7 @@ class TrinoQueryIngester:
           AND query NOT LIKE '%system.runtime%'
           AND query NOT LIKE '%EXPLAIN%'
         ORDER BY created DESC
-        LIMIT {limit}
+        LIMIT {int(limit)}
         """
 
         async with httpx.AsyncClient(
@@ -677,6 +687,7 @@ class DuckDBIngester:
             return events
 
         try:
+            table_name = _require_identifier(table_name, what="query log table")
             conn = duckdb.connect(database_path, read_only=True)
             try:
                 rows = conn.execute(
