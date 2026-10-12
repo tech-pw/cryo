@@ -77,6 +77,19 @@ scores must stay reachable under the grading rule (100 minus 8 per warning and 2
 because the Health page explains them. Add a screen by adding an entry to `SHOTS` in `capture.ts`;
 the run logs any API call the demo data does not answer.
 
+## README images
+
+The repo README uses images from `docs/img/`: a hero banner rendered from
+`docs/img/src/readme-hero.html`, and captures of the homepage's maintenance flow, platform diagram,
+operation order and audit feed. Rebuild the site first, then:
+
+```bash
+cd web && node ../scripts/readme_images.mjs
+```
+
+Product screenshots in the README point straight at `assets/img/screens/`, so regenerating those
+(above) updates both.
+
 ## Adding a diagram
 
 Add a spec to `diagrams` in `scripts/diagrams.mjs`. Edges anchor to `"node.side±offset"` and route
