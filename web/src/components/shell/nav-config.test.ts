@@ -37,6 +37,7 @@ describe("seven destinations", () => {
       "Insights",
       "Settings"
     ]);
+    expect(NAV_GROUPS.map((group) => group.label)).toEqual(["", "Operate", "Understand", ""]);
     for (const href of OLD_HREFS) {
       expect(hrefs()).not.toContain(href);
     }

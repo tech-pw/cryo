@@ -11,7 +11,6 @@ import { getEngineLoad } from "../api/engineLoad";
 import { getCryoVitals } from "../api/vitals";
 import { Alert } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
-import { PageHeader } from "../components/ui/page-header";
 import { useAuth } from "../lib/auth";
 import { optionalNumber } from "../lib/batchSummary";
 import { formatNumber } from "../lib/format";
@@ -115,6 +114,8 @@ export const DatalakeHealth = () => {
             : scannerStatus.data
               ? "Idle"
               : null;
+  const scannerNeedsAttention =
+    scannerLabel === "Off" || scannerLabel === "Last scan failed" || (scannerStatus.data?.queue_depth ?? 0) > 0;
   const engineLabel = engineLoad.isPending
     ? null
     : engineLoad.isError
@@ -127,9 +128,15 @@ export const DatalakeHealth = () => {
 
   return (
     <div className="home-overview">
-      <PageHeader title="Home" subtitle="Your lake at a glance. Health, maintenance and the next best action."
-        actions={<Button variant="secondary" size="sm" disabled={refreshing} onClick={() => void Promise.allSettled(queries.map((query) => query.refetch()))}><RefreshCw size={14} aria-hidden="true" className={refreshing ? "motion-safe:animate-spin" : ""} />{refreshing ? "Refreshing…" : "Refresh overview"}</Button>}
-      />
+      <header className="home-lead">
+        <div>
+          <h1>Home</h1>
+          <p>Your lake at a glance. Health, maintenance and the next best action.</p>
+        </div>
+        <Button variant="ghost" size="icon" aria-label={refreshing ? "Refreshing overview" : "Refresh overview"} disabled={refreshing} onClick={() => void Promise.allSettled(queries.map((query) => query.refetch()))}>
+          <RefreshCw size={16} aria-hidden="true" className={refreshing ? "motion-safe:animate-spin" : ""} />
+        </Button>
+      </header>
       {dashboard.isError ? (
         <Alert
           className="page-alert"
@@ -176,7 +183,8 @@ export const DatalakeHealth = () => {
         <FreshnessCard rows={dashboard.isLoading ? [] : freshnessRows} asOf={freshnessAsOf} loading={dashboard.isLoading} />
       )}
       <AttentionCard approvals={approvalCount} approvalsLoading={pendingApprovals.isLoading} approvalsError={pendingApprovals.isError}
-        needsCompaction={dashboard.isError ? null : data?.totals?.needs_compaction ?? null} failed={failedCount} runHref={latest ? `/runs/${latest.id}` : null} dashboardLoading={dashboard.isLoading} />
+        needsCompaction={dashboard.isError ? null : data?.totals?.needs_compaction ?? null} failed={failedCount} runHref={latest ? `/runs/${latest.id}` : null} dashboardLoading={dashboard.isLoading}
+        showScanner={scannerNeedsAttention} />
       <div className="home-discoveries">
           <DiscoveredList
             findings={fastPathFindings.data ?? []}

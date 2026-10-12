@@ -9,7 +9,7 @@ import {
   type VisibilityState
 } from "@tanstack/react-table";
 import { ChevronLeft, ChevronRight, Columns3, Rows2, Rows3 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "./button";
 import { Checkbox } from "./checkbox";
@@ -56,6 +56,19 @@ const rowHeightClass: Record<TableDensity, string> = {
   default: "h-[var(--table-row-height-default)]",
   compact: "h-[var(--table-row-height-compact)]"
 };
+
+/** Pin the leading identity column. With row selection, that is the checkbox plus the next column. */
+function stickyColumnClass(columnIndex: number, selectionEnabled: boolean, layer: "header" | "body" | "footer"): string | undefined {
+  const pinned = selectionEnabled ? columnIndex <= 1 : columnIndex === 0;
+  if (!pinned) return undefined;
+  const left = selectionEnabled && columnIndex === 1 ? "left-10" : "left-0";
+  const edge = columnIndex === (selectionEnabled ? 1 : 0) ? "shadow-[1px_0_0_0_var(--color-border)]" : undefined;
+  const surface =
+    layer === "header" || layer === "footer"
+      ? "z-20 bg-[var(--color-table-header)]"
+      : "z-10 bg-card group-hover:bg-[var(--color-surface-sunken)] group-data-[state=selected]:bg-[var(--color-primary-soft)]";
+  return cn("sticky", left, surface, edge);
+}
 
 function DensityToggle({
   density,
@@ -107,11 +120,13 @@ export function ColumnVisibilityMenu({
   options,
   visibility,
   onChange,
+  onReset,
   label = "Columns"
 }: {
   options: ColumnVisibilityOption[];
   visibility: Record<string, boolean>;
   onChange: (next: Record<string, boolean>) => void;
+  onReset?: () => void;
   label?: string;
 }) {
   const hiddenCount = options.filter((option) => visibility[option.id] === false).length;
@@ -143,6 +158,17 @@ export function ColumnVisibilityMenu({
             );
           })}
         </ul>
+        {onReset ? (
+          <div className="mt-1.5 border-t border-border pt-1.5">
+            <button
+              type="button"
+              className="w-full rounded-[var(--radius-sm)] px-1.5 py-1 text-left text-sm text-muted-foreground hover:bg-[var(--color-surface-sunken)] hover:text-foreground"
+              onClick={onReset}
+            >
+              All columns
+            </button>
+          </div>
+        ) : null}
       </PopoverContent>
     </Popover>
   );
@@ -296,6 +322,35 @@ export function DataTable<TData>({
   const showToolbar = Boolean(toolbar || (showDensityToggle && onDensityChange));
   const isEmpty = !loading && data.length === 0;
   const hasFooter = tableColumns.some((column) => column.footer !== undefined);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [track, setTrack] = useState({ width: 0, overflow: false });
+
+  useEffect(() => {
+    const scroller = tableScrollRef.current;
+    if (!scroller || isEmpty) return;
+    const measure = () => {
+      setTrack({
+        width: scroller.scrollWidth,
+        overflow: scroller.scrollWidth - scroller.clientWidth > 1
+      });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroller);
+    const tableEl = scroller.querySelector("table");
+    if (tableEl) observer.observe(tableEl);
+    return () => observer.disconnect();
+  }, [isEmpty, data, tableColumns, density]);
+
+  const syncingScroll = useRef(false);
+
+  const syncScroll = (source: HTMLDivElement, target: HTMLDivElement | null) => {
+    if (!target || syncingScroll.current || source.scrollLeft === target.scrollLeft) return;
+    syncingScroll.current = true;
+    target.scrollLeft = source.scrollLeft;
+    syncingScroll.current = false;
+  };
 
   return (
     <div
@@ -318,8 +373,12 @@ export function DataTable<TData>({
           <EmptyState title={emptyTitle} description={emptyDescription} action={emptyAction} />
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className={cn("w-full min-w-full border-collapse text-[13px]", tableClassName)}>
+        <div
+          ref={tableScrollRef}
+          className="cryo-hscroll overflow-x-auto"
+          onScroll={(event) => syncScroll(event.currentTarget, trackRef.current)}
+        >
+          <table className={cn("w-max min-w-full border-separate border-spacing-0 text-[13px]", tableClassName)}>
             <thead className="sticky top-0 z-10 bg-[var(--color-table-header)]">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id} className="border-b border-border">
@@ -327,12 +386,10 @@ export function DataTable<TData>({
                     <th
                       key={header.id}
                       className={cn(
-                        "px-3 py-2 text-left text-xs font-medium text-muted-foreground",
-                        stickyFirstColumn &&
-                          columnIndex === 0 &&
-                          "sticky left-0 z-20 bg-[var(--color-table-header)] after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border"
+                        "border-b border-border px-3 py-2 text-left text-xs font-medium text-muted-foreground",
+                        stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "header")
                       )}
-                      style={{ width: header.getSize() !== 150 ? header.getSize() : undefined }}
+                      style={{ width: header.getSize() }}
                     >
                       {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                     </th>
@@ -343,9 +400,15 @@ export function DataTable<TData>({
             <tbody>
               {loading && data.length === 0
                 ? Array.from({ length: pagination?.pageSize ?? 5 }).map((_, rowIndex) => (
-                    <tr key={`loading-${rowIndex}`} className={cn("border-b border-border/70", rowHeightClass[density])}>
+                    <tr key={`loading-${rowIndex}`} className={cn("group", rowHeightClass[density])}>
                       {tableColumns.map((column, columnIndex) => (
-                        <td key={`${column.id ?? columnIndex}-loading`} className="px-3 py-2">
+                        <td
+                          key={`${column.id ?? columnIndex}-loading`}
+                          className={cn(
+                            "border-b border-border/70 px-3 py-2",
+                            stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "body")
+                          )}
+                        >
                           <Skeleton className="h-4 w-full max-w-[12rem]" />
                         </td>
                       ))}
@@ -355,7 +418,7 @@ export function DataTable<TData>({
                     <tr
                       key={row.id}
                       className={cn(
-                        "border-b border-border/70 transition-colors duration-[var(--motion-fast)] ease-[var(--ease-standard)] hover:bg-[var(--color-surface-sunken)] data-[state=selected]:bg-[var(--color-primary-soft)]",
+                        "group transition-colors duration-[var(--motion-fast)] ease-[var(--ease-standard)] hover:bg-[var(--color-surface-sunken)] data-[state=selected]:bg-[var(--color-primary-soft)]",
                         rowHeightClass[density],
                         row.getIsSelected() && "bg-[var(--color-primary-soft)]",
                         getRowClassName?.(row.original)
@@ -366,11 +429,8 @@ export function DataTable<TData>({
                         <td
                           key={cell.id}
                           className={cn(
-                            "px-3 py-2 align-middle text-foreground",
-                            stickyFirstColumn &&
-                              columnIndex === 0 &&
-                              "sticky left-0 z-10 bg-card after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border",
-                            row.getIsSelected() && stickyFirstColumn && columnIndex === 0 && "bg-[var(--color-primary-soft)]"
+                            "border-b border-border/70 px-3 py-2 align-middle text-foreground",
+                            stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "body")
                           )}
                         >
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -382,15 +442,13 @@ export function DataTable<TData>({
             {hasFooter ? (
               <tfoot>
                 {table.getFooterGroups().map((footerGroup) => (
-                  <tr key={footerGroup.id} className="border-t-2 border-border bg-[var(--color-table-header)]">
+                  <tr key={footerGroup.id} className="bg-[var(--color-table-header)]">
                     {footerGroup.headers.map((header, columnIndex) => (
                       <td
                         key={header.id}
                         className={cn(
-                          "px-3 py-2 text-left text-xs font-semibold text-foreground [font-variant-numeric:tabular-nums]",
-                          stickyFirstColumn &&
-                            columnIndex === 0 &&
-                            "sticky left-0 z-10 bg-[var(--color-table-header)] after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border"
+                          "border-t-2 border-border px-3 py-2 text-left text-xs font-semibold text-foreground [font-variant-numeric:tabular-nums]",
+                          stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "footer")
                         )}
                       >
                         {header.isPlaceholder ? null : flexRender(header.column.columnDef.footer, header.getContext())}
@@ -403,6 +461,17 @@ export function DataTable<TData>({
           </table>
         </div>
       )}
+
+      {!isEmpty && track.overflow ? (
+        <div
+          ref={trackRef}
+          className="cryo-hscroll-track overflow-x-auto overflow-y-hidden"
+          onScroll={(event) => syncScroll(event.currentTarget, tableScrollRef.current)}
+          aria-hidden="true"
+        >
+          <div style={{ width: track.width, height: 1 }} />
+        </div>
+      ) : null}
 
       {pagination ? <TablePaginationBar pagination={pagination} /> : null}
     </div>

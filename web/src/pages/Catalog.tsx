@@ -23,6 +23,7 @@ export const Catalog = () => (
     <PageHeader
       title="Catalogs & tables"
       subtitle="Fleet-wide datalake health at the top, filterable table explorer below."
+      breadcrumbs={false}
     />
     <CatalogDashboard />
     <TableExplorerSection />

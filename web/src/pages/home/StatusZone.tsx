@@ -46,7 +46,7 @@ export const StatusZone = ({ vitals, vitalsLoading, vitalsError, scannerLabel, q
           { label: "Scanner", value: scannerLabel ?? "Loading…", href: "/runs/scanner" },
           { label: "Scan queue", value: queueDepth == null ? "Unavailable" : `${formatNumber(queueDepth)} waiting`, href: "/runs/scanner" },
           { label: "Engines", value: engineLabel ?? "Loading…", href: "/runs" }
-        ].map((row) => <Link key={row.label} to={row.href} aria-label={`${row.label}: ${row.value}`}><span>{row.label}</span><strong>{row.value}</strong><ArrowUpRight size={13} aria-hidden="true" /></Link>)}
+        ].map((row) => <Link key={row.label} to={row.href} aria-label={`${row.label}: ${row.value}`}><span>{row.label}</span><strong>{row.value}<ArrowUpRight size={13} aria-hidden="true" /></strong></Link>)}
       </nav>
     </HomeCard>
   );

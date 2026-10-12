@@ -677,6 +677,63 @@ export const CostOverviewTab = () => {
                 {deniedReason ? <span className="text-xs text-muted-foreground">{deniedReason}</span> : null}
               </div>
             </CardHeader>
+            {bulkWritesAllowed ? (
+              <div className="px-4">
+                <BulkAssignBar
+                  selection={selection}
+                  presets={presets.data ?? []}
+                  destinations={destinations.data ?? []}
+                  onClear={clearSelection}
+                  onAssign={(presetId) => assign.mutate(presetId)}
+                  onRun={({ destinationId, presetId, mode }) => bulkRun.mutate({ destinationId, presetId, mode })}
+                  onManifestRewrite={({ destinationId, presetId }) =>
+                    bulkManifestRewrite.mutate({ destinationId, presetId })
+                  }
+                  onScan={() => bulkScan.mutate()}
+                  onPreview={() => {
+                    if (!selection) throw new Error("No tables selected");
+                    const picked =
+                      selection.mode === "ids"
+                        ? opportunityRows.filter((row) => selection.ids.includes(row.id))
+                        : opportunityRows;
+                    setPreviewTables(picked.slice(0, 25));
+                    setPreviewOpen(true);
+                  }}
+                />
+              </div>
+            ) : selection ? (
+              <div className="bulk-bar mx-4 w-auto" data-testid="bulk-assign-bar" role="region" aria-label="Selection actions">
+                <span className="bulk-bar__count-value">{selection.totalSelected.toLocaleString()} selected</span>
+                {assignAccess.hidden ? null : assignAccess.allowed ? (
+                  <Select
+                    aria-label="Assign preset"
+                    placeholder="Select preset"
+                    options={(presets.data ?? []).map((preset) => ({ label: preset.name, value: preset.id }))}
+                    loading={assign.isPending}
+                    onChange={(presetId) => {
+                      if (presetId && assignAccess.allowed) assign.mutate(presetId);
+                    }}
+                  />
+                ) : (
+                  <Button type="button" disabled title={assignAccess.reason ?? undefined} aria-label="Assign preset">
+                    Assign
+                  </Button>
+                )}
+                {runAccess.hidden ? null : (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    disabled={!runAccess.allowed}
+                    title={runAccess.reason ?? undefined}
+                  >
+                    Run now
+                  </Button>
+                )}
+                <Button type="button" variant="ghost" onClick={clearSelection}>
+                  Clear
+                </Button>
+              </div>
+            ) : null}
             <CardContent className="p-0 pt-0">
               <DataTable
                 columns={opportunityColumns}
@@ -709,62 +766,6 @@ export const CostOverviewTab = () => {
               />
             </CardContent>
           </Card>
-
-          {bulkWritesAllowed ? (
-            <BulkAssignBar
-              selection={selection}
-              presets={presets.data ?? []}
-              destinations={destinations.data ?? []}
-              onClear={clearSelection}
-              onAssign={(presetId) => assign.mutate(presetId)}
-              onRun={({ destinationId, presetId, mode }) => bulkRun.mutate({ destinationId, presetId, mode })}
-              onManifestRewrite={({ destinationId, presetId }) =>
-                bulkManifestRewrite.mutate({ destinationId, presetId })
-              }
-              onScan={() => bulkScan.mutate()}
-              onPreview={() => {
-                if (!selection) throw new Error("No tables selected");
-                const picked =
-                  selection.mode === "ids"
-                    ? opportunityRows.filter((row) => selection.ids.includes(row.id))
-                    : opportunityRows;
-                setPreviewTables(picked.slice(0, 25));
-                setPreviewOpen(true);
-              }}
-            />
-          ) : selection ? (
-            <div className="bulk-bar flex flex-wrap items-center gap-2" data-testid="bulk-assign-bar">
-              <span className="font-semibold">{selection.totalSelected.toLocaleString()} selected</span>
-              {assignAccess.hidden ? null : assignAccess.allowed ? (
-                <Select
-                  aria-label="Assign preset"
-                  placeholder="Select preset"
-                  options={(presets.data ?? []).map((preset) => ({ label: preset.name, value: preset.id }))}
-                  loading={assign.isPending}
-                  onChange={(presetId) => {
-                    if (presetId && assignAccess.allowed) assign.mutate(presetId);
-                  }}
-                />
-              ) : (
-                <Button type="button" disabled title={assignAccess.reason ?? undefined} aria-label="Assign preset">
-                  Assign
-                </Button>
-              )}
-              {runAccess.hidden ? null : (
-                <Button
-                  type="button"
-                  variant="primary"
-                  disabled={!runAccess.allowed}
-                  title={runAccess.reason ?? undefined}
-                >
-                  Run now
-                </Button>
-              )}
-              <Button type="button" onClick={clearSelection}>
-                Clear
-              </Button>
-            </div>
-          ) : null}
 
           <PlanPreview open={previewOpen} onClose={() => setPreviewOpen(false)} tables={previewTables} />
         </>

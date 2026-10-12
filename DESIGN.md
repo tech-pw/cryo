@@ -68,7 +68,7 @@ Enable `font-variant-numeric: tabular-nums` for metrics, durations, sizes, count
 Use a compact app shell: a fixed light sidebar for primary sections, a white topbar for environment, search, user, and global actions, and a scrollable frost content region. Keep navigation familiar and stable. The sidebar is not a dark rail (plan owner decision, 2026-09-28).
 
 Recommended frame:
-- Sidebar width: 224px desktop, collapsible to icons at tablet, drawer on mobile. Frost background (`--sidebar-bg`), 1px right border, active item as a frost pill with deep-blue text and icon, section labels in muted text without uppercase.
+- Sidebar width: 224px desktop, collapsible to icons at tablet, drawer on mobile. Frost background (`--sidebar-bg`), 1px right border, active item as a frost pill with a 2px Iceberg-blue leading rail, deep-blue text, and an accent icon. Inactive icons sit quieter than their labels. Section labels are muted sentence case, never uppercase. Home and Settings are pinned; Operate (Tables, Runs, Decisions) and Understand (Cost, Insights) group the rest. Press scales a link to 0.97; hover changes the fill only, never the committed color. A scroll-edge fade replaces the brand divider, and only while nav content passes under the brand.
 - Topbar height: 48px, white, 1px bottom border. In dark mode the topbar follows `--color-bg`, not a forced white.
 - Page background: frost (`--color-layout-bg` / `--primitive-page`), not `--primitive-neutral-150`.
 - Page padding: 20-24px desktop, 16px tablet, 12px mobile.

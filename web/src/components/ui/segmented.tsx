@@ -12,6 +12,7 @@ export interface SegmentedProps<T extends string> {
   size?: "small" | "default";
   block?: boolean;
   className?: string;
+  "aria-label"?: string;
 }
 
 export function Segmented<T extends string>({
@@ -20,11 +21,13 @@ export function Segmented<T extends string>({
   options,
   size = "default",
   block,
-  className
+  className,
+  "aria-label": ariaLabel
 }: SegmentedProps<T>) {
   return (
     <div
       role="group"
+      aria-label={ariaLabel}
       className={cn(
         "inline-flex max-w-full overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--color-control-border)] bg-background p-0.5",
         block && "flex w-full",

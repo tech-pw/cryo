@@ -186,11 +186,26 @@
 @media (prefers-reduced-motion: reduce) {
   .cryo-dialog-overlay,
   .cryo-dialog-content,
-  .cryo-popover-content {
+  .cryo-popover-content,
+  .cryo-shell__user-dropdown {
     animation: none;
   }
-  .cryo-shell__sidebar {
+  .cryo-shell__sidebar,
+  .cryo-shell__nav-link,
+  .cryo-shell__brand::after,
+  .cryo-shell__backdrop {
     transition: none;
+    animation: none;
+  }
+  .cryo-shell__nav-link:active {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .cryo-shell__sidebar {
+    background: var(--sidebar-bg);
+    backdrop-filter: none;
   }
 }
 
@@ -198,7 +213,9 @@
 
 .cryo-shell {
   display: flex;
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
   background: var(--layout-bg);
 }
 
@@ -232,18 +249,39 @@
 }
 
 .cryo-shell__brand {
+  position: relative;
   flex: 0 0 auto;
   height: var(--topbar-height);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 0 16px;
-  border-bottom: 1px solid var(--color-border-default);
-  color: var(--sidebar-text-active);
-  font-size: 14px;
+  color: var(--ink, #131b24);
+  font-size: 17px;
   font-weight: 600;
+  line-height: 1.1;
   letter-spacing: -0.02em;
   text-decoration: none;
+}
+
+/* Scroll-edge fade, not a permanent rule. It only appears once nav content
+   passes under the brand, so the chrome separates from content instead of
+   drawing a hard line across an empty rail. */
+.cryo-shell__brand::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -8px;
+  height: 8px;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(to bottom, var(--sidebar-bg), transparent);
+  transition: opacity 150ms var(--ease-out);
+}
+
+.cryo-shell__sidebar--scrolled .cryo-shell__brand::after {
+  opacity: 1;
 }
 
 .cryo-shell__brand:focus-visible {
@@ -254,32 +292,58 @@
 .cryo-shell__brand-mark {
   display: block;
   flex: none;
-  width: 22px;
-  height: 22px;
+  width: 32px;
+  height: 32px;
 }
 
 .cryo-shell--sidebar-collapsed .cryo-shell__brand-mark {
-  width: 20px;
-  height: 20px;
+  width: 32px;
+  height: 32px;
 }
 
 .cryo-shell__brand-copy {
   min-width: 0;
   overflow: visible;
-  line-height: 1.25;
-  padding-bottom: 0.08em;
+  line-height: 1.15;
+  padding-bottom: 0.04em;
+}
+
+.cryo-shell__brand-cr {
+  color: #143e60;
+}
+
+.cryo-shell__brand-yo {
+  color: #277abe;
+}
+
+[data-theme="dark"] .cryo-shell__brand-cr {
+  color: #68c1ea;
+}
+
+[data-theme="dark"] .cryo-shell__brand-yo {
+  color: #eaf7fd;
 }
 
 .cryo-shell__nav {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 4px 0 16px;
 }
 
 .cryo-shell__nav-group + .cryo-shell__nav-group {
-  margin-top: 8px;
+  margin-top: 12px;
+}
+
+/* Settings is the last group and stays at the foot of the rail, the way a
+   pinned control does, instead of floating just under Insights. The
+   adjacent-sibling margin above would otherwise win over auto. */
+.cryo-shell__nav-group:last-child:not(:first-child) {
+  margin-top: auto;
+  padding-top: 12px;
 }
 
 .cryo-shell__nav-group-label {
@@ -299,40 +363,61 @@
   gap: 10px;
   margin: 2px 8px;
   padding: 8px 10px;
+  overflow: hidden;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--sidebar-text);
   font-size: 13px;
   font-weight: 500;
   text-decoration: none;
   transition:
-    background-color 150ms ease-out,
-    color 150ms ease-out,
-    border-color 150ms ease-out;
+    background-color 150ms var(--ease-out),
+    color 150ms var(--ease-out),
+    transform 120ms var(--ease-out);
 }
 
-.cryo-shell__nav-link:hover {
-  background: var(--sidebar-hover);
-  color: var(--sidebar-text-active);
+.cryo-shell__nav-link:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+/* Hover previews the target. It does not borrow the committed color —
+   "pointing at" and "I am here" have to stay distinguishable. */
+@media (hover: hover) and (pointer: fine) {
+  .cryo-shell__nav-link:hover {
+    background: var(--sidebar-hover);
+  }
+
+  .cryo-shell__nav-link:active {
+    transform: scale(0.97);
+  }
 }
 
 .cryo-shell__nav-link--active {
   background: var(--sidebar-active-bg);
-  border-color: transparent;
   color: var(--sidebar-text-active);
   font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--sidebar-accent);
 }
 
 .cryo-shell__nav-icon {
   flex: 0 0 auto;
-  opacity: 0.92;
+  opacity: 0.72;
+}
+
+.cryo-shell__nav-link--active .cryo-shell__nav-icon {
+  color: var(--sidebar-accent);
+  opacity: 1;
 }
 
 .cryo-shell__main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .cryo-shell__topbar {
@@ -455,6 +540,12 @@
   border-radius: 10px;
   background: var(--bg);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+  transform-origin: top right;
+  animation: cryo-menu-in 150ms var(--ease-out);
+}
+
+@keyframes cryo-menu-in {
+  from { opacity: 0; transform: scale(0.98); }
 }
 
 .cryo-shell__user-dropdown button {
@@ -476,7 +567,9 @@
 .cryo-shell__content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   padding: 24px;
+  overflow: auto;
   background: var(--layout-bg);
 }
 
@@ -728,7 +821,7 @@
     top: 0;
     height: 100dvh;
     transform: translateX(-100%);
-    transition: transform 200ms ease-out, visibility 0s linear 200ms;
+    transition: transform 250ms cubic-bezier(0.32, 0.72, 0, 1), visibility 0s linear 250ms;
     visibility: hidden;
     pointer-events: none;
   }
@@ -737,8 +830,12 @@
     transform: translateX(0);
     visibility: visible;
     pointer-events: auto;
-    transition: transform 200ms ease-out;
+    transition: transform 250ms cubic-bezier(0.32, 0.72, 0, 1);
     box-shadow: 8px 0 32px rgba(0, 0, 0, 0.28);
+  }
+
+  .cryo-shell__backdrop {
+    animation: cryo-fade-in 200ms var(--ease-out);
   }
 
   .cryo-shell__nav-link {

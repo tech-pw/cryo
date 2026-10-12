@@ -108,6 +108,12 @@ describe("Home overview", () => {
       "/decisions?tab=approvals#operation-approvals"
     );
     expect(screen.getByRole("link", { name: /Scan queue: 0 waiting/ })).toHaveAttribute("href", "/runs/scanner");
+    expect(screen.queryByText("Keep the lake in view")).not.toBeInTheDocument();
+  });
+  it("asks to check the scanner only when it is off, failed, or backed up", async () => {
+    vi.mocked(getScannerStatus).mockResolvedValue({ active_run: null, queue_depth: 2, config: { enabled: true } } as Awaited<ReturnType<typeof getScannerStatus>>);
+    renderHome();
+    expect(await screen.findByRole("link", { name: /Keep the lake in view/ })).toHaveAttribute("href", "/runs/scanner");
   });
   it("refreshes read models without starting maintenance", async () => {
     renderHome();

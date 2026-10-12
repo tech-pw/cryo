@@ -21,7 +21,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
     <select
       ref={ref}
       className={cn(
-        "h-[var(--control-height)] min-w-[8rem] rounded-[var(--radius-default)] border border-[var(--color-control-border)] bg-background px-3 text-sm text-foreground",
+        "cryo-select h-[var(--control-height)] min-w-[8rem] rounded-[var(--radius-default)] border border-[var(--color-control-border)] bg-background pl-3 pr-8 text-sm text-foreground",
         "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-[var(--focus-ring-color)] focus-visible:ring-offset-[var(--focus-ring-offset)]",
         "disabled:cursor-not-allowed disabled:opacity-60",
         className

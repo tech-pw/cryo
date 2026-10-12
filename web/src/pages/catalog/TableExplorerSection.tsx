@@ -1,5 +1,6 @@
 import type { ColumnDef, RowSelectionState, VisibilityState } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Download, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -34,9 +35,12 @@ import { Button } from "../../components/ui/button";
 import { ColumnVisibilityMenu, DataTable, type ColumnVisibilityOption } from "../../components/ui/data-table";
 import { Input } from "../../components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
+import { Segmented } from "../../components/ui/segmented";
 import { Select } from "../../components/ui/select";
 import { useAuth } from "../../lib/auth";
+import { cn } from "../../lib/cn";
 import { filterPresetsForSources } from "../../lib/catalogBindings";
+import { buildFilterChips } from "../../lib/filterChips";
 import { isOrphanScanStale } from "../../lib/costStaleness";
 import { FRESHNESS_LABELS } from "../../lib/freshness";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../../lib/format";
@@ -46,8 +50,10 @@ import {
   EXPLICIT_QUERY_KEYS,
   HIDEABLE_COLUMN_IDS,
   clearFilterParams,
+  allColumnVisibility,
   colsFromVisibility,
   explorerPredicate,
+  operatorColumnVisibility,
   filtersToSearchParamEntries,
   readExplorerQuery,
   searchParamsForSavedView,
@@ -94,7 +100,7 @@ const applyTranslatedFilter = (
 
 const CATALOG_VIEWS_STORAGE_KEY = "cryo.catalog.views.v1";
 const CATALOG_DEFAULT_VIEW_STORAGE_KEY = "cryo.catalog.defaultView.v1";
-const CATALOG_COLUMNS_STORAGE_KEY = "cryo.catalog.columnVisibility.v1";
+const CATALOG_COLUMNS_STORAGE_KEY = "cryo.catalog.columnVisibility.v3";
 
 interface CatalogSavedView {
   id?: string;
@@ -179,6 +185,29 @@ const GROUP_BY_LABELS: Record<TableGroupByField, string> = {
 
 const groupByLabel = (field: TableGroupByField): string => GROUP_BY_LABELS[field];
 
+const ExplorerTableMeta = ({
+  filters,
+  matchingTotal,
+  filtered
+}: {
+  filters: TableFilterState;
+  matchingTotal: number;
+  filtered: boolean;
+}) => (
+  <div className="flex items-baseline justify-between gap-3 px-1 pb-1">
+    {filtered ? (
+      <p className="text-xs text-muted-foreground">
+        {filters.activeOnly === false ? "All tables" : "Active tables"}
+      </p>
+    ) : (
+      <span />
+    )}
+    <p className="ml-auto text-xs tabular-nums text-muted-foreground">
+      {matchingTotal.toLocaleString()} {matchingTotal === 1 ? "table" : "tables"}
+    </p>
+  </div>
+);
+
 /** The "Table" identity column is intentionally excluded -- hiding it would leave rows unlabeled. */
 const COLUMN_LABELS: Record<(typeof HIDEABLE_COLUMN_IDS)[number], string> = {
   catalog: "Catalog",
@@ -221,7 +250,9 @@ export const SmallFileRatio = ({
 }: {
   smallFiles?: number | null;
   totalFiles?: number | null;
-}) => <span className="numeric-cell block text-right">{smallFilesRatioText(smallFiles, totalFiles)}</span>;
+}) => (
+  <span className="numeric-cell block whitespace-nowrap text-right">{smallFilesRatioText(smallFiles, totalFiles)}</span>
+);
 
 export const SlaBulletBar = ({
   label,
@@ -302,19 +333,24 @@ const SortHeader = ({
   field,
   label,
   sort,
-  onSort
+  onSort,
+  align = "left"
 }: {
   field: string;
   label: string;
   sort?: string;
   onSort: (next: string | undefined) => void;
+  align?: "left" | "right";
 }) => {
   const desc = sort === `-${field}`;
   const asc = sort === field;
   return (
     <button
       type="button"
-      className="inline-flex items-center gap-1 text-left text-xs font-medium text-muted-foreground hover:text-foreground"
+      className={cn(
+        "inline-flex w-full items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground hover:text-foreground",
+        align === "right" ? "justify-end text-right" : "text-left"
+      )}
       onClick={() => {
         if (!asc && !desc) onSort(`-${field}`);
         else if (desc) onSort(field);
@@ -380,10 +416,12 @@ export const TableExplorerSection = () => {
   const [nlQuery, setNlQuery] = useState("");
   const [exportingCsv, setExportingCsv] = useState(false);
 
-  const [storedVisibility, setStoredVisibility] = useState<VisibilityState>(() =>
-    readJson(CATALOG_COLUMNS_STORAGE_KEY, {})
+  const [storedVisibility, setStoredVisibility] = useState<VisibilityState | null>(() =>
+    readJson<VisibilityState | null>(CATALOG_COLUMNS_STORAGE_KEY, null)
   );
-  const columnVisibility = query.cols ? visibilityFromCols(query.cols) : storedVisibility;
+  const columnVisibility = query.cols
+    ? visibilityFromCols(query.cols)
+    : (storedVisibility ?? operatorColumnVisibility());
   useEffect(() => {
     writeJson(CATALOG_COLUMNS_STORAGE_KEY, columnVisibility);
   }, [columnVisibility]);
@@ -566,6 +604,7 @@ export const TableExplorerSection = () => {
 
   const pageItems = tables.data?.items ?? [];
   const matchingTotal = tables.data?.total ?? 0;
+  const filtersActive = buildFilterChips(filters, catalogOptions, () => undefined, presetOptions).length > 0;
 
   const {
     selectedRowKeys,
@@ -785,22 +824,22 @@ export const TableExplorerSection = () => {
             },
             {
               accessorKey: "count",
-              header: "Tables",
+              header: () => <span className="block text-right">Tables</span>,
               cell: ({ getValue }) => <span className="block text-right">{formatNumber(getValue() as number)}</span>
             },
             {
               accessorKey: "total_size_gb",
-              header: "Total Size",
+              header: () => <span className="block text-right">Total Size</span>,
               cell: ({ getValue }) => <span className="block text-right">{formatGb(getValue() as number)}</span>
             },
             {
               accessorKey: "total_small_files",
-              header: "Small Files",
+              header: () => <span className="block text-right">Small Files</span>,
               cell: ({ getValue }) => <span className="block text-right">{formatNumber(getValue() as number)}</span>
             },
             {
               accessorKey: "total_savings_usd_month",
-              header: "Savings/mo",
+              header: () => <span className="block text-right">Savings/mo</span>,
               cell: ({ getValue }) => <span className="block text-right">{formatCurrency(getValue() as number)}</span>
             }
           ]
@@ -850,18 +889,20 @@ export const TableExplorerSection = () => {
       {
         id: "compaction_priority",
         header: () => <SortHeader field="compaction_priority" label="Priority" sort={sort} onSort={applySort} />,
-        size: 104,
+        size: 96,
         cell: ({ row }) => <PriorityTag priority={row.original.stats?.compaction_priority} />
       },
       {
         id: "needs",
         header: "Compaction",
-        size: 142,
+        size: 168,
         cell: ({ row }) => <CompactionTag needsCompaction={row.original.stats?.needs_compaction} />
       },
       {
         id: "small_files",
-        header: () => <SortHeader field="small_files_count" label="Small / total files" sort={sort} onSort={applySort} />,
+        header: () => (
+          <SortHeader field="small_files_count" label="Small / total files" sort={sort} onSort={applySort} align="right" />
+        ),
         size: 220,
         cell: ({ row }) => (
           <SmallFileRatio
@@ -872,10 +913,10 @@ export const TableExplorerSection = () => {
       },
       {
         id: "total_files",
-        header: () => <SortHeader field="total_files" label="Files" sort={sort} onSort={applySort} />,
+        header: () => <SortHeader field="total_files" label="Files" sort={sort} onSort={applySort} align="right" />,
         size: 104,
         cell: ({ row }) => (
-          <span className="numeric-cell block text-right">
+          <span className="numeric-cell block whitespace-nowrap text-right">
             {row.original.stats?.total_files == null || Number.isNaN(row.original.stats.total_files)
               ? "Not measured"
               : formatNumber(row.original.stats.total_files, true)}
@@ -884,38 +925,50 @@ export const TableExplorerSection = () => {
       },
       {
         id: "total_size_gb",
-        header: () => <SortHeader field="total_size_gb" label="Size" sort={sort} onSort={applySort} />,
+        header: () => <SortHeader field="total_size_gb" label="Size" sort={sort} onSort={applySort} align="right" />,
         size: 96,
         cell: ({ row }) => (
-          <span className="numeric-cell block text-right">{formatGb(row.original.stats?.total_size_gb)}</span>
+          <span className="numeric-cell block whitespace-nowrap text-right">
+            {formatGb(row.original.stats?.total_size_gb)}
+          </span>
         )
       },
       {
         id: "last_scan",
-        header: "Last scan",
+        header: () => <span className="block whitespace-nowrap text-right">Last scan</span>,
         size: 152,
         cell: ({ row }) => (
-          <span className="block text-right">
+          <span className="table-date-cell block whitespace-nowrap text-right">
             {row.original.stats?.scan_at ? formatTime(row.original.stats.scan_at) : "Not measured"}
           </span>
         )
       },
       {
         id: "projected_savings_usd_month",
-        header: () => <SortHeader field="projected_savings_usd_month" label="Savings/mo" sort={sort} onSort={applySort} />,
+        header: () => (
+          <SortHeader
+            field="projected_savings_usd_month"
+            label="Savings/mo"
+            sort={sort}
+            onSort={applySort}
+            align="right"
+          />
+        ),
         size: 120,
         cell: ({ row }) => (
-          <span className="numeric-cell block text-right">
+          <span className="numeric-cell block whitespace-nowrap text-right">
             {formatCurrency(row.original.stats?.projected_savings_usd_month)}
           </span>
         )
       },
       {
         id: "reclaimable_bytes",
-        header: () => <SortHeader field="reclaimable_bytes" label="Reclaimable" sort={sort} onSort={applySort} />,
+        header: () => (
+          <SortHeader field="reclaimable_bytes" label="Reclaimable" sort={sort} onSort={applySort} align="right" />
+        ),
         size: 128,
         cell: ({ row }) => (
-          <span className="numeric-cell block text-right">
+          <span className="numeric-cell block whitespace-nowrap text-right">
             {formatBytesGb(row.original.stats?.reclaimable_bytes)}
           </span>
         )
@@ -928,7 +981,7 @@ export const TableExplorerSection = () => {
             tooltip="How Cryo calculated savings and reclaimable storage for this table."
           />
         ),
-        size: 150,
+        size: 196,
         cell: ({ row }) => (
           <CostPrecisionBadge
             precision={row.original.stats?.cost_precision}
@@ -952,28 +1005,33 @@ export const TableExplorerSection = () => {
       },
       {
         id: "freshness",
-        header: "Last updated",
+        header: () => <span className="block whitespace-nowrap text-right">Last updated</span>,
         size: 152,
-        cell: ({ row }) =>
-          row.original.stats?.last_snapshot_committed_at
-            ? formatTime(row.original.stats.last_snapshot_committed_at)
-            : "-"
+        cell: ({ row }) => (
+          <span className="table-date-cell block whitespace-nowrap text-right">
+            {row.original.stats?.last_snapshot_committed_at
+              ? formatTime(row.original.stats.last_snapshot_committed_at)
+              : "-"}
+          </span>
+        )
       },
       {
         id: "scan_failures",
-        header: "Scan failures",
+        header: () => <span className="block whitespace-nowrap text-right">Scan failures</span>,
         size: 112,
         cell: ({ row }) => (
-          <span className="numeric-cell block text-right">
+          <span className="numeric-cell block whitespace-nowrap text-right">
             {formatNumber(row.original.consecutive_scan_failures ?? 0, true)}
           </span>
         )
       },
       {
         accessorKey: "first_seen_at",
-        header: "Seen",
+        header: () => <span className="block whitespace-nowrap text-right">Seen</span>,
         size: 152,
-        cell: ({ getValue }) => formatTime(getValue() as string)
+        cell: ({ getValue }) => (
+          <span className="table-date-cell block whitespace-nowrap text-right">{formatTime(getValue() as string)}</span>
+        )
       },
       ...(SLA_VIEWS.has(view ?? "")
         ? [
@@ -1000,29 +1058,47 @@ export const TableExplorerSection = () => {
   );
 
   return (
-    <>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Button variant="secondary" onClick={() => void (groupByField ? grouped.refetch() : tables.refetch())}>
-          Refresh
-        </Button>
+    <div id="table-explorer">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={tables.isFetching || grouped.isFetching ? "Refreshing tables" : "Refresh tables"}
+            onClick={() => void (groupByField ? grouped.refetch() : tables.refetch())}
+          >
+            <RefreshCw
+              size={16}
+              aria-hidden="true"
+              className={tables.isFetching || grouped.isFetching ? "motion-safe:animate-spin" : ""}
+            />
+          </Button>
+          <Segmented
+            size="small"
+            aria-label="Table view"
+            value={savingsView ? "savings" : "all"}
+            onChange={(next) => {
+              const nextSavings = next === "savings";
+              if (nextSavings === savingsView) return;
+              updateParams({
+                view: nextSavings ? "savings" : null,
+                sort: nextSavings ? "-projected_savings_usd_month" : sort,
+                page: null
+              });
+            }}
+            options={[
+              { label: "All tables", value: "all" },
+              { label: "Savings", value: "savings" }
+            ]}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
         <ColumnVisibilityMenu
           options={COLUMN_VISIBILITY_OPTIONS}
           visibility={columnVisibility}
           onChange={setColumnVisibility}
+          onReset={() => setColumnVisibility(allColumnVisibility())}
         />
-        <Button
-          variant={savingsView ? "primary" : "secondary"}
-          onClick={() => {
-            const next = !savingsView;
-            updateParams({
-              view: next ? "savings" : null,
-              sort: next ? "-projected_savings_usd_month" : sort,
-              page: null
-            });
-          }}
-        >
-          Savings view
-        </Button>
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="secondary">Views</Button>
@@ -1047,8 +1123,7 @@ export const TableExplorerSection = () => {
               aria-label="Catalog view"
               value=""
               placeholder="Load a view..."
-        onReset={clearFilters}
-        onChange={(next) => {
+              onChange={(next) => {
                 const saved = allViews.find((candidate) => candidate.name === next);
                 if (saved) applyView(saved);
               }}
@@ -1077,37 +1152,30 @@ export const TableExplorerSection = () => {
             ) : null}
           </PopoverContent>
         </Popover>
-      </div>
-      <div className="mb-2.5 flex w-full flex-col gap-1.5">
-        <form
-          className="flex gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const queryText = nlQuery.trim();
-            if (!queryText) return;
-            translator.mutate(queryText);
-          }}
-        >
-          <Input
-            value={nlQuery}
-            placeholder='Find tables like... e.g. "grade D needs compaction savings above $200"'
-            onChange={(event) => setNlQuery(event.target.value)}
-          />
-          <Button type="submit" loading={translator.isPending}>
-            Translate
+        {matchingTotal > 0 ? (
+          <Button
+            variant="ghost"
+            aria-label="Export CSV"
+            onClick={() => void exportMatchingTablesCsv()}
+            disabled={Boolean(groupByField) || exportingCsv}
+          >
+            <Download size={16} aria-hidden="true" />
+            {exportingCsv ? "Exporting..." : "Export"}
           </Button>
-        </form>
-        {translator.data?.chips.length ? (
-          <p className="text-sm text-muted-foreground">Applied: {translator.data.chips.join(" · ")}</p>
         ) : null}
-        {translator.data?.errors.length ? (
-          <Alert
-            variant="warning"
-            title="Translation issues"
-            description={translator.data.errors.join(" · ")}
-          />
-        ) : null}
+        </div>
       </div>
+      {translator.data?.chips.length ? (
+        <p className="mb-2 text-sm text-muted-foreground">Applied: {translator.data.chips.join(" · ")}</p>
+      ) : null}
+      {translator.data?.errors.length ? (
+        <Alert
+          className="mb-2"
+          variant="warning"
+          title="Translation issues"
+          description={translator.data.errors.join(" · ")}
+        />
+      ) : null}
       {filters.freshnessBucket ? (
         <Alert
           className="mb-3"
@@ -1159,19 +1227,30 @@ export const TableExplorerSection = () => {
         catalogOptions={catalogOptions}
         presetOptions={presetOptions}
         matchingTotal={matchingTotal}
+        hideSummary
         hasSelection={hasSelection}
         filterSelectionActive={filterSelectionActive}
         onSelectAllMatching={viewSpec ? undefined : selectAllMatching}
         onClearSelection={clearSelection}
-        bulkActions={
-          <Button
-            variant="secondary"
-            aria-label="Export CSV"
-            onClick={() => void exportMatchingTablesCsv()}
-            disabled={!matchingTotal || Boolean(groupByField) || exportingCsv}
+        leading={
+          <form
+            className="flex gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const queryText = nlQuery.trim();
+              if (!queryText) return;
+              translator.mutate(queryText);
+            }}
           >
-            {exportingCsv ? "Exporting..." : `Export ${matchingTotal.toLocaleString()} CSV`}
-          </Button>
+            <Input
+              value={nlQuery}
+              placeholder='Find tables like... e.g. "grade D needs compaction savings above $200"'
+              onChange={(event) => setNlQuery(event.target.value)}
+            />
+            <Button type="submit" loading={translator.isPending}>
+              Translate
+            </Button>
+          </form>
         }
         onChange={(next) => {
           const nextSchema = (next as TableFilterState & { schema?: string }).schema;
@@ -1179,9 +1258,26 @@ export const TableExplorerSection = () => {
           resetSelectionForFilterChange();
         }}
       />
+      <BulkAssignBar
+        selection={selection}
+        presets={assignablePresets}
+        destinations={destinations.data ?? []}
+        assigning={assign.isPending}
+        running={run.isPending || manifestRewrite.isPending}
+        scanning={scan.isPending}
+        onClear={clearSelection}
+        onAssign={(presetId) => assign.mutate(presetId)}
+        onPreview={() => setPreviewOpen(true)}
+        onRun={(args) => run.mutate(args)}
+        onManifestRewrite={(args) => manifestRewrite.mutate(args)}
+        onUnassign={() => unassign.mutate()}
+        onScan={() => scan.mutate()}
+      />
       {tables.isError || grouped.isError ? (
         <QueryErrorAlert error={tables.error ?? grouped.error} title="Failed to load tables" />
       ) : groupByField ? (
+        <>
+          <ExplorerTableMeta filters={filters} matchingTotal={matchingTotal} filtered={filtersActive} />
         <DataTable
           className="datalake-table"
           columns={groupColumns}
@@ -1196,8 +1292,10 @@ export const TableExplorerSection = () => {
             </Button>
           }
         />
+        </>
       ) : (
         <>
+          <ExplorerTableMeta filters={filters} matchingTotal={matchingTotal} filtered={filtersActive} />
           <DataTable
             className="datalake-table"
             columns={tableColumns}
@@ -1230,24 +1328,9 @@ export const TableExplorerSection = () => {
               onPageChange: (pageIndex) => updateParams({ page: pageIndex > 0 ? String(pageIndex + 1) : null })
             }}
           />
-          <BulkAssignBar
-            selection={selection}
-            presets={assignablePresets}
-            destinations={destinations.data ?? []}
-            assigning={assign.isPending}
-            running={run.isPending || manifestRewrite.isPending}
-            scanning={scan.isPending}
-            onClear={clearSelection}
-            onAssign={(presetId) => assign.mutate(presetId)}
-            onPreview={() => setPreviewOpen(true)}
-            onRun={(args) => run.mutate(args)}
-            onManifestRewrite={(args) => manifestRewrite.mutate(args)}
-            onUnassign={() => unassign.mutate()}
-            onScan={() => scan.mutate()}
-          />
           <PlanPreview open={previewOpen} tables={selectedTables} onClose={() => setPreviewOpen(false)} />
         </>
       )}
-    </>
+    </div>
   );
 };

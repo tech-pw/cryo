@@ -25,6 +25,8 @@ interface Props {
   onSelectAllMatching?: () => void;
   onClearSelection?: () => void;
   bulkActions?: ReactNode;
+  leading?: ReactNode;
+  hideSummary?: boolean;
 }
 
 export const FilterBar = ({
@@ -38,7 +40,9 @@ export const FilterBar = ({
   filterSelectionActive = false,
   onSelectAllMatching,
   onClearSelection,
-  bulkActions
+  bulkActions,
+  leading,
+  hideSummary = false
 }: Props) => {
   const patch = (next: Partial<TableFilterState>) => onChange({ ...value, ...next });
   const chips = useMemo(
@@ -63,6 +67,7 @@ export const FilterBar = ({
     <div className="filter-bar">
       <div className="filter-bar__controls">
         <div className="flex flex-wrap items-center gap-2">
+          {leading ? <div className="min-w-[16rem] flex-1">{leading}</div> : null}
           {showBulk || bulkActions ? (
             <div className="flex items-center gap-1.5">
               {filterSelectionActive ? <Badge variant="default">Filter selection</Badge> : null}
@@ -200,6 +205,7 @@ export const FilterBar = ({
           ))}
         </div>
       </div>
+      {hideSummary ? null : (
       <div className="filter-bar__footer">
         <div className="filter-bar__summary">
           <p className="filter-bar__scope text-sm text-muted-foreground">{scopeLabel}</p>
@@ -209,6 +215,7 @@ export const FilterBar = ({
           <p className="filter-bar__match-count text-sm text-muted-foreground">{matchLabel}</p>
         ) : null}
       </div>
+      )}
     </div>
   );
 };

@@ -1,4 +1,7 @@
 .home-overview { min-width: 0; }
+.home-overview .home-lead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.home-overview .home-lead h1 { margin: 0; color: var(--color-ink); font-size: 24px; font-weight: 650; line-height: 32px; letter-spacing: -0.025em; }
+.home-overview .home-lead p { max-width: 68ch; margin-top: 4px; color: var(--color-muted); font-size: 14px; line-height: 20px; }
 .home-overview .home-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 20px; }
 .home-overview .home-card { display: flex; flex-direction: column; min-width: 0; padding: 22px; }
 .home-overview .home-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
@@ -42,7 +45,7 @@
 .home-overview .home-gauge-label strong { font-size: 34px; line-height: 40px; font-weight: 600; }
 .home-overview .home-gauge-label span { font-size: 12px; color: var(--color-muted); }
 .home-overview .home-gauge-bound { font-size: 10px; fill: var(--color-muted); }
-.home-overview .home-gauge-value { transition: stroke-dasharray 500ms ease-out; }
+.home-overview .home-gauge-value { transition: none; }
 .home-overview .home-platform-status { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .home-overview .home-platform-status strong { color: var(--color-ink); font-weight: 550; }
 .home-overview .home-tone-success { color: var(--color-status-success); }
@@ -54,18 +57,21 @@
 .home-overview summary { cursor: pointer; color: var(--color-link); font-size: 12px; }
 .home-overview .home-deduction li { margin-top: 6px; }
 .home-overview .home-platform-links { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: auto; padding-top: 16px; }
-.home-overview .home-platform-links a { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 10px 0 0; border-top: 1px solid var(--color-border-default); font-size: 12px; }
+.home-overview .home-platform-links a { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 10px 8px 8px; border-top: 1px solid var(--color-border-default); border-radius: 0 0 6px 6px; font-size: 12px; }
 .home-overview .home-platform-links a > span { color: var(--color-muted); }
-.home-overview .home-platform-links strong { font-weight: 500; }
-.home-overview .home-platform-links svg { display: none; }
-.home-overview .home-platform-links a:hover strong { color: var(--color-link); text-decoration: underline; }
+.home-overview .home-platform-links strong { display: inline-flex; align-items: center; gap: 4px; font-weight: 500; }
+.home-overview .home-platform-links svg { color: var(--color-muted); }
+@media (hover: hover) and (pointer: fine) {
+  .home-overview .home-platform-links a:hover { background: var(--color-primary-soft); }
+  .home-overview .home-platform-links a:hover strong, .home-overview .home-platform-links a:hover svg { color: var(--color-link); }
+}
 .home-overview .home-run-headline { display: flex; justify-content: space-between; gap: 12px; }
 .home-overview .home-run-value { font-size: 28px; line-height: 36px; font-weight: 600; }
 .home-overview .home-run-value > span { font-size: 18px; margin-left: 2px; color: var(--color-muted); }
 .home-overview .home-run-context { display: flex; align-items: flex-end; flex-direction: column; gap: 6px; font-size: 12px; color: var(--color-muted); text-align: right; }
 .home-overview .home-run-status { padding: 3px 8px; background: var(--color-panel); border: 1px solid var(--color-border-default); border-radius: 5px; text-transform: capitalize; font-weight: 550; color: var(--color-ink); }
 .home-overview .home-progress-track { display: flex; height: 10px; margin-top: 16px; background: var(--color-chart-grid); border-radius: 4px; overflow: hidden; }
-.home-overview .home-progress-track span { transition: width 500ms ease-out; }
+.home-overview .home-progress-track span { transition: none; }
 .home-overview .home-run-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-block: 18px; }
 .home-overview .home-run-counts dt { display: flex; align-items: center; gap: 5px; color: var(--color-muted); font-size: 12px; }
 .home-overview .home-run-counts dd { font-size: 20px; font-weight: 550; margin-top: 4px; }
@@ -95,7 +101,7 @@
 .home-overview .home-freshness-rows a:hover { background: var(--color-primary-soft); }
 .home-overview .home-freshness-label { font-size: 12px; color: var(--color-muted); }
 .home-overview .home-freshness-track { height: 7px; border-radius: 2px; overflow: hidden; background: var(--color-chart-grid); }
-.home-overview .home-freshness-track > span { display: block; height: 100%; border-radius: 2px; transition: width 500ms ease-out; }
+.home-overview .home-freshness-track > span { display: block; height: 100%; border-radius: 2px; }
 .home-overview .home-freshness-count { display: grid; grid-template-columns: 1fr 38px; gap: 6px; text-align: right; font-size: 12px; font-weight: 550; font-variant-numeric: tabular-nums; }
 .home-overview .home-freshness-count > span { font-size: 11px; color: var(--color-muted); font-weight: 400; }
 .home-overview .home-freshness-footnote { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--color-border-default); }

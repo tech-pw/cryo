@@ -76,131 +76,135 @@ export const BulkAssignBar = ({
     : "Choose the engine that will run maintenance.";
 
   return (
-    <div className="bulk-bar" data-testid="bulk-assign-bar">
-      <div className="flex flex-col gap-1.5">
-        <div className="flex flex-wrap items-center gap-2">
-          {isFilterSelection ? <Badge variant="default">Filter selection</Badge> : null}
-          <span className="font-semibold">
-            {isFilterSelection
-              ? `All ${selection.totalSelected.toLocaleString()} matching tables selected`
-              : `${selection.totalSelected.toLocaleString()} selected`}
+    <div className="bulk-bar" data-testid="bulk-assign-bar" role="region" aria-label="Selection actions">
+      <div className="bulk-bar__count">
+        {isFilterSelection ? <Badge variant="default">Filter selection</Badge> : null}
+        <span className="bulk-bar__count-value">
+          {isFilterSelection
+            ? `All ${selection.totalSelected.toLocaleString()} matching tables selected`
+            : `${selection.totalSelected.toLocaleString()} selected`}
+        </span>
+      </div>
+      <div className="bulk-bar__group" role="group" aria-label="Assign">
+        <Select
+          aria-label="Assign preset"
+          title={presetTooltip}
+          placeholder="Select preset"
+          value={activePresetId}
+          options={presetOptions}
+          allowClear
+          loading={assigning}
+          onChange={(next) => {
+            setPresetId(next);
+            if (next) onAssign(next);
+          }}
+          style={{ width: 168 }}
+        />
+        <Button title="Preview the planned maintenance steps before queueing a run." onClick={onPreview}>
+          Preview
+        </Button>
+      </div>
+      <div className="bulk-bar__group" role="group" aria-label="Run">
+        {onScan ? (
+          <ConfirmAction
+            title="Scan selected tables?"
+            description="Queue a metadata scan for every table in the current selection."
+            onConfirm={onScan}
+          >
+            <Button title="Queue a metadata scan for the current selection." loading={scanning}>
+              Scan selected
+            </Button>
+          </ConfirmAction>
+        ) : null}
+        <Select
+          aria-label="Run engine"
+          title={engineTooltip}
+          placeholder="Run engine"
+          value={activeDestinationId}
+          options={destinationOptions}
+          loading={running}
+          onChange={setDestinationId}
+          style={{ width: 156 }}
+        />
+        <ConfirmAction
+          title={
+            isFilterSelection
+              ? `Run maintenance on all ${selection.totalSelected.toLocaleString()} matching tables?`
+              : `Run maintenance on ${selection.totalSelected.toLocaleString()} selected tables?`
+          }
+          description="This queues real maintenance jobs. Review the preset and engine before confirming."
+          onConfirm={() =>
+            activePresetId && activeDestinationId
+              ? onRun({
+                  destinationId: activeDestinationId,
+                  presetId: activePresetId,
+                  mode: activePreset?.mode ?? "standard"
+                })
+              : undefined
+          }
+        >
+          <span title="Queue maintenance for the current selection using the chosen preset and engine.">
+            <Button variant="primary" loading={running} disabled={runDisabled}>
+              Run now
+            </Button>
           </span>
-          <Select
-            aria-label="Assign preset"
-            title={presetTooltip}
-            placeholder="Select preset"
-            value={activePresetId}
-            options={presetOptions}
-            allowClear
-            loading={assigning}
-            onChange={(next) => {
-              setPresetId(next);
-              if (next) onAssign(next);
-            }}
-            style={{ width: 250 }}
-          />
-          <Button title="Preview the planned maintenance steps before queueing a run." onClick={onPreview}>
-            Preview
-          </Button>
-          {onScan ? (
-            <ConfirmAction
-              title="Scan selected tables?"
-              description="Queue a metadata scan for every table in the current selection."
-              onConfirm={onScan}
-            >
-              <Button title="Queue a metadata scan for the current selection." loading={scanning}>
-                Scan selected
-              </Button>
-            </ConfirmAction>
-          ) : null}
-          <Select
-            aria-label="Run engine"
-            title={engineTooltip}
-            placeholder="Run engine"
-            value={activeDestinationId}
-            options={destinationOptions}
-            loading={running}
-            onChange={setDestinationId}
-            style={{ width: 220 }}
-          />
+        </ConfirmAction>
+        {onManifestRewrite ? (
           <ConfirmAction
             title={
               isFilterSelection
-                ? `Run maintenance on all ${selection.totalSelected.toLocaleString()} matching tables?`
-                : `Run maintenance on ${selection.totalSelected.toLocaleString()} selected tables?`
+                ? `Rewrite manifests for all ${selection.totalSelected.toLocaleString()} matching tables?`
+                : `Rewrite manifests for ${selection.totalSelected.toLocaleString()} selected tables?`
             }
-            description="This queues real maintenance jobs. Review the preset and engine before confirming."
+            description="Runs manifest-only maintenance (optimize_manifests) without data file compaction."
             onConfirm={() =>
               activePresetId && activeDestinationId
-                ? onRun({
+                ? onManifestRewrite({
                     destinationId: activeDestinationId,
-                    presetId: activePresetId,
-                    mode: activePreset?.mode ?? "standard"
+                    presetId: activePresetId
                   })
                 : undefined
             }
           >
-            <span title="Queue maintenance for the current selection using the chosen preset and engine.">
-              <Button variant="primary" loading={running} disabled={runDisabled}>
-                Run now
+            <span
+              title={
+                manifestRewriteDisabled && isNativeDestination(activeDestination)
+                  ? nativeUnsupportedOpTooltip
+                  : "Queue manifest rewrite only — no data file compaction."
+              }
+            >
+              <Button loading={running} disabled={manifestRewriteDisabled}>
+                Manifest rewrite
               </Button>
             </span>
           </ConfirmAction>
-          {onManifestRewrite ? (
-            <ConfirmAction
-              title={
-                isFilterSelection
-                  ? `Rewrite manifests for all ${selection.totalSelected.toLocaleString()} matching tables?`
-                  : `Rewrite manifests for ${selection.totalSelected.toLocaleString()} selected tables?`
-              }
-              description="Runs manifest-only maintenance (optimize_manifests) without data file compaction."
-              onConfirm={() =>
-                activePresetId && activeDestinationId
-                  ? onManifestRewrite({
-                      destinationId: activeDestinationId,
-                      presetId: activePresetId
-                    })
-                  : undefined
-              }
-            >
-              <span
-                title={
-                  manifestRewriteDisabled && isNativeDestination(activeDestination)
-                    ? nativeUnsupportedOpTooltip
-                    : "Queue manifest rewrite only — no data file compaction."
-                }
-              >
-                <Button loading={running} disabled={manifestRewriteDisabled}>
-                  Manifest rewrite
-                </Button>
-              </span>
-            </ConfirmAction>
-          ) : null}
-          {onUnassign ? (
-            <ConfirmAction
-              title={
-                isFilterSelection
-                  ? `Unassign presets from all ${selection.totalSelected.toLocaleString()} matching tables?`
-                  : `Unassign presets from ${selection.totalSelected.toLocaleString()} selected tables?`
-              }
-              description="Clears manual preset assignments for the selected tables."
-              onConfirm={onUnassign}
-            >
-              <Button title="Remove preset assignments from the current selection." loading={assigning}>
-                Unassign
-              </Button>
-            </ConfirmAction>
-          ) : null}
-          <Button title="Clear the current bulk selection." onClick={onClear}>
-            Clear
-          </Button>
-        </div>
-        {isFilterSelection ? (
-          <p className="bulk-selection-help text-sm text-muted-foreground">
-            Actions now apply to every table matching the current filters, across all pages.
-          </p>
         ) : null}
       </div>
+      <div className="bulk-bar__group bulk-bar__group--end">
+        {onUnassign ? (
+          <ConfirmAction
+            title={
+              isFilterSelection
+                ? `Unassign presets from all ${selection.totalSelected.toLocaleString()} matching tables?`
+                : `Unassign presets from ${selection.totalSelected.toLocaleString()} selected tables?`
+            }
+            description="Clears manual preset assignments for the selected tables."
+            onConfirm={onUnassign}
+          >
+            <Button title="Remove preset assignments from the current selection." loading={assigning}>
+              Unassign
+            </Button>
+          </ConfirmAction>
+        ) : null}
+        <Button variant="ghost" title="Clear the current bulk selection." onClick={onClear}>
+          Clear
+        </Button>
+      </div>
+      {isFilterSelection ? (
+        <p className="bulk-selection-help">
+          Actions apply to every table matching the current filters, across all pages.
+        </p>
+      ) : null}
     </div>
   );
 };

@@ -4,7 +4,7 @@ import { Skeleton } from "../../components/ui/skeleton";
 import { formatNumber } from "../../lib/format";
 import { HomeCard } from "./HomeCard";
 
-export const AttentionCard = ({ approvals, approvalsLoading, approvalsError, needsCompaction, failed, runHref, dashboardLoading }: {
+export const AttentionCard = ({ approvals, approvalsLoading, approvalsError, needsCompaction, failed, runHref, dashboardLoading, showScanner }: {
   approvals: number | null;
   approvalsLoading: boolean;
   approvalsError: boolean;
@@ -12,6 +12,7 @@ export const AttentionCard = ({ approvals, approvalsLoading, approvalsError, nee
   failed: number | null;
   runHref: string | null;
   dashboardLoading: boolean;
+  showScanner: boolean;
 }) => (
   <HomeCard title="Your next steps" description="Review the work that needs an operator." className="home-attention">
     <ul className="home-attention-list">
@@ -24,7 +25,7 @@ export const AttentionCard = ({ approvals, approvalsLoading, approvalsError, nee
       {failed != null && failed > 0 && runHref ? <li><Link to={runHref}>
         <span className="home-attention-icon"><TriangleAlert size={17} aria-hidden="true" /></span><div><strong>{formatNumber(failed)} failed in the latest nightly run</strong><p>Read the failure details before retrying.</p></div><ArrowRight size={16} aria-hidden="true" />
       </Link></li> : null}
-      <li><Link to="/runs/scanner"><span className="home-attention-icon"><CheckCheck size={17} aria-hidden="true" /></span><div><strong>Keep the lake in view</strong><p>Check scan coverage and refresh table statistics.</p></div><ArrowRight size={16} aria-hidden="true" /></Link></li>
+      {showScanner ? <li><Link to="/runs/scanner"><span className="home-attention-icon"><CheckCheck size={17} aria-hidden="true" /></span><div><strong>Keep the lake in view</strong><p>The scanner is off, a scan failed, or tables are waiting.</p></div><ArrowRight size={16} aria-hidden="true" /></Link></li> : null}
     </ul>
   </HomeCard>
 );

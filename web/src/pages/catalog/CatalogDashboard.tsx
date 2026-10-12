@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { CheckCircle2, Database, AlertTriangle } from "lucide-react";
-import { useMemo } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { getMultiCatalogDashboard, listTables, type MultiCatalogDashboard } from "../../api/client";
 import { AsyncBoundary } from "../../components/AsyncBoundary";
 import { ChartCard } from "../../components/table-detail/ChartCard";
@@ -37,6 +37,43 @@ const CATALOG_FLEET_COST_TOOLTIP =
 const COST_UNAVAILABLE = "Cost data unavailable";
 const NOT_MEASURED = "Not measured";
 
+const CatalogSummaryCard = ({ catalog }: { catalog: CatalogStats }) => {
+  const navigate = useNavigate();
+  const stats: [string, string][] = [
+    ["Tables", catalog.table_count.toLocaleString()],
+    ["Size", formatGb(catalog.total_size_gb)],
+    ["Small files", catalog.small_files_count.toLocaleString()],
+    ["Needs compaction", `${catalog.needs_compaction_count} tables`],
+    ["Cost", formatCurrency(catalog.monthly_cost_usd)],
+    ["Savings", catalog.projected_savings_usd_month ? formatCurrency(catalog.projected_savings_usd_month) : "—"]
+  ];
+  return (
+    <div className="rounded-[var(--radius-lg)] border border-border p-3">
+      <div className="flex items-center justify-between gap-3">
+        <button
+          type="button"
+          className="flex min-w-0 cursor-pointer items-center gap-2 text-left hover:underline"
+          onClick={() => navigate(`/catalogs?source=${catalog.catalog_id}`)}
+        >
+          <span className="truncate font-medium">{catalog.catalog_name}</span>
+          <Badge variant="secondary" className="shrink-0 text-[10px]">
+            {catalog.catalog_type.toUpperCase()}
+          </Badge>
+        </button>
+        <span className="shrink-0 text-sm font-semibold tabular-nums">{Math.round(catalog.avg_health_score)}</span>
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+        {stats.map(([label, value]) => (
+          <div key={label} className="min-w-0">
+            <dt className="text-[11px] text-muted-foreground">{label}</dt>
+            <dd className="truncate text-sm tabular-nums">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+};
+
 const displayCount = (value: number | null | undefined): string | number =>
   value == null || Number.isNaN(value) ? NOT_MEASURED : value;
 
@@ -58,20 +95,28 @@ const KpiSkeleton = () => (
   </div>
 );
 
-const HealthScoreCell = ({ score }: { score: number }) => (
-  <div className="catalogs-table-health flex flex-col items-end gap-1">
-    <span style={{ color: healthScoreColor(score) }}>{score.toFixed(1)}</span>
-    <div className="h-1.5 w-full max-w-[5rem] overflow-hidden rounded-full bg-[var(--color-surface-sunken)]">
-      <div
-        className="h-full rounded-full transition-all"
-        style={{ width: `${score}%`, backgroundColor: healthScoreColor(score) }}
-      />
+const HealthScoreCell = ({ score }: { score: number }) => {
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setSettled(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return (
+    <div className="catalogs-table-health flex flex-col items-end gap-1">
+      <span style={{ color: healthScoreColor(score) }}>{score.toFixed(1)}</span>
+      <div className="h-1.5 w-full max-w-[5rem] overflow-hidden rounded-full bg-[var(--color-surface-sunken)]">
+        <div
+          className={`h-full rounded-full${settled ? " catalogs-table-health__bar" : ""}`}
+          style={{ width: `${score}%`, backgroundColor: healthScoreColor(score) }}
+        />
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export const CatalogDashboard = () => {
   const { api, token } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { colors } = useTheme();
   const navigate = useNavigate();
 
@@ -121,7 +166,7 @@ export const CatalogDashboard = () => {
         cell: ({ row }) => (
           <button
             type="button"
-            className="flex items-start gap-2 text-left"
+            className="flex cursor-pointer items-start gap-2 text-left hover:underline"
             onClick={() => navigate(`/catalogs?source=${row.original.catalog_id}`)}
           >
             <span
@@ -141,7 +186,7 @@ export const CatalogDashboard = () => {
       },
       {
         accessorKey: "table_count",
-        header: "Tables with stats",
+        header: () => <span className="catalogs-table-align-end block text-right">Tables with stats</span>,
         size: 88,
         cell: ({ getValue }) => (
           <span className="catalogs-table-numeric block text-right font-medium">
@@ -151,7 +196,7 @@ export const CatalogDashboard = () => {
       },
       {
         accessorKey: "total_size_gb",
-        header: "Total Size",
+        header: () => <span className="catalogs-table-align-end block text-right">Total Size</span>,
         size: 104,
         cell: ({ getValue }) => (
           <span className="catalogs-table-numeric block text-right">{formatGb(getValue() as number)}</span>
@@ -159,7 +204,7 @@ export const CatalogDashboard = () => {
       },
       {
         accessorKey: "small_files_count",
-        header: "Small Files",
+        header: () => <span className="catalogs-table-align-end block text-right">Small Files</span>,
         size: 112,
         cell: ({ getValue }) => {
           const count = getValue() as number;
@@ -174,7 +219,7 @@ export const CatalogDashboard = () => {
       },
       {
         accessorKey: "needs_compaction_count",
-        header: "Needs Compaction",
+        header: () => <span className="catalogs-table-align-end block text-right">Needs Compaction</span>,
         size: 148,
         cell: ({ getValue }) => {
           const count = getValue() as number;
@@ -190,13 +235,13 @@ export const CatalogDashboard = () => {
       },
       {
         accessorKey: "avg_health_score",
-        header: "Health Score",
+        header: () => <span className="catalogs-table-align-end block text-right">Health Score</span>,
         size: 120,
         cell: ({ getValue }) => <HealthScoreCell score={getValue() as number} />
       },
       {
         accessorKey: "monthly_cost_usd",
-        header: "Monthly Cost",
+        header: () => <span className="catalogs-table-align-end block text-right">Monthly Cost</span>,
         size: 116,
         cell: ({ getValue }) => (
           <span className="catalogs-table-numeric block text-right" style={{ color: colors.costCurrent }}>
@@ -206,7 +251,7 @@ export const CatalogDashboard = () => {
       },
       {
         accessorKey: "projected_savings_usd_month",
-        header: "Est. Savings",
+        header: () => <span className="catalogs-table-align-end block text-right">Est. Savings</span>,
         size: 116,
         cell: ({ getValue }) => {
           const savings = getValue() as number | null;
@@ -232,10 +277,27 @@ export const CatalogDashboard = () => {
       onRetry={() => void refetch()}
       skeleton={<KpiSkeleton />}
     >
+      {catalogs.length === 0 ? (
+        <p className="mb-6 text-sm text-muted-foreground">No catalogs connected.</p>
+      ) : (
+      <>
       <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricTile label="Catalogs enabled" value={enabledCatalogs} suffix={`/ ${data?.total_catalogs ?? 0}`} />
         <MetricTile metricId="catalogs_tables_with_stats" value={displayCount(data?.total_tables)} />
-        <MetricTile label="Needs compaction" value={needsCompaction} emphasis={needsCompaction > 0} />
+        <MetricTile
+          label="Needs compaction"
+          value={needsCompaction}
+          emphasis={needsCompaction > 0}
+          pressed={searchParams.get("needs") === "compaction"}
+          onClick={() => {
+            const next = new URLSearchParams(searchParams);
+            if (next.get("needs") === "compaction") next.delete("needs");
+            else next.set("needs", "compaction");
+            next.delete("page");
+            setSearchParams(next, { replace: true });
+            document.getElementById("table-explorer")?.scrollIntoView({ block: "start" });
+          }}
+        />
         <MetricTile
           label="Preset coverage"
           value={presetCoverage == null ? "—" : `${presetCoverage}%`}
@@ -260,6 +322,12 @@ export const CatalogDashboard = () => {
         }
         className="mb-6"
       >
+        <div className="grid gap-2 md:hidden">
+          {catalogs.map((catalog) => (
+            <CatalogSummaryCard key={catalog.catalog_id} catalog={catalog} />
+          ))}
+        </div>
+        <div className="hidden md:block">
         <DataTable
           className="catalogs-table"
           columns={columns}
@@ -270,7 +338,10 @@ export const CatalogDashboard = () => {
           emptyTitle="No catalogs"
           emptyDescription="Connect a lakehouse to see catalog stats here."
         />
+        </div>
       </ChartCard>
+      </>
+      )}
     </AsyncBoundary>
   );
 };

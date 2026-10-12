@@ -65,9 +65,8 @@ describe("CatalogDashboard", () => {
 
     expect(await screen.findAllByText("Tables with stats")).not.toHaveLength(0);
     expect(screen.queryByText("Tables scanned")).not.toBeInTheDocument();
-    const compaction = screen.getByText("Needs compaction").closest(".cryo-metric-tile");
+    const compaction = screen.getByRole("button", { name: /Needs compaction/ }).closest(".cryo-metric-tile");
     expect(compaction).toHaveTextContent("0");
-    expect(screen.getByText("0 tables")).toBeInTheDocument();
     expect(screen.queryByText("Tables scanned")).not.toBeInTheDocument();
     const fleet = screen.getByTitle(
       "Modeled sum of scanner-estimated monthly S3 cost for tables with stats on enabled catalogs. Not the Health figure, and not a bill."
@@ -79,7 +78,21 @@ describe("CatalogDashboard", () => {
 
   it("does not turn a missing fleet cost or table count into zero", async () => {
     vi.mocked(getMultiCatalogDashboard).mockResolvedValue({
-      catalogs: [],
+      catalogs: [
+        {
+          catalog_id: "cat-1",
+          catalog_name: "prod",
+          catalog_type: "glue",
+          table_count: 0,
+          total_size_gb: 0,
+          small_files_count: 0,
+          needs_compaction_count: 0,
+          monthly_cost_usd: 0,
+          projected_savings_usd_month: null,
+          avg_health_score: 0,
+          enabled: true
+        }
+      ],
       total_catalogs: 0,
       total_tables: undefined as unknown as number,
       total_cost_usd: undefined as unknown as number
@@ -97,7 +110,21 @@ describe("CatalogDashboard", () => {
 
   it("does not show $0 when no tables have been scanned", async () => {
     vi.mocked(getMultiCatalogDashboard).mockResolvedValue({
-      catalogs: [],
+      catalogs: [
+        {
+          catalog_id: "cat-1",
+          catalog_name: "prod",
+          catalog_type: "glue",
+          table_count: 0,
+          total_size_gb: 0,
+          small_files_count: 0,
+          needs_compaction_count: 0,
+          monthly_cost_usd: 0,
+          projected_savings_usd_month: null,
+          avg_health_score: 0,
+          enabled: true
+        }
+      ],
       total_catalogs: 1,
       total_tables: 0,
       total_cost_usd: 0

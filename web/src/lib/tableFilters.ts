@@ -32,6 +32,35 @@ export const HIDEABLE_COLUMN_IDS = [
   "first_seen_at"
 ] as const;
 
+/** First screen answers "what needs work, how big is it, and what is it worth." */
+export const OPERATOR_COLUMN_IDS = [
+  "grade",
+  "compaction_priority",
+  "needs",
+  "small_files",
+  "total_files",
+  "total_size_gb",
+  "last_scan",
+  "projected_savings_usd_month",
+  "reclaimable_bytes",
+  "cost_precision",
+  "partition",
+  "freshness"
+] as const;
+
+export const operatorColumnVisibility = (): VisibilityState => {
+  const visible = new Set<string>(OPERATOR_COLUMN_IDS);
+  const state: VisibilityState = {};
+  for (const id of HIDEABLE_COLUMN_IDS) {
+    if (!visible.has(id)) state[id] = false;
+  }
+  return state;
+};
+
+/** Every hideable column on. `colsFromVisibility` encodes this as "no cols param." */
+export const allColumnVisibility = (): VisibilityState =>
+  Object.fromEntries(HIDEABLE_COLUMN_IDS.map((id) => [id, true]));
+
 const CANONICAL_FILTER_KEYS = [
   "q",
   "catalog",

@@ -7,14 +7,14 @@ export interface PageHeaderProps {
   title: string;
   subtitle?: ReactNode;
   actions?: ReactNode;
-  breadcrumbs?: ReactNode;
+  breadcrumbs?: ReactNode | false;
   rootCrumb?: Crumb;
   className?: string;
 }
 
 /** Page chrome with a single visible h1 — replaces the duplicated antd PageHeader gradually. */
 export function PageHeader({ title, subtitle, actions, breadcrumbs, rootCrumb, className }: PageHeaderProps) {
-  const crumbs = breadcrumbs ?? <PageBreadcrumbs root={rootCrumb} />;
+  const crumbs = breadcrumbs === false ? null : (breadcrumbs ?? <PageBreadcrumbs root={rootCrumb} />);
 
   return (
     <header className={cn("cryo-page-header", className)}>

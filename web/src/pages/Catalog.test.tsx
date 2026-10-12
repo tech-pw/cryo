@@ -136,13 +136,13 @@ describe("Consolidated Catalog page", () => {
     // Page header is shared between both sections.
     expect(await screen.findByText(/catalogs & tables/i)).toBeInTheDocument();
 
-    // Dashboard section: KPI strip renders once the dashboard query resolves.
-    await waitFor(() => {
-      expect(screen.getAllByText(/catalogs enabled/i).length).toBeGreaterThan(0);
-    });
+    // An empty lake collapses the KPI strip and catalog card to one line.
+    expect(await screen.findByText("No catalogs connected.")).toBeInTheDocument();
+    expect(screen.queryByText(/catalogs enabled/i)).not.toBeInTheDocument();
 
-    // Table explorer: Export CSV button is mounted regardless of row count.
-    expect(screen.getByRole("button", { name: /export csv/i })).toBeInTheDocument();
+    // Nothing to export until a table matches.
+    expect(screen.queryByRole("button", { name: /export csv/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh tables" })).toBeInTheDocument();
   }, 15000);
 
   it("renders a dashboard row per catalog with the catalog name", async () => {
@@ -278,15 +278,15 @@ describe("Consolidated Catalog page", () => {
     await screen.findByRole("button", { name: /export csv/i });
     const explorerTable = document.querySelector(".datalake-table");
     expect(explorerTable).not.toBeNull();
-    expect(within(explorerTable as HTMLElement).getByText("Catalog")).toBeInTheDocument();
+    expect(within(explorerTable as HTMLElement).queryByText("Catalog")).not.toBeInTheDocument();
+    expect(within(explorerTable as HTMLElement).getByText("Grade")).toBeInTheDocument();
 
     const columnsMenuButton = screen.getByRole("button", { name: /columns/i });
     fireEvent.click(columnsMenuButton);
-    const catalogCheckbox = screen.getByRole("checkbox", { name: "Catalog" });
-    fireEvent.click(catalogCheckbox);
+    fireEvent.click(screen.getByRole("button", { name: "All columns" }));
 
     await waitFor(() => {
-      expect(within(explorerTable as HTMLElement).queryByText("Catalog")).not.toBeInTheDocument();
+      expect(within(explorerTable as HTMLElement).getByText("Catalog")).toBeInTheDocument();
     });
     // The dashboard's own "Catalog" column (a separate, unrelated table) is unaffected --
     // column visibility only ever applies to the table explorer's DataTable instance.
@@ -311,10 +311,10 @@ describe("Consolidated Catalog page", () => {
     const first = renderPage();
     await screen.findByRole("button", { name: /export csv/i });
     fireEvent.click(screen.getByRole("button", { name: /columns/i }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Catalog" }));
+    fireEvent.click(screen.getByRole("button", { name: "All columns" }));
     await waitFor(() => {
       const explorerTable = document.querySelector(".datalake-table");
-      expect(within(explorerTable as HTMLElement).queryByText("Catalog")).not.toBeInTheDocument();
+      expect(within(explorerTable as HTMLElement).getByText("Catalog")).toBeInTheDocument();
     });
     first.unmount();
 
@@ -322,7 +322,7 @@ describe("Consolidated Catalog page", () => {
     await screen.findByRole("button", { name: /export csv/i });
     await waitFor(() => {
       const explorerTable = document.querySelector(".datalake-table");
-      expect(within(explorerTable as HTMLElement).queryByText("Catalog")).not.toBeInTheDocument();
+      expect(within(explorerTable as HTMLElement).getByText("Catalog")).toBeInTheDocument();
     });
   });
 });

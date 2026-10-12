@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 
 import { useAuth } from "../../lib/auth";
@@ -14,41 +15,38 @@ export interface SidebarProps {
 export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
   const { role } = useAuth();
   const activeHref = resolveActiveNavHref(pathname);
+  const [navScrolled, setNavScrolled] = useState(false);
+
+  useEffect(() => {
+    const nav = document.querySelector<HTMLElement>("#primary-navigation .cryo-shell__nav");
+    if (!nav) return;
+    const onScroll = () => setNavScrolled(nav.scrollTop > 0);
+    onScroll();
+    nav.addEventListener("scroll", onScroll, { passive: true });
+    return () => nav.removeEventListener("scroll", onScroll);
+  }, []);
 
   return (
     <aside
-      className={cn("cryo-shell__sidebar", mobileOpen && "cryo-shell__sidebar--open")}
-      style={{
-        background: "var(--sidebar-bg)",
-        borderRight: "1px solid var(--color-border-default)"
-      }}
+      className={cn("cryo-shell__sidebar", mobileOpen && "cryo-shell__sidebar--open", navScrolled && "cryo-shell__sidebar--scrolled")}
       id="primary-navigation"
       aria-label="Primary navigation"
     >
       <Link to="/" className="cryo-shell__brand" aria-label="Cryo, go to home" onClick={onNavigate}>
         <CryoMark className="cryo-shell__brand-mark" aria-hidden />
-        <span className="cryo-shell__brand-copy">Cryo</span>
+        <span className="cryo-shell__brand-copy">
+          <span className="cryo-shell__brand-cr">Cr</span>
+          <span className="cryo-shell__brand-yo">yo</span>
+        </span>
       </Link>
       <nav className="cryo-shell__nav">
-        {NAV_GROUPS.map((group) => {
+        {NAV_GROUPS.map((group, index) => {
           const items = group.items.filter((item) => !item.adminOnly || role === "admin");
           if (items.length === 0) return null;
 
           return (
-            <div key={group.label} className="cryo-shell__nav-group">
-              {group.label ? (
-              <div
-                className="cryo-shell__nav-group-label"
-                style={{
-                  color: "var(--sidebar-text)",
-                  fontWeight: 500,
-                  letterSpacing: 0,
-                  textTransform: "none"
-                }}
-              >
-                {group.label}
-              </div>
-              ) : null}
+            <div key={group.label || `pinned-${index}`} className="cryo-shell__nav-group">
+              {group.label ? <div className="cryo-shell__nav-group-label">{group.label}</div> : null}
               {items.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeHref === item.href;
@@ -56,31 +54,12 @@ export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
                   <NavLink
                     key={item.href}
                     to={item.href}
-                    className={cn(
-                      "cryo-shell__nav-link focus-visible:!outline focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[var(--focus-ring-color)]",
-                      isActive && "cryo-shell__nav-link--active"
-                    )}
-                    style={{
-                      overflow: "hidden",
-                      borderRadius: "var(--radius-default)",
-                      ...(isActive
-                        ? {
-                            background: "var(--sidebar-active-bg)",
-                            borderColor: "transparent",
-                            color: "var(--sidebar-text-active)"
-                          }
-                        : null)
-                    }}
+                    className={cn("cryo-shell__nav-link", isActive && "cryo-shell__nav-link--active")}
                     onClick={onNavigate}
                     end={item.href === "/"}
                     title={item.label}
                   >
-                    <Icon
-                      size={16}
-                      className="cryo-shell__nav-icon"
-                      style={isActive ? { color: "var(--sidebar-text-active)", opacity: 1 } : undefined}
-                      aria-hidden
-                    />
+                    <Icon size={16} className="cryo-shell__nav-icon" aria-hidden />
                     <span>{item.label}</span>
                   </NavLink>
                 );

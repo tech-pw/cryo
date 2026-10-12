@@ -74,9 +74,10 @@ export const CostPrecisionBadge = ({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Badge variant={variant} className="gap-1">
+        <Badge variant={variant} className="max-w-full gap-1 whitespace-nowrap">
           {icon}
-          {orphanScanStale ? `${label} · stale` : label}
+          <span>{label}</span>
+          {orphanScanStale ? <span className="font-normal opacity-80">· stale</span> : null}
         </Badge>
       </TooltipTrigger>
       <TooltipContent>{tooltip}</TooltipContent>

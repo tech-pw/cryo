@@ -68,6 +68,27 @@
   background: color-mix(in srgb, var(--primary-soft) 26%, var(--bg));
 }
 
+.cryo-metric-tile--action {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 100ms var(--ease-out);
+}
+
+.cryo-metric-tile--action:active {
+  transform: scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cryo-metric-tile--action {
+    transition: none;
+  }
+
+  .cryo-metric-tile--action:active {
+    transform: none;
+  }
+}
+
 /* Responsive grid utilities — replaces bespoke media queries in pages */
 .cryo-grid {
   display: grid;
@@ -268,42 +289,155 @@
   height: 168px;
 }
 
+.cryo-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2.5 4.25 6 7.75 9.5 4.25' stroke='%23545f6d' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px 12px;
+}
+
+[data-theme="dark"] .cryo-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2.5 4.25 6 7.75 9.5 4.25' stroke='%23a6b2c0' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
 .bulk-bar {
   position: sticky;
-  bottom: 12px;
-  z-index: 20;
-  margin: 12px auto 0;
-  padding: 10px 12px;
-  width: fit-content;
-  max-width: calc(100vw - 280px);
-  border: 1px solid rgba(225, 230, 237, 0.45);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.72) !important;
-  backdrop-filter: blur(12px) saturate(180%);
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
-  box-shadow: 0 10px 28px rgb(28 36 51 / 14%);
+  top: 8px;
+  z-index: 25;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 10px;
+  padding: 6px 8px;
+  width: 100%;
+  max-width: none;
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, white);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 55%),
+    0 1px 2px rgb(28 36 51 / 6%),
+    0 8px 20px rgb(28 36 51 / 6%);
+}
+
+.bulk-bar__count {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 4px 0 6px;
+  white-space: nowrap;
+}
+
+.bulk-bar__count-value {
+  font-size: 13px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.bulk-bar__group {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+}
+
+.bulk-bar__group--end {
+  margin-left: auto;
 }
 
 .bulk-selection-help {
-  display: block;
-  max-width: 680px;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 [data-theme="dark"] .bulk-bar {
-  background: rgba(11, 15, 22, 0.72) !important;
-  backdrop-filter: blur(12px) saturate(180%);
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
-  border: 1px solid rgba(32, 42, 56, 0.45);
-  box-shadow: 0 10px 28px rgb(0 0 0 / 45%);
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  border-color: color-mix(in srgb, var(--line) 70%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 8%),
+    0 10px 28px rgb(0 0 0 / 40%);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .bulk-bar {
+    background: var(--bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 [data-theme="dark"] .chart-frame .recharts-default-tooltip {
   box-shadow: 0 4px 12px rgb(0 0 0 / 45%) !important;
 }
 
+/* Classic scrollbar, not an overlay. Overlay scrollbars paint on top of the last row. */
+.cryo-hscroll {
+  overflow-x: auto;
+  /* The visible bar lives in .cryo-hscroll-track. Overlay thumbs paint on the last row. */
+  scrollbar-width: none;
+}
+
+.cryo-hscroll::-webkit-scrollbar {
+  display: none;
+  height: 0;
+}
+
+.cryo-hscroll-track {
+  height: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: var(--color-table-header);
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 62%, transparent) transparent;
+}
+
+.cryo-hscroll-track::-webkit-scrollbar {
+  height: 14px;
+}
+
+.cryo-hscroll-track::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cryo-hscroll-track::-webkit-scrollbar-thumb {
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 62%, transparent);
+  background-clip: padding-box;
+}
+
+.cryo-hscroll-track::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted) 82%, transparent);
+  background-clip: padding-box;
+}
+
+.catalogs-table th:has(.catalogs-table-align-end) {
+  text-align: right;
+}
+
 .catalogs-table-numeric {
   text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .catalogs-table-tag-cell {
@@ -312,12 +446,21 @@
 }
 
 .catalogs-table-health {
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 2px;
-  min-width: 88px;
-  margin-left: auto;
+  width: 100%;
+}
+
+.catalogs-table-health__bar {
+  transition: width 200ms var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .catalogs-table-health__bar {
+    transition: none;
+  }
 }
 
 .catalog-cost-chart {
@@ -390,8 +533,10 @@
   font-variant-numeric: tabular-nums;
 }
 
-.datalake-table .numeric-cell {
+.datalake-table .numeric-cell,
+.datalake-table .table-date-cell {
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .datalake-table .sparkline-cell {
@@ -595,9 +740,8 @@ textarea.mono-input {
     align-self: flex-start;
   }
 
-  .bulk-bar {
-    width: 100%;
-    max-width: none;
+  .bulk-bar__group--end {
+    margin-left: 0;
   }
 
   .cryo-page-header__body,

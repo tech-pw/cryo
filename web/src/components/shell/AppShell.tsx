@@ -56,7 +56,8 @@ const SIDEBAR_COLLAPSED_CSS = `
   justify-content: center;
   gap: 0;
   margin-inline: 6px;
-  padding-inline: 0;
+  /* 2px keeps the active inset rail inside the pill; 0 clips it. */
+  padding-inline: 2px 0;
 }
 @media (max-width: 768px) {
   .cryo-shell--sidebar-collapsed .cryo-shell__sidebar {
