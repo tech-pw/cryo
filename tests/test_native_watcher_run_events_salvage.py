@@ -15,7 +15,6 @@ run_events every ~30s while the pod is alive; this is the only surviving record 
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import event
@@ -56,15 +55,11 @@ def _watcher(session, *, run_events=None) -> NativeJobWatcher:
 
 def _seed_dispatch_jobs(session, *, n: int) -> tuple[uuid.UUID, list[MaintenanceJob]]:
     source = Source(id=uuid4(), name=f"source-{uuid4()}", type="rest", config={})
-    destination = Destination(
-        id=uuid4(), name=f"dest-{uuid4()}", engine="native", config={}
-    )
+    destination = Destination(id=uuid4(), name=f"dest-{uuid4()}", engine="native", config={})
     session.add_all([source, destination])
     session.flush()
 
-    run = MaintenanceRun(
-        id=uuid4(), kind="scheduled", trigger="cron", status="running", summary={}
-    )
+    run = MaintenanceRun(id=uuid4(), kind="scheduled", trigger="cron", status="running", summary={})
     session.add(run)
     session.flush()
 

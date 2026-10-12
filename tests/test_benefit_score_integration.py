@@ -851,7 +851,9 @@ def test_update_all_benefit_scores_refreshes_realized_value_within_budget(sessio
     )
     session.commit()
 
-    update_all_benefit_scores(session, refresh_realized_value=True, max_realized_value_refreshes=500)
+    update_all_benefit_scores(
+        session, refresh_realized_value=True, max_realized_value_refreshes=500
+    )
 
     refreshed = session.get(TableStats, table.id)
     assert "autocomp_realized_value" in refreshed.raw

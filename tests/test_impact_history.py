@@ -37,7 +37,9 @@ def _seed_source_table(session, *, name: str = "t") -> tuple[Source, Table]:
 
 
 def _seed_run(session, *, created_at: datetime) -> MaintenanceRun:
-    run = MaintenanceRun(id=uuid4(), kind="scheduled", status="completed", trigger="cron", created_at=created_at)
+    run = MaintenanceRun(
+        id=uuid4(), kind="scheduled", status="completed", trigger="cron", created_at=created_at
+    )
     session.add(run)
     session.flush()
     return run
@@ -51,7 +53,13 @@ def _seed_destination(session) -> Destination:
 
 
 def _seed_job(
-    session, *, run: MaintenanceRun, table: Table, destination: Destination, status: str, admitted_at: datetime
+    session,
+    *,
+    run: MaintenanceRun,
+    table: Table,
+    destination: Destination,
+    status: str,
+    admitted_at: datetime,
 ) -> MaintenanceJob:
     job = MaintenanceJob(
         id=uuid4(),
@@ -154,7 +162,9 @@ class TestRecordDailyImpact:
         session.commit()
 
         signal = compute_impact_signal(session, now=NOW)
-        row = record_daily_impact(session, report_data=_FakeReportData(impact_signal=signal), now=NOW)
+        row = record_daily_impact(
+            session, report_data=_FakeReportData(impact_signal=signal), now=NOW
+        )
         session.commit()
 
         assert row.measurement_state == "unmeasured"
@@ -164,7 +174,9 @@ class TestRecordDailyImpact:
         """A day with zero successful actions at all is a real, legitimate zero -- must still
         write a row (so the trend has no silent gap) with measurement_state='no_actions'."""
         signal = compute_impact_signal(session, now=NOW)
-        row = record_daily_impact(session, report_data=_FakeReportData(impact_signal=signal), now=NOW)
+        row = record_daily_impact(
+            session, report_data=_FakeReportData(impact_signal=signal), now=NOW
+        )
         session.commit()
 
         assert row.measurement_state == "no_actions"
@@ -176,13 +188,36 @@ class TestRecordDailyImpact:
         run = _seed_run(session, created_at=NOW - timedelta(days=1))
         day_start, _ = day_bounds(NOW, 1)
         admitted = day_start + timedelta(hours=3)
-        _seed_job(session, run=run, table=table, destination=destination, status="succeeded", admitted_at=admitted)
-        _seed_job(session, run=run, table=table, destination=destination, status="succeeded", admitted_at=admitted)
-        _seed_job(session, run=run, table=table, destination=destination, status="failed", admitted_at=admitted)
+        _seed_job(
+            session,
+            run=run,
+            table=table,
+            destination=destination,
+            status="succeeded",
+            admitted_at=admitted,
+        )
+        _seed_job(
+            session,
+            run=run,
+            table=table,
+            destination=destination,
+            status="succeeded",
+            admitted_at=admitted,
+        )
+        _seed_job(
+            session,
+            run=run,
+            table=table,
+            destination=destination,
+            status="failed",
+            admitted_at=admitted,
+        )
         session.commit()
 
         signal = compute_impact_signal(session, now=NOW)
-        row = record_daily_impact(session, report_data=_FakeReportData(impact_signal=signal), now=NOW)
+        row = record_daily_impact(
+            session, report_data=_FakeReportData(impact_signal=signal), now=NOW
+        )
         session.commit()
 
         assert row.jobs_succeeded == 2

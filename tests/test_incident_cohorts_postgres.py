@@ -45,7 +45,9 @@ def _clean_up():
                 text("DELETE FROM cryo.incident_cohort_members WHERE cohort_id = :c"),
                 {"c": cohort_id},
             )
-            session.execute(text("DELETE FROM cryo.incident_cohorts WHERE id = :c"), {"c": cohort_id})
+            session.execute(
+                text("DELETE FROM cryo.incident_cohorts WHERE id = :c"), {"c": cohort_id}
+            )
         for run_id in created["runs"]:
             session.execute(text("DELETE FROM cryo.runs WHERE id = :r"), {"r": run_id})
         for table_id in created["tables"]:
@@ -74,7 +76,9 @@ def test_create_cohort_is_idempotent_by_slug(_clean_up):
     with SessionLocal() as session:
         first = create_cohort(session, slug=slug, description="d", evidence_query="SELECT 1")
         _clean_up["cohorts"].append(first.id)
-        second = create_cohort(session, slug=slug, description="different", evidence_query="SELECT 2")
+        second = create_cohort(
+            session, slug=slug, description="different", evidence_query="SELECT 2"
+        )
         assert first.id == second.id
         # Idempotent means "return existing", not "overwrite" -- description must be unchanged.
         assert second.description == "d"

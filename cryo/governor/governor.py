@@ -1237,9 +1237,7 @@ def _admission_config_from_destination(
         staleness_boost_days=float(
             config.get("staleness_boost_days", default.staleness_boost_days)
         ),
-        staleness_boost_max=float(
-            config.get("staleness_boost_max", default.staleness_boost_max)
-        ),
+        staleness_boost_max=float(config.get("staleness_boost_max", default.staleness_boost_max)),
     )
 
 

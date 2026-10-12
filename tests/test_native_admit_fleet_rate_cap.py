@@ -211,9 +211,7 @@ def _seed_jobs_for_rate_count(session):
     )
     session.add(source)
     session.flush()
-    table = Table(
-        id=uuid4(), source_id=source.id, schema_name="s", table_name="t", is_active=True
-    )
+    table = Table(id=uuid4(), source_id=source.id, schema_name="s", table_name="t", is_active=True)
     session.add(table)
     session.flush()
     dest = Destination(id=uuid4(), name=f"dest-{uuid4()}", engine="native", config={})

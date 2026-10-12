@@ -562,7 +562,12 @@ def test_s3_keys_reach_the_pod_only_through_secret_refs() -> None:
 
 def test_no_keys_means_no_aws_env_so_the_service_account_role_applies() -> None:
     _, job = build_lane_objects(
-        uuid.uuid4(), _spec(), _cfg(), catalog="sample", deadline_epoch=0, active_deadline_seconds=600
+        uuid.uuid4(),
+        _spec(),
+        _cfg(),
+        catalog="sample",
+        deadline_epoch=0,
+        active_deadline_seconds=600,
     )
 
     env = job["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -606,7 +611,9 @@ def test_lane_runner_reports_each_result_once_even_after_log_rotation() -> None:
 
 def test_lane_runner_records_why_a_lane_pod_died() -> None:
     core = MagicMock()
-    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="sample", batch_api=MagicMock(), core_api=core)
+    runner = LaneRunner(
+        uuid.uuid4(), _cfg(), catalog="sample", batch_api=MagicMock(), core_api=core
+    )
     runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
     core.list_namespaced_pod.return_value = SimpleNamespace(
         items=[_pod("p0", "Failed", exit_code=137)]
@@ -674,7 +681,9 @@ def test_lane_runner_does_not_call_the_run_deadline_an_infrastructure_loss() -> 
 
 def test_an_evicted_lane_pod_counts_as_an_infrastructure_loss() -> None:
     core = MagicMock()
-    runner = LaneRunner(uuid.uuid4(), _cfg(), catalog="sample", batch_api=MagicMock(), core_api=core)
+    runner = LaneRunner(
+        uuid.uuid4(), _cfg(), catalog="sample", batch_api=MagicMock(), core_api=core
+    )
     runner.launch([_spec()], deadline_epoch=0, active_deadline_seconds=600)
     evicted = SimpleNamespace(
         metadata=SimpleNamespace(name="p0"),

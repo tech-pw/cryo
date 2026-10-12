@@ -73,9 +73,7 @@ class TestResourcePredictorShadowSampling:
         queue.enqueue("job-1", "dest")
 
         mock_predict = MagicMock()
-        monkeypatch.setattr(
-            "cryo.ai.resource_predictor.predict_resources_for_table", mock_predict
-        )
+        monkeypatch.setattr("cryo.ai.resource_predictor.predict_resources_for_table", mock_predict)
 
         governor = Governor(
             queue, locks, store, default_config=AdmissionConfig(adaptive_budget=False)
@@ -109,9 +107,7 @@ class TestResourcePredictorShadowSampling:
         queue.enqueue("job-1", "dest")
 
         mock_predict = MagicMock(side_effect=ValueError("no session in this fake store"))
-        monkeypatch.setattr(
-            "cryo.ai.resource_predictor.predict_resources_for_table", mock_predict
-        )
+        monkeypatch.setattr("cryo.ai.resource_predictor.predict_resources_for_table", mock_predict)
 
         governor = Governor(
             queue, locks, store, default_config=AdmissionConfig(adaptive_budget=False)
@@ -191,7 +187,9 @@ class TestROIGateShadowSampling:
         governor._roi_gate_shadow_mode = False  # real enforcement, not shadow
         governor._shadow_sample_rate = 10_000_000  # would skip almost everything in shadow mode
         governor._roi_gate.decide = MagicMock(
-            return_value=MagicMock(shadow=False, action=MagicMock(value="proceed"), bcr=1.0, threshold=1.0)
+            return_value=MagicMock(
+                shadow=False, action=MagicMock(value="proceed"), bcr=1.0, threshold=1.0
+            )
         )
 
         governor.run_wave(now=datetime(2026, 9, 2, 12, 0, tzinfo=UTC))

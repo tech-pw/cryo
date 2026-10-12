@@ -9,7 +9,12 @@ import pytest
 from pyiceberg.catalog import load_catalog
 
 from cryo.domain.enums import Mode, OperationType, PartitionTransform
-from cryo.domain.models import MaintenancePlan, Operation, PartitionPredicate, PartitionPredicateTerm
+from cryo.domain.models import (
+    MaintenancePlan,
+    Operation,
+    PartitionPredicate,
+    PartitionPredicateTerm,
+)
 from cryo.engines.native.payload import build_execute_request_for_operations
 from cryo.engines.native.runner import (
     execute_request,
@@ -98,7 +103,9 @@ def compaction_fixtures() -> dict[str, object]:
 
 @requires_rest
 @requires_engine
-def test_native_compaction_analyze_reports_candidates(compaction_fixtures: dict[str, object]) -> None:
+def test_native_compaction_analyze_reports_candidates(
+    compaction_fixtures: dict[str, object],
+) -> None:
     spawn_error = _spawn_error()
     if spawn_error is not None:
         pytest.skip(spawn_error)
@@ -130,7 +137,9 @@ def test_native_compaction_analyze_reports_candidates(compaction_fixtures: dict[
 
 @requires_rest
 @requires_engine
-@pytest.mark.skipif(_is_go_engine(), reason="Rust-only staged execute path (upstream commit blocked)")
+@pytest.mark.skipif(
+    _is_go_engine(), reason="Rust-only staged execute path (upstream commit blocked)"
+)
 def test_native_compaction_staged_execute_when_flag_enabled(
     compaction_fixtures: dict[str, object],
     monkeypatch: pytest.MonkeyPatch,
@@ -168,7 +177,9 @@ def test_native_compaction_staged_execute_when_flag_enabled(
 @requires_rest
 @requires_engine
 @pytest.mark.skipif(not _is_go_engine(), reason="Go engine COW compaction commit path")
-def test_native_compaction_execute_cow_unpartitioned(compaction_fixtures: dict[str, object]) -> None:
+def test_native_compaction_execute_cow_unpartitioned(
+    compaction_fixtures: dict[str, object],
+) -> None:
     spawn_error = _spawn_error()
     if spawn_error is not None:
         pytest.skip(spawn_error)
@@ -317,7 +328,9 @@ def test_native_compaction_execute_partition_scoped_identity(
 @requires_rest
 @requires_engine
 @pytest.mark.skipif(not _is_go_engine(), reason="Go engine COW compaction commit path")
-def test_native_compaction_execute_day_partition_scoped(compaction_fixtures: dict[str, object]) -> None:
+def test_native_compaction_execute_day_partition_scoped(
+    compaction_fixtures: dict[str, object],
+) -> None:
     spawn_error = _spawn_error()
     if spawn_error is not None:
         pytest.skip(spawn_error)

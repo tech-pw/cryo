@@ -32,9 +32,11 @@ def test_k8s_label_value_strips_illegal_chars() -> None:
 
 
 def test_operation_from_native_payload_single_and_mixed() -> None:
-    assert operation_from_native_payload(
-        {"operations": [{"type": "rewrite_data_files"}]}
-    ) == ("cryo-native", "native", "rewrite_data_files")
+    assert operation_from_native_payload({"operations": [{"type": "rewrite_data_files"}]}) == (
+        "cryo-native",
+        "native",
+        "rewrite_data_files",
+    )
     assert operation_from_native_payload(
         {
             "batch": True,

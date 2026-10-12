@@ -47,10 +47,7 @@ def test_prune_table_stats_history_bounds_work_and_reports_backlog(session) -> N
     now = datetime(2026, 8, 4, tzinfo=UTC)
     table_id = _table_with_history(session)
     session.add_all(
-        [
-            _snapshot(table_id, now - timedelta(days=200, seconds=index))
-            for index in range(5)
-        ]
+        [_snapshot(table_id, now - timedelta(days=200, seconds=index)) for index in range(5)]
     )
     session.commit()
 

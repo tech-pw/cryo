@@ -120,6 +120,7 @@ def cap_deadline_seconds_for_table(seconds: int, *, total_size_gb: float | None)
         return min(seconds, _DEADLINE_CEILING_SECONDS)
     return cap_deadline_seconds(seconds)
 
+
 _LIGHTWEIGHT_OPS = frozenset(
     {
         "expire_snapshots",

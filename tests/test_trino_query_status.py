@@ -120,9 +120,7 @@ class TestQueryStatusProbeFailureVisibility:
 
         coord = TrinoCoordinator(host="h")
         with patch("cryo.engines.trino.query_status.logger.warning") as mock_warning:
-            state = get_query_state(
-                coord, "20260916_1_abc", connector=lambda _c: _RaisingConn()
-            )
+            state = get_query_state(coord, "20260916_1_abc", connector=lambda _c: _RaisingConn())
         assert state is EngineOpState.UNCERTAIN
         assert mock_warning.called
 

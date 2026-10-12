@@ -130,7 +130,8 @@ def test_ingest_telemetry_opens_a_fresh_session_per_source(session, monkeypatch)
     monkeypatch.setattr("cryo.scheduler.service.SessionLocal", _counting_factory)
 
     monkeypatch.setattr(
-        "cryo.telemetry.query_buffer.buffer_trino_queries", lambda queries, *, source_id, maxlen=250_000: len(queries)
+        "cryo.telemetry.query_buffer.buffer_trino_queries",
+        lambda queries, *, source_id, maxlen=250_000: len(queries),
     )
     monkeypatch.setattr(
         "cryo.scheduler.service._source_for_destination", lambda session, destination: None

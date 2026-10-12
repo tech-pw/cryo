@@ -12,7 +12,9 @@ from cryo.worker.worker import InMemoryJobStore, Worker
 
 
 def _worker() -> Worker:
-    return Worker(InMemoryMaintenanceQueue(), InMemoryJobStore(), lambda d: None, InMemoryLockStore())
+    return Worker(
+        InMemoryMaintenanceQueue(), InMemoryJobStore(), lambda d: None, InMemoryLockStore()
+    )
 
 
 def test_deactivate_dropped_table_calls_both_deactivate_and_record_missing_metadata() -> None:

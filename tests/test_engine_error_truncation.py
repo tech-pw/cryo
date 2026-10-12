@@ -173,7 +173,9 @@ def test_deepest_caused_by_prefers_caused_by_over_header_fallback_when_both_pres
         "Caused by: org.apache.iceberg.exceptions.NoSuchTableException: actual root cause"
     )
     result = deepest_caused_by(message)
-    assert result == "Caused by: org.apache.iceberg.exceptions.NoSuchTableException: actual root cause"
+    assert (
+        result == "Caused by: org.apache.iceberg.exceptions.NoSuchTableException: actual root cause"
+    )
 
 
 def test_is_table_not_found_error_matches_known_signatures() -> None:

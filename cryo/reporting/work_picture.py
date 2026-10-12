@@ -88,9 +88,7 @@ class WorkPicture:
 def compute_work_picture(session: Session, *, now: datetime) -> WorkPicture:
     yesterday_start, yesterday_end = day_bounds(now, 1)
     by_action, by_engine, tables = _day_picture(session, yesterday_start, yesterday_end)
-    baseline = [
-        _tables_maintained(session, *day_bounds(now, days_ago)) for days_ago in range(2, 9)
-    ]
+    baseline = [_tables_maintained(session, *day_bounds(now, days_ago)) for days_ago in range(2, 9)]
     byte_succeeded = sum(row.succeeded for row in by_action if row.action in BYTE_ACTIONS)
     byte_measured = sum(row.measured for row in by_action if row.action in BYTE_ACTIONS)
     measured_bytes = sum(row.bytes_freed for row in by_action if row.action in BYTE_ACTIONS)
@@ -207,8 +205,10 @@ def _day_picture(
         )
         .group_by(AuditLog.engine)
     ).all()
-    return pictures, [(str(engine), int(count)) for engine, count in engines], _tables_maintained(
-        session, start, end
+    return (
+        pictures,
+        [(str(engine), int(count)) for engine, count in engines],
+        _tables_maintained(session, start, end),
     )
 
 

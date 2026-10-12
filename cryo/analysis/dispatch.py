@@ -86,9 +86,12 @@ def dispatch_analysis_job(
 
     job_name = f"cryo-analysis-{task_type.replace('_', '-')}-{uuid.uuid4().hex[:8]}"[:63]
     resolved_namespace = namespace or current_k8s_namespace()
-    resolved_image = image or os.environ.get("CRYO_ANALYSIS_IMAGE") or os.environ.get(
-        "CRYO_NATIVE_IMAGE"
-    ) or "cryo:latest"
+    resolved_image = (
+        image
+        or os.environ.get("CRYO_ANALYSIS_IMAGE")
+        or os.environ.get("CRYO_NATIVE_IMAGE")
+        or "cryo:latest"
+    )
     resolved_service_account = (
         service_account or os.environ.get("CRYO_ANALYSIS_SERVICE_ACCOUNT") or "default"
     )

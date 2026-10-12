@@ -50,9 +50,7 @@ def create_cohort(
     return cohort
 
 
-def add_member(
-    session: Session, cohort_id: uuid.UUID, run_id: uuid.UUID
-) -> IncidentCohortMember:
+def add_member(session: Session, cohort_id: uuid.UUID, run_id: uuid.UUID) -> IncidentCohortMember:
     """Idempotent by (cohort_id, run_id) -- see the partial-index-free unique index on the
     model; re-adding an already-tracked run returns the existing membership row unchanged."""
     existing = session.scalar(
@@ -106,9 +104,7 @@ def record_reconciliation_outcome(
     session.commit()
 
 
-def record_membership_status(
-    session: Session, member_id: uuid.UUID, *, status: str
-) -> None:
+def record_membership_status(session: Session, member_id: uuid.UUID, *, status: str) -> None:
     """Record the outcome of independently verifying whether a candidate member was actually
     affected by the incident (review finding F11) -- separate from reconciliation_status, which
     tracks what happened to the run's own recovery, not whether it belongs in this cohort at

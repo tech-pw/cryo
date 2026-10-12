@@ -44,7 +44,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import Table, TableStats
-from cryo.scanner.property_recommendations import count_suboptimal_property_issues
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +93,23 @@ class ChecklistItem:
 
 
 def _item(
-    key: str, status: ChecklistStatus, reason: str, *, value: float | None = None, threshold: float | None = None
+    key: str,
+    status: ChecklistStatus,
+    reason: str,
+    *,
+    value: float | None = None,
+    threshold: float | None = None,
 ) -> ChecklistItem:
     label, weight, tier = CHECKLIST_ITEMS[key]
     return ChecklistItem(
-        key=key, label=label, weight_pct=weight, tier=tier, status=status, reason=reason,
-        metric_value=value, threshold=threshold,
+        key=key,
+        label=label,
+        weight_pct=weight,
+        tier=tier,
+        status=status,
+        reason=reason,
+        metric_value=value,
+        threshold=threshold,
     )
 
 
@@ -113,11 +123,28 @@ def _check_file_size(stats: Mapping[str, Any]) -> ChecklistItem:
     # an otherwise tiny table isn't worth flagging red (matches the planner's own "not worth
     # compacting" gate, see health.py's docstring for the  incident this avoids).
     if small_files < 128:
-        return _item("file_size", "green", f"Only {small_files} small files (below compaction floor)", value=small_pct)
+        return _item(
+            "file_size",
+            "green",
+            f"Only {small_files} small files (below compaction floor)",
+            value=small_pct,
+        )
     if small_pct >= 50:
-        return _item("file_size", "red", f"{small_pct:.0f}% of {total_files:,} files are small", value=small_pct, threshold=50)
+        return _item(
+            "file_size",
+            "red",
+            f"{small_pct:.0f}% of {total_files:,} files are small",
+            value=small_pct,
+            threshold=50,
+        )
     if small_pct >= 20:
-        return _item("file_size", "yellow", f"{small_pct:.0f}% of {total_files:,} files are small", value=small_pct, threshold=20)
+        return _item(
+            "file_size",
+            "yellow",
+            f"{small_pct:.0f}% of {total_files:,} files are small",
+            value=small_pct,
+            threshold=20,
+        )
     return _item("file_size", "green", f"{small_pct:.0f}% small files", value=small_pct)
 
 
@@ -127,13 +154,32 @@ def _check_delete_files(stats: Mapping[str, Any]) -> ChecklistItem:
     if delete_files == 0:
         return _item("delete_files", "green", "No delete files")
     if delete_pct >= 20 or delete_files >= 1000:
-        return _item("delete_files", "red", f"{delete_pct:.0f}% delete ratio, {delete_files:,} delete files", value=delete_pct, threshold=20)
+        return _item(
+            "delete_files",
+            "red",
+            f"{delete_pct:.0f}% delete ratio, {delete_files:,} delete files",
+            value=delete_pct,
+            threshold=20,
+        )
     if delete_pct >= 5 or delete_files >= 100:
-        return _item("delete_files", "yellow", f"{delete_pct:.0f}% delete ratio, {delete_files:,} delete files", value=delete_pct, threshold=5)
-    return _item("delete_files", "green", f"{delete_pct:.0f}% delete ratio, {delete_files:,} delete files", value=delete_pct)
+        return _item(
+            "delete_files",
+            "yellow",
+            f"{delete_pct:.0f}% delete ratio, {delete_files:,} delete files",
+            value=delete_pct,
+            threshold=5,
+        )
+    return _item(
+        "delete_files",
+        "green",
+        f"{delete_pct:.0f}% delete ratio, {delete_files:,} delete files",
+        value=delete_pct,
+    )
 
 
-def _check_partition_match(session: Session, table_id: uuid.UUID, stats: Mapping[str, Any]) -> ChecklistItem:
+def _check_partition_match(
+    session: Session, table_id: uuid.UUID, stats: Mapping[str, Any]
+) -> ChecklistItem:
     """NEW. Compares the query log's dominant filter column against the table's actual
     partition column(s) -- the highest-weighted gap this checklist closes. Confirmed missing
     from the existing layout_analyzer.py (which recommends sort order and bloom filters from
@@ -152,7 +198,9 @@ def _check_partition_match(session: Session, table_id: uuid.UUID, stats: Mapping
         return _item("partition_match", "unknown", "No query pattern data available yet")
 
     if not patterns.dominant_filter_column or patterns.total_queries < 5:
-        return _item("partition_match", "unknown", "Not enough query volume to judge filter pattern")
+        return _item(
+            "partition_match", "unknown", "Not enough query volume to judge filter pattern"
+        )
 
     # TableStats only tracks the table's primary partition_col directly (e.g. "experimentname"
     # on gold_unleash_experiments_v1, which is also partitioned by day(createdat) -- the
@@ -166,19 +214,27 @@ def _check_partition_match(session: Session, table_id: uuid.UUID, stats: Mapping
     dominant = patterns.dominant_filter_column.lower()
     if not partition_field_names:
         return _item(
-            "partition_match", "red",
+            "partition_match",
+            "red",
             f"Table is unpartitioned but {patterns.total_queries} queries dominantly filter on '{patterns.dominant_filter_column}'",
         )
     if dominant in partition_field_names:
-        return _item("partition_match", "green", f"Dominant filter column '{patterns.dominant_filter_column}' is a partition field")
+        return _item(
+            "partition_match",
+            "green",
+            f"Dominant filter column '{patterns.dominant_filter_column}' is a partition field",
+        )
     return _item(
-        "partition_match", "red",
+        "partition_match",
+        "red",
         f"Dominant filter column '{patterns.dominant_filter_column}' is NOT among partition fields "
         f"({', '.join(sorted(partition_field_names)) or 'none'}) -- queries likely scan full partitions",
     )
 
 
-def _check_cadence_match(stats: Mapping[str, Any], *, preset_idle_hours: float | None = None) -> ChecklistItem:
+def _check_cadence_match(
+    stats: Mapping[str, Any], *, preset_idle_hours: float | None = None
+) -> ChecklistItem:
     """NEW logic (is_streaming already existed as a static flag in health.py; this makes it a
     real gate against the table's actual maintenance preset). Confirmed live 2026-09-11: a
     24h idle-hours gate on a continuously-written table caused repeated same-partition rewrite
@@ -192,7 +248,8 @@ def _check_cadence_match(stats: Mapping[str, Any], *, preset_idle_hours: float |
         return _item("cadence_match", "green", "Low write velocity, no cadence risk")
     if preset_idle_hours is None:
         return _item(
-            "cadence_match", "yellow",
+            "cadence_match",
+            "yellow",
             f"{'Streaming' if is_streaming else f'{commits_per_day:.1f} commits/day'} table with no maintenance preset configured yet -- verify idle-hours before scheduling one",
         )
     # Typical gap between commits, in hours, from the measured daily commit rate. The failure
@@ -206,12 +263,18 @@ def _check_cadence_match(stats: Mapping[str, Any], *, preset_idle_hours: float |
     safe_floor_hours = typical_gap_hours * 3
     if preset_idle_hours < safe_floor_hours:
         return _item(
-            "cadence_match", "red",
+            "cadence_match",
+            "red",
             f"partition_write_idle_hours={preset_idle_hours:g}h is too tight for a table committing "
             f"every ~{typical_gap_hours:.1f}h -- risk of racing the writer",
-            value=preset_idle_hours, threshold=safe_floor_hours,
+            value=preset_idle_hours,
+            threshold=safe_floor_hours,
         )
-    return _item("cadence_match", "green", f"idle_hours={preset_idle_hours:g}h safely exceeds ~{typical_gap_hours:.1f}h commit gap")
+    return _item(
+        "cadence_match",
+        "green",
+        f"idle_hours={preset_idle_hours:g}h safely exceeds ~{typical_gap_hours:.1f}h commit gap",
+    )
 
 
 def _check_sort_order(stats: Mapping[str, Any]) -> ChecklistItem:
@@ -227,18 +290,30 @@ def _check_distribution_mode(stats: Mapping[str, Any]) -> ChecklistItem:
     mode = stats.get("write_distribution_mode") or "none"
     total_partitions = int(stats.get("total_partitions") or 0)
     if total_partitions <= 1:
-        return _item("distribution_mode", "green", "Unpartitioned or single-partition table, distribution mode not relevant")
+        return _item(
+            "distribution_mode",
+            "green",
+            "Unpartitioned or single-partition table, distribution mode not relevant",
+        )
     if mode == "none":
-        return _item("distribution_mode", "yellow", f"write.distribution-mode is 'none' on a {total_partitions}-partition table")
+        return _item(
+            "distribution_mode",
+            "yellow",
+            f"write.distribution-mode is 'none' on a {total_partitions}-partition table",
+        )
     return _item("distribution_mode", "green", f"write.distribution-mode='{mode}'")
 
 
 def _check_manifest_bloat(stats: Mapping[str, Any]) -> ChecklistItem:
     manifests = int(stats.get("manifest_count") or 0)
     if manifests >= 500:
-        return _item("manifest_bloat", "red", f"{manifests:,} manifests", value=manifests, threshold=500)
+        return _item(
+            "manifest_bloat", "red", f"{manifests:,} manifests", value=manifests, threshold=500
+        )
     if manifests >= 100:
-        return _item("manifest_bloat", "yellow", f"{manifests:,} manifests", value=manifests, threshold=100)
+        return _item(
+            "manifest_bloat", "yellow", f"{manifests:,} manifests", value=manifests, threshold=100
+        )
     return _item("manifest_bloat", "green", f"{manifests:,} manifests", value=manifests)
 
 
@@ -247,19 +322,47 @@ def _check_stats_current(stats: Mapping[str, Any]) -> ChecklistItem:
     if ratio == 0.0 and int(stats.get("total_files") or 0) == 0:
         return _item("stats_current", "unknown", "No stats scanned yet")
     if ratio >= 0.15:
-        return _item("stats_current", "red", f"Metadata-to-data ratio {ratio * 100:.1f}%", value=ratio, threshold=0.15)
+        return _item(
+            "stats_current",
+            "red",
+            f"Metadata-to-data ratio {ratio * 100:.1f}%",
+            value=ratio,
+            threshold=0.15,
+        )
     if ratio >= 0.05:
-        return _item("stats_current", "yellow", f"Metadata-to-data ratio {ratio * 100:.1f}%", value=ratio, threshold=0.05)
-    return _item("stats_current", "green", f"Metadata-to-data ratio {ratio * 100:.1f}%", value=ratio)
+        return _item(
+            "stats_current",
+            "yellow",
+            f"Metadata-to-data ratio {ratio * 100:.1f}%",
+            value=ratio,
+            threshold=0.05,
+        )
+    return _item(
+        "stats_current", "green", f"Metadata-to-data ratio {ratio * 100:.1f}%", value=ratio
+    )
 
 
 def _check_snapshot_retention(stats: Mapping[str, Any]) -> ChecklistItem:
     snapshots = int(stats.get("total_snapshots") or 0)
     if snapshots >= 200:
-        return _item("snapshot_retention", "red", f"{snapshots:,} snapshots retained", value=snapshots, threshold=200)
+        return _item(
+            "snapshot_retention",
+            "red",
+            f"{snapshots:,} snapshots retained",
+            value=snapshots,
+            threshold=200,
+        )
     if snapshots >= 50:
-        return _item("snapshot_retention", "yellow", f"{snapshots:,} snapshots retained", value=snapshots, threshold=50)
-    return _item("snapshot_retention", "green", f"{snapshots:,} snapshots retained", value=snapshots)
+        return _item(
+            "snapshot_retention",
+            "yellow",
+            f"{snapshots:,} snapshots retained",
+            value=snapshots,
+            threshold=50,
+        )
+    return _item(
+        "snapshot_retention", "green", f"{snapshots:,} snapshots retained", value=snapshots
+    )
 
 
 def _check_orphan_cleanup(session: Session, table_id: uuid.UUID) -> ChecklistItem:
@@ -276,12 +379,24 @@ def _check_orphan_cleanup(session: Session, table_id: uuid.UUID) -> ChecklistIte
         .limit(1)
     ).first()
     if row is None:
-        return _item("orphan_cleanup", "red", "remove_orphan_files has never run successfully on this table")
+        return _item(
+            "orphan_cleanup", "red", "remove_orphan_files has never run successfully on this table"
+        )
     last_run = row[0]
-    age_days = (datetime.now(UTC) - (last_run if last_run.tzinfo else last_run.replace(tzinfo=UTC))).days
+    age_days = (
+        datetime.now(UTC) - (last_run if last_run.tzinfo else last_run.replace(tzinfo=UTC))
+    ).days
     if age_days > 14:
-        return _item("orphan_cleanup", "yellow", f"remove_orphan_files last ran {age_days}d ago", value=age_days, threshold=14)
-    return _item("orphan_cleanup", "green", f"remove_orphan_files last ran {age_days}d ago", value=age_days)
+        return _item(
+            "orphan_cleanup",
+            "yellow",
+            f"remove_orphan_files last ran {age_days}d ago",
+            value=age_days,
+            threshold=14,
+        )
+    return _item(
+        "orphan_cleanup", "green", f"remove_orphan_files last ran {age_days}d ago", value=age_days
+    )
 
 
 def _check_schema_width(stats: Mapping[str, Any]) -> ChecklistItem:
@@ -292,7 +407,13 @@ def _check_schema_width(stats: Mapping[str, Any]) -> ChecklistItem:
     if column_count == 0:
         return _item("schema_width", "unknown", "Column-level stats not available")
     if column_count >= 150:
-        return _item("schema_width", "yellow", f"{column_count} columns -- verify all are read", value=column_count, threshold=150)
+        return _item(
+            "schema_width",
+            "yellow",
+            f"{column_count} columns -- verify all are read",
+            value=column_count,
+            threshold=150,
+        )
     return _item("schema_width", "green", f"{column_count} columns")
 
 
@@ -456,5 +577,7 @@ def checklist_summary(items: list[ChecklistItem]) -> dict[str, Any]:
             weighted_score += item.weight_pct
         elif item.status == "yellow":
             weighted_score += item.weight_pct * 0.5
-    score = round((weighted_score / total_weight_scored) * 100, 1) if total_weight_scored > 0 else None
+    score = (
+        round((weighted_score / total_weight_scored) * 100, 1) if total_weight_scored > 0 else None
+    )
     return {"counts": counts, "weighted_score": score}

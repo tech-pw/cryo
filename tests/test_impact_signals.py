@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from cryo.db.models import AuditLog, Source, Table
-from cryo.reporting.impact_signals import _daily_impact, day_bounds, compute_impact_signal
+from cryo.reporting.impact_signals import _daily_impact, compute_impact_signal, day_bounds
 
 NOW = datetime(2026, 8, 19, 6, 0, tzinfo=UTC)
 

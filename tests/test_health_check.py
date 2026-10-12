@@ -16,7 +16,6 @@ import pytest
 
 from cryo.db.models import (
     Destination,
-    MaintenanceControlState,
     MaintenanceJob,
     MaintenanceRun,
     Source,
@@ -39,16 +38,18 @@ NOW = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
 
 def _seed_source_table(session, *, name: str = "t") -> tuple[Source, Table]:
     source = Source(id=uuid4(), name=f"source-{uuid4()}", type="rest", config={})
-    table = Table(
-        id=uuid4(), source_id=source.id, schema_name="s", table_name=name, is_active=True
-    )
+    table = Table(id=uuid4(), source_id=source.id, schema_name="s", table_name=name, is_active=True)
     session.add_all([source, table])
     session.flush()
     return source, table
 
 
-def _seed_run(session, *, status: str, created_at: datetime, trigger: str = "cron") -> MaintenanceRun:
-    run = MaintenanceRun(id=uuid4(), kind="scheduled", status=status, trigger=trigger, created_at=created_at)
+def _seed_run(
+    session, *, status: str, created_at: datetime, trigger: str = "cron"
+) -> MaintenanceRun:
+    run = MaintenanceRun(
+        id=uuid4(), kind="scheduled", status=status, trigger=trigger, created_at=created_at
+    )
     session.add(run)
     session.flush()
     return run
@@ -202,7 +203,9 @@ class TestStaleJobs:
         source, table = _seed_source_table(session)
         destination = _seed_destination(session)
         run = _seed_run(session, status="running", created_at=NOW)
-        _seed_job(session, run=run, table=table, destination=destination, status="running", started_at=NOW)
+        _seed_job(
+            session, run=run, table=table, destination=destination, status="running", started_at=NOW
+        )
         session.commit()
 
         report = run_production_health_checks(session, now=NOW)

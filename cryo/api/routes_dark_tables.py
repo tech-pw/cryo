@@ -88,9 +88,7 @@ def list_dark_tables(session: SessionDep) -> DarkTableCandidatesResponse:
         candidates=reads,
         total_candidates=len(reads),
         total_size_gb=sum(r.total_size_gb for r in reads),
-        total_estimated_monthly_cost_usd=sum(
-            r.estimated_monthly_cost_usd or 0.0 for r in reads
-        ),
+        total_estimated_monthly_cost_usd=sum(r.estimated_monthly_cost_usd or 0.0 for r in reads),
     )
 
 

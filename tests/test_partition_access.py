@@ -11,7 +11,6 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from uuid import uuid4
 
-from cryo.config import Settings
 from cryo.db.models import PartitionAccessDaily, Source, Table, TablePartition
 from cryo.integrations import s3_bucket_logging
 from cryo.scanner import s3_request_cost_ingest as ingest_mod
@@ -28,9 +27,7 @@ from cryo.security.crypto import encrypt_secret
 
 
 def test_parse_partition_segments_extracts_column_value_pairs() -> None:
-    assert parse_partition_segments("dt=2026-08-19/00000-0-uuid.parquet") == {
-        "dt": "2026-08-19"
-    }
+    assert parse_partition_segments("dt=2026-08-19/00000-0-uuid.parquet") == {"dt": "2026-08-19"}
 
 
 def test_parse_partition_segments_handles_multi_column_partitioning() -> None:
@@ -61,9 +58,7 @@ def test_parse_partition_segments_ignores_non_kv_directory_segments() -> None:
 
 
 def test_partition_path_from_segments_drops_trailing_filename() -> None:
-    assert (
-        partition_path_from_segments("dt=2026-08-19/00000-0-uuid.parquet") == "dt=2026-08-19/"
-    )
+    assert partition_path_from_segments("dt=2026-08-19/00000-0-uuid.parquet") == "dt=2026-08-19/"
 
 
 def test_partition_path_from_segments_multi_segment() -> None:
@@ -396,9 +391,7 @@ def test_ingest_bucket_records_unmatched_partition_path_when_no_scan_yet(
 
     today = date(2026, 7, 7)
     prefix = f"logs/{today.year}/{today.month:02d}/{today.day:02d}/"
-    body = _log_line(
-        "REST.GET.OBJECT", "warehouse/db/a/data/dt=2026-07-07/f1.parquet"
-    ).encode()
+    body = _log_line("REST.GET.OBJECT", "warehouse/db/a/data/dt=2026-07-07/f1.parquet").encode()
     fake_client = _FakeLogBucketClient(
         tree={
             "logs/": [f"logs/{today.year}/"],

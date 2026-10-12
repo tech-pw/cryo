@@ -76,9 +76,7 @@ def get_query_state(
         from cryo.observability.metrics import trino_query_status_probe_failures_total
 
         trino_query_status_probe_failures_total.labels(probe="get_query_state").inc()
-        logger.warning(
-            "Trino get_query_state failed for %s: %s", query_id, exc, exc_info=True
-        )
+        logger.warning("Trino get_query_state failed for %s: %s", query_id, exc, exc_info=True)
         return EngineOpState.UNCERTAIN
     finally:
         cursor.close()

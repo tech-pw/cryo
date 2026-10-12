@@ -167,8 +167,7 @@ def correlate_with_maintenance(
     relevant_actions = _REWRITE_ACTIONS if signal.direction == "spike" else _CLEANUP_ACTIONS
 
     rows = session.execute(
-        select(AuditLog.table_id, AuditLog.actual_bytes_freed)
-        .where(
+        select(AuditLog.table_id, AuditLog.actual_bytes_freed).where(
             AuditLog.ts >= since,
             AuditLog.action.in_(relevant_actions),
             AuditLog.status.in_(_SUCCESS_STATUSES),

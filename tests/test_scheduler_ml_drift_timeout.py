@@ -15,7 +15,6 @@ as due on every single tick -- the loop never got that far.
 from __future__ import annotations
 
 import time
-import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import event

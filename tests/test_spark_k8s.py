@@ -102,7 +102,7 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     client = SparkK8sClient(cfg)
 
     with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
-        job_id =         client.submit_spark_sql(
+        job_id = client.submit_spark_sql(
             "CALL sample.system.rewrite_manifests(table => 'ns.tbl')",
             job_name="cryo-optimize-manifests",
             catalog="sample",

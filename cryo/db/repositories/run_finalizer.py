@@ -65,7 +65,9 @@ _CAPACITY_DEFERRED_FINALIZE_GRACE = timedelta(hours=6)
 # rely on. See is_capacity_defer_reason's docstring for the fuller incident history.
 
 
-def finalize_open_runs(session_factory: Callable[[], Session], *, now: datetime | None = None) -> int:
+def finalize_open_runs(
+    session_factory: Callable[[], Session], *, now: datetime | None = None
+) -> int:
     """Mark runs finished when all child jobs reached a terminal state.
 
     A run with only DEFERRED jobs left is not finalized until each of those jobs has been
@@ -120,8 +122,7 @@ def finalize_open_runs(session_factory: Callable[[], Session], *, now: datetime 
                 continue
             if counts.get(JobStatus.DEFERRED.value, 0) > 0:
                 deferred_jobs = session.execute(
-                    select(MaintenanceJob.finished_at, MaintenanceJob.error)
-                    .where(
+                    select(MaintenanceJob.finished_at, MaintenanceJob.error).where(
                         MaintenanceJob.run_id == run.id,
                         MaintenanceJob.status == JobStatus.DEFERRED.value,
                     )

@@ -35,13 +35,18 @@ jobs:
           fetch-depth: 0
 
       - name: Install gitleaks CLI
+        # 8.18.0 (pinned here previously) didn't honor .gitleaks.toml's [[allowlists]]
+        # `paths` entries the same way current gitleaks does -- confirmed live, 2026-10-12:
+        # the engine-go/third_party/.* allowlist (for a vendored iceberg-go identifier that
+        # trips the generic-api-key rule) was silently ignored on 8.18.0, flagging a false
+        # positive that 8.30.1 correctly suppresses. Bumped to the current release.
         run: |
           set -euo pipefail
-          ver="8.18.0"
+          ver="8.30.1"
           archive="gitleaks_${ver}_linux_x64.tar.gz"
           curl -fsSLO \
             "https://github.com/gitleaks/gitleaks/releases/download/v${ver}/${archive}"
-          echo "6e19050a3ee0688265ed3be4c46a0362487d20456ecd547e8c7328eaed3980cb  ${archive}" \
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  ${archive}" \
             | sha256sum --check --strict
           tar -xzf "${archive}" -C /usr/local/bin gitleaks
           gitleaks version

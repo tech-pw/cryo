@@ -72,8 +72,12 @@ def detect_dark_table_candidates(
     now = now or datetime.now(UTC)
 
     rows = session.execute(
-        select(Table.id, TableStats.query_count_30d, TableStats.total_size_gb,
-               TableStats.estimated_monthly_s3_cost_usd)
+        select(
+            Table.id,
+            TableStats.query_count_30d,
+            TableStats.total_size_gb,
+            TableStats.estimated_monthly_s3_cost_usd,
+        )
         .join(TableStats, TableStats.table_id == Table.id)
         .where(Table.is_active.is_(True), TableStats.total_size_gb >= MIN_SIZE_GB_TO_TRACK)
     ).all()

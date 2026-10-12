@@ -79,8 +79,12 @@ def test_excludes_non_trino_engine_queries(session):
     trino_table = _seed_table(session, source, name="trino_table")
 
     for _ in range(50):
-        _log_query(session, source=source, table=spark_only, engine="spark", when=NOW - timedelta(days=1))
-    _log_query(session, source=source, table=trino_table, engine="trino", when=NOW - timedelta(days=1))
+        _log_query(
+            session, source=source, table=spark_only, engine="spark", when=NOW - timedelta(days=1)
+        )
+    _log_query(
+        session, source=source, table=trino_table, engine="trino", when=NOW - timedelta(days=1)
+    )
     session.commit()
 
     ranked = top_trino_query_tables(session, limit=10, now=NOW)
@@ -116,7 +120,9 @@ def test_respects_limit(session):
     source = _seed_source(session)
     tables = [_seed_table(session, source, name=f"t{i}") for i in range(5)]
     for table in tables:
-        _log_query(session, source=source, table=table, engine="trino", when=NOW - timedelta(days=1))
+        _log_query(
+            session, source=source, table=table, engine="trino", when=NOW - timedelta(days=1)
+        )
     session.commit()
 
     ranked = top_trino_query_tables(session, limit=2, now=NOW)
@@ -131,7 +137,9 @@ def test_tie_breaks_by_table_id_for_stable_ordering(session):
     a = _seed_table(session, source, name="a")
     b = _seed_table(session, source, name="b")
     for table in (a, b):
-        _log_query(session, source=source, table=table, engine="trino", when=NOW - timedelta(days=1))
+        _log_query(
+            session, source=source, table=table, engine="trino", when=NOW - timedelta(days=1)
+        )
     session.commit()
 
     first = top_trino_query_tables(session, limit=10, now=NOW)

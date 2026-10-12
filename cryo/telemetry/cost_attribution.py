@@ -175,9 +175,7 @@ def aggregate_query_cost_attribution(
         # this window (below), not accumulated across the whole call and flushed once at the
         # end: a crash partway through a multi-window call would otherwise lose an earlier
         # window's already-read data even though its watermark had already moved past it.
-        rollup: defaultdict[tuple[date, str, str, str], list[int]] = defaultdict(
-            lambda: [0, 0, 0]
-        )
+        rollup: defaultdict[tuple[date, str, str, str], list[int]] = defaultdict(lambda: [0, 0, 0])
         try:
             scan = iceberg_table.scan(
                 row_filter=And(
@@ -256,8 +254,7 @@ def aggregate_query_cost_attribution(
         windows_processed += 1
 
     logger.info(
-        "Query cost attribution: %s window(s), %s queries read, %s rows upserted, "
-        "watermark now %s",
+        "Query cost attribution: %s window(s), %s queries read, %s rows upserted, watermark now %s",
         windows_processed,
         queries_read,
         rows_upserted,
@@ -299,8 +296,7 @@ def _upsert_rollup(
             set_={
                 "query_count": QueryCostAttributionDaily.query_count + stmt.excluded.query_count,
                 "failed_query_count": (
-                    QueryCostAttributionDaily.failed_query_count
-                    + stmt.excluded.failed_query_count
+                    QueryCostAttributionDaily.failed_query_count + stmt.excluded.failed_query_count
                 ),
                 "physical_bytes_scanned": (
                     QueryCostAttributionDaily.physical_bytes_scanned
@@ -388,9 +384,7 @@ def apply_scan_cost_prices(
     for price in prices:
         rows = list(
             session.scalars(
-                select(QueryCostAttributionDaily).where(
-                    QueryCostAttributionDaily.day == price.day
-                )
+                select(QueryCostAttributionDaily).where(QueryCostAttributionDaily.day == price.day)
             )
         )
         if not rows:

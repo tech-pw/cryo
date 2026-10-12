@@ -88,7 +88,9 @@ def _seed_binary() -> Path:
 def _reseed_mor_table(table_name: str) -> None:
     binary = _seed_binary()
     if not binary.is_file():
-        pytest.skip(f"MOR fixture seeder not found at {binary}; run `make build-seed-native-fixtures`")
+        pytest.skip(
+            f"MOR fixture seeder not found at {binary}; run `make build-seed-native-fixtures`"
+        )
     subprocess.run(
         [str(binary), "seed-table", table_name],
         check=True,

@@ -41,7 +41,9 @@ def test_native_admit_py_imports_the_shared_constants_not_local_literals() -> No
     import cryo.governor.native_admit as native_admit
 
     assert native_admit.NATIVE_CLUSTER_CAPACITY_DEFER_REASON == NATIVE_CLUSTER_CAPACITY_DEFER_REASON
-    assert native_admit.FLEET_ADMISSION_RATE_CAP_DEFER_REASON == FLEET_ADMISSION_RATE_CAP_DEFER_REASON
+    assert (
+        native_admit.FLEET_ADMISSION_RATE_CAP_DEFER_REASON == FLEET_ADMISSION_RATE_CAP_DEFER_REASON
+    )
     assert (
         native_admit.METASTORE_CAPACITY_DEFER_REASON_PREFIX
         == METASTORE_CAPACITY_DEFER_REASON_PREFIX

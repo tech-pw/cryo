@@ -21,13 +21,11 @@ from tests.integration.native.concurrency_harness import (
     is_commit_conflict_error,
     join_optimize,
     reseed_mor_table,
-    run_optimize,
     start_optimize_async,
 )
 from tests.integration.native.mor_inspect import count_live_rows
 from tests.integration.native.test_native_mor_compaction_e2e import (
     _engine_config,
-    _is_go_engine,
     _load_table,
     _spawn_error,
     _table_ref,

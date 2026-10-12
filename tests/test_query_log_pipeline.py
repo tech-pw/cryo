@@ -1010,14 +1010,18 @@ def test_resolve_table_prefers_trino_inputs_over_query_text_regex(session) -> No
     inputs on one real production query)."""
     from types import SimpleNamespace
 
-    from cryo.db.models import Source, Table as TableModel
+    from cryo.db.models import Source
+    from cryo.db.models import Table as TableModel
     from cryo.telemetry.curator import CuratorSettings, QueryLogCurator
 
     source = Source(id=uuid4(), name="s", type="rest", config={})
     session.add(source)
     session.flush()
     real_table = TableModel(
-        id=uuid4(), source_id=source.id, schema_name="analytics", table_name="silver_dbt_orders",
+        id=uuid4(),
+        source_id=source.id,
+        schema_name="analytics",
+        table_name="silver_dbt_orders",
         is_active=True,
     )
     session.add(real_table)
@@ -1089,14 +1093,18 @@ def test_resolve_table_falls_back_to_query_text_when_no_trino_inputs(session) ->
     regex-based resolution -- this fix must not regress that destination's behavior."""
     from types import SimpleNamespace
 
-    from cryo.db.models import Source, Table as TableModel
+    from cryo.db.models import Source
+    from cryo.db.models import Table as TableModel
     from cryo.telemetry.curator import CuratorSettings, QueryLogCurator
 
     source = Source(id=uuid4(), name="s", type="rest", config={})
     session.add(source)
     session.flush()
     real_table = TableModel(
-        id=uuid4(), source_id=source.id, schema_name="analytics", table_name="orders",
+        id=uuid4(),
+        source_id=source.id,
+        schema_name="analytics",
+        table_name="orders",
         is_active=True,
     )
     session.add(real_table)

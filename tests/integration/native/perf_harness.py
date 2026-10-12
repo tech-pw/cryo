@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from cryo.engines.native.runner import (
-    NativeExecuteResult,
     PROGRESS_PREFIX,
+    NativeExecuteResult,
     _first_error,
     _parse_operation_result,
     split_stdout_lines,
@@ -115,9 +115,7 @@ def parse_progress_events(stdout: str) -> list[ProgressEvent]:
                 bytes_processed=payload.get("bytes_processed")
                 if isinstance(payload.get("bytes_processed"), int)
                 else None,
-                message=payload.get("message")
-                if isinstance(payload.get("message"), str)
-                else None,
+                message=payload.get("message") if isinstance(payload.get("message"), str) else None,
                 group_index=payload.get("group_index")
                 if isinstance(payload.get("group_index"), int)
                 else None,
@@ -229,9 +227,7 @@ def execute_request_with_metrics(
         return native, _metrics_from_native(
             native, wall_seconds, peak_rss, progress_events, request, label
         )
-    results = tuple(
-        _parse_operation_result(item, 0) for item in parsed.get("results", [])
-    )
+    results = tuple(_parse_operation_result(item, 0) for item in parsed.get("results", []))
     ok = bool(parsed.get("ok", False)) and returncode == 0
     native = NativeExecuteResult(
         ok=ok,

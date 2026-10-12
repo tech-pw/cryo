@@ -12,7 +12,11 @@ from pyiceberg.transforms import DayTransform, IdentityTransform
 from pyiceberg.types import DateType, LongType, NestedField, StringType
 
 from tests.integration.native.compaction_oracles import capture_table_snapshot
-from tests.integration.native.rest_env import catalog_properties, normalize_uri, wait_for_rest_catalog
+from tests.integration.native.rest_env import (
+    catalog_properties,
+    normalize_uri,
+    wait_for_rest_catalog,
+)
 
 COMPACTION_NAMESPACE = "native_compaction"
 UNPARTITIONED_TABLE = "f_unpart_small"
@@ -380,8 +384,7 @@ def ensure_perf_compaction_fixture(
         isp = isps[batch_idx % len(isps)]
         # ~180-byte mostly-unique payloads → real encode/stats cost + denser files.
         payloads = [
-            f"geoip|{batch_idx:04d}|{i}|{city}|{isp}|{'x' * 96}|{i * 7919 % 9973}"
-            for i in ids
+            f"geoip|{batch_idx:04d}|{i}|{city}|{isp}|{'x' * 96}|{i * 7919 % 9973}" for i in ids
         ]
         arrays = [
             pa.array(ids, type=pa.int64()),
@@ -409,8 +412,7 @@ def ensure_perf_compaction_fixture(
         table = catalog.load_table(identifier)  # type: ignore[attr-defined]
         if batch_idx % 4 == 0:
             print(
-                f"perf fixture: wrote file {batch_idx + 1}/{file_count} "
-                f"({row_id:,} rows)",
+                f"perf fixture: wrote file {batch_idx + 1}/{file_count} ({row_id:,} rows)",
                 flush=True,
             )
 

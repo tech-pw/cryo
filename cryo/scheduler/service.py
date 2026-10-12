@@ -587,13 +587,17 @@ class SchedulerService:
         applied = 0
         failed = 0
         with SessionLocal() as session:
-            candidates = session.execute(
-                select(LayoutRecommendation)
-                .where(LayoutRecommendation.status == "pending")
-                .where(LayoutRecommendation.recommended_strategy.in_(("sort", "zorder")))
-                .order_by(LayoutRecommendation.updated_at.asc().nulls_first())
-                .limit(settings.layout_autopilot_max_tables_per_tick)
-            ).scalars().all()
+            candidates = (
+                session.execute(
+                    select(LayoutRecommendation)
+                    .where(LayoutRecommendation.status == "pending")
+                    .where(LayoutRecommendation.recommended_strategy.in_(("sort", "zorder")))
+                    .order_by(LayoutRecommendation.updated_at.asc().nulls_first())
+                    .limit(settings.layout_autopilot_max_tables_per_tick)
+                )
+                .scalars()
+                .all()
+            )
             for recommendation in candidates:
                 table = session.get(Table, recommendation.table_id)
                 if table is None:

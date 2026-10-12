@@ -231,7 +231,9 @@ class TestEnsurePendingApprovalRequests:
 
         table = _seed_table(session, schema_name="test", table_name="needs_approval")
         session.commit()
-        plan_operations = [{"type": OperationType.EXPIRE_SNAPSHOTS.value, "params": {"retention_days": 3}}]
+        plan_operations = [
+            {"type": OperationType.EXPIRE_SNAPSHOTS.value, "params": {"retention_days": 3}}
+        ]
 
         created = ensure_pending_approval_requests(session, table.id, plan_operations)
 

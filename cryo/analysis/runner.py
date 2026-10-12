@@ -120,9 +120,7 @@ def run_benefit_score_sweep_task() -> int:
         # across-batch (within one invocation) and across-invocation (crash/continuation)
         # boundaries, same as `cursor` does for table position.
         refresh_budget_remaining = (
-            claimed.task_state.get("refresh_budget_remaining")
-            if claimed.task_state
-            else None
+            claimed.task_state.get("refresh_budget_remaining") if claimed.task_state else None
         )
         if refresh_budget_remaining is None:
             refresh_budget_remaining = _DEFAULT_MAX_REALIZED_VALUE_REFRESHES_PER_SWEEP
@@ -133,7 +131,10 @@ def run_benefit_score_sweep_task() -> int:
                 # lease (reclaimed by another owner after this one's lease expired) before
                 # spending the batch's own compute/commit cost, per F05's docstring above.
                 refreshed_generation = heartbeat(
-                    session, claimed.id, lease_generation=lease_generation, lease_seconds=_LEASE_SECONDS
+                    session,
+                    claimed.id,
+                    lease_generation=lease_generation,
+                    lease_seconds=_LEASE_SECONDS,
                 )
                 if refreshed_generation is None:
                     logger.warning(

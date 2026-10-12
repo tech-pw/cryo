@@ -53,7 +53,12 @@ MeasurementState = Literal["complete", "partial", "unmeasured", "no_actions"]
 # expire_snapshots (frees storage indirectly, once remove_orphan_files later collects the
 # now-unreferenced files -- double-counting it here would credit the same bytes twice) and
 # optimize_manifests/apply_table_properties/compute_statistics (no bytes-freed semantics).
-_RECLAIM_ACTIONS = ("remove_orphan_files", "optimize", "convert_deletes", "rewrite_position_deletes")
+_RECLAIM_ACTIONS = (
+    "remove_orphan_files",
+    "optimize",
+    "convert_deletes",
+    "rewrite_position_deletes",
+)
 _SUCCESS_STATUSES = ("OK", "succeeded")
 
 

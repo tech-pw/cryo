@@ -32,9 +32,7 @@ def _seed_table(session, source: Source, *, name: str) -> Table:
 
 
 def _seed_cost(session, table: Table, *, scan_at: datetime, cost: float) -> None:
-    session.add(
-        TableCostHistory(table_id=table.id, scan_at=scan_at, current_monthly_cost_usd=cost)
-    )
+    session.add(TableCostHistory(table_id=table.id, scan_at=scan_at, current_monthly_cost_usd=cost))
 
 
 # ---------------------------------------------------------------------------

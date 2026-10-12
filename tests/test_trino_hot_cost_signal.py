@@ -105,9 +105,13 @@ def test_improving_when_bytes_scanned_drop_significantly_dod(session):
     _pin(session, preset, table)
 
     # DoD baseline (2 days ago): 100 GiB scanned.
-    _log_query(session, source=source, table=table, when=NOW - timedelta(days=2), bytes_read=100 * 1024**3)
+    _log_query(
+        session, source=source, table=table, when=NOW - timedelta(days=2), bytes_read=100 * 1024**3
+    )
     # Yesterday: 20 GiB -- an 80% drop, well past the default 15% DoD threshold.
-    _log_query(session, source=source, table=table, when=NOW - timedelta(days=1), bytes_read=20 * 1024**3)
+    _log_query(
+        session, source=source, table=table, when=NOW - timedelta(days=1), bytes_read=20 * 1024**3
+    )
     session.commit()
 
     signal = compute_trino_hot_cost_signal(session, preset_name=preset.name, now=NOW)
@@ -122,8 +126,12 @@ def test_worsening_when_bytes_scanned_rise_significantly_dod(session):
     table = _seed_table(session, source, name="t")
     _pin(session, preset, table)
 
-    _log_query(session, source=source, table=table, when=NOW - timedelta(days=2), bytes_read=10 * 1024**3)
-    _log_query(session, source=source, table=table, when=NOW - timedelta(days=1), bytes_read=50 * 1024**3)
+    _log_query(
+        session, source=source, table=table, when=NOW - timedelta(days=2), bytes_read=10 * 1024**3
+    )
+    _log_query(
+        session, source=source, table=table, when=NOW - timedelta(days=1), bytes_read=50 * 1024**3
+    )
     session.commit()
 
     signal = compute_trino_hot_cost_signal(session, preset_name=preset.name, now=NOW)
@@ -138,8 +146,12 @@ def test_flat_within_threshold_band(session):
     table = _seed_table(session, source, name="t")
     _pin(session, preset, table)
 
-    _log_query(session, source=source, table=table, when=NOW - timedelta(days=2), bytes_read=100 * 1024**3)
-    _log_query(session, source=source, table=table, when=NOW - timedelta(days=1), bytes_read=105 * 1024**3)
+    _log_query(
+        session, source=source, table=table, when=NOW - timedelta(days=2), bytes_read=100 * 1024**3
+    )
+    _log_query(
+        session, source=source, table=table, when=NOW - timedelta(days=1), bytes_read=105 * 1024**3
+    )
     session.commit()
 
     signal = compute_trino_hot_cost_signal(session, preset_name=preset.name, now=NOW)
@@ -152,7 +164,9 @@ def test_cost_usd_is_none_when_pricing_is_unavailable(session):
     preset = _seed_preset(session)
     table = _seed_table(session, source, name="t")
     _pin(session, preset, table)
-    _log_query(session, source=source, table=table, when=NOW - timedelta(days=1), bytes_read=10 * 1024**3)
+    _log_query(
+        session, source=source, table=table, when=NOW - timedelta(days=1), bytes_read=10 * 1024**3
+    )
     session.commit()
 
     signal = compute_trino_hot_cost_signal(session, preset_name=preset.name, now=NOW)
@@ -169,7 +183,9 @@ def test_cost_usd_is_populated_when_pricing_is_available(session):
         datetime(NOW.year, NOW.month, NOW.day, tzinfo=UTC) - timedelta(days=1),
         None,
     )
-    _log_query(session, source=source, table=table, when=NOW - timedelta(days=1), bytes_read=10 * 1024**3)
+    _log_query(
+        session, source=source, table=table, when=NOW - timedelta(days=1), bytes_read=10 * 1024**3
+    )
     # $2 for 10 GiB priced that day -> $0.20/GiB; cohort scanned 10 GiB -> $2.00 estimated cost.
     session.add(
         QueryCostAttributionDaily(
@@ -198,8 +214,16 @@ def test_only_counts_pinned_tables_not_the_whole_fleet(session):
     not_pinned = _seed_table(session, source, name="not_pinned")
     _pin(session, preset, pinned)
 
-    _log_query(session, source=source, table=pinned, when=NOW - timedelta(days=1), bytes_read=1 * 1024**3)
-    _log_query(session, source=source, table=not_pinned, when=NOW - timedelta(days=1), bytes_read=999 * 1024**3)
+    _log_query(
+        session, source=source, table=pinned, when=NOW - timedelta(days=1), bytes_read=1 * 1024**3
+    )
+    _log_query(
+        session,
+        source=source,
+        table=not_pinned,
+        when=NOW - timedelta(days=1),
+        bytes_read=999 * 1024**3,
+    )
     session.commit()
 
     signal = compute_trino_hot_cost_signal(session, preset_name=preset.name, now=NOW)

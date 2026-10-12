@@ -93,7 +93,9 @@ class CheckpointCollector:
 
     @property
     def committed_groups(self) -> list[int]:
-        return [int(e["committed_groups"]) for e in self.events if e.get("committed_groups") is not None]
+        return [
+            int(e["committed_groups"]) for e in self.events if e.get("committed_groups") is not None
+        ]
 
     @property
     def max_committed(self) -> int:

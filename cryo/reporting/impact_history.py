@@ -74,7 +74,9 @@ class FleetImpactHistoryRow:
         return 100.0 * self.jobs_succeeded / total
 
 
-def _job_status_counts(session: Session, *, day_start: datetime, day_end: datetime) -> tuple[int, int]:
+def _job_status_counts(
+    session: Session, *, day_start: datetime, day_end: datetime
+) -> tuple[int, int]:
     """Succeeded/failed MaintenanceJob counts for [day_start, day_end) by admitted_at --
     same window compute_impact_signal uses for 'yesterday', so this row's reliability numbers
     and its reclaim numbers describe the same calendar day."""
@@ -126,7 +128,7 @@ def _bytes_freed_by_engine(
 def record_daily_impact(
     session: Session,
     *,
-    report_data: "object",  # cryo.reporting.daily_report.DailyReportData, see module docstring
+    report_data: object,  # cryo.reporting.daily_report.DailyReportData, see module docstring
     infra_cost_usd: float | None = None,
     now: datetime | None = None,
 ) -> FleetImpactHistoryRow:
@@ -149,7 +151,9 @@ def record_daily_impact(
         "measurement_state": today.measurement_state if today is not None else "no_actions",
         "actions_succeeded": today.actions_succeeded if today is not None else 0,
         "tables_touched": today.tables_touched if today is not None else 0,
-        "actions_with_bytes_evidence": today.actions_with_bytes_evidence if today is not None else 0,
+        "actions_with_bytes_evidence": today.actions_with_bytes_evidence
+        if today is not None
+        else 0,
         "actions_without_bytes_evidence": (
             today.actions_without_bytes_evidence if today is not None else 0
         ),
@@ -164,9 +168,7 @@ def record_daily_impact(
         "jobs_failed": jobs_failed,
         "infra_cost_usd": infra_cost_usd,
         "raw": {
-            "measured_reclaim_gb": (
-                measured_reclaim_gb(impact) if impact is not None else None
-            ),
+            "measured_reclaim_gb": (measured_reclaim_gb(impact) if impact is not None else None),
             "impact_direction": impact.direction if impact is not None else None,
             "bytes_freed_by_engine": bytes_freed_by_engine,
         },

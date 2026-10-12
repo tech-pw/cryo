@@ -237,9 +237,7 @@ def _auth_settings() -> AuthSettings:
 
 
 def _issue_for_user(user: LocalUser) -> TokenResponse:
-    return TokenResponse(
-        access_token=issue_access_token(subject=user.username, roles=[user.role])
-    )
+    return TokenResponse(access_token=issue_access_token(subject=user.username, roles=[user.role]))
 
 
 class LoginRequest(BaseModel):
@@ -324,12 +322,20 @@ def _last_admin(session, excluding: uuid.UUID | None = None) -> bool:
 def login_with_password(payload: LoginRequest) -> TokenResponse:
     settings_row = _auth_settings()
     if not settings_row.password_login_enabled:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password sign-in is disabled")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Password sign-in is disabled"
+        )
     username = payload.username.strip().lower()
     with SessionLocal() as session:
         user = session.query(LocalUser).filter(LocalUser.username == username).one_or_none()
-        if user is None or user.disabled or not verify_password(payload.password, user.password_hash):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
+        if (
+            user is None
+            or user.disabled
+            or not verify_password(payload.password, user.password_hash)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password"
+            )
         return _issue_for_user(user)
 
 
@@ -337,14 +343,18 @@ def login_with_password(payload: LoginRequest) -> TokenResponse:
 def login_with_google(payload: GoogleLoginRequest) -> TokenResponse:
     settings_row = _auth_settings()
     if not settings_row.google_enabled or not settings_row.google_client_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Google sign-in is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Google sign-in is not configured"
+        )
     claims = verify_google_id_token(
         payload.id_token,
         client_id=settings_row.google_client_id,
         hosted_domain=settings_row.google_hosted_domain,
     )
     if claims is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Google sign-in was rejected")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Google sign-in was rejected"
+        )
     email = claims["email"]
     with SessionLocal() as session:
         user = session.query(LocalUser).filter(LocalUser.username == email).one_or_none()
@@ -423,12 +433,18 @@ def create_user(payload: UserWrite) -> UserRead:
     with SessionLocal() as session:
         if session.query(LocalUser).filter(LocalUser.username == username).one_or_none():
             raise HTTPException(status_code=409, detail="Username already exists")
-        user = LocalUser(username=username, password_hash=hash_password(payload.password), role=role)
+        user = LocalUser(
+            username=username, password_hash=hash_password(payload.password), role=role
+        )
         session.add(user)
         session.commit()
         session.refresh(user)
         return UserRead(
-            id=user.id, username=user.username, role=user.role, disabled=user.disabled, has_password=True
+            id=user.id,
+            username=user.username,
+            role=user.role,
+            disabled=user.disabled,
+            has_password=True,
         )
 
 
@@ -444,7 +460,11 @@ def update_user(user_id: uuid.UUID, payload: UserPatch) -> UserRead:
                 raise HTTPException(status_code=409, detail="Cannot remove the last admin")
             user.role = role
         if payload.disabled is not None:
-            if payload.disabled and user.role == "admin" and _last_admin(session, excluding=user.id):
+            if (
+                payload.disabled
+                and user.role == "admin"
+                and _last_admin(session, excluding=user.id)
+            ):
                 raise HTTPException(status_code=409, detail="Cannot disable the last admin")
             user.disabled = payload.disabled
         if payload.password is not None:
@@ -478,8 +498,12 @@ def patch_auth_settings(payload: AuthSettingsPatch) -> AuthSettingsRead:
         row = session.get(AuthSettings, 1) or AuthSettings(id=1)
         session.add(row)
         data = payload.model_dump(exclude_unset=True)
-        if data.get("google_enabled") and not (data.get("google_client_id") or row.google_client_id):
-            raise HTTPException(status_code=400, detail="Google Client ID is required to enable sign-in")
+        if data.get("google_enabled") and not (
+            data.get("google_client_id") or row.google_client_id
+        ):
+            raise HTTPException(
+                status_code=400, detail="Google Client ID is required to enable sign-in"
+            )
         for key, value in data.items():
             setattr(row, key, value)
         session.commit()

@@ -305,14 +305,15 @@ class NativeJobWatcher:
                 noop_operations = _reported_zero_work_operations(entry)
                 if noop_operations:
                     ok = False
-                    error = (
-                        "native_job_reported_success_with_zero_work: "
-                        + ", ".join(noop_operations)
+                    error = "native_job_reported_success_with_zero_work: " + ", ".join(
+                        noop_operations
                     )
             if ok:
                 status = JobStatus.SUCCEEDED
-            elif error and _is_transient_metastore_error(error) and _under_retry_cap(
-                session, table_id=job.table_id
+            elif (
+                error
+                and _is_transient_metastore_error(error)
+                and _under_retry_cap(session, table_id=job.table_id)
             ):
                 status = JobStatus.DEFERRED
             else:
@@ -386,9 +387,7 @@ class NativeJobWatcher:
         mark_dispatch_finished(session, dispatch_id, status="failed", error=reason)
         _INCREMENTAL_LOG_SEEN.pop(str(dispatch_id), None)
 
-    def _salvage_from_run_events(
-        self, run_id: Any, own_job_ids: set[str]
-    ) -> dict[str, bool]:
+    def _salvage_from_run_events(self, run_id: Any, own_job_ids: set[str]) -> dict[str, bool]:
         """Reconstruct per-job success from already-streamed run_events log_line events.
 
         _publish_incremental_progress relays each CRYO_TABLE_RESULT line to run_events while

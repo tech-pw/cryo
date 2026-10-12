@@ -6,15 +6,20 @@ import os
 import subprocess
 from pathlib import Path
 
+from pyiceberg.catalog import load_catalog
+
 from cryo.domain.enums import Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
 from cryo.engines.native.payload import build_execute_request_for_operations
 from cryo.engines.native.runner import execute_request
 from tests.integration.native.compaction_fixtures import COMPACTION_NAMESPACE
 from tests.integration.native.mor_inspect import live_int_column_values
-from tests.integration.native.rest_env import source_config, trino_connect, wait_for_trino
-from pyiceberg.catalog import load_catalog
-from tests.integration.native.rest_env import catalog_properties
+from tests.integration.native.rest_env import (
+    catalog_properties,
+    source_config,
+    trino_connect,
+    wait_for_trino,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SEED_BINARY_ENV = "CRYO_SEED_NATIVE_FIXTURES_BINARY"
@@ -74,9 +79,7 @@ def trino_count(cursor, table_name: str) -> int:
 
 
 def trino_live_id_multiset(cursor, table_name: str) -> tuple[int, ...]:
-    cursor.execute(
-        f'SELECT id FROM "{COMPACTION_NAMESPACE}"."{table_name}" ORDER BY id'
-    )
+    cursor.execute(f'SELECT id FROM "{COMPACTION_NAMESPACE}"."{table_name}" ORDER BY id')
     return tuple(int(row[0]) for row in cursor.fetchall())
 
 
@@ -94,9 +97,7 @@ def live_id_multiset(cursor, table_name: str, *, prefer_trino: bool) -> tuple[in
 
 
 def trino_optimize(cursor, table_name: str) -> None:
-    cursor.execute(
-        f'ALTER TABLE "{COMPACTION_NAMESPACE}"."{table_name}" EXECUTE optimize'
-    )
+    cursor.execute(f'ALTER TABLE "{COMPACTION_NAMESPACE}"."{table_name}" EXECUTE optimize')
     cursor.fetchall()
 
 
@@ -116,7 +117,9 @@ def cow_optimize_params() -> dict[str, int]:
     }
 
 
-def run_go_optimize(table_ref: str, engine_config: dict[str, str], params: dict[str, int]) -> object:
+def run_go_optimize(
+    table_ref: str, engine_config: dict[str, str], params: dict[str, int]
+) -> object:
     plan = MaintenancePlan(
         table_ref=table_ref,
         mode=Mode.STANDARD,

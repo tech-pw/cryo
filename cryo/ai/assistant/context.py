@@ -30,7 +30,9 @@ def _heading_name(value: Any) -> str | None:
 def screen_block(resolved: dict[str, Any], page: dict[str, Any] | None = None) -> str:
     """Tell the model which table or run is on screen. Do not ask the operator again."""
     page = page or {}
-    lines = ["The operator is looking at this screen. Use it. Do not ask which table if one is named here."]
+    lines = [
+        "The operator is looking at this screen. Use it. Do not ask which table if one is named."
+    ]
     entities = resolved.get("entities") or []
     if entities:
         entity = entities[0]

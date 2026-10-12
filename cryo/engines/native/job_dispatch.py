@@ -382,9 +382,7 @@ def create_native_job(
     elif isinstance(payload.get("table_ref"), str):
         primary_ref = str(payload["table_ref"])[:63]
 
-    workload_name, engine_name, operation = operation_from_native_payload(
-        payload, command=command
-    )
+    workload_name, engine_name, operation = operation_from_native_payload(payload, command=command)
     labels = {
         "app.kubernetes.io/name": "cryo",
         "app.kubernetes.io/component": "native-engine",

@@ -37,7 +37,9 @@ def _seed_source_table(session, *, name: str = "t") -> tuple[Source, Table]:
 
 
 def _seed_run(session, *, created_at: datetime) -> MaintenanceRun:
-    run = MaintenanceRun(id=uuid4(), kind="scheduled", status="completed", trigger="cron", created_at=created_at)
+    run = MaintenanceRun(
+        id=uuid4(), kind="scheduled", status="completed", trigger="cron", created_at=created_at
+    )
     session.add(run)
     session.flush()
     return run
@@ -145,7 +147,9 @@ class TestDispatchHeartbeat:
         vitals = compute_cryo_vitals(session, now=NOW)
         assert vitals.dispatch_heartbeat.is_stalled is False
 
-    def test_stalled_heartbeat_forces_critical_status_even_with_clean_checklist(self, session) -> None:
+    def test_stalled_heartbeat_forces_critical_status_even_with_clean_checklist(
+        self, session
+    ) -> None:
         """A stalled dispatch heartbeat is exactly the multi-day-stall shape fixed 2026-08-31
         in scheduler/service.py -- this must independently drive status to CRITICAL even when
         health_check.py's own checklist has nothing to flag (e.g. no stuck runs/jobs recorded
@@ -362,7 +366,9 @@ class TestScoreAndPayload:
         vitals = compute_cryo_vitals(session, now=NOW)
         assert 0.0 <= vitals.score <= 100.0
 
-    def test_trino_hot_cost_signal_populates_without_affecting_score(self, session, monkeypatch) -> None:
+    def test_trino_hot_cost_signal_populates_without_affecting_score(
+        self, session, monkeypatch
+    ) -> None:
         """The Trino-hot-tables cost signal answers a different question ("is this specific
         cost lever working") than vitals' score ("is Cryo healthy") -- a worsening cost trend
         must surface in the payload but never move the score/status, which would conflate an
@@ -386,7 +392,9 @@ class TestScoreAndPayload:
         )
         session.add(preset)
         session.flush()
-        session.add(TableAssignment(table_id=table.id, preset_id=preset.id, assigned_by="test", pinned=True))
+        session.add(
+            TableAssignment(table_id=table.id, preset_id=preset.id, assigned_by="test", pinned=True)
+        )
         session.add(
             QueryLog(
                 source_id=source.id,

@@ -31,9 +31,7 @@ def _seed_job(
     destination = Destination(
         id=uuid4(), name=f"dest-{uuid4()}", engine="native", config={"slot_cap": 5}
     )
-    table = Table(
-        id=uuid4(), source_id=source.id, schema_name="s", table_name=name, is_active=True
-    )
+    table = Table(id=uuid4(), source_id=source.id, schema_name="s", table_name=name, is_active=True)
     session.add_all([source, destination, table])
     session.flush()
 

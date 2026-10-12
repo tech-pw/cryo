@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from tests.integration.native.compaction_fixtures import UNPARTITIONED_TABLE, ensure_compaction_fixtures
+from tests.integration.native.compaction_fixtures import (
+    UNPARTITIONED_TABLE,
+    ensure_compaction_fixtures,
+)
 from tests.integration.native.compaction_oracles import (
     assert_failure_no_op,
     assert_file_count_reduced,
@@ -66,7 +69,9 @@ def test_native_c4_commit_retry_exhaustion_no_op(compaction_fixtures: dict[str, 
 @requires_rest
 @requires_engine
 @pytest.mark.skipif(not _is_go_engine(), reason="Go engine fault-injection testhooks")
-def test_native_c5_crash_before_commit_leaves_orphans(compaction_fixtures: dict[str, object]) -> None:
+def test_native_c5_crash_before_commit_leaves_orphans(
+    compaction_fixtures: dict[str, object],
+) -> None:
     """C5: crash after write/before commit is a no-op; orphans are removable."""
     spawn_error = _spawn_error()
     if spawn_error is not None:
@@ -130,7 +135,9 @@ def test_native_c6_catalog_error_is_atomic_no_op(compaction_fixtures: dict[str, 
 @requires_rest
 @requires_engine
 @pytest.mark.skipif(not _is_go_engine(), reason="Go engine fault-injection testhooks")
-def test_native_c7_object_store_put_failure_aborts_chunk(compaction_fixtures: dict[str, object]) -> None:
+def test_native_c7_object_store_put_failure_aborts_chunk(
+    compaction_fixtures: dict[str, object],
+) -> None:
     """C7: failed output PUT aborts compaction without dangling manifest refs."""
     spawn_error = _spawn_error()
     if spawn_error is not None:

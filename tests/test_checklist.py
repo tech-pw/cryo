@@ -30,7 +30,9 @@ def _seed_table(session, *, table_name: str = "events", stats_kwargs: dict | Non
     source_id = uuid.uuid4()
     table_id = uuid.uuid4()
     session.add(Source(id=source_id, name=f"src-{source_id}", type="rest", config={}))
-    table = Table(id=table_id, source_id=source_id, schema_name="demo", table_name=table_name, is_active=True)
+    table = Table(
+        id=table_id, source_id=source_id, schema_name="demo", table_name=table_name, is_active=True
+    )
     session.add(table)
     session.flush()
     stats = TableStats(
@@ -51,17 +53,21 @@ def _seed_table(session, *, table_name: str = "events", stats_kwargs: dict | Non
     return table
 
 
-def _seed_query_logs(session, table: Table, source_id: uuid.UUID, *, column: str, count: int) -> None:
+def _seed_query_logs(
+    session, table: Table, source_id: uuid.UUID, *, column: str, count: int
+) -> None:
     for i in range(count):
-        session.add(QueryLog(
-            source_id=source_id,
-            table_id=table.id,
-            query_id=f"q-{table.id}-{i}",
-            engine="trino",
-            query_type="SELECT",
-            filter_columns=[{"column": column, "operator": "=", "cardinality": None}],
-            executed_at=datetime.now(UTC),
-        ))
+        session.add(
+            QueryLog(
+                source_id=source_id,
+                table_id=table.id,
+                query_id=f"q-{table.id}-{i}",
+                engine="trino",
+                query_type="SELECT",
+                filter_columns=[{"column": column, "operator": "=", "cardinality": None}],
+                executed_at=datetime.now(UTC),
+            )
+        )
     session.commit()
 
 
@@ -190,15 +196,24 @@ def test_orphan_cleanup_green_when_run_recently(session) -> None:
     session.add(run)
     session.flush()
     job = MaintenanceJob(
-        id=uuid.uuid4(), run_id=run.id, table_id=table.id, destination_id=uuid.uuid4(),
-        mode="standard", status="succeeded",
+        id=uuid.uuid4(),
+        run_id=run.id,
+        table_id=table.id,
+        destination_id=uuid.uuid4(),
+        mode="standard",
+        status="succeeded",
     )
     session.add(job)
     session.commit()
-    session.add(AuditLog(
-        ts=datetime.now(UTC) - timedelta(days=1), table_id=table.id, job_id=job.id,
-        action="remove_orphan_files", status="OK",
-    ))
+    session.add(
+        AuditLog(
+            ts=datetime.now(UTC) - timedelta(days=1),
+            table_id=table.id,
+            job_id=job.id,
+            action="remove_orphan_files",
+            status="OK",
+        )
+    )
     session.commit()
 
     from cryo.scanner.checklist import _check_orphan_cleanup
@@ -226,9 +241,18 @@ def test_compute_checklist_never_raises_and_returns_all_12_items(session) -> Non
     items = compute_checklist(session, table.id)
     assert len(items) == 12
     assert {item.key for item in items} == {
-        "file_size", "delete_files", "partition_match", "cadence_match", "sort_order",
-        "distribution_mode", "manifest_bloat", "stats_current", "snapshot_retention",
-        "orphan_cleanup", "schema_width", "storage_class",
+        "file_size",
+        "delete_files",
+        "partition_match",
+        "cadence_match",
+        "sort_order",
+        "distribution_mode",
+        "manifest_bloat",
+        "stats_current",
+        "snapshot_retention",
+        "orphan_cleanup",
+        "schema_width",
+        "storage_class",
     }
 
 
@@ -236,10 +260,18 @@ def test_checklist_summary_weights_green_full_yellow_half() -> None:
     from cryo.scanner.checklist import ChecklistItem
 
     items = [
-        ChecklistItem(key="file_size", label="x", weight_pct=25.0, tier=1, status="green", reason=""),
-        ChecklistItem(key="delete_files", label="x", weight_pct=20.0, tier=1, status="yellow", reason=""),
-        ChecklistItem(key="partition_match", label="x", weight_pct=15.0, tier=1, status="red", reason=""),
-        ChecklistItem(key="cadence_match", label="x", weight_pct=10.0, tier=1, status="unknown", reason=""),
+        ChecklistItem(
+            key="file_size", label="x", weight_pct=25.0, tier=1, status="green", reason=""
+        ),
+        ChecklistItem(
+            key="delete_files", label="x", weight_pct=20.0, tier=1, status="yellow", reason=""
+        ),
+        ChecklistItem(
+            key="partition_match", label="x", weight_pct=15.0, tier=1, status="red", reason=""
+        ),
+        ChecklistItem(
+            key="cadence_match", label="x", weight_pct=10.0, tier=1, status="unknown", reason=""
+        ),
     ]
     summary = checklist_summary(items)
     assert summary["counts"] == {"green": 1, "yellow": 1, "red": 1, "unknown": 1}

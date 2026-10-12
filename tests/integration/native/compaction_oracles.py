@@ -9,7 +9,12 @@ from typing import Any
 from pyiceberg.manifest import DataFileContent
 from pyiceberg.table import Table
 
-from tests.integration.native.mor_inspect import count_live_rows, live_int_column_values as mor_live_ints
+from tests.integration.native.mor_inspect import (
+    count_live_rows,
+)
+from tests.integration.native.mor_inspect import (
+    live_int_column_values as mor_live_ints,
+)
 from tests.integration.native.rest_env import list_object_sizes, normalize_uri
 
 
@@ -170,9 +175,7 @@ def assert_snapshot_lineage(table: Table, parent_snapshot_id: int | None) -> Non
     metadata = table.metadata
     current = metadata.current_snapshot_id
     assert current is not None, "expected a current snapshot after compaction"
-    snapshot = next(
-        snap for snap in metadata.snapshots if snap.snapshot_id == current
-    )
+    snapshot = next(snap for snap in metadata.snapshots if snap.snapshot_id == current)
     assert snapshot.parent_snapshot_id == parent_snapshot_id, (
         f"O5 parent snapshot mismatch: expected {parent_snapshot_id}, "
         f"got {snapshot.parent_snapshot_id}"

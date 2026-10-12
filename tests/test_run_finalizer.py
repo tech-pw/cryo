@@ -20,9 +20,7 @@ NOW = datetime(2026, 8, 24, 10, 0, tzinfo=UTC)
 
 def _seed_source_table(session, *, name: str = "t") -> tuple[Source, Table]:
     source = Source(id=uuid4(), name=f"source-{uuid4()}", type="rest", config={})
-    table = Table(
-        id=uuid4(), source_id=source.id, schema_name="s", table_name=name, is_active=True
-    )
+    table = Table(id=uuid4(), source_id=source.id, schema_name="s", table_name=name, is_active=True)
     session.add_all([source, table])
     session.flush()
     return source, table
@@ -36,7 +34,9 @@ def _seed_destination(session) -> Destination:
 
 
 def _seed_run(session, *, status: str = "running", created_at: datetime = NOW) -> MaintenanceRun:
-    run = MaintenanceRun(id=uuid4(), kind="scheduled", status=status, trigger="cron", created_at=created_at)
+    run = MaintenanceRun(
+        id=uuid4(), kind="scheduled", status=status, trigger="cron", created_at=created_at
+    )
     session.add(run)
     session.flush()
     return run
@@ -73,7 +73,9 @@ def _seed_job(
     return job
 
 
-def test_run_with_only_deferred_jobs_finalizes_instead_of_staying_open_forever(session, session_factory) -> None:
+def test_run_with_only_deferred_jobs_finalizes_instead_of_staying_open_forever(
+    session, session_factory
+) -> None:
     """Direct regression test for the live incident: a run whose jobs are 100% deferred (the
     governor declined to admit any of them this cycle) must not be stuck at status="running"
     indefinitely -- it has nothing left in flight."""
@@ -197,7 +199,9 @@ def test_freshly_deferred_job_does_not_finalize_the_run_yet(session, session_fac
     assert run.finished_at is None
 
 
-def test_deferred_job_finalizes_the_run_once_past_the_grace_window(session, session_factory) -> None:
+def test_deferred_job_finalizes_the_run_once_past_the_grace_window(
+    session, session_factory
+) -> None:
     """The other half of the same fix: this must not regress back into the original 2026-08-24
     bug (runs stuck open forever) -- a DEFERRED job that has genuinely had multiple wave cycles
     to un-defer and didn't must still let the run finalize."""
@@ -222,7 +226,9 @@ def test_deferred_job_finalizes_the_run_once_past_the_grace_window(session, sess
     assert run.finished_at is not None
 
 
-def test_mix_of_recently_and_long_deferred_jobs_waits_for_the_freshest_one(session, session_factory) -> None:
+def test_mix_of_recently_and_long_deferred_jobs_waits_for_the_freshest_one(
+    session, session_factory
+) -> None:
     """If even one deferred job under the run is still inside its grace window, the whole run
     must stay open -- a partially-eager finalize would still orphan that one fresh job the next
     time it un-defers."""
@@ -283,7 +289,9 @@ def test_capacity_deferred_job_does_not_orphan_within_ten_minutes(session, sessi
     assert run.finished_at is None
 
 
-def test_capacity_deferred_job_finalizes_once_past_its_own_longer_grace(session, session_factory) -> None:
+def test_capacity_deferred_job_finalizes_once_past_its_own_longer_grace(
+    session, session_factory
+) -> None:
     """The other half: a capacity-deferred job that has genuinely sat deferred for the full
     capacity grace window (hours, not minutes) must still let the run finalize eventually --
     this fix must not regress into the original 2026-08-24 bug (runs stuck open forever)."""
@@ -335,7 +343,9 @@ def test_native_cluster_capacity_and_fleet_rate_cap_also_get_the_longer_grace(
         assert run.status == "running", f"reason={reason} should still be in its capacity grace"
 
 
-def test_finalize_open_runs_never_reconsiders_an_already_terminal_run(session, session_factory) -> None:
+def test_finalize_open_runs_never_reconsiders_an_already_terminal_run(
+    session, session_factory
+) -> None:
     """Recovery plan §4, 2026-09-20: the old query (`status != "cancelled"`) re-selected every
     already-terminal run (succeeded/failed/partial) on every tick forever, not just genuinely
     open ones. Restricting to status == "running" means a terminal run is never even loaded, so
@@ -359,7 +369,9 @@ def test_finalize_open_runs_never_reconsiders_an_already_terminal_run(session, s
     assert saved_finished_at == original_finished_at
 
 
-def test_finalize_open_runs_never_overwrites_an_already_set_finished_at(session, session_factory) -> None:
+def test_finalize_open_runs_never_overwrites_an_already_set_finished_at(
+    session, session_factory
+) -> None:
     """Direct regression test for the actual data-corruption bug (not just the wasted-query
     side of it): even in a hypothetical race where a "running" row somehow already carries a
     finished_at (e.g. two finalize_open_runs invocations racing the same run), the second one

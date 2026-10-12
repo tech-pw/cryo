@@ -15,16 +15,26 @@ def _seed_table_with_job(session, *, plan: dict | None) -> Table:
     source_id = uuid.uuid4()
     table_id = uuid.uuid4()
     session.add(Source(id=source_id, name=f"src-{source_id}", type="rest", config={}))
-    table = Table(id=table_id, source_id=source_id, schema_name="demo", table_name="events", is_active=True)
+    table = Table(
+        id=table_id, source_id=source_id, schema_name="demo", table_name="events", is_active=True
+    )
     session.add(table)
     session.flush()
     run = MaintenanceRun(id=uuid.uuid4(), kind="adhoc", trigger="api", status="succeeded")
     session.add(run)
     session.flush()
-    session.add(MaintenanceJob(
-        id=uuid.uuid4(), run_id=run.id, table_id=table_id, destination_id=uuid.uuid4(),
-        mode="standard", status="succeeded", started_at=datetime.now(UTC), plan=plan,
-    ))
+    session.add(
+        MaintenanceJob(
+            id=uuid.uuid4(),
+            run_id=run.id,
+            table_id=table_id,
+            destination_id=uuid.uuid4(),
+            mode="standard",
+            status="succeeded",
+            started_at=datetime.now(UTC),
+            plan=plan,
+        )
+    )
     session.commit()
     return table
 

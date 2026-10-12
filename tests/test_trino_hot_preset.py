@@ -35,7 +35,9 @@ def _seed_destination(session, *, name: str = "spark-test") -> Destination:
     return destination
 
 
-def _seed_preset(session, destination: Destination, *, name: str = "daily-trino-hot-tables") -> Preset:
+def _seed_preset(
+    session, destination: Destination, *, name: str = "daily-trino-hot-tables"
+) -> Preset:
     preset = Preset(
         id=uuid4(),
         name=name,
@@ -54,8 +56,11 @@ def _seed_preset(session, destination: Destination, *, name: str = "daily-trino-
 def _log_query(session, *, source: Source, table: Table, when: datetime) -> None:
     session.add(
         QueryLog(
-            source_id=source.id, table_id=table.id, query_id=f"q-{uuid4()}",
-            engine="trino", executed_at=when,
+            source_id=source.id,
+            table_id=table.id,
+            query_id=f"q-{uuid4()}",
+            engine="trino",
+            executed_at=when,
         )
     )
 

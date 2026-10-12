@@ -159,9 +159,7 @@ def test_execute_batch_reports_member_count_and_peak_cgroup_memory() -> None:
     def fake_execute(request, config=None, timeout_seconds=None, on_progress=None):
         return NativeExecuteResult(ok=True, table_ref=str(request.get("table_ref")), results=())
 
-    payload = build_batch_payload(
-        [{"table_ref": "a.b", "job_id": "j1", "operations": []}]
-    )
+    payload = build_batch_payload([{"table_ref": "a.b", "job_id": "j1", "operations": []}])
     with (
         patch("cryo.engines.native.batch.execute_request", side_effect=fake_execute),
         patch("cryo.engines.native.batch.read_peak_cgroup_memory_mib", return_value=512),
@@ -241,7 +239,9 @@ def test_log_batch_memory_telemetry_is_a_noop_when_measurement_missing() -> None
     e.g. local dev) must not log a misleading line implying a real measurement exists."""
     from cryo.engines.native.watcher import _log_batch_memory_telemetry
 
-    stdout = json.dumps({"batch": True, "ok": True, "member_count": 1, "peak_cgroup_memory_mib": None})
+    stdout = json.dumps(
+        {"batch": True, "ok": True, "member_count": 1, "peak_cgroup_memory_mib": None}
+    )
     with patch("cryo.engines.native.watcher.logger.info") as mock_info:
         _log_batch_memory_telemetry(uuid.uuid4(), stdout)
 
@@ -347,10 +347,30 @@ def test_execute_batch_circuit_breaker_is_scoped_per_catalog_uri() -> None:
 
     payload = build_batch_payload(
         [
-            {"table_ref": "dead1", "job_id": "j1", "operations": [], "catalog_uri": "thrift://dead-metastore:9083"},
-            {"table_ref": "dead2", "job_id": "j2", "operations": [], "catalog_uri": "thrift://dead-metastore:9083"},
-            {"table_ref": "healthy1", "job_id": "j3", "operations": [], "catalog_uri": "thrift://healthy-metastore:9083"},
-            {"table_ref": "dead3", "job_id": "j4", "operations": [], "catalog_uri": "thrift://dead-metastore:9083"},
+            {
+                "table_ref": "dead1",
+                "job_id": "j1",
+                "operations": [],
+                "catalog_uri": "thrift://dead-metastore:9083",
+            },
+            {
+                "table_ref": "dead2",
+                "job_id": "j2",
+                "operations": [],
+                "catalog_uri": "thrift://dead-metastore:9083",
+            },
+            {
+                "table_ref": "healthy1",
+                "job_id": "j3",
+                "operations": [],
+                "catalog_uri": "thrift://healthy-metastore:9083",
+            },
+            {
+                "table_ref": "dead3",
+                "job_id": "j4",
+                "operations": [],
+                "catalog_uri": "thrift://dead-metastore:9083",
+            },
         ]
     )
     with patch("cryo.engines.native.batch.execute_request", side_effect=fake_execute):
@@ -387,7 +407,12 @@ def test_execute_batch_circuit_breaker_resets_on_intervening_success() -> None:
 
     payload = build_batch_payload(
         [
-            {"table_ref": f"t{i}", "job_id": f"j{i}", "operations": [], "catalog_uri": "thrift://flaky:9083"}
+            {
+                "table_ref": f"t{i}",
+                "job_id": f"j{i}",
+                "operations": [],
+                "catalog_uri": "thrift://flaky:9083",
+            }
             for i in range(5)
         ]
     )
