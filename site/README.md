@@ -15,8 +15,10 @@ No dependencies. Node 22.
 | Path | What it is |
 |---|---|
 | `_src/site.json` | Navigation groups and site metadata |
+| `_src/contributors.json` | Snapshot of GitHub contributors for the homepage credit |
 | `_src/pages/*.html` | Page fragments with front matter (`title`, `lede`, `description`, `updated`) |
 | `scripts/build.mjs` | Generator: chrome, TOC, search index, sitemap, `llms.txt`, per-page `index.md` |
+| `scripts/contributors.mjs` | Refresh the contributor snapshot from GitHub (`node site/scripts/contributors.mjs`) |
 | `scripts/diagrams.mjs` | Diagram specs rendered to inline SVG at build time |
 | `scripts/highlight.mjs` | Small bash and SQL highlighter |
 | `assets/` | CSS, JS, self-hosted IBM Plex (reading) and Cormorant Garamond (homepage display, OFL), Cryo mark SVGs (`assets/svg/cryo-mark.svg`, `cryo-mark-small.svg`, `favicon.svg`), OG image |
@@ -27,6 +29,15 @@ Everything outside `_src/` and `scripts/` is generated or static and is what get
 Each page also writes `index.md`, and the site root writes `llms.txt`. HTML pages link the markdown with `rel="alternate" type="text/markdown"`. Copy page fetches that file. There is no chat on the site. The quickstart carries the prompt an agent should be given: read `llms.txt`, then answer only from those pages.
 
 The homepage's supported-stack list scrolls as a slow marquee, pauses on hover or focus, and wraps into a static list when reduced motion is enabled.
+
+The homepage credit (`<contributors />`) renders `site/_src/contributors.json`, a snapshot of the public GitHub contributor list. The build does not call GitHub. Refresh it when the list changes, then rebuild:
+
+```bash
+node site/scripts/contributors.mjs   # needs network; writes site/_src/contributors.json
+make docs
+```
+
+Bots and AI agents are dropped: GitHub `Bot` accounts, logins ending in `[bot]`, and known agent logins (`dependabot`, `copilot`, `github-actions`, `cryo-agent`, and the other patterns in `scripts/contributors.mjs`). Commits that were never linked to a GitHub user, including the local `Cryo Agent <cryo@local>` identity, never appear in that API list. Profile names that are email addresses are not published; `DISPLAY_NAMES` in that script supplies the public name. Add a login there when someone new shows up with an email as their GitHub name.
 
 The "What Cryo does" animation lives in `site/_src/includes/maintenance-flow.html`, its styles in the `.mf-*` block of `site.css`, and its controller in `site.js`. The markup is the finished state (step 5), and `.is-animated[data-step]` rules hide whatever hasn't happened yet, so the section stays readable without JavaScript or with reduced motion. Playback starts the first time the section scrolls into view; clicking a step pauses on it. In the markdown export, each step button keeps its text (`data-go`), and other buttons are dropped.
 

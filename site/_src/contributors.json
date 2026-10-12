@@ -1,0 +1,34 @@
+{
+  "source": "https://api.github.com/repos/tech-pw/cryo/contributors",
+  "fetched": "2026-10-12",
+  "contributors": [
+    {
+      "login": "aamirpw306",
+      "contributions": 582,
+      "type": "User",
+      "html_url": "https://github.com/aamirpw306",
+      "name": "maintainer@example.com"
+    },
+    {
+      "login": "ShubhamMaurya9",
+      "contributions": 67,
+      "type": "User",
+      "html_url": "https://github.com/ShubhamMaurya9",
+      "name": "Shubham"
+    },
+    {
+      "login": "piyush-kumar20",
+      "contributions": 8,
+      "type": "User",
+      "html_url": "https://github.com/piyush-kumar20",
+      "name": "maintainer@example.com"
+    },
+    {
+      "login": "niteesh-pw",
+      "contributions": 4,
+      "type": "User",
+      "html_url": "https://github.com/niteesh-pw",
+      "name": "maintainer@example.com"
+    }
+  ]
+}

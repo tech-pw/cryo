@@ -9,12 +9,15 @@
 // 404.html, assets/search.json, sitemap.xml, robots.txt, llms.txt
 //
 // Fragments are plain HTML plus a few components (<callout>, <codeblock>, <diagram>, <tabs>, <steps>,
-// <linkcards>). Internal links are written as href="@/path/" and rewritten relative to each page.
+// <linkcards>, <contributors />). Internal links are written as href="@/path/" and rewritten relative to each page.
+// <contributors /> expands site/_src/contributors.json. Refresh that file with site/scripts/contributors.mjs;
+// the build itself does not call GitHub. Bots and AI-agent logins are dropped when the snapshot is written.
 
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { contributorItems, renderContributors } from "./contributors.mjs";
 import { renderDiagram } from "./diagrams.mjs";
 import { highlight } from "./highlight.mjs";
 
@@ -81,6 +84,11 @@ function expandComponents(body, ctx) {
   };
 
   body = body.replace(/<include\s+src="([^"]+)"\s*\/>/g, (_, rel) => readFileSync(join(SRC, rel), "utf8"));
+
+  body = body.replace(/<contributors\s*\/>/g, () => {
+    const snap = JSON.parse(readFileSync(join(SRC, "contributors.json"), "utf8"));
+    return hold(renderContributors(contributorItems(snap.contributors || [])));
+  });
 
   body = body.replace(/<codeblock([^>]*)>([\s\S]*?)<\/codeblock>/g, (_, a, code) => {
     const at = parseAttrs(a);

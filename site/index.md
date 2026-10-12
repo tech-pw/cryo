@@ -255,11 +255,13 @@ Thirty seconds
 
 The same people who keep the lake write the tool that maintains it.
 
-- 01 Name to come Data Platform
+- 01 [Aamir Siddiqui](https://github.com/aamirpw306) Data Platform
 
-- 02 Name to come Data Platform
+- 02 [Shubham Maurya](https://github.com/ShubhamMaurya9) Data Platform
 
-- 03 Name to come Data Platform
+- 03 [Piyush Kumar](https://github.com/piyush-kumar20) Data Platform
+
+- 04 [Niteesh Kumar Pandey](https://github.com/niteesh-pw) Data Platform
 
 Source: https://tech-pw.github.io/cryo/
 Markdown: https://tech-pw.github.io/cryo/index.md
