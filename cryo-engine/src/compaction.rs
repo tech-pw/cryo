@@ -24,7 +24,11 @@ pub struct CompactionScanSummary {
     pub scoped_bytes: u64,
 }
 
-pub fn estimate_output_files(candidate_bytes: u64, target_file_size_bytes: u64, candidate_files: u64) -> u64 {
+pub fn estimate_output_files(
+    candidate_bytes: u64,
+    target_file_size_bytes: u64,
+    candidate_files: u64,
+) -> u64 {
     if candidate_files == 0 || candidate_bytes == 0 {
         return 0;
     }

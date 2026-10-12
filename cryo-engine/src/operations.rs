@@ -16,7 +16,9 @@ use tracing::info;
 use iceberg::table::Table;
 use iceberg::transaction::{ApplyTransactionAction, Transaction};
 use iceberg::{Catalog, CatalogBuilder, NamespaceIdent, TableIdent};
-use iceberg_catalog_rest::{RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE};
+use iceberg_catalog_rest::{
+    RestCatalogBuilder, REST_CATALOG_PROP_URI, REST_CATALOG_PROP_WAREHOUSE,
+};
 use iceberg_storage_opendal::OpenDalStorageFactory;
 
 const DEFAULT_TARGET_FILE_SIZE_BYTES: u64 = 268_435_456; // 256 MB
@@ -24,14 +26,20 @@ const DEFAULT_MIN_FILE_SIZE_BYTES: u64 = 104_857_600; // 100 MB
 const DEFAULT_ORPHAN_MIN_AGE_HOURS: i64 = 72;
 
 fn is_execute_mode(mode: &str) -> bool {
-    !matches!(mode.to_ascii_lowercase().as_str(), "dry_run" | "dry-run" | "analyze")
+    !matches!(
+        mode.to_ascii_lowercase().as_str(),
+        "dry_run" | "dry-run" | "analyze"
+    )
 }
 
 async fn load_catalog(request: &ExecuteRequest) -> Result<Arc<dyn Catalog>> {
     use std::collections::HashMap;
 
     let mut props = HashMap::new();
-    props.insert(REST_CATALOG_PROP_URI.to_string(), request.catalog_uri.clone());
+    props.insert(
+        REST_CATALOG_PROP_URI.to_string(),
+        request.catalog_uri.clone(),
+    );
     props.insert(
         REST_CATALOG_PROP_WAREHOUSE.to_string(),
         request.warehouse.clone(),
@@ -80,9 +88,8 @@ fn parse_table_ident(table_ref: &str) -> Result<TableIdent> {
     } else {
         vec![parts[0].to_string()]
     };
-    let namespace = NamespaceIdent::from_strs(namespace_parts).context(format!(
-        "invalid namespace in table_ref: {table_ref}"
-    ))?;
+    let namespace = NamespaceIdent::from_strs(namespace_parts)
+        .context(format!("invalid namespace in table_ref: {table_ref}"))?;
     Ok(TableIdent::new(namespace, table_name))
 }
 
@@ -229,11 +236,8 @@ pub async fn rewrite_data_files(
 
     let (_catalog, table) = load_table(request).await?;
     let scan = scan_candidates(&table, op, min_file_size).await?;
-    let estimated_output = estimate_output_files(
-        scan.candidate_bytes,
-        target_file_size,
-        scan.candidate_files,
-    );
+    let estimated_output =
+        estimate_output_files(scan.candidate_bytes, target_file_size, scan.candidate_files);
 
     if scan.scoped_files == 0 && table.metadata().current_snapshot().is_none() {
         emit_completed("rewrite_data_files", 0, 0);
@@ -248,7 +252,11 @@ pub async fn rewrite_data_files(
     );
 
     if !is_execute_mode(&request.mode) {
-        emit_completed("rewrite_data_files", scan.candidate_files, scan.candidate_bytes);
+        emit_completed(
+            "rewrite_data_files",
+            scan.candidate_files,
+            scan.candidate_bytes,
+        );
         return Ok(rewrite_result(
             true,
             scan.candidate_files,
@@ -267,7 +275,8 @@ pub async fn rewrite_data_files(
 
     if compaction_execute_enabled(request, op) {
         let candidates = collect_candidates(&table, op, min_file_size).await?;
-        let write_result = binpack_candidates_to_staging(&table, &candidates, target_file_size).await?;
+        let write_result =
+            binpack_candidates_to_staging(&table, &candidates, target_file_size).await?;
         emit_completed(
             "rewrite_data_files",
             write_result.input_files,
@@ -288,7 +297,11 @@ pub async fn rewrite_data_files(
         ));
     }
 
-    emit_completed("rewrite_data_files", scan.candidate_files, scan.candidate_bytes);
+    emit_completed(
+        "rewrite_data_files",
+        scan.candidate_files,
+        scan.candidate_bytes,
+    );
     Ok(rewrite_result(
         false,
         scan.candidate_files,
@@ -315,9 +328,7 @@ pub async fn expire_snapshots(
             .commit(catalog.as_ref())
             .await
             .context("failed to commit expire_snapshots transaction")?;
-        before
-            .difference(&snapshot_ids(&updated))
-            .count() as u64
+        before.difference(&snapshot_ids(&updated)).count() as u64
     } else {
         let preview = PreviewCatalog::new(catalog);
         tx.commit(&preview)

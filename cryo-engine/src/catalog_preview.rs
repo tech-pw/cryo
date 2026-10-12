@@ -3,8 +3,7 @@
 use async_trait::async_trait;
 use iceberg::table::Table;
 use iceberg::{
-    Catalog, Namespace, NamespaceIdent, Result, TableCommit, TableCreation, TableIdent,
-    TableUpdate,
+    Catalog, Namespace, NamespaceIdent, Result, TableCommit, TableCreation, TableIdent, TableUpdate,
 };
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
@@ -115,11 +114,7 @@ impl Catalog for PreviewCatalog {
         self.inner.rename_table(src, dest).await
     }
 
-    async fn register_table(
-        &self,
-        table: &TableIdent,
-        metadata_location: String,
-    ) -> Result<Table> {
+    async fn register_table(&self, table: &TableIdent, metadata_location: String) -> Result<Table> {
         self.inner.register_table(table, metadata_location).await
     }
 
