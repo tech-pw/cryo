@@ -1,0 +1,89 @@
+.ops-signal-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  background: var(--color-card);
+  padding: 0.85rem 0.95rem 0.95rem;
+}
+
+.ops-signal-card__header h2 {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.ops-signal-card__header p,
+.ops-signal-card__empty {
+  margin: 0.15rem 0 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.ops-funnel {
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  list-style: none;
+}
+
+.ops-funnel__stage {
+  display: flex;
+  min-width: 6.5rem;
+  flex-grow: 1;
+  flex-basis: 0;
+  flex-direction: column;
+  gap: 0.15rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface-sunken));
+  padding: 0.55rem 0.6rem 0.5rem;
+}
+
+.ops-funnel__stage.is-failed {
+  background: color-mix(in srgb, var(--color-status-failed, var(--destructive)) 14%, var(--color-surface-sunken));
+}
+
+.ops-funnel__stage.is-missing {
+  background: var(--color-surface-sunken);
+}
+
+.ops-funnel__count {
+  font-size: 0.95rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.ops-funnel__stage.is-failed .ops-funnel__count,
+.ops-funnel__stage.is-failed .ops-funnel__name {
+  color: var(--color-status-failed, var(--destructive));
+}
+
+.ops-funnel__name {
+  color: var(--color-muted-foreground);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 16px;
+  text-transform: capitalize;
+}
+
+.ops-funnel__drop,
+.ops-funnel__reason {
+  color: var(--color-muted-foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.ops-funnel__stage.is-failed .ops-funnel__reason {
+  color: var(--color-status-failed, var(--destructive));
+}

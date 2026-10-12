@@ -13,7 +13,7 @@ saving. Keeping both sides in sync is required; if you change the canonical orde
 backend, update CORRECT_ORDER here too.
 */
 
-const CORRECT_ORDER = [
+export const CORRECT_ORDER = [
   "convert_deletes",
   "rewrite_position_deletes",
   "optimize",

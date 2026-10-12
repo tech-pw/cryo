@@ -80,7 +80,7 @@ export const OpsPanel = () => {
         Platform observability and GitOps hooks for admins. These endpoints are intended for operators and monitoring
         — not day-to-day maintenance workflows. To hold maintenance, open{" "}
         <Link to="/runs?tab=holds" className="text-primary underline-offset-2 hover:underline">
-          Runs → Holds
+          Holds
         </Link>
         .
       </p>

@@ -22,11 +22,18 @@ vi.mock("../../lib/auth", () => ({
 
 vi.mock("../../api/client", () => ({
   getScannerStatus: vi.fn(),
+  listPendingApprovals: vi.fn(),
   listPresets: vi.fn(),
-  listRuns: vi.fn()
+  listRuns: vi.fn(),
+  apiFetch: vi.fn()
 }));
 
-import { getScannerStatus, listPresets, listRuns } from "../../api/client";
+vi.mock("../../api/engineLoad", () => ({
+  getEngineLoad: vi.fn()
+}));
+
+import { getScannerStatus, listPendingApprovals, listPresets, listRuns } from "../../api/client";
+import { getEngineLoad } from "../../api/engineLoad";
 
 const scannerStatus: ScannerStatusRead = {
   config: { schedule_cron: "0 2 * * *", enabled: true } as ScannerStatusRead["config"],
@@ -65,6 +72,8 @@ const renderPage = (initialEntries: string[] = ["/operations"]) => {
 describe("OperationsHome", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(listPendingApprovals).mockResolvedValue([]);
+    vi.mocked(getEngineLoad).mockResolvedValue({ engines: [] });
   });
 
   it("shows a 'Not run' badge instead of a fake queued status for workflows with no runs", async () => {
@@ -118,10 +127,7 @@ describe("OperationsHome", () => {
     expect(nightlyRow.getByText("Nightly (CronJob)")).toBeInTheDocument();
     expect(nightlyRow.getByText("Partial")).toBeInTheDocument();
     expect(nightlyRow.getByRole("list", { name: /last 2 runs/i })).toBeInTheDocument();
-    expect(nightlyRow.getByRole("link", { name: "Open" })).toHaveAttribute(
-      "href",
-      "/runs/bbbbbbbb-0000-0000-0000-000000000002"
-    );
+    expect(nightlyRow.getByRole("button", { name: "Nightly maintenance actions" })).toBeInTheDocument();
     expect(screen.getByText("Maintenance is driven by the nightly batch.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /new preset/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/new preset/i)).not.toBeInTheDocument();
@@ -145,7 +151,7 @@ describe("OperationsHome", () => {
       expect(screen.getByRole("tab", { name: "History", selected: true })).toBeInTheDocument();
     });
     // The "Failed" filter button within the runs tab should now be the active one.
-    const failedFilterButton = screen.getByRole("button", { name: "Failed" });
+    const failedFilterButton = screen.getByRole("button", { name: "Failed · 24h" });
     expect(failedFilterButton.className).toMatch(/bg-primary/);
   });
 
@@ -161,7 +167,7 @@ describe("OperationsHome", () => {
     await waitFor(() => {
       expect(screen.getByRole("tab", { name: "History", selected: true })).toBeInTheDocument();
     });
-    const failedFilterButton = screen.getByRole("button", { name: "Failed" });
+    const failedFilterButton = screen.getByRole("button", { name: "Failed · 24h" });
     expect(failedFilterButton.className).toMatch(/bg-primary/);
   });
 });

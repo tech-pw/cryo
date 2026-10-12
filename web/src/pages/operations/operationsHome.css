@@ -59,6 +59,155 @@
   gap: 0.75rem;
 }
 
+
+.ops-load-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ops-load-row__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ops-load-row__name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ops-load-row__count {
+  flex: none;
+  color: var(--color-foreground);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-load-row__count.is-closed {
+  color: var(--color-status-failed, var(--destructive));
+}
+
+.ops-load-row__track {
+  height: 6px;
+  margin-top: 0.35rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-surface-sunken);
+}
+
+.ops-load-row__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-primary);
+}
+
+.ops-load-row__fill.is-tight {
+  background: var(--color-status-warning, #b8860b);
+}
+
+.ops-load-row__fill.is-closed {
+  background: var(--color-status-failed, var(--destructive));
+}
+
+.ops-load-row__detail {
+  margin: 0.28rem 0 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+
+.ops-hold-count {
+  display: inline-flex;
+  min-width: 1.05rem;
+  height: 1.05rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-status-warning) 14%, var(--color-card));
+  padding: 0 0.3rem;
+  color: var(--color-status-warning);
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.operations-home-page .ops-workspace-tabs [role="tab"][data-state="active"] .ops-hold-count {
+  background: color-mix(in srgb, var(--color-status-warning) 18%, var(--color-card));
+}
+
+.ops-run-identity,
+.ops-schedule-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.ops-run-identity__name,
+.ops-schedule-cell__label {
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ops-run-identity__id,
+.ops-schedule-cell__cron,
+.ops-result-line {
+  color: var(--color-muted-foreground);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-run-identity__id {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.ops-workflow-desc {
+  display: block;
+  max-width: 28rem;
+  overflow: hidden;
+  color: var(--color-muted-foreground);
+  font-size: 0.6875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ops-row-menu {
+  display: flex;
+  min-width: 9rem;
+  flex-direction: column;
+  padding: 0.25rem;
+}
+
+.ops-row-menu a {
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.8125rem;
+}
+
+.ops-row-menu a:hover {
+  background: var(--color-surface-sunken);
+}
+
+.ops-row-menu a:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
 .operations-home-page .ops-context-grid > section {
   margin-bottom: 0;
   min-width: 0;
@@ -79,22 +228,110 @@
   background: var(--color-card);
 }
 
-.operations-home-page .ops-workspace-card > [data-slot="tabs"] {
-  padding: 0.75rem;
-}
-
-.operations-home-page .ops-workspace-card [data-slot="tabs-list"] {
+.operations-home-page .ops-workspace-tabs {
+  display: flex;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0.25rem;
   margin: 0;
+  border: 0;
   border-bottom: 1px solid var(--color-border);
   border-radius: 0;
-  padding: 0 0.25rem;
+  background: transparent;
+  padding: 0 0.85rem;
+  color: var(--color-text-secondary);
+  overflow: hidden;
 }
 
-.operations-home-page .ops-workspace-card [data-slot="tabs-content"] {
-  padding-top: 0.85rem;
+.operations-home-page .ops-workspace-tabs [role="tab"] {
+  position: relative;
+  gap: 0.4rem;
+  height: auto;
+  min-height: 2.5rem;
+  margin-bottom: 0;
+  border-radius: 0;
+  padding: 0.7rem 0.15rem 0.65rem;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 550;
+  letter-spacing: -0.006em;
+  line-height: 1;
+  box-shadow: none;
+  transition: color 160ms ease, transform 120ms var(--ease-standard);
+}
+
+.operations-home-page .ops-workspace-tabs [role="tab"] + [role="tab"] {
+  margin-left: 0.85rem;
+}
+
+.operations-home-page .ops-workspace-tabs [role="tab"]::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  transform: scaleX(0.4);
+  transform-origin: center;
+  transition: transform 180ms var(--ease-standard), background-color 160ms ease;
+}
+
+.operations-home-page .ops-workspace-tabs [role="tab"]:hover {
+  background: transparent;
+  color: var(--color-text-primary);
+}
+
+.operations-home-page .ops-workspace-tabs [role="tab"][data-state="active"] {
+  background: transparent;
+  color: var(--color-text-primary);
+  box-shadow: none;
+}
+
+.operations-home-page .ops-workspace-tabs [role="tab"][data-state="active"]::after {
+  background: var(--color-primary);
+  transform: scaleX(1);
+}
+
+.operations-home-page .ops-workspace-tabs [role="tab"]:active {
+  transform: scale(0.98);
+}
+
+.ops-actions-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.ops-actions-filters__control {
+  width: auto;
+  min-width: 9.5rem;
+  height: 1.75rem;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 0.75rem;
+}
+
+.operations-home-page .ops-workspace-card [role="tabpanel"] {
+  margin-top: 0;
+  padding: 0.85rem 0.75rem 0.75rem;
 }
 
 @media (max-width: 900px) {
+  .ops-funnel {
+    flex-wrap: wrap;
+  }
+
+  .ops-funnel__stage {
+    flex-basis: calc(33% - 0.35rem);
+  }
+
   .operations-home-page .ops-control-hero {
     align-items: flex-start;
     flex-direction: column;
@@ -122,7 +359,15 @@
     grid-template-columns: 1fr;
   }
 
-  .operations-home-page .ops-workspace-card > [data-slot="tabs"] {
-    padding: 0.5rem;
+  .operations-home-page .ops-workspace-tabs {
+    padding: 0 0.5rem;
+  }
+
+  .operations-home-page .ops-workspace-tabs [role="tab"] + [role="tab"] {
+    margin-left: 0.65rem;
+  }
+
+  .operations-home-page .ops-workspace-card [role="tabpanel"] {
+    padding: 0.75rem 0.5rem 0.5rem;
   }
 }

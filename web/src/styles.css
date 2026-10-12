@@ -2700,11 +2700,11 @@ textarea.mono-input {
 
 .ops-mini-bar {
   display: flex;
-  gap: 3px;
-  align-items: center;
+  gap: 4px;
+  align-items: flex-end;
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 2px 0;
 }
 
 .ops-mini-bar__item {
@@ -2712,11 +2712,16 @@ textarea.mono-input {
 }
 
 .ops-mini-bar__cell {
-  width: 12px;
-  height: 18px;
-  border-radius: 2px;
-  border: 1px solid var(--border-subtle, var(--border));
+  width: 8px;
+  height: 22px;
+  border-radius: 3px;
   display: inline-block;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-foreground) 8%, transparent);
+}
+
+.ops-mini-bar__cell:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .ops-mini-bar__cell--ok {
