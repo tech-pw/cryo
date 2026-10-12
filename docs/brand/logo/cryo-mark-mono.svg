@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Cryo">
+  <g stroke="#143E60" stroke-width="1.6" stroke-linejoin="round">
+    <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#FFFFFF"/>
+    <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#FFFFFF"/>
+    <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#143E60"/>
+    <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#FFFFFF"/>
+    <path d="M21.54 6L25 8V12L21.54 10Z" fill="#FFFFFF"/>
+    <path d="M25 8L28.46 6V10L25 12Z" fill="#143E60"/>
+    <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#FFFFFF"/>
+    <path d="M3.54 31L7 33V37L3.54 35Z" fill="#FFFFFF"/>
+    <path d="M7 33L10.46 31V35L7 37Z" fill="#143E60"/>
+  </g>
+  <g fill="none" stroke="#143E60" stroke-width="2" stroke-linecap="round">
+    <path d="M17 19.5L20 22.3"/>
+    <path d="M27.6 14.5L29 18"/>
+    <path d="M13.9 34.1L17.2 34.7"/>
+  </g>
+  <g stroke="#143E60" stroke-width="2.6" stroke-linejoin="round">
+    <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#FFFFFF"/>
+    <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#FFFFFF"/>
+    <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#143E60"/>
+  </g>
+  <path d="M28.78 33.25V52.25M20.55 38L37 47.5" fill="none" stroke="#143E60" stroke-width="1.1"/>
+  <path d="M45.23 33.25V52.25M37 47.5L53.45 38" fill="none" stroke="#FFFFFF" stroke-width="1.1"/>
+  <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.6" stroke-linejoin="round" stroke="#143E60"/>
+</svg>

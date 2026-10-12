@@ -249,7 +249,6 @@
   flex: none;
   width: 32px;
   height: 32px;
-  --cryo-mark-core: var(--sidebar-bg);
 }
 
 .cryo-shell__brand-copy {

@@ -199,6 +199,8 @@
   --sidebar-text-active: #90d4f0;
   --sidebar-accent: #68c1ea;
   --sidebar-hover-bg: #141c28;
+  --cryo-mark-line: #0b0f16;
+  --cryo-mark-dash: #b8e1f3;
 }
 
 :root .text-primary,

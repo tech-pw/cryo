@@ -238,8 +238,31 @@ and amber mean "warning".
 
 ## 6. Wordmark and logo
 
-**Today, the logo is the wordmark:** "Cryo" in IBM Plex Sans Bold (700) with letter spacing of
--1%. This matches the product's sidebar.
+**The logo is the ice-cube mark plus the wordmark.** The wordmark is "Cryo" in IBM Plex Sans Bold
+(700) with letter spacing of -1%. This matches the product's sidebar.
+
+**The mark** (`docs/brand/logo/`, adopted 2026-10-12): three small cubes move toward one large
+isometric ice cube and fuse into it. Faint 2×2 seams on each face show the big cube was built
+from smaller pieces. It says what Cryo does in one look: many small files, compacted into one.
+"Cryo" means cold, so the subject is ice. It replaced a faceted-iceberg mark that was too close
+to the Apache Iceberg logo (section 12).
+
+| File | Use |
+|---|---|
+| `cryo-mark.svg` | Default, 32 px and up, light backgrounds |
+| `cryo-mark-small.svg` | Favicons and anything under 32 px: the cube alone, heavier outline |
+| `cryo-mark-dark.svg` | Night and Deep ice backgrounds: Night outline, Firn motion dashes |
+| `cryo-mark-mono.svg` | One-colour print and stamps |
+
+- The site and product inline the mark, and switch the outline and dashes through
+  `--cryo-mark-line` and `--cryo-mark-dash` in dark themes. Edit
+  `site/assets/svg/cryo-mark.svg` and `web/src/components/brand/CryoMark.tsx` together.
+- Lockup: mark on the left, wordmark cap height about 60% of the mark height, gap about 0.3× the
+  mark width.
+- Never recolour the faces, rotate the cube, add a waterline, or put the mark inside a circle.
+  Those are the moves that drift it back toward the Apache Iceberg logo.
+- The current mark is a vector draft. A designer's polish pass should keep the construction
+  above.
 
 - Colours: Deep ice on light backgrounds; White on Deep ice. Never orange, never a gradient,
   never outlined, stretched or given effects.
@@ -247,9 +270,9 @@ and amber mean "warning".
 - Spelling: always "Cryo". Never "CRYO" or "CryO". Lowercase "cryo" only in code and CLI
   commands.
 
-**A future symbol** (brief for a human designer):
+**A future symbol** (the original brief, kept for the designer's polish pass):
 
-- Base it on the Core.
+- Base it on the Core, or on the ice-cube mark above.
 - It must read at 16 px.
 - It must not look like a battery, a database-cylinder icon, a menu or filter icon, a snowflake
   or an iceberg. Test it at 16, 32 and 180 px, and squint at it.
