@@ -60,6 +60,7 @@ from cryo.db.models import (
     TablePartition,
 )
 from cryo.engines.trino.client import TrinoCoordinator
+from cryo.engines.trino.sql import quote_identifier, quote_qualified_name
 from cryo.integrations import s3_bucket_logging
 from cryo.integrations.aws_s3_metrics import S3RequestPriceInfo, fetch_s3_request_prices
 from cryo.scanner.orphans import parse_s3_location
@@ -151,7 +152,7 @@ def _coordinator(settings: Settings, *, catalog: str, schema: str) -> TrinoCoord
 
 
 def _fq_table(catalog: str, schema: str, table: str) -> str:
-    return f'{catalog}."{schema}"."{table}"'
+    return f"{quote_qualified_name(catalog)}.{quote_identifier(schema)}.{quote_identifier(table)}"
 
 
 def _log_table_name(bucket: str) -> str:

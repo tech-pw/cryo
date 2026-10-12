@@ -3,6 +3,7 @@ package predicate
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/apache/iceberg-go"
@@ -171,6 +172,9 @@ func buildIdentityExpr(ref iceberg.Reference, value json.RawMessage, colType str
 		if n, ok := jsonAsInt64(value); ok {
 			if strings.Contains(lowered, "long") {
 				return iceberg.EqualTo(ref, n), nil
+			}
+			if n < math.MinInt32 || n > math.MaxInt32 {
+				return nil, fmt.Errorf("identity predicate value %d overflows column type %s", n, colType)
 			}
 			return iceberg.EqualTo(ref, int32(n)), nil
 		}

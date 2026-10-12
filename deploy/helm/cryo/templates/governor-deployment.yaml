@@ -30,10 +30,12 @@ spec:
       {{- if or .Values.native.enabled .Values.spark.k8s.enabled }}
       serviceAccountName: {{ include "cryo.fullname" . }}-governor
       {{- end }}
+      {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 6 }}
       containers:
         - name: governor
           image: {{ include "cryo.imageRef" .Values.image | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "cryo.containerSecurityContext" $ | nindent 10 }}
           command: ["cryo", "governor"]
           ports:
             - name: metrics

@@ -39,10 +39,12 @@ spec:
       # driver/executor pods still run under their own -spark SA, not this one.
       serviceAccountName: {{ include "cryo.fullname" . }}-native
       {{- end }}
+      {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 6 }}
       containers:
         - name: api
           image: {{ include "cryo.imageRef" .Values.image | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "cryo.containerSecurityContext" $ | nindent 10 }}
           command: ["uvicorn", "cryo.api.app:app", "--host", "0.0.0.0", "--port", "{{ .Values.api.port }}", "--workers", "{{ .Values.api.workers | default 1 }}"]
           ports:
             - name: http

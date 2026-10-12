@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,8 @@ def _severity_to_pagerduty(severity: str) -> str:
 
 
 def _post_json(url: str, payload: dict[str, Any], *, timeout: float = 10.0) -> None:
+    if urllib.parse.urlsplit(url).scheme not in {"http", "https"}:
+        raise ValueError("alert webhook URL must use http or https")
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         url,

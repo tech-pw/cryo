@@ -22,6 +22,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from cryo.engines.k8s_security import container_security_context, pod_security_context
 from cryo.engines.native.job_state import current_k8s_namespace
 
 logger = logging.getLogger(__name__)
@@ -119,11 +120,13 @@ def dispatch_analysis_job(
                 "spec": {
                     "restartPolicy": "Never",
                     "serviceAccountName": resolved_service_account,
+                    "securityContext": pod_security_context(),
                     "containers": [
                         {
                             "name": "cryo-analysis",
                             "image": resolved_image,
                             "imagePullPolicy": resolved_pull_policy,
+                            "securityContext": container_security_context(),
                             "command": ["python", "-m", "cryo.cli", "analysis", task_type],
                             "resources": {
                                 "requests": {

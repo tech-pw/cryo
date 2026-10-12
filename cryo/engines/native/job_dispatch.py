@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from kubernetes import client
 
 from cryo.engines.k8s_cost_labels import cost_attribution_labels, operation_from_native_payload
+from cryo.engines.k8s_security import container_security_context, pod_security_context
 from cryo.engines.native.job_state import current_k8s_namespace
 from cryo.engines.native.resources import (
     MAX_POD_CPU_MILLI,
@@ -429,11 +430,13 @@ def create_native_job(
                     "nodeSelector": node_selector,
                     "tolerations": tolerations,
                     "imagePullSecrets": [{"name": s} for s in image_pull_secrets],
+                    "securityContext": pod_security_context(),
                     "containers": [
                         {
                             "name": "cryo-engine",
                             "image": image,
                             "imagePullPolicy": image_pull_policy,
+                            "securityContext": container_security_context(),
                             "command": command,
                             "env": [
                                 # File path, not the payload itself -- see volumeMounts below.

@@ -131,7 +131,8 @@ func startProfiles() func() {
 	if dir == "" {
 		return func() {}
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	dir = filepath.Clean(dir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		log.Printf("pprof: mkdir %s: %v", dir, err)
 		return func() {}
 	}
@@ -139,7 +140,7 @@ func startProfiles() func() {
 	cpuPath := filepath.Join(dir, fmt.Sprintf("cpu-%s.pprof", stamp))
 	heapPath := filepath.Join(dir, fmt.Sprintf("heap-%s.pprof", stamp))
 
-	cpuFile, err := os.Create(cpuPath)
+	cpuFile, err := os.OpenFile(cpuPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		log.Printf("pprof: create cpu profile: %v", err)
 		return func() {}
@@ -156,7 +157,7 @@ func startProfiles() func() {
 		_ = cpuFile.Close()
 
 		runtime.GC()
-		heapFile, err := os.Create(heapPath)
+		heapFile, err := os.OpenFile(heapPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
 			log.Printf("pprof: create heap profile: %v", err)
 			return

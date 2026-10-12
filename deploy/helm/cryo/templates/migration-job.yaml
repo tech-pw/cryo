@@ -23,10 +23,12 @@ spec:
       restartPolicy: Never
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
+      {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 6 }}
       containers:
         - name: migrate
           image: {{ include "cryo.imageRef" .Values.migration.image | quote }}
           imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
+          {{- include "cryo.containerSecurityContext" $ | nindent 10 }}
           command: ["alembic", "upgrade", "head"]
           env:
             {{- range $k, $v := .Values.global.env }}

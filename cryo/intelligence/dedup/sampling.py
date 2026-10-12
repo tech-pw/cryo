@@ -19,9 +19,10 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
-from cryo.db.model_utils import qualified_table_name
+from cryo.db.model_utils import catalog_name_for_table
 from cryo.db.models import Table
 from cryo.engines.trino.client import connect, coordinators_from_config
+from cryo.engines.trino.sql import quote_identifier, quote_qualified_name
 
 # Bounded per the design doc SS4.4's "a few hundred thousand rows per side" guidance --
 # high enough for the O(1/sqrt(n)) Jaccard estimation error to be small, low enough that
@@ -72,8 +73,11 @@ def fetch_row_sample(
     for this pair rather than let one bad table abort the whole batch, matching
     tiering.s3_analyzer's per-table try/except pattern in get_all_tiering_recommendations.
     """
-    qualified_name = qualified_table_name(table)
-    column_list = ", ".join(f'"{c}"' for c in columns) if columns else "*"
+    qualified_name = quote_qualified_name(
+        catalog_name_for_table(table), table.schema_name, table.table_name
+    )
+    column_list = ", ".join(quote_identifier(c) for c in columns) if columns else "*"
+    row_limit = int(row_limit)
 
     coordinators = coordinators_from_config(trino_config)
     conn = connect(coordinators[0])

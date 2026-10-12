@@ -15,9 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from cryo.db.model_utils import qualified_table_name
+from cryo.db.model_utils import catalog_name_for_table
 from cryo.db.models import Table
 from cryo.engines.trino.client import connect, coordinators_from_config
+from cryo.engines.trino.sql import quote_qualified_name
 
 
 class VerifiedRelationship(StrEnum):
@@ -67,8 +68,13 @@ def verify_pair_exact(
     tables, but a much tighter one than Stage 2's MinHash sample, since Trino computes the
     true overlap over whatever rows are compared rather than estimating from a signature.
     """
-    name_a = qualified_table_name(table_a)
-    name_b = qualified_table_name(table_b)
+    name_a = quote_qualified_name(
+        catalog_name_for_table(table_a), table_a.schema_name, table_a.table_name
+    )
+    name_b = quote_qualified_name(
+        catalog_name_for_table(table_b), table_b.schema_name, table_b.table_name
+    )
+    row_limit = int(row_limit)
 
     coordinators = coordinators_from_config(trino_config)
     conn = connect(coordinators[0])

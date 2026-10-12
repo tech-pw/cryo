@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from kubernetes import client
 
 from cryo.engines.k8s_cost_labels import cost_attribution_labels
+from cryo.engines.k8s_security import container_security_context, pod_security_context
 from cryo.engines.native.job_state import current_k8s_namespace
 from cryo.engines.spark.sizing import (
     ExecutorProfile,
@@ -481,11 +482,13 @@ class SparkK8sClient:
                         "serviceAccountName": cfg.service_account,
                         "nodeSelector": cfg.node_selector,
                         "imagePullSecrets": [{"name": s} for s in cfg.image_pull_secrets],
+                        "securityContext": pod_security_context(),
                         "containers": [
                             {
                                 "name": "spark-submit",
                                 "image": cfg.image,
                                 "imagePullPolicy": cfg.image_pull_policy,
+                                "securityContext": container_security_context(),
                                 "command": spark_submit_cmd,
                                 "resources": {
                                     "requests": {"cpu": "250m", "memory": "512Mi"},

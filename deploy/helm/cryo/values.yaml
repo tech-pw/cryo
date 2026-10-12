@@ -17,6 +17,23 @@ image:
 
 imagePullSecrets: []
 
+# Applied to every pod. UID/GID 10001 is the `cryo` user baked into the Cryo image; redis and
+# web override it to their own images' non-root users. fsGroup also lets the non-root user read
+# the projected IRSA web-identity token, which is otherwise root-only.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  privileged: false
+  capabilities:
+    drop: ["ALL"]
+
 global:
   env:
     # Public chart default. A production overlay must set this to prod and pin
@@ -343,6 +360,11 @@ redis:
   # the worst thing to do next to a memory limit. Durability here is Postgres: both
   # reconcile_queued_jobs and orphan recovery rebuild Redis state from it after a restart.
   save: ""
+  # The official redis:7-alpine image's `redis` user.
+  podSecurityContext:
+    runAsUser: 999
+    runAsGroup: 1000
+    fsGroup: 1000
 
 migration:
   image:
@@ -359,6 +381,12 @@ web:
     tag: latest
     digest: ""
     pullPolicy: Always # see the comment on image.pullPolicy above
+  # nginx-unprivileged's `nginx` user; it listens on 8080 (web/nginx.conf).
+  port: 8080
+  podSecurityContext:
+    runAsUser: 101
+    runAsGroup: 101
+    fsGroup: 101
   resources:
     requests:
       cpu: 100m

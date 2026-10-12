@@ -43,6 +43,22 @@ nodeSelector:
   kubernetes.io/arch: amd64
 {{- end }}
 
+{{/*
+Pod-level securityContext. Pass (list $ <override dict>) — the override wins key-by-key,
+so redis/web can swap in their images' own non-root UIDs.
+*/}}
+{{- define "cryo.podSecurityContext" -}}
+{{- $root := index . 0 -}}
+{{- $override := index . 1 | default dict -}}
+securityContext:
+  {{- toYaml (merge (deepCopy $override) (deepCopy $root.Values.podSecurityContext)) | nindent 2 }}
+{{- end }}
+
+{{- define "cryo.containerSecurityContext" -}}
+securityContext:
+  {{- toYaml .Values.containerSecurityContext | nindent 2 }}
+{{- end }}
+
 {{- define "cryo.imagePullSecrets" -}}
 {{- if .Values.imagePullSecrets }}
 imagePullSecrets:

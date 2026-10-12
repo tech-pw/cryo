@@ -15,3 +15,5 @@ RUN apt-get update \
 COPY deploy/hive/hive-site.xml /opt/hive/conf/hive-site.xml
 COPY deploy/hive/entrypoint.sh /opt/hive/conf/entrypoint.sh
 RUN chmod +x /opt/hive/conf/entrypoint.sh
+
+USER hive

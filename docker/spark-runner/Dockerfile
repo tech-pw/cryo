@@ -12,6 +12,10 @@ RUN python3 -m pip install --no-cache-dir \
     "pandas>=2.0.0" \
     "pyarrow>=15.0.0"
 
+RUN useradd --create-home --uid 10001 --user-group spark \
+    && mkdir -p /workspace \
+    && chown spark:spark /workspace
 WORKDIR /workspace
+USER 10001
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["bash", "-lc", "sleep infinity"]

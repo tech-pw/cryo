@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import quote
 from urllib.request import urlopen
 
 _TOKENINFO = "https://oauth2.googleapis.com/tokeninfo?id_token="
@@ -41,7 +42,7 @@ def verify_google_id_token(
 
 
 def _fetch_tokeninfo(id_token: str) -> dict[str, Any]:
-    with urlopen(f"{_TOKENINFO}{id_token}", timeout=8) as response:
+    with urlopen(f"{_TOKENINFO}{quote(id_token, safe='')}", timeout=8) as response:
         payload = json.loads(response.read().decode())
     if not isinstance(payload, dict):
         raise ValueError("tokeninfo was not an object")
