@@ -26,6 +26,8 @@ Everything outside `_src/` and `scripts/` is generated or static and is what get
 
 Each page also writes `index.md`, and the site root writes `llms.txt`. HTML pages link the markdown with `rel="alternate" type="text/markdown"`. Copy page fetches that file. There is no chat on the site. The quickstart carries the prompt an agent should be given: read `llms.txt`, then answer only from those pages.
 
+The homepage's supported-stack list scrolls as a slow marquee, pauses on hover or focus, and wraps into a static list when reduced motion is enabled.
+
 ## Writing a page
 
 Fragments are plain HTML plus a few components. Link internally with `href="@/maintenance/#admission"`,
