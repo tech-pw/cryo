@@ -23,6 +23,7 @@ import { ConfirmAction } from "../../components/confirm";
 import { PageHeader } from "../../components/common";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { Segmented } from "../../components/ui/segmented";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { DataTable } from "../../components/ui/data-table";
 import { EmptyState } from "../../components/ui/empty-state";
@@ -36,8 +37,6 @@ import type { WriteAccess } from "../../lib/permissions";
 
 const DECISION_TABS = ["recommendations", "approvals", "skipped"] as const;
 type DecisionTab = (typeof DECISION_TABS)[number];
-
-const NOT_RECORDED = "not recorded";
 
 const INTERNAL_NAME = /\b(HOT|MOOP|WAIR|ROI)\b/i;
 
@@ -125,6 +124,23 @@ const gateCopy = (enforced: boolean): { label: string; tip: string } =>
     ? { label: "Benefit-cost gate on", tip: "ROI enforcement on" }
     : { label: "Benefit-cost gate off", tip: "ROI enforcement off (shadow)" };
 
+const statusVariant = (status: string): "warning" | "success" | "secondary" => {
+  if (status === "pending") return "warning";
+  if (status === "approved" || status === "applied") return "success";
+  return "secondary";
+};
+
+const canExecuteLayout = (rec: SmartLayoutRecommendationRead): boolean =>
+  rec.status === "approved" && (rec.recommended_strategy === "sort" || rec.recommended_strategy === "zorder");
+
+const forecastHour = (value: string): string => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+};
+
+const tabCount = (count: number | null): string => (count == null ? "—" : String(count));
+
 const ProposalActions = ({
   rec,
   approveAccess,
@@ -135,7 +151,9 @@ const ProposalActions = ({
   executePending,
   onApprove,
   onDismiss,
-  onExecute
+  onExecute,
+  showReview,
+  onReview
 }: {
   rec: SmartLayoutRecommendationRead;
   approveAccess: WriteAccess;
@@ -147,38 +165,62 @@ const ProposalActions = ({
   onApprove: (rec: SmartLayoutRecommendationRead) => void;
   onDismiss: (rec: SmartLayoutRecommendationRead) => void;
   onExecute: (rec: SmartLayoutRecommendationRead) => void;
+  showReview?: boolean;
+  onReview?: (rec: SmartLayoutRecommendationRead) => void;
 }) => {
-  const approveDisabled =
-    !approveAccess.allowed || rec.status === "applied" || rec.status === "approved";
-  const dismissDisabled =
-    !dismissAccess.allowed || rec.status === "rejected" || rec.status === "applied";
-  const executeDisabled =
-    !executeAccess.allowed ||
-    rec.status !== "approved" ||
-    (rec.recommended_strategy !== "sort" && rec.recommended_strategy !== "zorder");
+  const approveDisabled = !approveAccess.allowed || rec.status === "applied" || rec.status === "approved";
+  const dismissDisabled = !dismissAccess.allowed || rec.status === "rejected" || rec.status === "applied";
+  const executable = canExecuteLayout(rec);
+  const executeDisabled = !executeAccess.allowed || !executable;
+  const primaryIsExecute = rec.status === "approved" || rec.status === "applied";
 
   return (
-    <div className="flex flex-wrap gap-1">
-      <ConfirmAction
-        title="Approve this recommendation?"
-        description={
-          <span>
-            Marks <strong>{rec.table_ref}</strong> as reviewed. It does not change table data.
-          </span>
-        }
-        onConfirm={() => onApprove(rec)}
-        disabled={approveDisabled}
-      >
-        <Button
-          size="sm"
-          variant="outline"
+    <div className="flex flex-wrap items-center gap-1">
+      {primaryIsExecute ? (
+        executable ? (
+          <ConfirmAction
+            title="Apply this layout change?"
+            description={
+              <span>
+                Runs the approved layout change for <strong>{rec.table_ref}</strong> now.
+              </span>
+            }
+            onConfirm={() => onExecute(rec)}
+            disabled={executeDisabled}
+          >
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={executeDisabled}
+              title={executeAccess.reason ?? undefined}
+              loading={executePending}
+            >
+              Execute
+            </Button>
+          </ConfirmAction>
+        ) : null
+      ) : (
+        <ConfirmAction
+          title="Approve this recommendation?"
+          description={
+            <span>
+              Marks <strong>{rec.table_ref}</strong> as reviewed. It does not change table data.
+            </span>
+          }
+          onConfirm={() => onApprove(rec)}
           disabled={approveDisabled}
-          title={approveAccess.reason ?? undefined}
-          loading={approvePending}
         >
-          Approve
-        </Button>
-      </ConfirmAction>
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={approveDisabled}
+            title={approveAccess.reason ?? undefined}
+            loading={approvePending}
+          >
+            Approve
+          </Button>
+        </ConfirmAction>
+      )}
       <ConfirmAction
         title="Dismiss this recommendation?"
         description={
@@ -191,7 +233,7 @@ const ProposalActions = ({
       >
         <Button
           size="sm"
-          variant="danger"
+          variant="ghost"
           disabled={dismissDisabled}
           title={dismissAccess.reason ?? undefined}
           loading={dismissPending}
@@ -199,26 +241,11 @@ const ProposalActions = ({
           Dismiss
         </Button>
       </ConfirmAction>
-      <ConfirmAction
-        title="Apply this layout change?"
-        description={
-          <span>
-            Runs the approved layout change for <strong>{rec.table_ref}</strong> now.
-          </span>
-        }
-        onConfirm={() => onExecute(rec)}
-        disabled={executeDisabled}
-      >
-        <Button
-          size="sm"
-          variant="primary"
-          disabled={executeDisabled}
-          title={executeAccess.reason ?? undefined}
-          loading={executePending}
-        >
-          Execute
+      {showReview && onReview ? (
+        <Button size="sm" variant="ghost" onClick={() => onReview(rec)}>
+          Review
         </Button>
-      </ConfirmAction>
+      ) : null}
     </div>
   );
 };
@@ -285,8 +312,8 @@ export function DecisionsPage() {
     [recommendations.data]
   );
   const pending = useMemo(() => visible.filter((item) => item.status === "pending"), [visible]);
-  const shown =
-    statusFilter === "pending" ? pending : activeTab === "approvals" ? pending : visible;
+  const shown = statusFilter === "pending" ? pending : visible;
+  const approvalCount = operationApprovals.isSuccess ? (operationApprovals.data ?? []).length : null;
   const review = visible.find((item) => item.id === reviewId) ?? null;
   const reviewTier = review
     ? (tiers.data?.items ?? []).find((row) => row.table_id === review.table_id) ?? null
@@ -366,19 +393,9 @@ export function DecisionsPage() {
       cell: ({ row }) => <InternalText text={proposedChange(row.original)} />
     },
     {
-      id: "reason",
-      header: "Reason",
-      cell: () => <span className="text-muted-foreground">{NOT_RECORDED}</span>
-    },
-    {
       id: "effect",
       header: "Expected effect",
       cell: ({ row }) => expectedEffect(row.original)
-    },
-    {
-      id: "evidence",
-      header: "Evidence quality",
-      cell: () => <span className="text-muted-foreground">{NOT_RECORDED}</span>
     },
     {
       id: "confidence",
@@ -386,16 +403,11 @@ export function DecisionsPage() {
       cell: ({ row }) => formatPercent(row.original.confidence * 100, 0)
     },
     {
-      id: "evaluated",
-      header: "Evaluation time",
-      cell: () => <span className="text-muted-foreground">{NOT_RECORDED}</span>
-    },
-    {
       id: "state",
       header: "Review state",
       cell: ({ row }) => (
         <div className="flex flex-col gap-0.5">
-          <Badge variant="secondary">{row.original.status}</Badge>
+          <Badge variant={statusVariant(row.original.status)}>{row.original.status}</Badge>
           {reviewStamp(row.original) ? (
             <span className="text-xs text-muted-foreground">{reviewStamp(row.original)}</span>
           ) : null}
@@ -406,23 +418,20 @@ export function DecisionsPage() {
       id: "actions",
       header: "Actions",
       cell: ({ row }) => (
-        <div className="flex flex-wrap items-center gap-1">
-          <ProposalActions
-            rec={row.original}
-            approveAccess={approveAccess}
-            dismissAccess={dismissAccess}
-            executeAccess={executeAccess}
-            approvePending={approve.isPending}
-            dismissPending={dismiss.isPending}
-            executePending={execute.isPending}
-            onApprove={(item) => approve.mutate(item)}
-            onDismiss={(item) => dismiss.mutate(item)}
-            onExecute={(item) => execute.mutate(item)}
-          />
-          <Button size="sm" variant="ghost" onClick={() => setReview(row.original.id)}>
-            Review
-          </Button>
-        </div>
+        <ProposalActions
+          rec={row.original}
+          approveAccess={approveAccess}
+          dismissAccess={dismissAccess}
+          executeAccess={executeAccess}
+          approvePending={approve.isPending}
+          dismissPending={dismiss.isPending}
+          executePending={execute.isPending}
+          onApprove={(item) => approve.mutate(item)}
+          onDismiss={(item) => dismiss.mutate(item)}
+          onExecute={(item) => execute.mutate(item)}
+          showReview
+          onReview={(item) => setReview(item.id)}
+        />
       )
     }
   ];
@@ -493,6 +502,7 @@ export function DecisionsPage() {
       isError={recommendations.isError}
       error={recommendations.error}
       onRetry={() => void recommendations.refetch()}
+      fade={false}
       isEmpty={!recommendations.isLoading && shown.length === 0}
       emptyTitle="No proposals"
       emptyDescription="Strategies recorded as none at 0% confidence are hidden. Nothing else is waiting."
@@ -506,33 +516,37 @@ export function DecisionsPage() {
       <PageHeader
         title="Decisions"
         subtitle="What is waiting on a person, and why was a table skipped?"
-        breadcrumbs={null}
+        breadcrumbs={false}
+        actions={
+          gate ? (
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <span className="text-sm text-muted-foreground">
+                Overview generated {formatTime(overview.data?.generated_at)}
+              </span>
+              {overview.data && !overview.data.roi_enforced ? (
+                <Badge variant="warning" title={gate.tip}>
+                  {gate.label}
+                </Badge>
+              ) : null}
+            </div>
+          ) : null
+        }
       />
       {writeReasons.length ? (
         <p className="mb-3 text-xs text-muted-foreground">{writeReasons.join(" ")}</p>
       ) : null}
-      {gate ? (
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          <span>Overview generated {formatTime(overview.data?.generated_at)}</span>
-          <Badge variant="secondary" title={gate.tip}>
-            {gate.label}
-          </Badge>
-        </div>
-      ) : null}
 
-      <div className="mb-4 flex gap-1" role="tablist" aria-label="Decisions">
-        {DECISION_TABS.map((tab) => (
-          <Button
-            key={tab}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === tab}
-            variant={activeTab === tab ? "secondary" : "ghost"}
-            onClick={() => setTab(tab)}
-          >
-            {tab === "recommendations" ? "Recommendations" : tab === "approvals" ? "Approvals" : "Skipped"}
-          </Button>
-        ))}
+      <div className="mb-4">
+        <Segmented
+          aria-label="Decisions"
+          value={activeTab}
+          onChange={setTab}
+          options={[
+            { value: "recommendations", label: `Recommendations · ${tabCount(recommendations.isSuccess ? visible.length : null)}` },
+            { value: "approvals", label: `Approvals · ${tabCount(approvalCount)}` },
+            { value: "skipped", label: "Skipped · —" }
+          ]}
+        />
       </div>
 
       {activeTab === "recommendations" ? (
@@ -568,11 +582,12 @@ export function DecisionsPage() {
 
       {activeTab === "approvals" ? (
         <div className="space-y-4" role="tabpanel">
-          <p>Pending approvals use the same proposals as Recommendations</p>
-          <Link to={{ search: "?tab=recommendations&status=pending" }} className="text-primary hover:underline">
-            Show pending proposals
-          </Link>
-          {queue}
+          <p className="text-sm text-muted-foreground">
+            Layout proposals stay on Recommendations.{" "}
+            <Link to={{ search: "?status=pending" }} className="text-primary hover:underline">
+              Show pending proposals
+            </Link>
+          </p>
           <Card>
             <CardHeader className="pb-2">
               <CardTitle id="operation-approvals">Operation approval requests</CardTitle>
@@ -623,15 +638,12 @@ export function DecisionsPage() {
       ) : null}
 
       {activeTab === "skipped" ? (
-        <section className="space-y-3" role="tabpanel" aria-labelledby="skipped-evaluation">
-          <h2 id="skipped-evaluation" className="text-sm font-medium">
-            latest evaluation only
-          </h2>
+        <section className="space-y-3" role="tabpanel" aria-labelledby="nightly-funnel-title">
+          <DecisionFunnelStrip />
           <EmptyState
             title="No skip list is stored"
             description="Per-table eligibility returns the latest evaluation only. A fleet history of skip reasons is not stored, so this view does not estimate how many tables were skipped."
           />
-          <DecisionFunnelStrip />
         </section>
       ) : null}
 
@@ -645,36 +657,22 @@ export function DecisionsPage() {
               <Link to={`/tables/${review.table_id}`} className="text-primary hover:underline">
                 Open table
               </Link>
-              <dl className="grid grid-cols-2 gap-3">
+              <dl className="grid gap-3">
                 <div>
                   <dt className="text-xs text-muted-foreground">Proposed change</dt>
-                  <dd>
+                  <dd className="text-base font-medium">
                     <InternalText text={proposedChange(review)} />
                   </dd>
                 </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Confidence</dt>
-                  <dd>{formatPercent(review.confidence * 100, 0)}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Expected effect</dt>
-                  <dd>{expectedEffect(review)}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Evidence quality</dt>
-                  <dd className="text-muted-foreground">{NOT_RECORDED}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Evaluation time</dt>
-                  <dd className="text-muted-foreground">{NOT_RECORDED}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Input freshness</dt>
-                  <dd className="text-muted-foreground">{NOT_RECORDED}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Settings and budget</dt>
-                  <dd className="text-muted-foreground">{NOT_RECORDED}</dd>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Confidence</dt>
+                    <dd>{formatPercent(review.confidence * 100, 0)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Expected effect</dt>
+                    <dd>{expectedEffect(review)}</dd>
+                  </div>
                 </div>
                 <div>
                   <dt className="text-xs text-muted-foreground">Activity</dt>
@@ -687,6 +685,9 @@ export function DecisionsPage() {
                   </dd>
                 </div>
               </dl>
+              <p className="text-muted-foreground">
+                Reason, evidence, evaluation time, input freshness, and settings are not stored on this proposal.
+              </p>
               <p className="text-muted-foreground">A per-engine plan preview is not stored on this proposal.</p>
               <ProposalActions
                 rec={review}
@@ -757,7 +758,7 @@ export function DecisionsPage() {
                       <tbody>
                         {forecast.data.points.map((point) => (
                           <tr key={point.hour_start}>
-                            <td>{point.hour_start}</td>
+                            <td>{forecastHour(point.hour_start)}</td>
                             <td className="text-right">{point.expected_queries}</td>
                           </tr>
                         ))}

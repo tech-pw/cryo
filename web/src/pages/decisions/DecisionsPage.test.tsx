@@ -151,15 +151,12 @@ describe("DecisionsPage", () => {
     expect(screen.getByText(VIEWER_REASON)).toBeInTheDocument();
   });
 
-  it("does not show a fake funnel number on the skipped tab", async () => {
+  it("does not invent a skip count on the skipped tab", async () => {
     renderPage(["/decisions?tab=skipped"]);
-    const heading = await screen.findByRole("heading", { name: "latest evaluation only" });
-    const section = heading.closest("section");
-    expect(section).not.toBeNull();
-    expect(section?.textContent ?? "").not.toMatch(/\d/);
-    for (const stage of ["Needs work", "Eligible", "Selected", "Ran", "Succeeded"]) {
-      expect(screen.queryByText(stage)).not.toBeInTheDocument();
-    }
+    expect(await screen.findByRole("heading", { name: "No skip list is stored" })).toBeInTheDocument();
+    expect(screen.getByText(/does not estimate how many tables were skipped/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skipped · —" })).toBeInTheDocument();
     expect(screen.queryByText("500+")).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Reason" })).not.toBeInTheDocument();
   });
 });
