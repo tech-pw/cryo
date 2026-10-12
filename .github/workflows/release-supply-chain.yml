@@ -15,6 +15,13 @@ jobs:
   release-image:
     name: Build, scan, attest, and sign
     runs-on: ubuntu-latest
+    # requirements.lock is dependencies-only (--require-hashes can't cover an editable
+    # local install), so `cryo` itself is never pip-installed below -- both evidence
+    # scripts (`from cryo...`) import it straight from the checked-out repo root instead.
+    # Confirmed live, 2026-10-12: without this, the v0.1.0 release run failed at the
+    # first import with ModuleNotFoundError: No module named 'cryo'.
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
