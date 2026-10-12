@@ -7,9 +7,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  attestations: write
 
 jobs:
   release-evidence:
@@ -59,6 +56,11 @@ jobs:
     name: Build, scan, attest, and sign (${{ matrix.component }})
     needs: release-evidence
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
