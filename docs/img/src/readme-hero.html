@@ -1,0 +1,37 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+@font-face{font-family:Plex;font-weight:700;src:url(../../../site/assets/fonts/ibm-plex-sans-latin-700-normal.woff2) format("woff2")}
+@font-face{font-family:Plex;font-weight:600;src:url(../../../site/assets/fonts/ibm-plex-sans-latin-600-normal.woff2) format("woff2")}
+@font-face{font-family:Plex;font-weight:400;src:url(../../../site/assets/fonts/ibm-plex-sans-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:Mono;font-weight:500;src:url(../../../site/assets/fonts/ibm-plex-mono-latin-500-normal.woff2) format("woff2")}
+*{margin:0;box-sizing:border-box}
+body{width:1280px;height:440px;overflow:hidden;font-family:Plex,sans-serif;
+  --bg:#F5FAFD;--ink:#143E60;--soft:#5C667A;--dot:#B8E1F3;--chip:#FFFFFF;--chipline:#B8E1F3;--accent:#277ABE}
+body.dark{--bg:#0B0F16;--ink:#F5FAFD;--soft:#AFC2CF;--dot:#1B2C3D;--chip:#111A25;--chipline:#1F3A52;--accent:#68C1EA}
+.stage{position:relative;width:100%;height:100%;background:var(--bg);
+  background-image:radial-gradient(var(--dot) 1.2px,transparent 1.2px);background-size:22px 22px}
+.inner{position:absolute;inset:0;display:flex;align-items:center;gap:56px;padding:0 84px}
+.mark{width:250px;height:250px;flex:none}
+.brand{display:flex;align-items:baseline;gap:18px;margin-bottom:18px}
+.brand b{font-weight:700;font-size:92px;letter-spacing:-.015em;line-height:.9;color:var(--ink)}
+.brand span{font:500 17px Mono,monospace;color:var(--accent);letter-spacing:.02em}
+h1{font-weight:600;font-size:36px;line-height:1.18;color:var(--ink);max-width:760px;letter-spacing:-.005em}
+p{margin-top:12px;font-size:19px;color:var(--soft)}
+.chips{display:flex;align-items:center;gap:10px;margin-top:26px;font:500 15px Mono,monospace;color:var(--ink)}
+.chips i{font-style:normal;padding:7px 13px;border:1px solid var(--chipline);background:var(--chip);border-radius:8px}
+.chips em{font-style:normal;color:var(--soft)}
+.chips i.on{border-color:var(--accent);color:var(--accent)}
+</style></head><body>
+<div class="stage"><div class="inner">
+  <img class="mark" id="mark" src="../../brand/logo/cryo-mark.svg" alt="">
+  <div>
+    <div class="brand"><b>Cryo</b><span>v0.x · Apache-2.0</span></div>
+    <h1>Self-hosted Apache Iceberg maintenance, with a receipt for every decision.</h1>
+    <p>Compacts small files, expires snapshots and removes orphans on the Trino or Spark you already run.</p>
+    <div class="chips"><i>scan</i><em>→</em><i>plan</i><em>→</em><i class="on">admit</i><em>→</em><i>rewrite</i><em>→</em><i>receipt</i></div>
+  </div>
+</div></div>
+<script>
+if (location.hash === "#dark") { document.body.classList.add("dark"); document.getElementById("mark").src = "../../brand/logo/cryo-mark-dark.svg"; }
+</script>
+</body></html>

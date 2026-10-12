@@ -16,6 +16,16 @@ All notable changes to Cryo will be documented in this file. The format is based
 - Initial `CHANGELOG.md`.
 
 ### Changed
+- New Cryo mark: small ice cubes fusing into one solid cube, replacing the faceted-iceberg mark,
+  which was too close to the Apache Iceberg logo. Updated in `docs/brand/logo/` (with dark and
+  one-colour variants), the docs site header, homepage animation, video poster and favicon, the
+  web app's `CryoMark` and favicon, and the docs-site screenshots. See
+  `docs/brand/CRYO_BRAND_GUIDE.md` §6. The homepage film still shows the old mark and needs a
+  re-render from its source.
+- `README.md` rewritten around images: hero banner, maintenance flow, product screenshots and
+  architecture, each with light and dark versions. The long comparison, features and research
+  sections are now collapsible. Images live in `docs/img/` and are rebuilt by
+  `scripts/readme_images.mjs`. Removed a dead link to `docs/premortem.md`.
 - `README.md`: license section now links to `LICENSE` instead of "TBD".
 - Spark maintenance lanes run `local[N,3]` (task retries), cap the long-lived driver's status
   store, bulk-delete 1,000 S3 keys per request, retry throttled S3 calls 32 times, and may
