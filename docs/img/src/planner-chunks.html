@@ -1,0 +1,131 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="diagram.css">
+<script>if (location.hash === "#dark") document.documentElement.classList.add("dark");</script>
+<style>
+.top{margin-top:26px;display:grid;grid-template-columns:560px 40px 1fr;align-items:stretch}
+.panel{padding:20px 22px}
+.panel h3{font-weight:600;font-size:17px;display:flex;gap:10px;align-items:baseline}
+.panel h3 em{font-style:normal;font:500 13px Mono,monospace;color:var(--link)}
+.panel .note{margin-top:4px}
+.parts{margin-top:14px;display:flex;flex-direction:column;gap:7px}
+.part{display:grid;grid-template-columns:96px 78px 1fr;gap:12px;align-items:center;font-size:14px}
+.part .d{font:500 13.5px Mono,monospace}
+.part .sf{text-align:right;color:var(--soft);font-variant-numeric:tabular-nums}
+.part .track{display:flex;align-items:center;gap:8px}
+.part .b{height:16px;border-radius:4px;background:var(--glacier);border:1.4px solid var(--tile-line)}
+.part .b.big{background:var(--core)}
+.part .gb{font-size:13px;color:var(--soft);white-space:nowrap}
+.part.skip{opacity:.42}
+.part.skip .b{background:transparent;border-style:dashed}
+.gate{margin:8px 0 2px;display:flex;align-items:center;gap:10px;font-size:14px;color:var(--soft)}
+.gate::before,.gate::after{content:"";flex:1;border-top:1.5px dashed var(--soft)}
+.flow{display:grid;place-items:center;color:var(--soft);font-size:26px}
+.chunks{margin-top:14px;display:flex;flex-direction:column;gap:12px}
+.chunk{padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.chunk .hd{display:flex;justify-content:space-between;font-size:14.5px}
+.chunk .hd b{font-weight:600}
+.chunk .hd span{color:var(--soft);font-variant-numeric:tabular-nums}
+.budget{margin-top:9px;position:relative;height:22px;border-radius:5px;border:1.4px dashed var(--soft);display:flex;overflow:visible}
+.seg{height:100%;background:var(--glacier);border-right:1.4px solid var(--tile-line);display:grid;place-items:center;font:500 11.5px Mono,monospace;color:#143E60}
+.seg.big{background:var(--core);color:#fff;border-radius:5px;border:1.4px solid var(--tile-line)}
+.chunk .why{margin-top:7px;font-size:14px;color:var(--soft)}
+.params{margin-top:14px}
+.params code{font-size:12.5px;color:var(--link)}
+.bottom{margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.bottom .panel{padding:18px 20px}
+.bottom .code{margin-top:10px;font-size:13.5px}
+.foot{margin-top:16px;display:flex;justify-content:space-between;gap:24px}
+</style></head><body>
+<div class="stage">
+  <h2>How the planner keeps OPTIMIZE from swamping Trino</h2>
+  <p class="sub">It never sends a full-table OPTIMIZE on a large table. It works from stored scan data,
+    picks the partitions worth rewriting, and packs them into chunks under a size budget.</p>
+
+  <div class="top">
+    <div class="card panel">
+      <h3>1 · Rank partitions <em>day(event_date)</em></h3>
+      <p class="note">From the scanner's stored stats. No live <code>$files</code> reads.</p>
+      <div class="parts" id="parts"></div>
+    </div>
+    <div class="flow">→</div>
+    <div class="card panel">
+      <h3>2 · Pack into chunks</h3>
+      <p class="note">Walk the ranking and fill each chunk up to the budget.</p>
+      <div class="chunks">
+        <div class="chunk">
+          <div class="hd"><b>Chunk 1</b><span>2 partitions · 79 of 100 GB</span></div>
+          <div class="budget"><div class="seg" style="width:38%">10-11</div><div class="seg" style="width:41%">10-10</div></div>
+        </div>
+        <div class="chunk focus">
+          <div class="hd"><b>Chunk 2</b><span>1 partition · 160 GB</span></div>
+          <div class="budget" style="border-color:transparent"><div class="seg big" style="width:100%">10-09 · bigger than the budget</div></div>
+          <p class="why">A partition over budget closes the current chunk and runs alone.</p>
+        </div>
+        <div class="chunk">
+          <div class="hd"><b>Chunk 3</b><span>3 partitions · 78 of 100 GB</span></div>
+          <div class="budget"><div class="seg" style="width:22%">10-08</div><div class="seg" style="width:30%">10-07</div><div class="seg" style="width:26%">10-06</div></div>
+        </div>
+      </div>
+      <p class="params note">Defaults: <code>chunk_size_gb</code> 100 · <code>max_partitions_per_chunk</code> 100 · <code>min_small_files</code> 128</p>
+    </div>
+  </div>
+
+  <div class="bottom">
+    <div class="card panel">
+      <h3>3 · Render chunk 1 for Trino</h3>
+      <div class="code"><span class="k">ALTER TABLE</span> iceberg.analytics.events
+  <span class="k">EXECUTE</span> optimize(file_size_threshold => <span class="s">'256MB'</span>)
+<span class="k">WHERE</span> (event_date >= <span class="k">DATE</span> <span class="s">'2026-10-11'</span>
+       <span class="k">AND</span> event_date &lt; <span class="k">DATE</span> <span class="s">'2026-10-12'</span>)
+   <span class="k">OR</span> (event_date >= <span class="k">DATE</span> <span class="s">'2026-10-10'</span>
+       <span class="k">AND</span> event_date &lt; <span class="k">DATE</span> <span class="s">'2026-10-11'</span>)</div>
+    </div>
+    <div class="card panel">
+      <h3>…or the same chunk for Spark</h3>
+      <div class="code"><span class="k">CALL</span> iceberg.system.rewrite_data_files(
+  table => <span class="s">'iceberg.analytics.events'</span>,
+  strategy => <span class="s">'binpack'</span>,
+  where => <span class="s">'(event_date >= DATE ''2026-10-11''</span>
+<span class="s">           AND event_date &lt; DATE ''2026-10-12'')</span>
+<span class="s">        OR (…''2026-10-10''…)'</span>,
+  options => map(…))</div>
+    </div>
+  </div>
+
+  <div class="foot note">
+    <span>The planner emits partition predicates, never SQL. Each engine has its own renderer.</span>
+    <span>Table under the budget? One full-table <code>optimize</code>.</span>
+  </div>
+</div>
+<script>
+const rows = [
+  ["2026-10-11", 2140, 38], ["2026-10-10", 1860, 41], ["2026-10-09", 1420, 160],
+  ["2026-10-08", 980, 22], ["2026-10-07", 610, 30], ["2026-10-06", 340, 26],
+  null,
+  ["2026-10-05", 96, 18], ["2026-10-04", 12, 35],
+];
+const host = document.getElementById("parts");
+const head = document.createElement("div");
+head.className = "part note";
+head.innerHTML = "<span>Partition</span><span class='sf'>Small files</span><span>Size</span>";
+host.appendChild(head);
+let skipped = false;
+for (const r of rows) {
+  if (r === null) {
+    const g = document.createElement("div");
+    g.className = "gate";
+    g.textContent = "below 128 small files: skipped";
+    host.appendChild(g);
+    skipped = true;
+    continue;
+  }
+  const [d, sf, gb] = r;
+  const el = document.createElement("div");
+  el.className = "part" + (skipped ? " skip" : "");
+  el.innerHTML = `<span class="d">${d}</span><span class="sf">${sf.toLocaleString("en-US")}</span>` +
+    `<span class="track"><span class="b${gb > 100 ? " big" : ""}" style="width:${Math.round(gb * 1.6)}px"></span><span class="gb">${gb} GB</span></span>`;
+  host.appendChild(el);
+}
+</script>
+</body></html>

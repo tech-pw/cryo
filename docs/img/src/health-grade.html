@@ -1,0 +1,109 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="diagram.css">
+<script>if (location.hash === "#dark") document.documentElement.classList.add("dark");</script>
+<style>
+.grid{margin-top:28px;display:grid;grid-template-columns:690px 1fr;gap:22px;align-items:start}
+.score{padding:22px 26px}
+.score header{display:flex;justify-content:space-between;align-items:baseline;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.score header b{font:500 19px Mono,monospace}
+.score header span{font-size:14.5px;color:var(--soft)}
+.ded{display:grid;grid-template-columns:96px 1fr 60px;gap:14px;align-items:center;padding:13px 0;border-bottom:1px solid var(--line)}
+.ded h4{font-weight:600;font-size:16.5px}
+.ded p{margin-top:3px;font:500 14px Mono,monospace;color:var(--soft)}
+.ded .fixby{margin-top:7px;font-size:13.5px;color:var(--soft)}
+.ded .fixby .op{font-size:13px;padding:2px 8px}
+.pts{font:600 22px Plex,sans-serif;text-align:right}
+.start .pts{color:var(--soft)}
+.total{display:flex;justify-content:space-between;align-items:center;padding-top:18px}
+.total .sum{font-size:16px;color:var(--soft)}
+.total .sum b{font-size:40px;color:var(--ink);font-weight:600;margin-left:10px;vertical-align:-4px}
+.grade{width:88px;height:88px;border-radius:16px;display:grid;place-items:center;
+  font:700 54px Plex,sans-serif;background:var(--frost);border:1px solid var(--firn)}
+.side{display:flex;flex-direction:column;gap:22px}
+.side .card{padding:20px 22px}
+.bands{margin-top:14px;position:relative}
+.bar{display:flex;height:40px;border-radius:9px;overflow:hidden;border:1px solid var(--line)}
+.bar div{display:grid;place-items:center;font-weight:600;font-size:15px;border-right:1px solid var(--card)}
+.bar div:last-child{border-right:0}
+.ticks{display:flex;margin-top:6px;font:500 12px Mono,monospace;color:var(--soft)}
+.pin{position:absolute;top:-12px;width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:10px solid var(--ink)}
+.rules{margin-top:12px;display:flex;flex-direction:column;gap:8px;font-size:14.5px;line-height:1.45;color:var(--soft)}
+.rules b{color:var(--ink);font-weight:600}
+.checks{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;font-size:15px}
+.checks span{display:flex;gap:8px;align-items:baseline}
+.checks span::before{content:"";width:6px;height:6px;border-radius:2px;background:var(--glacier);flex:none;transform:translateY(-2px)}
+</style></head><body>
+<div class="stage">
+  <h2>How a table earns its grade</h2>
+  <p class="sub">Every table starts at 100. Each check it fails takes points off, and every deduction
+    comes with its reason and the operation that fixes it.</p>
+
+  <div class="grid">
+    <div class="card score">
+      <header><b>analytics.events</b><span>64 GB · 9,400 files · 184 snapshots</span></header>
+      <div class="ded start"><span class="label">Start</span><div><h4>Every table starts here</h4></div><div class="pts">100</div></div>
+      <div class="ded">
+        <span class="status crit"><i></i>Critical</span>
+        <div><h4>Small-file fragmentation</h4><p>62.3% small files (exceeds threshold of 50%)</p>
+          <div class="fixby">Fixed by <span class="op">optimize</span></div></div>
+        <div class="pts">−20</div>
+      </div>
+      <div class="ded">
+        <span class="status warn"><i></i>Warning</span>
+        <div><h4>Snapshot retention buildup</h4><p>184 snapshots (exceeds limit of 50)</p>
+          <div class="fixby">Fixed by <span class="op">expire_snapshots</span></div></div>
+        <div class="pts">−8</div>
+      </div>
+      <div class="ded">
+        <span class="status warn"><i></i>Warning</span>
+        <div><h4>Manifest files bloat</h4><p>212 manifests (exceeds limit of 100)</p>
+          <div class="fixby">Fixed by <span class="op">optimize_manifests</span></div></div>
+        <div class="pts">−8</div>
+      </div>
+      <div class="total">
+        <span class="sum">Score<b>64</b></span>
+        <div class="grade focus">C</div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="card">
+        <span class="label">Grade bands</span>
+        <div class="bands">
+          <div class="bar">
+            <div style="flex:40;background:var(--frost)">F</div>
+            <div style="flex:20;background:var(--frost)">D</div>
+            <div style="flex:15;background:var(--firn)">C</div>
+            <div style="flex:15;background:var(--frost)">B</div>
+            <div style="flex:10;background:var(--frost)">A</div>
+          </div>
+          <div class="pin" style="left:calc(64% - 7px)"></div>
+          <div class="ticks">
+            <span style="flex:40">0</span><span style="flex:20">40</span><span style="flex:15">60</span><span style="flex:15">75</span><span style="flex:10">90</span><span>100</span>
+          </div>
+        </div>
+        <div class="rules">
+          <span><b>Critical −20, warning −8.</b> The score never drops below 0.</span>
+          <span><b>Big tables aren't punished for being big.</b> Count limits grow with the square root of
+            size in 100 GB units, so a 10 TB table gets limits 10× higher.</span>
+          <span><b>Small-file share counts</b> only once a table has 128 small files.</span>
+        </div>
+      </div>
+      <div class="card">
+        <span class="label">The 14 checks</span>
+        <div class="checks">
+          <span>Small-file share</span><span>Partition count</span>
+          <span>Total file count</span><span>Partition skew</span>
+          <span>Delete files</span><span>Files per partition</span>
+          <span>Snapshot count</span><span>Metadata-to-data ratio</span>
+          <span>Days since last commit</span><span>Iceberg V3 candidate</span>
+          <span>Manifest count</span><span>Streaming write rate</span>
+          <span>Table properties</span><span>File formats</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note" style="margin-top:16px">Rules and thresholds from <code>cryo/scanner/health.py</code>. Example table and numbers are illustrative.</p>
+</div>
+</body></html>

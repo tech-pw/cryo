@@ -1,0 +1,41 @@
+@font-face{font-family:Plex;font-weight:700;src:url(../../../site/assets/fonts/ibm-plex-sans-latin-700-normal.woff2) format("woff2")}
+@font-face{font-family:Plex;font-weight:600;src:url(../../../site/assets/fonts/ibm-plex-sans-latin-600-normal.woff2) format("woff2")}
+@font-face{font-family:Plex;font-weight:400;src:url(../../../site/assets/fonts/ibm-plex-sans-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:Mono;font-weight:500;src:url(../../../site/assets/fonts/ibm-plex-mono-latin-500-normal.woff2) format("woff2")}
+
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#F5FAFD;--card:#FFFFFF;--frost:#EAF7FD;--firn:#B8E1F3;--glacier:#68C1EA;--core:#277ABE;
+  --ink:#143E60;--soft:#5C667A;--line:#D3E8F3;--link:#277ABE;--marker:#EA580C;--dot:#DCEEF8;
+  --tile:#EAF7FD;--tile-line:#143E60;--muted-tile:#FFFFFF;
+  --ok:#1E8E5A;--warn:#A9791E;--crit:#B23A2E;
+  --code-bg:#0B0F16;--code-ink:#EAF7FD;--code-soft:#8FA6B8;--code-key:#68C1EA;--code-str:#B8E1F3;
+}
+html.dark{
+  --bg:#0B0F16;--card:#111A25;--frost:#13263A;--firn:#1F3A52;--glacier:#68C1EA;--core:#277ABE;
+  --ink:#F5FAFD;--soft:#AFC2CF;--line:#1F3A52;--link:#68C1EA;--dot:#152434;
+  --tile:#1B3550;--tile-line:#B8E1F3;--muted-tile:#111A25;
+  --code-bg:#05080D;
+}
+body{font-family:Plex,sans-serif;color:var(--ink);background:var(--bg);width:1280px}
+.stage{width:1280px;padding:44px 56px 40px;background:var(--bg);
+  background-image:radial-gradient(var(--dot) 1.1px,transparent 1.1px);background-size:22px 22px}
+h2{font-weight:600;font-size:30px;line-height:1.2;letter-spacing:-.005em}
+.sub{margin-top:8px;font-size:17px;line-height:1.45;color:var(--soft);max-width:1120px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px}
+.mono,code{font-family:Mono,monospace;font-weight:500}
+.op{display:inline-block;font:500 15px Mono,monospace;color:var(--link);background:var(--frost);
+  border:1px solid var(--firn);border-radius:7px;padding:4px 10px;white-space:nowrap}
+.note{font-size:14.5px;color:var(--soft)}
+.focus{outline:3px solid var(--marker);outline-offset:-1px}
+.label{font-size:13px;font-weight:600;color:var(--soft);letter-spacing:.01em}
+.status{display:inline-flex;align-items:center;gap:7px;font-size:14.5px;font-weight:600;color:var(--ink)}
+.status i{width:11px;height:11px;border-radius:3px;display:inline-block}
+.status.crit i{background:var(--crit)}
+.status.warn i{background:var(--warn)}
+.status.ok i{background:var(--ok)}
+.code{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:16px 18px;
+  font:500 14px/1.6 Mono,monospace;white-space:pre;overflow:hidden}
+.code .k{color:var(--code-key)}
+.code .s{color:var(--code-str)}
+.code .c{color:var(--code-soft)}

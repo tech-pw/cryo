@@ -26,6 +26,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   architecture, each with light and dark versions. The long comparison, features and research
   sections are now collapsible. Images live in `docs/img/` and are rebuilt by
   `scripts/readme_images.mjs`. Removed a dead link to `docs/premortem.md`.
+- `README.md`: four explainer diagrams. What decays in an Iceberg table and which operation fixes
+  each; how a table earns its A–F grade; how the planner chunks partitions under a GB budget,
+  with the Trino and Spark SQL it renders; and how the governor admits a job into a free engine
+  slot. "How it works" now walks scan → plan → admit → rewrite and record.
 - `README.md`: license section now links to `LICENSE` instead of "TBD".
 - Spark maintenance lanes run `local[N,3]` (task retries), cap the long-lived driver's status
   store, bulk-delete 1,000 S3 keys per request, retry throttled S3 calls 32 times, and may

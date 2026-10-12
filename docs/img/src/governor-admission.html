@@ -1,0 +1,86 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="diagram.css">
+<script>if (location.hash === "#dark") document.documentElement.classList.add("dark");</script>
+<style>
+.flow{margin-top:28px;display:grid;grid-template-columns:200px 30px 1fr 30px 364px;align-items:center}
+.arrow{text-align:center;color:var(--soft);font-size:24px}
+.job{padding:18px 18px}
+.job .op{margin-top:10px}
+.job dl{margin-top:12px;display:grid;grid-template-columns:auto 1fr;gap:5px 10px;font-size:14px}
+.job dt{color:var(--soft)}
+.job dd{font:500 13px Mono,monospace}
+.gates{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.gate{padding:14px 16px}
+.gate h3{font-weight:600;font-size:16.5px;display:flex;align-items:center;gap:9px}
+.gate h3 .n{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;background:var(--core);color:#fff;font-size:13px;font-weight:600}
+.gate ul{margin-top:8px;list-style:none;display:flex;flex-direction:column;gap:4px;font-size:14.5px;color:var(--soft)}
+.gate li::before{content:"·";margin-right:7px;color:var(--ink)}
+.gate li i{font-style:normal;font-size:12px;color:var(--soft);border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-left:5px}
+.slots{padding:18px 20px}
+.slots h3{font-weight:600;font-size:17px}
+.slots .note{margin-top:4px;line-height:1.4}
+.rep{margin-top:14px;display:grid;grid-template-columns:64px 150px 1fr;gap:10px;align-items:center;font-size:13.5px}
+.rep .nm{font:500 13px Mono,monospace}
+.rep .cells{display:flex;gap:5px}
+.rep .cells span{width:26px;height:22px;border-radius:5px;border:1.4px solid var(--tile-line);background:transparent}
+.rep .cells span.used{background:var(--glacier)}
+.rep .cells span.new{background:var(--core)}
+.rep .st{color:var(--soft);text-align:right;font-size:12.5px}
+.rep.pick .st{color:var(--ink);font-weight:600}
+.legend{margin-top:14px;display:flex;gap:14px;font-size:12.5px;color:var(--soft)}
+.legend b{display:inline-block;width:14px;height:10px;border-radius:3px;border:1.2px solid var(--tile-line);margin-right:5px;vertical-align:-1px}
+.out{margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.out .card{padding:16px 20px;display:flex;gap:14px;align-items:flex-start}
+.out .card .status{flex:none;margin-top:2px}
+.out h4{font-weight:600;font-size:16px}
+.out p{margin-top:4px;font-size:15px;line-height:1.45;color:var(--soft)}
+</style></head><body>
+<div class="stage">
+  <h2>How the governor decides when a job runs</h2>
+  <p class="sub">Workers don't pick work up on their own. Every job passes the governor's checks first,
+    then gets a slot only where an engine has room right now.</p>
+
+  <div class="flow">
+    <div class="card job">
+      <span class="label">Queued job</span>
+      <div><span class="op">optimize</span></div>
+      <dl>
+        <dt>table</dt><dd>analytics.events</dd>
+        <dt>plan</dt><dd>chunk 1 of 3</dd>
+        <dt>engine</dt><dd>trino-prod</dd>
+      </dl>
+    </div>
+    <div class="arrow">→</div>
+    <div class="gates">
+      <div class="card gate"><h3><span class="n">1</span>Is it allowed?</h3>
+        <ul><li>Table or engine not paused</li><li>Access policy allows it</li><li>Destructive ops have an approval</li><li>PII policy permits the rewrite</li></ul></div>
+      <div class="card gate"><h3><span class="n">2</span>Is it due?</h3>
+        <ul><li>Past the table's cooldown</li><li>Inside the off-peak window</li><li>Before its deadline, within budget</li><li>Worth the compute<i>optional</i></li></ul></div>
+      <div class="card gate"><h3><span class="n">3</span>Is the table free?</h3>
+        <ul><li>Takes the per-table lock, so two jobs never maintain one table</li></ul></div>
+      <div class="card gate"><h3><span class="n">4</span>Is it safe?</h3>
+        <ul><li>Predicted p95 latency stays under target<i>optional</i></li></ul></div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="card slots focus">
+      <h3>Engine has a free slot?</h3>
+      <p class="note">Each Trino coordinator gets a cap. Cryo counts the OPTIMIZEs running there now from
+        <code>system.runtime.queries</code>, and fills free slots round-robin.</p>
+      <div class="rep"><span class="nm">trino-a</span><span class="cells"><span class="used"></span><span class="used"></span><span class="used"></span><span class="used"></span><span class="used"></span></span><span class="st">full</span></div>
+      <div class="rep pick"><span class="nm">trino-b</span><span class="cells"><span class="used"></span><span class="new"></span><span></span><span></span><span></span></span><span class="st">← this job</span></div>
+      <div class="rep"><span class="nm">trino-c</span><span class="cells"><span class="used"></span><span class="used"></span><span class="used"></span><span></span><span></span></span><span class="st">2 free</span></div>
+      <div class="legend"><span><b style="background:var(--glacier)"></b>running now</span><span><b style="background:var(--core)"></b>this job</span><span><b></b>free</span></div>
+    </div>
+  </div>
+
+  <div class="out">
+    <div class="card"><span class="status ok"><i></i></span><div><h4>Admitted</h4>
+      <p>The job goes to the worker queue for that coordinator. The worker renders the plan, runs it, and
+        writes the result to the audit log.</p></div></div>
+    <div class="card"><span class="status warn"><i></i></span><div><h4>Deferred</h4>
+      <p>A failed check usually defers the job and records why. With no free slot, it stays queued for
+        the next governor wave. Adding workers never adds parallel rewrites.</p></div></div>
+  </div>
+</div>
+</body></html>

@@ -80,8 +80,12 @@ the run logs any API call the demo data does not answer.
 ## README images
 
 The repo README uses images from `docs/img/`: a hero banner rendered from
-`docs/img/src/readme-hero.html`, and captures of the homepage's maintenance flow, platform diagram,
-operation order and audit feed. Rebuild the site first, then:
+`docs/img/src/readme-hero.html`; four explainer diagrams (table decay, health grade, planner chunks,
+governor admission) rendered from `docs/img/src/<name>.html`, which share `diagram.css` and take
+`#dark` for the dark variant; and captures of the homepage's maintenance flow, platform diagram,
+operation order and audit feed. The diagrams quote real defaults and rendered SQL, so update their
+HTML when `cryo/scanner/health.py`, the planner defaults or the renderers change. Rebuild the site
+first, then:
 
 ```bash
 cd web && node ../scripts/readme_images.mjs
