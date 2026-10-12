@@ -9,7 +9,10 @@ RUN go mod download
 COPY engine-go/ ./
 RUN CGO_ENABLED=0 go build -o cryo-engine-go ./cmd/cryo-engine-go
 
-FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+# Confirmed live, 2026-10-12: the prior digest (debian 13.6, 2026-era base rebuild) had
+# 40 fixable HIGH OS-package CVEs (bsdutils, gzip, lib{blkid1,mount1,pcre2-8-0,lastlog2-2})
+# purely from a stale base layer, unrelated to anything this app pins itself.
+FROM python:3.12-slim@sha256:2b4f19dae3a777dfc3b76730bda1e82e1f66ab2a2686fa93ca78edbfb4f04ffe
 
 WORKDIR /app
 

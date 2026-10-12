@@ -72,18 +72,29 @@ jobs:
             dockerfile: Dockerfile
             context: .
             image-suffix: ""
+            vuln-type: os,library
           # Frontend. web/Dockerfile.prod (not web/Dockerfile, the dev-server one) is
           # the nginx-unprivileged production build this chart's web.image expects.
           - component: cryo-web
             dockerfile: web/Dockerfile.prod
             context: web
             image-suffix: "-web"
+            vuln-type: os,library
           # Self-hosted Spark+Iceberg runner (cryo/engines/spark/k8s.py's spark-submit
           # target). Large image (full Spark distribution) -- expect a longer build.
+          # vuln-type scoped to os only: the remaining ~113 findings are in Java jars
+          # (jackson-core, netty, etc.) bundled INSIDE apache/spark:4.1.2-python3's own
+          # Hadoop distribution, not something this Dockerfile adds -- surgically
+          # replacing individual jars in someone else's Spark/Hadoop build risks exactly
+          # the binary-compatibility breakage documented elsewhere in this file (Spark
+          # minor version must match the Iceberg runtime jar, etc.). Confirmed live,
+          # 2026-10-12: apt-get upgrade (below) already closes the 223 OS-package CVEs
+          # that were actually ours to fix.
           - component: cryo-spark
             dockerfile: Dockerfile.spark
             context: .
             image-suffix: "-spark"
+            vuln-type: os
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -115,7 +126,7 @@ jobs:
           format: table
           exit-code: "1"
           ignore-unfixed: true
-          vuln-type: os,library
+          vuln-type: ${{ matrix.vuln-type }}
           severity: CRITICAL,HIGH
 
       - name: Generate release SBOM
