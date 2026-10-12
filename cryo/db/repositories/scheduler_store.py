@@ -93,12 +93,14 @@ class SQLSchedulerStore:
             # docstring for why expire-only/property-autopilot audits must not count.
             from cryo.reporting.impact_signals import _RECLAIM_ACTIONS
 
-            last_maintained_by_table = dict(
+            last_maintained_by_table: dict[uuid.UUID | None, datetime] = dict(
                 session.execute(
                     select(AuditLog.table_id, func.max(AuditLog.ts))
                     .where(AuditLog.status == "OK", AuditLog.action.in_(_RECLAIM_ACTIONS))
                     .group_by(AuditLog.table_id)
-                ).all()
+                )
+                .tuples()
+                .all()
             )
             return [
                 table_to_candidate(table, last_maintained_at=last_maintained_by_table.get(table.id))

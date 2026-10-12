@@ -59,7 +59,7 @@ def deepest_caused_by(message: str | None) -> str | None:
         return None
     caused_by_matches = _CAUSED_BY_RE.findall(message)
     if caused_by_matches:
-        return caused_by_matches[-1]
+        return str(caused_by_matches[-1])
     header_match = _EXCEPTION_HEADER_RE.search(message)
     if header_match:
         # Return the matched line trimmed, not just the class-name group, so the message

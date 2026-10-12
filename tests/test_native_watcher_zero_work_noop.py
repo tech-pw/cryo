@@ -147,13 +147,13 @@ class TestFinalizeSuccessZeroWorkDowngrade:
         watcher = self._make_watcher(statuses, audits, locks)
 
         stdout = (
-            '{"batch":true,"results":[{"job_id":"%s","ok":true,"results":['
+            '{"batch":true,"results":[{"job_id":"' + str(job.id) + '","ok":true,"results":['
             '{"operation":"rewrite_position_deletes","success":true,"files_rewritten":0},'
             '{"operation":"optimize","success":true,"files_rewritten":0},'
             '{"operation":"compute_statistics","success":true},'
             '{"operation":"expire_snapshots","success":true,"snapshots_expired":0},'
             '{"operation":"remove_orphan_files","success":true,"bytes_removed":0}'
-            "]}]}" % job.id
+            "]}]}"
         )
         dispatch_id = uuid.uuid4()
         with (
@@ -191,10 +191,10 @@ class TestFinalizeSuccessZeroWorkDowngrade:
         watcher = self._make_watcher(statuses, audits, locks)
 
         stdout = (
-            '{"batch":true,"results":[{"job_id":"%s","ok":true,"results":['
+            '{"batch":true,"results":[{"job_id":"' + str(job.id) + '","ok":true,"results":['
             '{"operation":"rewrite_position_deletes","success":true,"files_rewritten":53,'
             '"bytes_removed":12000000}'
-            "]}]}" % job.id
+            "]}]}"
         )
         dispatch_id = uuid.uuid4()
         with (
@@ -220,9 +220,9 @@ class TestFinalizeSuccessZeroWorkDowngrade:
         watcher = self._make_watcher(statuses, audits, locks)
 
         stdout = (
-            '{"batch":true,"results":[{"job_id":"%s","ok":true,"results":['
+            '{"batch":true,"results":[{"job_id":"' + str(job.id) + '","ok":true,"results":['
             '{"operation":"compute_statistics","success":true}'
-            "]}]}" % job.id
+            "]}]}"
         )
         dispatch_id = uuid.uuid4()
         with (

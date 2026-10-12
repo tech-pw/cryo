@@ -2,7 +2,8 @@
 
 Deliberately does not fail, cancel, or relabel any run/job -- see
 cryo/db/models.py::IncidentCohort's docstring. Actual remediation of a member still goes through
-cryo.worker.orphan_recovery.recover_orphaned_jobs / cryo.queue.reconcile.reconcile_stuck_admitted_jobs,
+cryo.worker.orphan_recovery.recover_orphaned_jobs /
+cryo.queue.reconcile.reconcile_stuck_admitted_jobs,
 which already check external execution state before touching anything; this module only records
 membership and the reconciliation *outcome* observed by re-querying those existing systems.
 """

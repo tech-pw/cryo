@@ -124,6 +124,7 @@ def test_noop_when_pricing_disabled(session, monkeypatch) -> None:
 
 def test_noop_when_grafana_token_not_set(session, monkeypatch) -> None:
     monkeypatch.setattr("cryo.config.get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr("cryo.reporting.cost_ceiling.get_settings", lambda: _FakeSettings())
     monkeypatch.delenv("CRYO_GRAFANA_TOKEN", raising=False)
     service = _service()
 
@@ -136,6 +137,7 @@ def test_noop_when_grafana_token_not_set(session, monkeypatch) -> None:
 
 def test_prices_and_writes_estimated_scan_cost(session, monkeypatch) -> None:
     monkeypatch.setattr("cryo.config.get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr("cryo.reporting.cost_ceiling.get_settings", lambda: _FakeSettings())
     monkeypatch.setenv("CRYO_GRAFANA_TOKEN", "tok")
     monkeypatch.setattr("cryo.scheduler.service.SessionLocal", lambda: session)
 
@@ -162,6 +164,7 @@ def test_survives_grafana_fetch_failure(session, monkeypatch) -> None:
     """A Grafana outage/auth failure must not raise out of the scheduler tick -- fail
     safe-open, matching cost_ceiling's degraded-dependency contract."""
     monkeypatch.setattr("cryo.config.get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr("cryo.reporting.cost_ceiling.get_settings", lambda: _FakeSettings())
     monkeypatch.setenv("CRYO_GRAFANA_TOKEN", "tok")
 
     def _raise(*args, **kwargs):
@@ -177,6 +180,7 @@ def test_survives_grafana_fetch_failure(session, monkeypatch) -> None:
 
 def test_second_tick_within_a_day_is_a_noop(session, monkeypatch) -> None:
     monkeypatch.setattr("cryo.config.get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr("cryo.reporting.cost_ceiling.get_settings", lambda: _FakeSettings())
     monkeypatch.setenv("CRYO_GRAFANA_TOKEN", "tok")
     monkeypatch.setattr("cryo.scheduler.service.SessionLocal", lambda: session)
 

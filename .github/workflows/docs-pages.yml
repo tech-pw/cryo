@@ -14,8 +14,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: docs-pages
@@ -35,8 +33,15 @@ jobs:
         run: node site/scripts/build.mjs --check
 
   deploy:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # Pages is unavailable while the repository is private, so deploy only once it is public.
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && !github.event.repository.private
     needs: check
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

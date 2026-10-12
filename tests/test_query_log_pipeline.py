@@ -1044,7 +1044,9 @@ def test_resolve_table_prefers_trino_inputs_over_query_text_regex(session) -> No
     row = {
         # A join-shaped query text the regex would resolve to the WRONG table (the first
         # one named), while _trino_inputs correctly names the real one queried.
-        "query_text": "SELECT * FROM wrong_schema.wrong_table JOIN analytics.silver_dbt_orders ON 1=1",
+        "query_text": (
+            "SELECT * FROM wrong_schema.wrong_table JOIN analytics.silver_dbt_orders ON 1=1"
+        ),
         "_trino_inputs": [
             {"catalog": "sample", "schema": "analytics", "table": "silver_dbt_orders$files"},
             {"catalog": "sample", "schema": "analytics", "table": "silver_dbt_orders"},

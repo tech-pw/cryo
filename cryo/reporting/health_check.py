@@ -40,7 +40,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, true
 from sqlalchemy.orm import Session
 
 from cryo.db.models import (
@@ -718,7 +718,7 @@ def _check_scan_freshness(session: Session, *, now: datetime) -> CheckResult:
             .where(
                 Table.is_active.is_(True),
                 Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"),
-                Table.schema_name.not_in(excluded) if excluded else True,
+                Table.schema_name.not_in(excluded) if excluded else true(),
             )
         ).scalar_one()
     )
@@ -738,7 +738,7 @@ def _check_scan_freshness(session: Session, *, now: datetime) -> CheckResult:
             .where(
                 Table.is_active.is_(True),
                 Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"),
-                Table.schema_name.not_in(excluded) if excluded else True,
+                Table.schema_name.not_in(excluded) if excluded else true(),
                 TableStats.scan_at >= cutoff,
             )
         ).scalar_one()
@@ -749,14 +749,18 @@ def _check_scan_freshness(session: Session, *, now: datetime) -> CheckResult:
             name="scan_freshness",
             passed=True,
             severity="info",
-            summary=f"{fresh_count}/{active_total} active tables scanned within {_SCAN_STALE_HOURS}h",
+            summary=(
+                f"{fresh_count}/{active_total} active tables scanned within {_SCAN_STALE_HOURS}h"
+            ),
         )
     severity = "critical" if stale_count > active_total * 0.5 else "warning"
     return CheckResult(
         name="scan_freshness",
         passed=False,
         severity=severity,
-        summary=f"{stale_count}/{active_total} active tables have no scan within {_SCAN_STALE_HOURS}h",
+        summary=(
+            f"{stale_count}/{active_total} active tables have no scan within {_SCAN_STALE_HOURS}h"
+        ),
         detail="A large cluster of stale scans together (not just a few individually old "
         "tables) usually means the scanner's own cron/queue stopped feeding it, not that "
         "these specific tables are broken -- check scan_queue depth and go_scan's own liveness "
@@ -782,7 +786,7 @@ def _check_scan_failures(session: Session, *, now: datetime) -> CheckResult:
         .where(
             Table.is_active.is_(True),
             Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"),
-            Table.schema_name.not_in(excluded) if excluded else True,
+            Table.schema_name.not_in(excluded) if excluded else true(),
             Table.consecutive_scan_failures >= _SCAN_CONSECUTIVE_FAILURE_THRESHOLD,
         )
         .order_by(Table.consecutive_scan_failures.desc())
@@ -793,9 +797,11 @@ def _check_scan_failures(session: Session, *, now: datetime) -> CheckResult:
             name="scan_failures",
             passed=True,
             severity="info",
-            summary=f"No active table with {_SCAN_CONSECUTIVE_FAILURE_THRESHOLD}+ consecutive scan failures",
+            summary=(
+                f"No active table with {_SCAN_CONSECUTIVE_FAILURE_THRESHOLD}+ "
+                "consecutive scan failures"
+            ),
         )
-    total_failing = len(rows)
     # rows is capped at 10 by the query LIMIT -- get the real total separately so a fleet with
     # e.g. 400 failing tables doesn't under-report as "10".
     real_total = int(
@@ -805,7 +811,7 @@ def _check_scan_failures(session: Session, *, now: datetime) -> CheckResult:
             .where(
                 Table.is_active.is_(True),
                 Table.table_name.not_like(f"%{_EVOLVING_SUFFIX}"),
-                Table.schema_name.not_in(excluded) if excluded else True,
+                Table.schema_name.not_in(excluded) if excluded else true(),
                 Table.consecutive_scan_failures >= _SCAN_CONSECUTIVE_FAILURE_THRESHOLD,
             )
         ).scalar_one()
@@ -880,7 +886,9 @@ def _check_cost_ingestion_freshness(session: Session, *, now: datetime) -> Check
             name="cost_ingestion_freshness",
             passed=True,
             severity="info",
-            summary=f"{fresh_count}/{priced_total} priced tables refreshed within {_COST_STALE_HOURS}h",
+            summary=(
+                f"{fresh_count}/{priced_total} priced tables refreshed within {_COST_STALE_HOURS}h"
+            ),
         )
     return CheckResult(
         name="cost_ingestion_freshness",

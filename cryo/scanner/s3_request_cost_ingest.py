@@ -528,12 +528,14 @@ def _load_table_partition_context(
     if not table_ids:
         return {}
 
-    latest_scans = dict(
+    latest_scans: dict[uuid.UUID, datetime] = dict(
         session.execute(
             select(TablePartition.table_id, func.max(TablePartition.scan_at))
             .where(TablePartition.table_id.in_(table_ids))
             .group_by(TablePartition.table_id)
-        ).all()
+        )
+        .tuples()
+        .all()
     )
     if not latest_scans:
         return {}

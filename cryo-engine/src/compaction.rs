@@ -33,7 +33,7 @@ pub fn estimate_output_files(
         return 0;
     }
     let target = target_file_size_bytes.max(1);
-    ((candidate_bytes + target - 1) / target).max(1)
+    candidate_bytes.div_ceil(target).max(1)
 }
 
 pub async fn collect_candidates(
@@ -75,7 +75,7 @@ pub async fn collect_candidates(
                 continue;
             }
 
-            let file_size = data_file.file_size_in_bytes().max(0) as u64;
+            let file_size = data_file.file_size_in_bytes();
             if file_size < min_file_size_bytes {
                 candidates.push(compaction_candidate_from_data_file(data_file));
             }
@@ -88,7 +88,7 @@ pub async fn collect_candidates(
 fn compaction_candidate_from_data_file(data_file: &DataFile) -> CompactionCandidate {
     CompactionCandidate {
         path: data_file.file_path().to_string(),
-        size_bytes: data_file.file_size_in_bytes().max(0) as u64,
+        size_bytes: data_file.file_size_in_bytes(),
     }
 }
 
@@ -131,7 +131,7 @@ pub async fn scan_candidates(
                 continue;
             }
 
-            let file_size = data_file.file_size_in_bytes().max(0) as u64;
+            let file_size = data_file.file_size_in_bytes();
             summary.scoped_files += 1;
             summary.scoped_bytes += file_size;
 

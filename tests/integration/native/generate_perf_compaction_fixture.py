@@ -10,7 +10,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tests.integration.native.compaction_fixtures import ensure_perf_compaction_fixture
+from tests.integration.native.compaction_fixtures import (  # noqa: E402
+    ensure_perf_compaction_fixture,
+)
 
 
 def main() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, SupportsFloat, cast
 
 from sqlalchemy import and_, case, desc, func, literal, select
 from sqlalchemy.orm import Session, load_only, selectinload
@@ -851,6 +851,10 @@ def _stats_snapshot_payload(row: TableStatsHistory | None) -> dict[str, object] 
     }
 
 
+def _as_float(value: object) -> float | None:
+    return float(value) if isinstance(value, (SupportsFloat, str)) else None
+
+
 def _pct_change(before: float | None, after: float | None) -> float | None:
     """Signed percent change, before -> after. Negative means it went down. None if either
     side is missing or before is zero (no baseline to compare against)."""
@@ -879,18 +883,9 @@ def _run_effectiveness_payload(
     size_before = before.get("total_size_gb")
     size_after = after.get("total_size_gb")
 
-    file_pct = _pct_change(
-        float(total_files_before) if total_files_before is not None else None,
-        float(total_files_after) if total_files_after is not None else None,
-    )
-    small_file_pct = _pct_change(
-        float(small_files_before) if small_files_before is not None else None,
-        float(small_files_after) if small_files_after is not None else None,
-    )
-    byte_pct = _pct_change(
-        float(size_before) if size_before is not None else None,
-        float(size_after) if size_after is not None else None,
-    )
+    file_pct = _pct_change(_as_float(total_files_before), _as_float(total_files_after))
+    small_file_pct = _pct_change(_as_float(small_files_before), _as_float(small_files_after))
+    byte_pct = _pct_change(_as_float(size_before), _as_float(size_after))
     if file_pct is None and byte_pct is None:
         return None
 

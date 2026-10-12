@@ -60,7 +60,7 @@ describe("run cart", () => {
     const dialog = await screen.findByRole("dialog");
     const steps = [...dialog.querySelectorAll(".td-cart-steps li b")].map((node) => node.textContent);
     expect(steps).toEqual(["Compact files", "Remove orphan files"]);
-    const run = within(dialog).getByRole("button", { name: "Run 2 operations" });
+    const run = within(dialog).getByRole("button", { name: "Queue 2 operations" });
     expect(run).toBeDisabled();
     fireEvent.click(within(dialog).getByRole("checkbox"));
     fireEvent.click(run);
@@ -78,7 +78,7 @@ describe("run cart", () => {
     fireEvent.click(screen.getByRole("button", { name: "Review & run" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Rewrite now" })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "Queue Rewrite manifests" })).toBeEnabled();
   });
 
   it("disables adding with the role's reason", async () => {

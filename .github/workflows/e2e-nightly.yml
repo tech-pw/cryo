@@ -21,9 +21,7 @@ jobs:
           cache: pip
 
       - name: Install backend
-        run: |
-          pip install -U pip
-          pip install -e ".[dev]"
+        uses: ./.github/actions/python-deps
 
       - name: Start stack
         run: docker compose up -d postgres redis

@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import ColumnElement, Select, and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.ai.embedding_cache import get_or_compute_embedding
@@ -218,8 +218,8 @@ def _literal_catalog_hits(
     return hits, len(matched)
 
 
-def _schema_match(query: str, pattern: str, sources: list[Source]):
-    clauses = [Table.schema_name.ilike(pattern, escape="\\")]
+def _schema_match(query: str, pattern: str, sources: list[Source]) -> ColumnElement[bool]:
+    clauses: list[ColumnElement[bool]] = [Table.schema_name.ilike(pattern, escape="\\")]
     parts = [part for part in query.split(".") if part]
     if len(parts) >= 2:
         ids = _source_ids_for_catalog(sources, parts[-2])
@@ -276,7 +276,7 @@ def _literal_schema_hits(
     return hits, total
 
 
-def _qualified_table_match(query: str, sources: list[Source]):
+def _qualified_table_match(query: str, sources: list[Source]) -> ColumnElement[bool] | None:
     parts = [part for part in query.split(".") if part]
     if len(parts) < 3:
         return None
@@ -300,16 +300,16 @@ def _literal_table_hits(
     offset: int,
     limit: int,
 ) -> tuple[list[SearchMatchRead], int]:
-    clauses = [
+    clauses: list[ColumnElement[bool]] = [
         Table.table_name.ilike(pattern, escape="\\"),
         Table.schema_name.ilike(pattern, escape="\\"),
         func.concat(Source.name, ".", Table.schema_name, ".", Table.table_name).ilike(
             pattern, escape="\\"
         ),
     ]
-    qualified = _qualified_table_match(query, sources)
-    if qualified is not None:
-        clauses.append(qualified)
+    qualified_match = _qualified_table_match(query, sources)
+    if qualified_match is not None:
+        clauses.append(qualified_match)
     stmt = (
         select(Table)
         .join(Source, Table.source_id == Source.id)

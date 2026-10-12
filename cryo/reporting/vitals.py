@@ -395,7 +395,9 @@ def cryo_vitals_to_payload(vitals: CryoVitals) -> dict[str, Any]:
                 "trend": vitals.trino_hot_cost.trend,
                 "cohort_size": vitals.trino_hot_cost.today.cohort_size,
                 "gib_scanned_yesterday": round(vitals.trino_hot_cost.today.gib_scanned, 2),
-                "estimated_scan_cost_usd_yesterday": vitals.trino_hot_cost.today.estimated_scan_cost_usd,
+                "estimated_scan_cost_usd_yesterday": (
+                    vitals.trino_hot_cost.today.estimated_scan_cost_usd
+                ),
                 "dod_bytes_pct": vitals.trino_hot_cost.dod_bytes_pct,
                 "wow_bytes_pct": vitals.trino_hot_cost.wow_bytes_pct,
             }

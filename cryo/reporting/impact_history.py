@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -31,8 +32,10 @@ from cryo.reporting.impact_signals import (
     measured_reclaim_gb,
 )
 
-# reporting.daily_report imports this module for the write call, so importing DailyReportData
-# back would be circular; callers pass the fields this needs instead of the whole dataclass.
+# reporting.daily_report imports this module for the write call, so DailyReportData is imported
+# for type checking only; a runtime import would be circular.
+if TYPE_CHECKING:
+    from cryo.reporting.daily_report import DailyReportData
 
 
 @dataclass(frozen=True)
@@ -128,7 +131,7 @@ def _bytes_freed_by_engine(
 def record_daily_impact(
     session: Session,
     *,
-    report_data: object,  # cryo.reporting.daily_report.DailyReportData, see module docstring
+    report_data: DailyReportData,
     infra_cost_usd: float | None = None,
     now: datetime | None = None,
 ) -> FleetImpactHistoryRow:

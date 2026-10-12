@@ -27,7 +27,8 @@ Item inventory (matches the checklist shared with the user 2026-09-14):
   Tier 3 (~10%):
     9.  snapshot_retention   3% -- snapshot count/age tuned, not left at infinite defaults
     10. orphan_cleanup       3% -- remove_orphan_files actually runs, not just expire_snapshots
-    11. schema_width         2% -- no obviously dead/unused wide columns (best-effort, informational)
+    11. schema_width         2% -- no obviously dead/unused wide columns
+                                   (best-effort, informational)
     12. storage_class        2% -- data files directly readable (not restore-required classes)
 """
 
@@ -216,7 +217,8 @@ def _check_partition_match(
         return _item(
             "partition_match",
             "red",
-            f"Table is unpartitioned but {patterns.total_queries} queries dominantly filter on '{patterns.dominant_filter_column}'",
+            f"Table is unpartitioned but {patterns.total_queries} queries dominantly filter "
+            f"on '{patterns.dominant_filter_column}'",
         )
     if dominant in partition_field_names:
         return _item(
@@ -228,7 +230,8 @@ def _check_partition_match(
         "partition_match",
         "red",
         f"Dominant filter column '{patterns.dominant_filter_column}' is NOT among partition fields "
-        f"({', '.join(sorted(partition_field_names)) or 'none'}) -- queries likely scan full partitions",
+        f"({', '.join(sorted(partition_field_names)) or 'none'}) "
+        "-- queries likely scan full partitions",
     )
 
 
@@ -250,7 +253,9 @@ def _check_cadence_match(
         return _item(
             "cadence_match",
             "yellow",
-            f"{'Streaming' if is_streaming else f'{commits_per_day:.1f} commits/day'} table with no maintenance preset configured yet -- verify idle-hours before scheduling one",
+            f"{'Streaming' if is_streaming else f'{commits_per_day:.1f} commits/day'} "
+            "table with no maintenance preset configured yet -- verify idle-hours "
+            "before scheduling one",
         )
     # Typical gap between commits, in hours, from the measured daily commit rate. The failure
     # mode this guards against (confirmed live 2026-09-11) isn't idle_hours being "too long" --
@@ -265,7 +270,8 @@ def _check_cadence_match(
         return _item(
             "cadence_match",
             "red",
-            f"partition_write_idle_hours={preset_idle_hours:g}h is too tight for a table committing "
+            f"partition_write_idle_hours={preset_idle_hours:g}h is too tight for a table "
+            "committing "
             f"every ~{typical_gap_hours:.1f}h -- risk of racing the writer",
             value=preset_idle_hours,
             threshold=safe_floor_hours,

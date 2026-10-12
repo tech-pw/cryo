@@ -49,7 +49,8 @@ def system_prompt(now: datetime, timezone: str, team_instructions: str | None = 
             "Ask one short question only if the screen does not name a subject."
         ),
         (
-            "If you are not sure about Iceberg behavior, call search_iceberg_docs before answering. "
+            "If you are not sure about Iceberg behavior, call search_iceberg_docs "
+            "before answering. "
             "Cite the URL it returns. Do not invent spec rules."
         ),
         (

@@ -99,11 +99,14 @@ describe("Home overview", () => {
     vi.mocked(listPendingApprovals).mockRejectedValue(new Error("approvals down"));
     renderHome();
     expect(await screen.findByText(/Approval status unavailable/)).toBeInTheDocument();
-    expect(screen.queryByText("No pending approvals")).not.toBeInTheDocument();
+    expect(screen.queryByText("No pending operation approvals")).not.toBeInTheDocument();
   });
   it("links approvals and scan queues to the right workspace", async () => {
     renderHome();
-    expect(await screen.findByRole("link", { name: /1 awaiting review/ })).toHaveAttribute("href", "/decisions?tab=approvals");
+    expect(await screen.findByRole("link", { name: /1 operation approval awaiting review/ })).toHaveAttribute(
+      "href",
+      "/decisions?tab=approvals#operation-approvals"
+    );
     expect(screen.getByRole("link", { name: /Scan queue: 0 waiting/ })).toHaveAttribute("href", "/runs/scanner");
   });
   it("refreshes read models without starting maintenance", async () => {

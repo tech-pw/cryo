@@ -291,6 +291,8 @@ def _selectivity_for_query(
         if not isinstance(connector_info, dict):
             continue
         total_records = connector_info.get("totalRecords")
+        if physical_input_rows is None or total_records is None:
+            return None
         try:
             physical_input_rows = float(physical_input_rows)
             total_records = float(total_records)

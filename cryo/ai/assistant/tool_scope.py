@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import HTTPException
@@ -111,7 +112,7 @@ class TenantSession:
 
 
 def _guarded(
-    original: Any,
+    original: Callable[[ToolRegistry, str, ToolContext, dict[str, Any]], EvidenceEnvelope],
     registry: ToolRegistry,
     name: str,
     ctx: ToolContext,
@@ -280,7 +281,7 @@ def _resource_tenant(session: Session, obj: Any) -> uuid.UUID | None:
             return None
         table = session.get(Table, job.table_id)
         return table.tenant_id if table is not None else None
-    direct = getattr(obj, "tenant_id", None)
+    direct: uuid.UUID | None = getattr(obj, "tenant_id", None)
     if direct is not None:
         return direct
     table_id = getattr(obj, "table_id", None)

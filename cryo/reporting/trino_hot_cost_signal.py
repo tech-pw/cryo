@@ -18,6 +18,7 @@ faked, when it isn't.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal
@@ -66,7 +67,7 @@ def _day_bounds(now: datetime, days_ago: int) -> tuple[datetime, datetime]:
     return start, start + timedelta(days=1)
 
 
-def _cohort_table_ids(session: Session, preset_id) -> list:
+def _cohort_table_ids(session: Session, preset_id: uuid.UUID) -> list[uuid.UUID]:
     return list(
         session.scalars(
             select(TableAssignment.table_id).where(TableAssignment.preset_id == preset_id)

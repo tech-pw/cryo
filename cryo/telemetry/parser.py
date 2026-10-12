@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass
@@ -209,7 +209,7 @@ _SQLGLOT_PREDICATE_OPERATORS: list[tuple[str, str, bool, bool]] = [
 ]
 
 
-def _extract_sqlglot_filter_columns(where: object, info: PredicateInfo) -> None:
+def _extract_sqlglot_filter_columns(where: Any, info: PredicateInfo) -> None:
     """Record each WHERE column with the operator it was actually compared under.
 
     Regression, 2026-09-04: this path previously stamped ``is_equality=True`` on every column

@@ -40,9 +40,9 @@ describe("formatDestinationTestSummary", () => {
     expect(summary.toLowerCase()).not.toContain("byte");
   });
 
-  it("falls back to a generic reachable message when no capacity numbers are present", () => {
+  it("does not claim reachability when no capacity numbers are present", () => {
     const summary = formatDestinationTestSummary({ ok: true, name: "spark-cluster" });
-    expect(summary).toBe('"spark-cluster" is reachable and ready to run maintenance.');
+    expect(summary).toBe('"spark-cluster" was not probed. Do not treat this as reachable.');
   });
 
   it("reports failure without fabricating capacity numbers", () => {

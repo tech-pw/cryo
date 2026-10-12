@@ -87,8 +87,7 @@ def _iter_manifest_entries(table: Table):
     if snapshot is None:
         return
     for manifest in snapshot.manifests(table.io):
-        for entry in manifest.fetch_manifest_entry(table.io):
-            yield entry
+        yield from manifest.fetch_manifest_entry(table.io)
 
 
 def _iter_data_file_paths(table: Table) -> list[str]:

@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tests.integration.native.compaction_fixtures import ensure_compaction_fixtures
+from tests.integration.native.compaction_fixtures import ensure_compaction_fixtures  # noqa: E402
 
 SEED_BINARY_ENV = "CRYO_SEED_NATIVE_FIXTURES_BINARY"
 

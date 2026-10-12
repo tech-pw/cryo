@@ -27,10 +27,11 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from cryo.cost.model import TrinoScanCostPrice
@@ -92,6 +93,8 @@ def _sum_physical_bytes(inputs_json: str | None) -> int:
         if not isinstance(entry, dict):
             continue
         raw = entry.get("physicalInputBytes")
+        if raw is None:
+            continue
         try:
             total += int(raw)
         except (TypeError, ValueError):
@@ -157,7 +160,7 @@ def aggregate_query_cost_attribution(
     rows_upserted = 0
     cursor = since
 
-    fields = (
+    fields: tuple[str, ...] = (
         config.query_text_column,
         config.executed_at_column,
         "source",
@@ -179,8 +182,8 @@ def aggregate_query_cost_attribution(
         try:
             scan = iceberg_table.scan(
                 row_filter=And(
-                    GreaterThan(config.executed_at_column, cursor),  # type: ignore[arg-type]
-                    LessThanOrEqual(config.executed_at_column, window_end),  # type: ignore[arg-type]
+                    GreaterThan(config.executed_at_column, cursor),  # type: ignore[misc,call-arg,arg-type]
+                    LessThanOrEqual(config.executed_at_column, window_end),  # type: ignore[misc,call-arg,arg-type]
                 ),
                 selected_fields=fields,
             )
@@ -319,8 +322,11 @@ def prune_query_cost_attribution(
     a cost-attribution *trend* report. Returns rows deleted; caller commits."""
     now = now or datetime.now(UTC)
     cutoff = now.date() - timedelta(days=retention_days)
-    result = session.execute(
-        delete(QueryCostAttributionDaily).where(QueryCostAttributionDaily.day < cutoff)
+    result = cast(
+        CursorResult[Any],
+        session.execute(
+            delete(QueryCostAttributionDaily).where(QueryCostAttributionDaily.day < cutoff)
+        ),
     )
     return int(result.rowcount or 0)
 

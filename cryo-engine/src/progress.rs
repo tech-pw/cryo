@@ -51,17 +51,6 @@ impl ProgressEvent {
         }
     }
 
-    pub fn failed(operation: &str, message: &str) -> Self {
-        Self {
-            event: "failed",
-            operation: operation.to_string(),
-            progress_pct: None,
-            files_processed: None,
-            bytes_processed: None,
-            message: Some(message.to_string()),
-        }
-    }
-
     pub fn emit(&self) {
         if let Ok(json) = serde_json::to_string(self) {
             let _ = writeln!(io::stdout(), "{PROGRESS_PREFIX}{json}");
@@ -80,8 +69,4 @@ pub fn emit_progress(operation: &str, pct: u8, files: u64, bytes: u64) {
 
 pub fn emit_completed(operation: &str, files: u64, bytes: u64) {
     ProgressEvent::completed(operation, files, bytes).emit();
-}
-
-pub fn emit_failed(operation: &str, message: &str) {
-    ProgressEvent::failed(operation, message).emit();
 }

@@ -166,7 +166,8 @@ def test_native_compaction_throughput_local_minio() -> None:
     if metrics.input_bytes >= 1024 * 1024 * 1024:
         assert metrics.wall_seconds <= THROUGHPUT_TARGET_SECONDS, (
             f"wall {metrics.wall_seconds:.1f}s exceeds {THROUGHPUT_TARGET_SECONDS}s target "
-            f"(MB/s={metrics.mb_per_second:.2f}, peak_rss_mib={metrics.peak_rss_bytes // (1024 * 1024)})"
+            f"(MB/s={metrics.mb_per_second:.2f}, "
+            f"peak_rss_mib={metrics.peak_rss_bytes // (1024 * 1024)})"
         )
     print(
         f"PERF {label}: wall={metrics.wall_seconds:.1f}s "

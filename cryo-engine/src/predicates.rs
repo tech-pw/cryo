@@ -201,6 +201,7 @@ mod tests {
             transform: "day".to_string(),
             value: serde_json::json!(20337),
             col_type: Some("date".to_string()),
+            partition_field: None,
         };
         let names = candidate_field_names(&term);
         assert!(names.contains(&"event_date_day".to_string()));
@@ -219,6 +220,7 @@ mod tests {
             transform: "bucket".to_string(),
             value: serde_json::json!(3),
             col_type: None,
+            partition_field: None,
         };
         assert!(term_unsupported_reason(&term).is_some());
     }

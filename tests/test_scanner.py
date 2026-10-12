@@ -734,7 +734,7 @@ def test_record_table_scan_outcome_deactivates_dead_table_with_no_query_traffic(
     threshold = get_settings().scan_dead_table_failure_threshold
 
     with session_factory() as session:
-        for n in range(threshold - 1):
+        for _ in range(threshold - 1):
             table = record_table_scan_outcome(session, **kwargs, error="boom", scanned_at=scan_at)
             session.commit()
         assert table.is_active is True

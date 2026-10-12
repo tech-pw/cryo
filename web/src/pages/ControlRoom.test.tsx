@@ -122,7 +122,7 @@ describe("Control Room", () => {
 
   it("requires a reason before engaging the global hold", async () => {
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Emergency stop" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Hold all maintenance" }));
 
     const confirm = screen.getByRole("button", { name: "Hold all maintenance" });
     expect(confirm).toBeDisabled();

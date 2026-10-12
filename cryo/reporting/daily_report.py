@@ -286,7 +286,8 @@ def _append_north_star(blocks: list[SlackBlock], picture: object | None) -> None
             [
                 [
                     "Tables maintained",
-                    f"{picture.tables_maintained:,} / {picture.tables_baseline_median} ({coverage})",
+                    f"{picture.tables_maintained:,} / {picture.tables_baseline_median} "
+                    f"({coverage})",
                 ],
                 ["Measured GiB", f"{picture.measured_gib:.1f}"],
                 ["Byte measurement", measured],
@@ -315,7 +316,8 @@ def _append_north_star(blocks: list[SlackBlock], picture: object | None) -> None
         context_block(
             [
                 "Vitals here are coverage and measurement, not job success. "
-                "expire_snapshots has no size in Iceberg's result, so a blank expire GiB is not a failure."
+                "expire_snapshots has no size in Iceberg's result, so a blank expire GiB "
+                "is not a failure."
             ]
         )
     )
@@ -352,7 +354,10 @@ def _impact_signal_sentence(data: DailyReportData) -> str:
     # rather than let a reader assume it's the full day total the way "complete" coverage is.
     if signal.measurement_state == "partial":
         comparison += " -- partial coverage, some actions had no bytes-freed evidence"
-    return f" Reclaim impact {signal.direction}{comparison}: {signal.today.gb_freed:.1f} GB freed yesterday."
+    return (
+        f" Reclaim impact {signal.direction}{comparison}: "
+        f"{signal.today.gb_freed:.1f} GB freed yesterday."
+    )
 
 
 def _cost_signal_sentence(data: DailyReportData) -> str:
@@ -380,7 +385,8 @@ def _deterministic_bottom_line(data: DailyReportData) -> str:
     noun = "anomaly" if len(data.critical_anomalies) == 1 else "anomalies"
     return (
         f"{data.unhealthy_tables} of {data.total_tables} tables need attention "
-        f"({len(data.critical_anomalies)} {noun} flagged).{delta_str}{impact_sentence}{cost_sentence}"
+        f"({len(data.critical_anomalies)} {noun} flagged)."
+        f"{delta_str}{impact_sentence}{cost_sentence}"
     )
 
 
@@ -727,8 +733,8 @@ async def _generate_bottom_line(session: Session, data: DailyReportData) -> str 
                 "direction": data.impact_signal.direction,
                 "measurement_state": data.impact_signal.measurement_state,
                 "gb_freed_yesterday": (
-                    round(measured_reclaim_gb(data.impact_signal), 1)
-                    if measured_reclaim_gb(data.impact_signal) is not None
+                    round(gb_freed, 1)
+                    if (gb_freed := measured_reclaim_gb(data.impact_signal)) is not None
                     else None
                 ),
                 "dod_baseline_gb": (

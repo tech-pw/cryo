@@ -812,7 +812,7 @@ def admit_native_k8s_jobs(
                     # callers that pass no operations because none were ever planned.
                     sizing_params["metadata_only_sizing_hint"] = True
             else:
-                ops_hint = job.operations
+                ops_hint = job.operations or ()
             # Keep the CPU estimate in sync with the group_concurrency actually dispatched
             # (see the matching override in build_native_request below) -- otherwise the pod
             # gets sized/CPU-limited for concurrency=2 while the engine is told to run more

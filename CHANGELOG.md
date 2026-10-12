@@ -16,6 +16,15 @@ All notable changes to Cryo will be documented in this file. The format is based
 - Initial `CHANGELOG.md`.
 
 ### Changed
+- `LICENSE` and `deploy/helm/cryo/LICENSE` are now the verbatim Apache License 2.0 text. The
+  previous copies had reworded clauses, so GitHub could not identify the license.
+- The GitHub mirror sync now also rewrites file contents and commit messages through
+  `scripts/oss_mirror_replacements.txt` (internal hostnames, buckets, IPs, Slack IDs) and strips
+  internal working docs from history. See `docs/OSS_MIRROR.md`.
+- GitHub CI installs Python dependencies from `uv.lock` (the same lock the image ships) instead
+  of resolving the newest releases on every run, builds `cryo-engine-go` for the scanner parity
+  tests, and skips CodeQL and the Pages deploy while the repository is private. Lint, mypy,
+  clippy, Rust and frontend tests that had drifted are fixed.
 - New Cryo mark: small ice cubes fusing into one solid cube, replacing the faceted-iceberg mark,
   which was too close to the Apache Iceberg logo. Updated in `docs/brand/logo/` (with dark and
   one-colour variants), the docs site header, homepage animation, video poster and favicon, the

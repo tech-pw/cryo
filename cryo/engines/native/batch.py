@@ -125,7 +125,7 @@ def execute_batch(
         table_ref = str(request.get("table_ref", "unknown"))
         catalog_uri = request.get("catalog_uri")
         if isinstance(catalog_uri, str) and catalog_uri in open_breaker_uris:
-            entry = {
+            entry: dict[str, Any] = {
                 "ok": False,
                 "index": index,
                 "job_id": job_id,

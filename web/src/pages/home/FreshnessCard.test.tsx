@@ -36,7 +36,7 @@ describe("Snapshot age distribution", () => {
     renderCard({ rows: [] });
     expect(screen.getByRole("heading", { name: "Table freshness" })).toBeInTheDocument();
     expect(screen.getByText("No snapshot ages yet.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Run a catalog scan" })).toHaveAttribute("href", "/runs/scanner");
+    expect(screen.getByRole("link", { name: "Run a catalog scan" })).toHaveAttribute("href", "/runs/scanner?tab=config");
     expect(screen.queryByText(/As of/)).not.toBeInTheDocument();
   });
 });

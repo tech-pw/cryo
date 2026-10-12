@@ -274,7 +274,8 @@ class SparkK8sEngine:
         # different catalogs (e.g. a REST-catalog "rest_catalog" table and a Hive-Metastore "hive"
         # table both falling back to the same Spark destination), so the statement's own
         # catalog (set at render time from the table's real table_ref) must win when present
-        # -- confirmed live, 2026-07-24: submitting with the destination's default "rest_catalog" while
+        # -- confirmed live, 2026-07-24: submitting with the destination's default
+        # "rest_catalog" while
         # the SQL referenced "hive.system.rewrite_data_files" left no "hive" catalog plugin
         # registered in the Spark session, and Spark silently tried to resolve it against the
         # builtin spark_catalog instead, which doesn't support procedures at all.

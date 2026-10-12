@@ -81,7 +81,8 @@ def test_candidate_generation_excludes_wildly_different_sizes_with_no_naming_hin
 
 def test_candidate_generation_rejects_moderate_size_gap_without_naming_hint() -> None:
     """Regression for the real production run, 2026-08-13: a single schema bucket of
-    1,667 tables spanning many unrelated source products (analytics, analytics_events, analytics_regions,
+    1,667 tables spanning many unrelated source products (analytics, analytics_events,
+    analytics_regions,
     ...) sharing a generic ingestion schema by coincidence produced 1.39M of 1.41M total
     candidate pairs at the original 0.02 ratio -- tightened to 0.9 (size must be within
     10% of the other side) specifically so two same-schema, unrelated tables with a

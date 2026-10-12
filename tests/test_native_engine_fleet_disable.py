@@ -78,7 +78,7 @@ class TestResolveNativeRoutingGloballyDisabled:
         assert result.native_operations == ()
         assert result.fallback_operations == ()
         assert len(result.skipped_operations) == len(plan.operations)
-        for op, detail in result.skipped_operations:
+        for _op, detail in result.skipped_operations:
             assert detail == NATIVE_ENGINE_DISABLED_DETAIL
 
     def test_enabled_flag_preserves_normal_routing_behavior(self) -> None:

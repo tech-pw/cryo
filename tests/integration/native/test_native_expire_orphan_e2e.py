@@ -47,7 +47,9 @@ def _engine_config() -> dict[str, str]:
 
 requires_engine = pytest.mark.skipif(
     not is_cryo_engine_available(_engine_config()),
-    reason="cryo-engine release/debug binary not found; run `cargo build --release` in cryo-engine/",
+    reason=(
+        "cryo-engine release/debug binary not found; run `cargo build --release` in cryo-engine/"
+    ),
 )
 
 

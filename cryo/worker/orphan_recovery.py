@@ -423,16 +423,18 @@ def _spark_job_state(destination: DestinationConfig, engine_ref: str) -> EngineO
 
         from cryo.engines.spark.emr import (
             SUCCESS_STATES,
-            TERMINAL_STATES,
             EMRServerlessClient,
             EMRServerlessConfig,
+        )
+        from cryo.engines.spark.emr import (
+            TERMINAL_STATES as EMR_TERMINAL_STATES,
         )
 
         emr_client = EMRServerlessClient(EMRServerlessConfig.from_config(destination.config))
         emr_result = emr_client.get_job_run(engine_ref)
         if emr_result.state in SUCCESS_STATES:
             return EngineOpState.SUCCEEDED
-        if emr_result.state in TERMINAL_STATES:
+        if emr_result.state in EMR_TERMINAL_STATES:
             return EngineOpState.FAILED
         return EngineOpState.RUNNING
     except Exception:

@@ -161,12 +161,6 @@ def test_rank_destinations_failure_threshold_is_configurable() -> None:
 def test_rank_destinations_fails_open_when_every_destination_is_excluded() -> None:
     """A route must always resolve to *something* -- if every candidate in the pool has
     failed past the threshold, still return the least-bad option rather than nothing."""
-    preset = PresetConfig(
-        id="p1",
-        name="escalate",
-        destination_id="native-1",
-        guardrails={"engine_pool": ["native-1"]},
-    )
     table = TableCandidate(
         "t1",
         "raw",

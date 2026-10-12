@@ -242,7 +242,8 @@ def test_compute_impact_signal_wow_only_fires_when_dod_is_flat(session) -> None:
 def test_compute_impact_signal_dod_takes_priority_over_wow(session) -> None:
     source = _seed_source(session)
     table = _seed_table(session, source, name="t1")
-    # Both DoD and WoW would fire -- DoD must win as primary_signal, same precedence as cost_signals.
+    # Both DoD and WoW would fire -- DoD must win as primary_signal, same precedence as
+    # cost_signals.
     _log(session, table, days_ago=1, action="optimize", bytes_freed=10 * 1024**3)
     _log(session, table, days_ago=2, action="optimize", bytes_freed=1 * 1024**3)
     _log(session, table, days_ago=8, action="optimize", bytes_freed=1 * 1024**3)

@@ -13,7 +13,8 @@ _PREFIX = "[cryo-result] "
 
 _SQL = {
     "optimize": (
-        "CALL sample.system.rewrite_data_files(table => 'sample.demo.events', strategy => 'binpack')"
+        "CALL sample.system.rewrite_data_files("
+        "table => 'sample.demo.events', strategy => 'binpack')"
     ),
     "rewrite_position_deletes": (
         "CALL sample.system.rewrite_position_delete_files(table => 'sample.demo.events')"

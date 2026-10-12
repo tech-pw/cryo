@@ -4,7 +4,7 @@ use crate::catalog_preview::PreviewCatalog;
 use crate::compaction::{collect_candidates, estimate_output_files, scan_candidates};
 use crate::compaction_write::binpack_candidates_to_staging;
 use crate::orphans::{delete_orphans, scan_orphans};
-use crate::predicates::{operation_has_predicates, unsupported_predicate_reason};
+use crate::predicates::unsupported_predicate_reason;
 use crate::progress::{emit_completed, emit_progress, emit_started};
 use crate::{ExecuteRequest, OperationRequest, OperationResult};
 use anyhow::{Context, Result};
@@ -480,7 +480,7 @@ pub async fn rewrite_manifests(
 
     let manifest_list = current_snapshot.manifest_list();
     let manifest_count = table
-        .manifest_list_reader(&current_snapshot)
+        .manifest_list_reader(current_snapshot)
         .load()
         .await
         .map(|list| list.entries().len() as u64)

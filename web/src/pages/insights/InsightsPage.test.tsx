@@ -153,7 +153,11 @@ describe("InsightsPage", () => {
     expect(container.querySelector("circle")).toBeNull();
     expect(screen.queryByRole("img", { name: /similarity layout/i })).not.toBeInTheDocument();
     expect(getSimilarityClusters).toHaveBeenCalledWith(expect.objectContaining({ token: "test-token" }));
-    expect(getSimilarityPairs).toHaveBeenCalledWith(expect.anything(), { min_score: 0.3, limit: 100 });
+    expect(getSimilarityPairs).toHaveBeenCalledWith(expect.anything(), {
+      table_ids: ["t1", "t2"],
+      min_score: 0,
+      limit: 200
+    });
   });
 
   it("does not treat a missing query log as 0 queries", async () => {

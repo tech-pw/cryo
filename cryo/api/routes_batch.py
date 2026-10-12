@@ -115,7 +115,7 @@ def _to_read(receipt: BatchSelectionReceipt) -> BatchSelectionReceiptRead:
             BatchTableRefRead(
                 id=row.id,
                 catalog=row.catalog,
-                schema_=row.schema,
+                schema=row.schema,
                 name=row.name,
             )
             for row in receipt.tables

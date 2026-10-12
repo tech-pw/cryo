@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from cryo.api.deps import require_admin
 from cryo.config import Settings, get_settings
@@ -308,7 +309,7 @@ def _check_role(role: str) -> str:
     return normalized
 
 
-def _last_admin(session, excluding: uuid.UUID | None = None) -> bool:
+def _last_admin(session: Session, excluding: uuid.UUID | None = None) -> bool:
     rows = (
         session.query(LocalUser)
         .filter(LocalUser.role == "admin", LocalUser.disabled.is_(False))

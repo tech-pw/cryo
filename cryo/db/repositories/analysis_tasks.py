@@ -17,8 +17,10 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -158,7 +160,7 @@ def claim_due_task(
 
     expected_generation = candidate.lease_generation
     new_lease_generation = expected_generation + 1
-    result = session.execute(
+    result: CursorResult[Any] = session.execute(  # type: ignore[assignment]
         update(AnalysisTask)
         .where(
             AnalysisTask.id == candidate.id,
@@ -220,7 +222,7 @@ def heartbeat(
     """
     current = now or datetime.now(UTC)
     new_lease_generation = lease_generation + 1
-    result = session.execute(
+    result: CursorResult[Any] = session.execute(  # type: ignore[assignment]
         update(AnalysisTask)
         .where(
             AnalysisTask.id == task_id,
@@ -291,7 +293,7 @@ def commit_progress(
     }
     if task_state is not None:
         values["task_state"] = task_state
-    result = session.execute(
+    result: CursorResult[Any] = session.execute(  # type: ignore[assignment]
         update(AnalysisTask)
         .where(
             AnalysisTask.id == task_id,
@@ -330,7 +332,7 @@ def finish_task(
     if status not in _TERMINAL_STATUSES:
         raise ValueError(f"finish_task status must be terminal, got {status!r}")
     current = now or datetime.now(UTC)
-    result = session.execute(
+    result: CursorResult[Any] = session.execute(  # type: ignore[assignment]
         update(AnalysisTask)
         .where(
             AnalysisTask.id == task_id,
@@ -374,7 +376,7 @@ def yield_task(
     the moment the coordinator's next tick runs) while preserving cursor/processed_count/
     generation exactly as commit_progress last left them -- only status/lease ownership changes.
     """
-    result = session.execute(
+    result: CursorResult[Any] = session.execute(  # type: ignore[assignment]
         update(AnalysisTask)
         .where(
             AnalysisTask.id == task_id,

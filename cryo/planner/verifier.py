@@ -434,9 +434,9 @@ def _resolve_table(session: Session, table_ref: str) -> Any:
     # table_ref is conventionally "schema.table" or "catalog.schema.table"; the Planner also
     # stores it that way. We try to find a row by name first, then by id-as-string.
     #
-    # Multi-catalog deployments (e.g. warehouse + warehouse_dev) routinely share the same schema.table
-    # across sources. Never use scalar_one_or_none() here — MultipleResultsFound becomes an
-    # unhandled 500 on POST /maintenance/run.
+    # Multi-catalog deployments (e.g. warehouse + warehouse_dev) routinely share the same
+    # schema.table across sources. Never use scalar_one_or_none() here — MultipleResultsFound
+    # becomes an unhandled 500 on POST /maintenance/run.
     parts = table_ref.split(".")
     if len(parts) >= 2:
         schema_name = parts[-2]

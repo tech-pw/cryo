@@ -94,7 +94,6 @@ def test_run_benefit_score_sweep_task_returns_zero_when_nothing_due(_clean_up):
 
 
 def test_run_benefit_score_sweep_task_completes_a_small_fleet_and_marks_task_succeeded(_clean_up):
-    task_type = f"test_{uuid.uuid4().hex[:12]}"
     with SessionLocal() as session:
         _seed_table_with_partition(session, _clean_up, name=f"runner_{uuid.uuid4().hex[:8]}")
 

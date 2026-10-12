@@ -75,7 +75,8 @@ def _run_catalog_call_bounded[R](fn: Callable[[], R], *, description: str) -> R:
         return future.result(timeout=_LAYOUT_ANALYZER_CATALOG_TIMEOUT_SECONDS)
     except FuturesTimeoutError as exc:
         raise TimeoutError(
-            f"{description} exceeded {_LAYOUT_ANALYZER_CATALOG_TIMEOUT_SECONDS:.0f}s and was abandoned"
+            f"{description} exceeded {_LAYOUT_ANALYZER_CATALOG_TIMEOUT_SECONDS:.0f}s "
+            "and was abandoned"
         ) from exc
 
 
@@ -500,7 +501,7 @@ def _estimate_improvement(
     if patterns.multi_column_filter_ratio > 0.5:
         target_efficiency *= _CURVE_EFFICIENCY_DISCOUNT
 
-    improvement = max(0, target_efficiency - current_efficiency)
+    improvement = max(0.0, float(target_efficiency - current_efficiency))
     return round(improvement, 3)
 
 

@@ -121,9 +121,7 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: |
-          pip install -U pip
-          pip install -e ".[dev]"
+        uses: ./.github/actions/python-deps
 
       - name: Run ruff check
         run: ruff check cryo tests
@@ -146,9 +144,7 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: |
-          pip install -U pip
-          pip install -e ".[dev]"
+        uses: ./.github/actions/python-deps
 
       - name: Run mypy
         run: mypy cryo
@@ -190,9 +186,16 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: |
-          pip install -U pip
-          pip install -e ".[dev]"
+        uses: ./.github/actions/python-deps
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25.5"
+          cache-dependency-path: engine-go/go.sum
+
+      - name: Build cryo-engine-go (the scanner parity tests run it)
+        working-directory: engine-go
+        run: CGO_ENABLED=0 go build -o bin/cryo-engine-go ./cmd/cryo-engine-go
 
       - name: Run database migrations
         env:
@@ -310,9 +313,7 @@ jobs:
           exit 1
 
       - name: Install Python dependencies
-        run: |
-          pip install -U pip
-          pip install -e ".[dev]"
+        uses: ./.github/actions/python-deps
 
       - name: Build cryo-engine
         working-directory: cryo-engine
@@ -356,9 +357,7 @@ jobs:
           exit 1
 
       - name: Install Python dependencies
-        run: |
-          pip install -U pip
-          pip install -e ".[dev]"
+        uses: ./.github/actions/python-deps
 
       - name: Build cryo-engine-go
         working-directory: engine-go
@@ -414,9 +413,7 @@ jobs:
           exit 1
 
       - name: Install Python dependencies
-        run: |
-          pip install -U pip
-          pip install -e ".[dev]"
+        uses: ./.github/actions/python-deps
 
       - name: Build cryo-engine-go
         working-directory: engine-go
@@ -551,10 +548,7 @@ jobs:
           cache: pip
 
       - name: Install backend deps (for the API server the e2e hits)
-        working-directory: .
-        run: |
-          pip install -U pip
-          pip install -e ".[dev]"
+        uses: ./.github/actions/python-deps
 
       - name: Install JS deps (incl. @axe-core/playwright)
         run: npm ci
@@ -643,9 +637,7 @@ jobs:
           cache: pip
 
       - name: Install backend deps (for the API server the visual tests hit)
-        run: |
-          pip install -U pip
-          pip install -e ".[dev]"
+        uses: ./.github/actions/python-deps
 
       - name: Install JS deps
         run: npm ci

@@ -20,7 +20,7 @@ describe("DevTokenProdBanner", () => {
     const { container } = render(<DevTokenProdBanner />);
     expect(container).toBeEmptyDOMElement();
     expect(
-      screen.queryByText(/development sign-in is enabled on this production install/i)
+      screen.queryByText(/anyone who can open this page can choose admin/i)
     ).not.toBeInTheDocument();
   });
 
@@ -29,7 +29,7 @@ describe("DevTokenProdBanner", () => {
     render(<DevTokenProdBanner />);
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(
-      screen.getByText(/development sign-in is enabled on this production install/i)
+      screen.getByText(/anyone who can open this page can choose admin/i)
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
   });

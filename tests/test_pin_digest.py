@@ -95,8 +95,10 @@ def test_pin_digest_works_even_when_the_three_digests_have_already_drifted_apart
     image:/migration.image:/native.image:), not by matching a specific old value, so it must
     still find and update all three even when they don't currently agree with each other."""
     drifted = _SAMPLE_YAML.replace(
-        f'migration:\n  image:\n    repository: registry.gitlab.com/example/cryo\n    tag: latest\n    digest: "{_OLD_DIGEST}"',
-        f'migration:\n  image:\n    repository: registry.gitlab.com/example/cryo\n    tag: latest\n    digest: "{_NEW_DIGEST}"',
+        "migration:\n  image:\n    repository: registry.gitlab.com/example/cryo\n"
+        f'    tag: latest\n    digest: "{_OLD_DIGEST}"',
+        "migration:\n  image:\n    repository: registry.gitlab.com/example/cryo\n"
+        f'    tag: latest\n    digest: "{_NEW_DIGEST}"',
     )
     assert drifted != _SAMPLE_YAML  # sanity: the replace actually did something
 
