@@ -54,7 +54,9 @@ describe("BatchPanel", () => {
     expect(screen.getByRole("button", { name: "Compact" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Compact and clean up" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Metadata only" })).toBeInTheDocument();
-    expect(screen.getByText(/Ready 11 · Blocked 2 · Nothing to do 1/)).toBeInTheDocument();
+    expect(screen.getByText("Ready").previousElementSibling).toHaveTextContent("11");
+    expect(screen.getByText("Blocked").previousElementSibling).toHaveTextContent("2");
+    expect(screen.getByText("Nothing to do").previousElementSibling).toHaveTextContent("1");
 
     const operations = screen.getAllByTestId("batch-operation").map((node) => node.textContent);
     const indexes = operations.map((operation) =>

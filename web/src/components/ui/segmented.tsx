@@ -39,6 +39,7 @@ export function Segmented<T extends string>({
             "rounded-[var(--radius-default)] font-medium transition-colors duration-[var(--motion-fast)]",
             "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-[var(--focus-ring-color)] focus-visible:ring-offset-1",
             size === "small" ? "px-2 py-1 text-xs" : "px-3 py-1.5 text-sm",
+            "whitespace-nowrap",
             block && "flex-1",
             value === option.value
               ? "bg-[var(--color-primary-soft)] text-[var(--color-on-tint)]"
