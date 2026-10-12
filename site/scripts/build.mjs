@@ -324,7 +324,7 @@ const BUG_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" st
 const COLLAPSE_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg>';
 const LOGO_WORD = '<span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span>';
 function logoMark() {
-  return `<svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 512 512" aria-hidden="true">${LOGO_MARK_INNER}</svg>`;
+  return `<svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true">${LOGO_MARK_INNER}</svg>`;
 }
 
 function header(root, activeGroup) {

@@ -410,6 +410,11 @@ html[data-theme="dark"] .logo-yo {
     flex: none;
 }
 
+html[data-theme="dark"] .logo-mark {
+    --cryo-mark-line: var(--c-night);
+    --cryo-mark-dash: #b8e1f3;
+}
+
 :root {
     --c-core-mark: var(--c-core);
 }
