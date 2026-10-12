@@ -36,7 +36,7 @@ const SIDEBAR_COLLAPSED_CSS = `
 }
 .cryo-shell--sidebar-collapsed .cryo-shell__brand {
   justify-content: center;
-  height: var(--topbar-height);
+  height: 56px;
   padding-inline: 0;
 }
 .cryo-shell--sidebar-collapsed .cryo-shell__brand-copy,
@@ -52,12 +52,24 @@ const SIDEBAR_COLLAPSED_CSS = `
   white-space: nowrap;
   border: 0;
 }
-.cryo-shell--sidebar-collapsed .cryo-shell__nav-link {
+.cryo-shell--sidebar-collapsed .cryo-shell__nav-link,
+.cryo-shell--sidebar-collapsed .cryo-shell__collapse {
   justify-content: center;
   gap: 0;
   margin-inline: 6px;
   /* 2px keeps the active inset rail inside the pill; 0 clips it. */
   padding-inline: 2px 0;
+}
+.cryo-shell--sidebar-collapsed .cryo-shell__collapse > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 @media (max-width: 768px) {
   .cryo-shell--sidebar-collapsed .cryo-shell__sidebar {
@@ -79,11 +91,21 @@ const SIDEBAR_COLLAPSED_CSS = `
     clip: auto;
     white-space: normal;
   }
-  .cryo-shell--sidebar-collapsed .cryo-shell__nav-link {
+  .cryo-shell--sidebar-collapsed .cryo-shell__nav-link,
+  .cryo-shell--sidebar-collapsed .cryo-shell__collapse {
     justify-content: flex-start;
     gap: 10px;
     margin: 2px 8px;
     padding: 8px 10px;
+  }
+  .cryo-shell--sidebar-collapsed .cryo-shell__collapse > span {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
   }
 }
 `;
@@ -202,7 +224,13 @@ const AppShellFrame = ({ children }: AppShellProps) => {
           />
         ) : null}
 
-        <Sidebar pathname={pathname} mobileOpen={mobileOpen} onNavigate={closeMobileNav} />
+        <Sidebar
+          pathname={pathname}
+          mobileOpen={mobileOpen}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={toggleSidebar}
+          onNavigate={closeMobileNav}
+        />
 
         <div className="cryo-shell__main" inert={mobileOpen ? true : undefined}>
           <Topbar menuOpen={mobileOpen} onMenuClick={() => setMobileOpen((open) => !open)} />

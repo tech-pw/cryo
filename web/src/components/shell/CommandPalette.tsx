@@ -10,6 +10,7 @@ import {
   Lightbulb,
   Moon,
   Plug,
+  Settings,
   RadioTower,
   Scan,
   ScanSearch,
@@ -58,7 +59,7 @@ const paletteIcon = (href: string, label: string) => {
   if (href === "/decisions") return <Cloud size={14} />;
   if (href === "/cost") return <DollarSign size={14} />;
   if (href === "/insights") return <Zap size={14} />;
-  if (href.startsWith("/settings")) return <Plug size={14} />;
+  if (href.startsWith("/settings")) return <Settings size={14} />;
   return <Activity size={14} />;
 };
 

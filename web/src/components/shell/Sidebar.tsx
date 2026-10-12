@@ -1,3 +1,4 @@
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 
@@ -9,10 +10,12 @@ import { NAV_GROUPS, resolveActiveNavHref } from "./nav-config";
 export interface SidebarProps {
   pathname: string;
   mobileOpen: boolean;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
   onNavigate?: () => void;
 }
 
-export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
+export const Sidebar = ({ pathname, mobileOpen, collapsed = false, onToggleCollapsed, onNavigate }: SidebarProps) => {
   const { role } = useAuth();
   const activeHref = resolveActiveNavHref(pathname);
   const [navScrolled, setNavScrolled] = useState(false);
@@ -68,6 +71,19 @@ export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
           );
         })}
       </nav>
+      {onToggleCollapsed ? (
+        <button
+          type="button"
+          className="cryo-shell__collapse"
+          aria-expanded={!collapsed}
+          aria-controls="primary-navigation"
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          onClick={onToggleCollapsed}
+        >
+          {collapsed ? <PanelLeftOpen size={16} aria-hidden /> : <PanelLeftClose size={16} aria-hidden />}
+          <span>{collapsed ? "Expand sidebar" : "Collapse sidebar"}</span>
+        </button>
+      ) : null}
     </aside>
   );
 };

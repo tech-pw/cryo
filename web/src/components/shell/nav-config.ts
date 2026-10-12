@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Cloud, DollarSign, LayoutDashboard, Plug, Zap, type LucideIcon } from "lucide-react";
+import { Activity, BarChart3, Cloud, DollarSign, LayoutDashboard, Settings, Zap, type LucideIcon } from "lucide-react";
 
 import { DESTINATIONS, destinationHrefForPath, type Destination } from "../../lib/routes";
 
@@ -21,7 +21,7 @@ const DESTINATION_ICONS: Record<Destination["id"], LucideIcon> = {
   decisions: Cloud,
   cost: DollarSign,
   insights: Zap,
-  settings: Plug
+  settings: Settings
 };
 
 const navItem = (id: Destination["id"]): NavItem => {

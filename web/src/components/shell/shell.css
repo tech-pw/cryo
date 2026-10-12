@@ -251,16 +251,16 @@
 .cryo-shell__brand {
   position: relative;
   flex: 0 0 auto;
-  height: var(--topbar-height);
+  height: 64px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 16px;
+  padding: 0 14px;
   color: var(--ink, #131b24);
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 650;
   line-height: 1.1;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
   text-decoration: none;
 }
 
@@ -292,13 +292,13 @@
 .cryo-shell__brand-mark {
   display: block;
   flex: none;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
 }
 
 .cryo-shell--sidebar-collapsed .cryo-shell__brand-mark {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
 }
 
 .cryo-shell__brand-copy {
@@ -331,7 +331,46 @@
   flex-direction: column;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 4px 0 16px;
+  padding: 4px 0 8px;
+}
+
+.cryo-shell__collapse {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 8px 8px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--sidebar-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms var(--ease-out), transform 120ms var(--ease-out);
+}
+
+.cryo-shell__collapse svg {
+  flex: 0 0 auto;
+  opacity: 0.72;
+}
+
+.cryo-shell__collapse:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cryo-shell__collapse:hover {
+    background: var(--sidebar-hover);
+  }
+
+  .cryo-shell__collapse:active {
+    transform: scale(0.97);
+  }
 }
 
 .cryo-shell__nav-group + .cryo-shell__nav-group {
@@ -813,6 +852,11 @@
 @media (max-width: 768px) {
   .cryo-shell__menu-btn {
     display: inline-flex;
+  }
+
+  /* The drawer is the collapse on a phone. A second control would fight it. */
+  .cryo-shell__collapse {
+    display: none;
   }
 
   .cryo-shell__sidebar {
