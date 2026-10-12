@@ -36,6 +36,7 @@ const SIDEBAR_COLLAPSED_CSS = `
 }
 .cryo-shell--sidebar-collapsed .cryo-shell__brand {
   justify-content: center;
+  height: var(--topbar-height);
   padding-inline: 0;
 }
 .cryo-shell--sidebar-collapsed .cryo-shell__brand-copy,

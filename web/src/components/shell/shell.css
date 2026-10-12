@@ -233,7 +233,7 @@
 
 .cryo-shell__brand {
   flex: 0 0 auto;
-  height: 48px;
+  height: var(--topbar-height);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -339,8 +339,8 @@
   position: sticky;
   top: 0;
   z-index: 30;
-  flex: 0 0 48px;
-  height: 48px;
+  flex: 0 0 var(--topbar-height);
+  height: var(--topbar-height);
   display: flex;
   align-items: center;
   gap: 12px;
