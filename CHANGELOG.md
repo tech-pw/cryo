@@ -26,6 +26,12 @@ All notable changes to Cryo will be documented in this file. The format is based
   architecture, each with light and dark versions. The long comparison, features and research
   sections are now collapsible. Images live in `docs/img/` and are rebuilt by
   `scripts/readme_images.mjs`. Removed a dead link to `docs/premortem.md`.
+- Docs site homepage: the maintenance animation now follows one partition through five steps
+  (scan, plan, admit, rewrite, receipt) with a live readout for each, before/after file stats,
+  and a clickable step strip with pause and replay. Rebuilt as responsive HTML
+  (`site/_src/includes/maintenance-flow.html`) instead of separate wide and compact SVGs.
+- `site/scripts/preview.mjs` no longer crashes on request paths starting with `//` or on
+  malformed percent-escapes.
 - `README.md`: four explainer diagrams. What decays in an Iceberg table and which operation fixes
   each; how a table earns its A–F grade; how the planner chunks partitions under a GB budget,
   with the Trino and Spark SQL it renders; and how the governor admits a job into a free engine

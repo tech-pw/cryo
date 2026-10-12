@@ -73,9 +73,86 @@ What Cryo does
 
 ## Plans a safe rewrite. Runs it with headroom.
 
-One table passes through Cryo and leaves maintained, with a receipt.
+Follow one fragmented partition through Cryo, from scan to receipt. Click a step to pause on it.
 
-01 SCAN 02 ADMIT 03 REWRITE CRYO CONTROL PLANE admits work when engines have headroom TABLE AFTER MAINTAINED TABLE same table, with a receipt 01 SCAN 02 ADMIT 03 REWRITE TABLE AFTER MAINTAINED TABLE same table, with a receipt The rewrite stays partition-aware and load-aware. [See the maintenance flow →](https://tech-pw.github.io/cryo/maintenance/)
+analytics.events · day = 2026-10-11
+
+Every action audited
+
+TABLE BEFORE
+
+chunk 1 · 38 GB
+
+Files
+2,140
+Avg size
+18 MB
+Small files
+2,140
+
+Scan · metadata only
+
+manifests read
+212
+data files listed
+2,140
+partition size
+38 GB
+data files opened
+0
+
+Plan · 1 chunk
+
+38 of 100 GB
+WHERE event_date = DATE '2026-10-11'
+
+No SQL yet: the plan holds this predicate.
+
+Admit · live Trino slots
+
+trino-a  full
+trino-b  this job
+
+Counted from `system.runtime.queries`
+
+Rewrite · `optimize` on `trino-b`
+
+2,140 *→* 152 files
+
+Only this partition. The rest of the table is untouched.
+
+Receipt · audit log
+
+✓`optimize` succeeded
+
+engine
+trino-b
+duration
+4m 12s
+files
+2,140 → 152
+
+TABLE AFTER
+receipt
+
+Files
+152
+Avg size
+256 MB
+Small files
+0
+
+- **01 Scan** Reads metadata. Never opens data files.
+
+- **02 Plan** Fits the partition into a size-budgeted chunk.
+
+- **03 Admit** Waits for a free slot on a Trino coordinator.
+
+- **04 Rewrite** OPTIMIZE on this partition only, never the whole table.
+
+- **05 Receipt** Logs what ran, where, how long, and what changed.
+
+The rewrite stays partition-aware and load-aware. [See the maintenance flow →](https://tech-pw.github.io/cryo/maintenance/)
 
 How Cryo works
 

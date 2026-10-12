@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cryo: Apache Iceberg maintenance, with receipts</title><meta name="description" content="Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. It reads your catalogs, plans maintenance, admits the work to Trino or Spark, and leaves a receipt for every decision."><link rel="canonical" href="https://tech-pw.github.io/cryo/"><link rel="alternate" type="text/markdown" href="./index.md" title="Markdown version"><meta name="theme-color" content="#F5FAFD" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0F16" media="(prefers-color-scheme: dark)"><meta property="og:type" content="website"><meta property="og:site_name" content="Cryo"><meta property="og:title" content="Cryo: Apache Iceberg maintenance, with receipts"><meta property="og:description" content="Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. It reads your catalogs, plans maintenance, admits the work to Trino or Spark, and leaves a receipt for every decision."><meta property="og:url" content="https://tech-pw.github.io/cryo/"><meta property="og:image" content="https://tech-pw.github.io/cryo/assets/img/og.png"><meta name="twitter:card" content="summary_large_image"><link rel="icon" href="./assets/svg/favicon.svg" type="image/svg+xml"><link rel="preload" href="./assets/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="./assets/fonts/ibm-plex-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin><script>(function(){try{var t=localStorage.getItem("cryo-site-theme");if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}})()</script><link rel="stylesheet" href="./assets/css/site.css?v=046f9c85d3"></head><body class="home-page" data-page="home" data-root="./"><a class="skip" href="#main">Skip to content</a><header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><a class="logo" href="./" aria-label="Cryo home"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true"><g stroke-width="1.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cryo: Apache Iceberg maintenance, with receipts</title><meta name="description" content="Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. It reads your catalogs, plans maintenance, admits the work to Trino or Spark, and leaves a receipt for every decision."><link rel="canonical" href="https://tech-pw.github.io/cryo/"><link rel="alternate" type="text/markdown" href="./index.md" title="Markdown version"><meta name="theme-color" content="#F5FAFD" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0F16" media="(prefers-color-scheme: dark)"><meta property="og:type" content="website"><meta property="og:site_name" content="Cryo"><meta property="og:title" content="Cryo: Apache Iceberg maintenance, with receipts"><meta property="og:description" content="Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. It reads your catalogs, plans maintenance, admits the work to Trino or Spark, and leaves a receipt for every decision."><meta property="og:url" content="https://tech-pw.github.io/cryo/"><meta property="og:image" content="https://tech-pw.github.io/cryo/assets/img/og.png"><meta name="twitter:card" content="summary_large_image"><link rel="icon" href="./assets/svg/favicon.svg" type="image/svg+xml"><link rel="preload" href="./assets/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="./assets/fonts/ibm-plex-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin><script>(function(){try{var t=localStorage.getItem("cryo-site-theme");if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}})()</script><link rel="stylesheet" href="./assets/css/site.css?v=64df376d87"></head><body class="home-page" data-page="home" data-root="./"><a class="skip" href="#main">Skip to content</a><header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><a class="logo" href="./" aria-label="Cryo home"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true"><g stroke-width="1.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
     <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
     <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
     <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
@@ -88,313 +88,168 @@ FIRST VIEWPORT: Type-first hero, tally, actions, stack. No product graphic.
         <header class="maintenance-demo-head">
             <p class="eyebrow">What Cryo does</p>
             <h2 id="maintenance-demo-title">Plans a safe rewrite.<br> Runs it with headroom.<a class="anchor" href="#maintenance-demo-title" aria-label="Link to Plans a safe rewrite. Runs it with headroom.">#</a></h2>
-            <p>One table passes through Cryo and leaves maintained, with a receipt.</p>
+            <p>Follow one fragmented partition through Cryo, from scan to receipt. Click a step to pause on it.</p>
         </header>
         <div class="maintenance-machine">
-            <svg class="maintenance-flow-svg is-wide" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" role="img" aria-labelledby="maintenanceFlowTitle maintenanceFlowDesc">
-  <title id="maintenanceFlowTitle">Cryo maintains one Iceberg table: scan, admit, rewrite, receipt</title>
-  <desc id="maintenanceFlowDesc">The same Iceberg table is shown on both sides. On the left it is fragmented with many small files. Cryo scans stored stats, admits the rewrite when engines have headroom, then packs the files. On the right the same table holds a few right-sized files and an audit receipt.</desc>
+            <div class="mf" data-mf>
+  <div class="mf-top">
+    <span class="mf-kicker"><span class="mf-dot" aria-hidden="true"></span>analytics.events · day = 2026-10-11</span>
+    <span class="mf-top-right">
+      <span class="mf-state" data-mf-state>Every action audited</span>
+      <button class="mf-play" type="button" data-mf-play hidden>Pause</button>
+    </span>
+  </div>
 
-  <defs>
-    <pattern id="instrumentDots" width="18" height="18" patternUnits="userSpaceOnUse">
-      <circle class="instrument-dot" cx="1" cy="1" r="1"/>
-    </pattern>
-  </defs>
+  <div class="mf-stage">
+    <section class="mf-card mf-before" aria-label="The partition before maintenance">
+      <header><span class="mf-glyph" aria-hidden="true"></span> <b>TABLE</b> <em>BEFORE</em></header>
+      <div class="mf-tiles" aria-hidden="true">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <span class="mf-scan"></span>
+        <span class="mf-chunk"><span>chunk 1 · 38 GB</span></span>
+      </div>
+      <dl class="mf-stats">
+        <div><dt>Files</dt>
+<dd>2,140</dd></div>
+        <div><dt>Avg size</dt>
+<dd>18 MB</dd></div>
+        <div><dt>Small files</dt>
+<dd class="is-bad">2,140</dd></div>
+      </dl>
+    </section>
 
-  <rect class="instrument-field" width="1200" height="400"/>
-  <rect width="1200" height="400" fill="url(#instrumentDots)"/>
+    <div class="mf-rail mf-rail-in" aria-hidden="true"><span></span><span></span><span></span></div>
 
-  <path class="instrument-rule" d="M48 52h1104"/>
-  <path class="instrument-ticks" d="M70 52v9m32-9v5m32-5v5m32-5v5m32-5v9m804-9v9m32-9v5m32-5v5m32-5v5m32-5v9"/>
+    <div class="mf-core">
+      <svg class="mf-ring" viewBox="0 0 240 240" aria-hidden="true">
+        <circle class="mf-ring-outer" cx="120" cy="120" r="92"/>
+        <path class="mf-ring-track" d="M22.27 84.43A104 104 0 0 1 217.73 84.43"/>
+        <path class="mf-ring-progress" pathLength="100" d="M22.27 84.43A104 104 0 0 1 217.73 84.43"/>
+        <circle class="mf-ring-dial" cx="120" cy="120" r="78"/>
+        <circle class="mf-ring-core" cx="120" cy="120" r="60"/>
+        <circle class="mf-ring-bezel" cx="120" cy="120" r="47"/>
+        <g class="mf-node" data-n="1"><circle cx="22.27" cy="84.43" r="11"/><text x="22.27" y="88.6">1</text></g>
+        <g class="mf-node" data-n="2"><circle cx="60.35" cy="34.81" r="11"/><text x="60.35" y="39">2</text></g>
+        <g class="mf-node" data-n="3"><circle cx="120" cy="16" r="11"/><text x="120" y="20.2">3</text></g>
+        <g class="mf-node" data-n="4"><circle cx="179.65" cy="34.81" r="11"/><text x="179.65" y="39">4</text></g>
+        <g class="mf-node" data-n="5"><circle cx="217.73" cy="84.43" r="11"/><text x="217.73" y="88.6">5</text></g>
+        <svg class="mf-cube" x="76" y="76" width="88" height="88" viewBox="0 0 64 64">
+          <g class="mf-cube-small" stroke="#0B0F16" stroke-width="1.6" stroke-linejoin="round">
+            <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
+            <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
+            <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
+            <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
+            <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
+            <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
+            <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
+            <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
+            <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
+          </g>
+          <g fill="none" stroke="#B8E1F3" stroke-width="2" stroke-linecap="round">
+            <path d="M17 19.5L20 22.3"/><path d="M27.6 14.5L29 18"/><path d="M13.9 34.1L17.2 34.7"/>
+          </g>
+          <g stroke="#0B0F16" stroke-width="2.2" stroke-linejoin="round">
+            <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
+            <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
+            <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
+          </g>
+          <g fill="none" stroke-width="1.1">
+            <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
+            <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
+            <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
+          </g>
+          <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.2" stroke-linejoin="round" stroke="#0B0F16"/>
+          <g stroke="#FFFFFF" stroke-linecap="round">
+            <path d="M24.2 34.5V41.5" stroke-width="2.4"/><path d="M30.5 24.8L36 21.6" stroke-width="2"/>
+          </g>
+        </svg>
+      </svg>
 
-  <text class="instrument-kicker" x="64" y="40">ONE TABLE · ONE PARTITION CHUNK</text>
-  <text class="instrument-state" x="1136" y="40" text-anchor="end">EVERY ACTION AUDITED</text>
+      <div class="mf-readout">
+        <div class="mf-panel" data-panel="1">
+          <p class="mf-panel-title">Scan · metadata only</p>
+          <dl class="mf-kv">
+            <div><dt>manifests read</dt>
+<dd>212</dd></div>
+            <div><dt>data files listed</dt>
+<dd>2,140</dd></div>
+            <div><dt>partition size</dt>
+<dd>38 GB</dd></div>
+            <div class="is-key"><dt>data files opened</dt>
+<dd>0</dd></div>
+          </dl>
+        </div>
+        <div class="mf-panel" data-panel="2">
+          <p class="mf-panel-title">Plan · 1 chunk</p>
+          <div class="mf-budget"><span class="mf-budget-fill"></span><span class="mf-budget-label">38 of 100 GB</span></div>
+          <code class="mf-pred">WHERE event_date = DATE '2026-10-11'</code>
+          <p class="mf-panel-note">No SQL yet: the plan holds this predicate.</p>
+        </div>
+        <div class="mf-panel" data-panel="3">
+          <p class="mf-panel-title">Admit · live Trino slots</p>
+          <div class="mf-slots">
+            <span class="mf-rep">trino-a</span> <span class="mf-cells"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span> <span class="mf-slot-note">full</span>
+            <span class="mf-rep">trino-b</span> <span class="mf-cells"><i class="on"></i><i class="job"></i><i></i><i></i><i></i></span> <span class="mf-slot-note is-pick">this job</span>
+          </div>
+          <p class="mf-panel-note">Counted from <code>system.runtime.queries</code></p>
+        </div>
+        <div class="mf-panel" data-panel="4">
+          <p class="mf-panel-title">Rewrite · <code>optimize</code> on <code>trino-b</code></p>
+          <div class="mf-progress"><span></span></div>
+          <p class="mf-big"><span>2,140</span> <em>→</em> <span>152</span> <small>files</small></p>
+          <p class="mf-panel-note">Only this partition. The rest of the table is untouched.</p>
+        </div>
+        <div class="mf-panel" data-panel="5">
+          <p class="mf-panel-title">Receipt · audit log</p>
+          <p class="mf-log"><span class="mf-ok" aria-hidden="true">✓</span><code>optimize</code> succeeded</p>
+          <dl class="mf-kv">
+            <div><dt>engine</dt>
+<dd>trino-b</dd></div>
+            <div><dt>duration</dt>
+<dd>4m 12s</dd></div>
+            <div><dt>files</dt>
+<dd>2,140 → 152</dd></div>
+          </dl>
+        </div>
+      </div>
+    </div>
 
-  <g class="table-card table-in">
-    <rect class="table-shell" x="64" y="86" width="228" height="248" rx="8"/>
-    <rect class="table-head" x="64" y="86" width="228" height="38" rx="8"/>
-    <rect class="table-head-clip" x="64" y="108" width="228" height="16"/>
-    <g class="table-glyph" transform="translate(80 99)">
-      <rect width="7" height="7" rx="1"/>
-      <rect x="9" width="7" height="7" rx="1"/>
-      <rect y="9" width="7" height="7" rx="1"/>
-      <rect x="9" y="9" width="7" height="7" rx="1"/>
-    </g>
-    <text class="table-name" x="108" y="111">TABLE</text>
-    <text class="table-meta" x="268" y="111" text-anchor="end">BEFORE</text>
-    <path class="table-strata" d="M80 146h196M80 186h196M80 226h196M80 266h196"/>
-    <g class="file-slivers">
-      <g class="sliver-row" style="--i:0"><rect x="86" y="136" width="58" height="8" rx="2"/><rect x="150" y="136" width="36" height="8" rx="2"/><rect x="192" y="136" width="24" height="8" rx="2"/><rect x="222" y="136" width="50" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:1"><rect x="86" y="156" width="28" height="8" rx="2"/><rect x="120" y="156" width="64" height="8" rx="2"/><rect x="190" y="156" width="42" height="8" rx="2"/><rect x="238" y="156" width="34" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:2"><rect x="86" y="176" width="48" height="8" rx="2"/><rect x="140" y="176" width="22" height="8" rx="2"/><rect x="168" y="176" width="70" height="8" rx="2"/><rect x="244" y="176" width="28" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:3"><rect x="86" y="196" width="32" height="8" rx="2"/><rect x="124" y="196" width="54" height="8" rx="2"/><rect x="184" y="196" width="26" height="8" rx="2"/><rect x="216" y="196" width="56" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:4"><rect x="86" y="216" width="66" height="8" rx="2"/><rect x="158" y="216" width="30" height="8" rx="2"/><rect x="194" y="216" width="48" height="8" rx="2"/><rect x="248" y="216" width="24" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:5"><rect x="86" y="236" width="24" height="8" rx="2"/><rect x="116" y="236" width="72" height="8" rx="2"/><rect x="194" y="236" width="34" height="8" rx="2"/><rect x="234" y="236" width="38" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:6"><rect x="86" y="256" width="52" height="8" rx="2"/><rect x="144" y="256" width="28" height="8" rx="2"/><rect x="178" y="256" width="60" height="8" rx="2"/><rect x="244" y="256" width="28" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:7"><rect x="86" y="276" width="36" height="8" rx="2"/><rect x="128" y="276" width="48" height="8" rx="2"/><rect x="182" y="276" width="22" height="8" rx="2"/><rect x="210" y="276" width="62" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:8"><rect x="86" y="296" width="44" height="8" rx="2"/><rect x="136" y="296" width="68" height="8" rx="2"/><rect x="210" y="296" width="30" height="8" rx="2"/><rect x="246" y="296" width="26" height="8" rx="2"/></g>
-    </g>
-    <rect class="scan-line" x="78" y="128" width="200" height="1.5" style="--scan-travel:176px"/>
-  </g>
-  <text class="bank-title" x="64" y="356">FRAGMENTED TABLE</text>
-  <text class="bank-note" x="64" y="374">many small files inside</text>
+    <div class="mf-rail mf-rail-out" aria-hidden="true"><span></span><span></span><span></span></div>
 
-  <path class="flow-rail" d="M292 216h164M744 216h164"/>
-  <path class="flow-chevron" d="m442 208 14 8-14 8M894 208l14 8-14 8"/>
+    <section class="mf-card mf-after" aria-label="The same partition after maintenance">
+      <header><span class="mf-glyph" aria-hidden="true"></span> <b>TABLE</b> <em>AFTER</em></header>
+      <span class="mf-receipt"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>receipt</span>
+      <div class="mf-blocks" aria-hidden="true">
+        <i style="--d:0ms"></i><i style="--d:220ms"></i><i style="--d:440ms"></i><i style="--d:660ms"></i>
+      </div>
+      <dl class="mf-stats">
+        <div><dt>Files</dt>
+<dd>152</dd></div>
+        <div><dt>Avg size</dt>
+<dd>256 MB</dd></div>
+        <div><dt>Small files</dt>
+<dd class="is-good">0</dd></div>
+      </dl>
+    </section>
+  </div>
 
-  <g class="flow-packets" style="--travel-x:148px;--travel-y:0px">
-    <rect class="flow-packet packet-a" x="298" y="196" width="30" height="8" rx="2"/>
-    <rect class="flow-packet packet-b" x="298" y="212" width="22" height="8" rx="2"/>
-    <rect class="flow-packet packet-c" x="298" y="228" width="35" height="8" rx="2"/>
-  </g>
-
-  <g class="cryo-aperture">
-    <circle class="aperture-outer" cx="600" cy="216" r="114"/>
-    <circle class="stage-track" cx="600" cy="216" r="104"/>
-    <path class="stage-progress" pathLength="100" d="M526.46 142.46A104 104 0 0 1 673.54 142.46"/>
-    <circle class="aperture-dial" cx="600" cy="216" r="88"/>
-    <circle class="aperture-core" cx="600" cy="216" r="66"/>
-    <circle class="aperture-bezel" cx="600" cy="216" r="51"/>
-    <svg class="aperture-logo" x="553" y="169" width="94" height="94" viewBox="0 0 64 64" aria-hidden="true">
-      <g stroke="#0B0F16" stroke-width="1.6" stroke-linejoin="round">
-        <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
-        <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
-        <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
-        <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
-        <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
-        <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
-        <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
-        <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
-        <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
-      </g>
-      <g fill="none" stroke="#B8E1F3" stroke-width="2" stroke-linecap="round">
-        <path d="M17 19.5L20 22.3"/>
-        <path d="M27.6 14.5L29 18"/>
-        <path d="M13.9 34.1L17.2 34.7"/>
-      </g>
-      <g stroke="#0B0F16" stroke-width="2.2" stroke-linejoin="round">
-        <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
-        <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
-        <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
-      </g>
-      <g fill="none" stroke-width="1.1">
-        <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
-        <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
-        <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
-      </g>
-      <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.2" stroke-linejoin="round" stroke="#0B0F16"/>
-      <g stroke="#FFFFFF" stroke-linecap="round">
-        <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
-        <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
-      </g>
-    </svg>
-
-    <g class="stage-signal signal-scan">
-      <path d="M520.8 136.8 510 126"/>
-      <circle class="signal-halo" cx="526.46" cy="142.46" r="11"/>
-      <circle class="signal-node" cx="526.46" cy="142.46" r="6"/>
-      <text x="502" y="131" text-anchor="end"><tspan class="stage-index">01</tspan> SCAN</text>
-    </g>
-    <g class="stage-signal signal-admit">
-      <path d="M600 104V90"/>
-      <circle class="signal-halo" cx="600" cy="112" r="11"/>
-      <circle class="signal-node" cx="600" cy="112" r="6"/>
-      <text x="600" y="80" text-anchor="middle"><tspan class="stage-index">02</tspan> ADMIT</text>
-    </g>
-    <g class="stage-signal signal-rewrite">
-      <path d="M679.2 136.8 690 126"/>
-      <circle class="signal-halo" cx="673.54" cy="142.46" r="11"/>
-      <circle class="signal-node" cx="673.54" cy="142.46" r="6"/>
-      <text x="698" y="131"><tspan class="stage-index">03</tspan> REWRITE</text>
-    </g>
-
-    <g class="survey-marker">
-      <path class="survey-pole" d="M673.54 135V92"/>
-      <path class="survey-flag" d="M673.54 92h24l-6 8 6 8h-24z"/>
-    </g>
-
-    <text class="bank-title" x="600" y="356" text-anchor="middle">CRYO CONTROL PLANE</text>
-    <text class="bank-note" x="600" y="374" text-anchor="middle">admits work when engines have headroom</text>
-  </g>
-
-  <g class="table-card table-out">
-    <rect class="table-shell" x="908" y="86" width="228" height="248" rx="8"/>
-    <rect class="table-head" x="908" y="86" width="228" height="38" rx="8"/>
-    <rect class="table-head-clip" x="908" y="108" width="228" height="16"/>
-    <g class="table-glyph" transform="translate(924 99)">
-      <rect width="7" height="7" rx="1"/>
-      <rect x="9" width="7" height="7" rx="1"/>
-      <rect y="9" width="7" height="7" rx="1"/>
-      <rect x="9" y="9" width="7" height="7" rx="1"/>
-    </g>
-    <text class="table-name" x="952" y="111">TABLE</text>
-    <text class="table-meta" x="1112" y="111" text-anchor="end">AFTER</text>
-    <rect class="output-slot" x="924" y="144" width="196" height="44" rx="5"/>
-    <rect class="output-slot" x="924" y="200" width="196" height="44" rx="5"/>
-    <rect class="output-slot" x="924" y="256" width="196" height="44" rx="5"/>
-    <g class="maintenance-output" style="--enter-x:-20px;--enter-y:0px">
-      <g class="output-unit" style="--d:0.28s"><rect class="output-file" x="924" y="144" width="196" height="44" rx="5"/><path class="output-line" d="M944 166h156"/></g>
-      <g class="output-unit" style="--d:0.48s"><rect class="output-file" x="924" y="200" width="196" height="44" rx="5"/><path class="output-line" d="M944 222h156"/></g>
-      <g class="output-unit" style="--d:0.68s"><rect class="output-file" x="924" y="256" width="196" height="44" rx="5"/><path class="output-line" d="M944 278h156"/></g>
-    </g>
-    <g class="receipt-tag">
-      <path class="receipt-link" d="M1109 86v-2"/>
-      <rect class="receipt-card" x="1078" y="58" width="62" height="26" rx="3"/>
-      <path class="receipt-check" pathLength="1" d="m1087 71 4 4 8-8"/>
-      <path class="receipt-lines" d="M1107 67h22M1107 75h14"/>
-    </g>
-  </g>
-  <text class="bank-title" x="908" y="356">MAINTAINED TABLE</text>
-  <text class="bank-note" x="908" y="374">same table, with a receipt</text>
-</svg>
-<svg class="maintenance-flow-svg is-compact" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 752" role="img" aria-labelledby="maintenanceFlowTitleCompact maintenanceFlowDescCompact">
-  <title id="maintenanceFlowTitleCompact">Cryo maintains one Iceberg table: scan, admit, rewrite, receipt</title>
-  <desc id="maintenanceFlowDescCompact">The same Iceberg table is shown above and below Cryo. Above it is fragmented with many small files. Cryo scans, admits, then rewrites. Below, the same table holds a few right-sized files and an audit receipt.</desc>
-
-  <defs>
-    <pattern id="instrumentDotsCompact" width="18" height="18" patternUnits="userSpaceOnUse">
-      <circle class="instrument-dot" cx="1" cy="1" r="1"/>
-    </pattern>
-  </defs>
-
-  <rect class="instrument-field" width="360" height="752"/>
-  <rect width="360" height="752" fill="url(#instrumentDotsCompact)"/>
-
-  <path class="instrument-rule" d="M24 44h312"/>
-  <path class="instrument-ticks" d="M36 44v8m24-8v5m24-5v5m24-5v8m168-8v8m-24-8v5m-24-5v5m-24-5v8"/>
-
-  <text class="instrument-kicker" x="24" y="30">ONE TABLE · ONE CHUNK</text>
-  <text class="instrument-state" x="336" y="30" text-anchor="end">AUDITED</text>
-
-  <g class="table-card table-in">
-    <rect class="table-shell" x="28" y="58" width="304" height="168" rx="8"/>
-    <rect class="table-head" x="28" y="58" width="304" height="34" rx="8"/>
-    <rect class="table-head-clip" x="28" y="76" width="304" height="16"/>
-    <g class="table-glyph" transform="translate(44 69)">
-      <rect width="6" height="6" rx="1"/>
-      <rect x="8" width="6" height="6" rx="1"/>
-      <rect y="8" width="6" height="6" rx="1"/>
-      <rect x="8" y="8" width="6" height="6" rx="1"/>
-    </g>
-    <text class="table-name" x="70" y="81">TABLE</text>
-    <text class="table-meta" x="316" y="81" text-anchor="end">BEFORE</text>
-    <g class="file-slivers">
-      <g class="sliver-row" style="--i:0"><rect x="44" y="106" width="82" height="8" rx="2"/><rect x="132" y="106" width="48" height="8" rx="2"/><rect x="186" y="106" width="28" height="8" rx="2"/><rect x="220" y="106" width="92" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:1"><rect x="44" y="124" width="36" height="8" rx="2"/><rect x="86" y="124" width="110" height="8" rx="2"/><rect x="202" y="124" width="54" height="8" rx="2"/><rect x="262" y="124" width="50" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:2"><rect x="44" y="142" width="96" height="8" rx="2"/><rect x="146" y="142" width="32" height="8" rx="2"/><rect x="184" y="142" width="78" height="8" rx="2"/><rect x="268" y="142" width="44" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:3"><rect x="44" y="160" width="48" height="8" rx="2"/><rect x="98" y="160" width="88" height="8" rx="2"/><rect x="192" y="160" width="40" height="8" rx="2"/><rect x="238" y="160" width="74" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:4"><rect x="44" y="178" width="70" height="8" rx="2"/><rect x="120" y="178" width="52" height="8" rx="2"/><rect x="178" y="178" width="96" height="8" rx="2"/><rect x="280" y="178" width="32" height="8" rx="2"/></g>
-      <g class="sliver-row" style="--i:5"><rect x="44" y="196" width="40" height="8" rx="2"/><rect x="90" y="196" width="108" height="8" rx="2"/><rect x="204" y="196" width="36" height="8" rx="2"/><rect x="246" y="196" width="66" height="8" rx="2"/></g>
-    </g>
-    <rect class="scan-line" x="40" y="100" width="280" height="1.5" style="--scan-travel:110px"/>
-  </g>
-  <text class="bank-title" x="28" y="246">FRAGMENTED TABLE</text>
-  <text class="bank-note" x="28" y="264">many small files inside</text>
-
-  <path class="flow-rail" d="M148 278v36M148 516v28"/>
-  <path class="flow-chevron" d="m140 304 8 12 8-12M140 534l8 12 8-12"/>
-
-  <g class="flow-packets" style="--travel-x:0px;--travel-y:36px">
-    <rect class="flow-packet packet-a" x="134" y="280" width="28" height="6" rx="2"/>
-    <rect class="flow-packet packet-b" x="138" y="280" width="20" height="6" rx="2"/>
-    <rect class="flow-packet packet-c" x="132" y="280" width="32" height="6" rx="2"/>
-  </g>
-
-  <g class="cryo-aperture">
-    <circle class="aperture-outer" cx="148" cy="400" r="88"/>
-    <circle class="stage-track" cx="148" cy="400" r="78"/>
-    <path class="stage-progress" pathLength="100" d="M203.15 344.85A78 78 0 0 1 203.15 455.15"/>
-    <circle class="aperture-dial" cx="148" cy="400" r="64"/>
-    <circle class="aperture-core" cx="148" cy="400" r="50"/>
-    <circle class="aperture-bezel" cx="148" cy="400" r="38"/>
-    <svg class="aperture-logo" x="114" y="366" width="68" height="68" viewBox="0 0 64 64" aria-hidden="true">
-      <g stroke="#0B0F16" stroke-width="1.6" stroke-linejoin="round">
-        <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
-        <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
-        <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
-        <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
-        <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
-        <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
-        <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
-        <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
-        <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
-      </g>
-      <g fill="none" stroke="#B8E1F3" stroke-width="2" stroke-linecap="round">
-        <path d="M17 19.5L20 22.3"/>
-        <path d="M27.6 14.5L29 18"/>
-        <path d="M13.9 34.1L17.2 34.7"/>
-      </g>
-      <g stroke="#0B0F16" stroke-width="2.2" stroke-linejoin="round">
-        <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
-        <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
-        <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
-      </g>
-      <g fill="none" stroke-width="1.1">
-        <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
-        <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
-        <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
-      </g>
-      <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.2" stroke-linejoin="round" stroke="#0B0F16"/>
-      <g stroke="#FFFFFF" stroke-linecap="round">
-        <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
-        <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
-      </g>
-    </svg>
-
-    <g class="stage-signal signal-scan">
-      <path d="M208 340 218 330"/>
-      <circle class="signal-halo" cx="203.15" cy="344.85" r="10"/>
-      <circle class="signal-node" cx="203.15" cy="344.85" r="5.5"/>
-      <text x="224" y="332"><tspan class="stage-index">01</tspan> SCAN</text>
-    </g>
-    <g class="stage-signal signal-admit">
-      <path d="M234 400h12"/>
-      <circle class="signal-halo" cx="226" cy="400" r="10"/>
-      <circle class="signal-node" cx="226" cy="400" r="5.5"/>
-      <text x="252" y="405"><tspan class="stage-index">02</tspan> ADMIT</text>
-    </g>
-    <g class="stage-signal signal-rewrite">
-      <path d="M208 460 218 470"/>
-      <circle class="signal-halo" cx="203.15" cy="455.15" r="10"/>
-      <circle class="signal-node" cx="203.15" cy="455.15" r="5.5"/>
-      <text x="224" y="478"><tspan class="stage-index">03</tspan> REWRITE</text>
-    </g>
-
-    <g class="survey-marker">
-      <path class="survey-pole" d="M328 478v-22"/>
-      <path class="survey-flag" d="M328 456h18l-5 7 5 7h-18z"/>
-    </g>
-  </g>
-
-  <g class="table-card table-out">
-    <rect class="table-shell" x="28" y="560" width="304" height="148" rx="8"/>
-    <rect class="table-head" x="28" y="560" width="304" height="34" rx="8"/>
-    <rect class="table-head-clip" x="28" y="578" width="304" height="16"/>
-    <g class="table-glyph" transform="translate(44 571)">
-      <rect width="6" height="6" rx="1"/>
-      <rect x="8" width="6" height="6" rx="1"/>
-      <rect y="8" width="6" height="6" rx="1"/>
-      <rect x="8" y="8" width="6" height="6" rx="1"/>
-    </g>
-    <text class="table-name" x="70" y="583">TABLE</text>
-    <text class="table-meta" x="316" y="583" text-anchor="end">AFTER</text>
-    <rect class="output-slot" x="44" y="606" width="210" height="26" rx="4"/>
-    <rect class="output-slot" x="44" y="638" width="210" height="26" rx="4"/>
-    <rect class="output-slot" x="44" y="670" width="210" height="26" rx="4"/>
-    <g class="maintenance-output" style="--enter-x:0px;--enter-y:-10px">
-      <g class="output-unit" style="--d:0.28s"><rect class="output-file" x="44" y="606" width="210" height="26" rx="4"/><path class="output-line" d="M58 619h182"/></g>
-      <g class="output-unit" style="--d:0.48s"><rect class="output-file" x="44" y="638" width="210" height="26" rx="4"/><path class="output-line" d="M58 651h182"/></g>
-      <g class="output-unit" style="--d:0.68s"><rect class="output-file" x="44" y="670" width="210" height="26" rx="4"/><path class="output-line" d="M58 683h182"/></g>
-    </g>
-    <g class="receipt-tag">
-      <path class="receipt-link" d="M254 619h22"/>
-      <rect class="receipt-card" x="276" y="604" width="42" height="30" rx="3"/>
-      <path class="receipt-check" pathLength="1" d="m284 619 4 4 8-8"/>
-    </g>
-  </g>
-  <text class="bank-title" x="28" y="728">MAINTAINED TABLE</text>
-  <text class="bank-note" x="28" y="746">same table, with a receipt</text>
-</svg>
+  <ol class="mf-steps">
+    <li><button type="button" data-go="1"><span class="mf-n">01</span> <b>Scan</b> <span class="mf-d">Reads metadata. Never opens data files.</span> <span class="mf-bar"></span></button></li>
+    <li><button type="button" data-go="2"><span class="mf-n">02</span> <b>Plan</b> <span class="mf-d">Fits the partition into a size-budgeted chunk.</span> <span class="mf-bar"></span></button></li>
+    <li><button type="button" data-go="3"><span class="mf-n">03</span> <b>Admit</b> <span class="mf-d">Waits for a free slot on a Trino coordinator.</span> <span class="mf-bar"></span></button></li>
+    <li><button type="button" data-go="4"><span class="mf-n">04</span> <b>Rewrite</b> <span class="mf-d">OPTIMIZE on this partition only, never the whole table.</span> <span class="mf-bar"></span></button></li>
+    <li><button type="button" data-go="5"><span class="mf-n">05</span> <b>Receipt</b> <span class="mf-d">Logs what ran, where, how long, and what changed.</span> <span class="mf-bar"></span></button></li>
+  </ol>
+</div>
 
         </div>
         <p class="maintenance-demo-foot">
@@ -624,4 +479,4 @@ FIRST VIEWPORT: Type-first hero, tally, actions, stack. No product graphic.
   <g stroke="#FFFFFF" stroke-linecap="round">
     <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
     <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
-  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><p>Apache-2.0, self-hosted Iceberg maintenance with a receipt for every decision.</p></div><div><p class="foot-h">Docs</p><ul><li><a href="./quickstart/">Quickstart</a></li><li><a href="./concepts/">Concepts</a></li><li><a href="./architecture/">Architecture</a></li><li><a href="./reference/">Reference</a></li></ul></div><div><p class="foot-h">Operate</p><ul><li><a href="./maintenance/">Maintenance</a></li><li><a href="./health/">Health and cost</a></li><li><a href="./engines/">Engines</a></li><li><a href="./deployment/">Deployment</a></li></ul></div><div><p class="foot-h">Project</p><ul><li><a href="https://github.com/tech-pw/cryo">GitHub</a></li><li><a href="https://github.com/tech-pw/cryo/issues">Issues</a></li><li><a href="./llms.txt">llms.txt</a></li><li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 licence</a></li></ul></div></div><p class="foot-fine">Apache, Apache Iceberg, Iceberg and Apache Spark are trademarks of The Apache Software Foundation. Other names may be trademarks of their respective owners.</p></footer><dialog class="search" id="search" aria-label="Search the docs"><form method="dialog" class="search-box"><div class="search-field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="search-input" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="search-list"><kbd>Esc</kbd></div><ul class="search-list" id="search-list" role="listbox"></ul><p class="search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to open</span></p></form></dialog><script src="./assets/js/site.js?v=bced71b664" defer></script></body></html>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><p>Apache-2.0, self-hosted Iceberg maintenance with a receipt for every decision.</p></div><div><p class="foot-h">Docs</p><ul><li><a href="./quickstart/">Quickstart</a></li><li><a href="./concepts/">Concepts</a></li><li><a href="./architecture/">Architecture</a></li><li><a href="./reference/">Reference</a></li></ul></div><div><p class="foot-h">Operate</p><ul><li><a href="./maintenance/">Maintenance</a></li><li><a href="./health/">Health and cost</a></li><li><a href="./engines/">Engines</a></li><li><a href="./deployment/">Deployment</a></li></ul></div><div><p class="foot-h">Project</p><ul><li><a href="https://github.com/tech-pw/cryo">GitHub</a></li><li><a href="https://github.com/tech-pw/cryo/issues">Issues</a></li><li><a href="./llms.txt">llms.txt</a></li><li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 licence</a></li></ul></div></div><p class="foot-fine">Apache, Apache Iceberg, Iceberg and Apache Spark are trademarks of The Apache Software Foundation. Other names may be trademarks of their respective owners.</p></footer><dialog class="search" id="search" aria-label="Search the docs"><form method="dialog" class="search-box"><div class="search-field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="search-input" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="search-list"><kbd>Esc</kbd></div><ul class="search-list" id="search-list" role="listbox"></ul><p class="search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to open</span></p></form></dialog><script src="./assets/js/site.js?v=b76e2c1cc1" defer></script></body></html>
