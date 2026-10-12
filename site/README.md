@@ -28,6 +28,8 @@ Each page also writes `index.md`, and the site root writes `llms.txt`. HTML page
 
 The homepage's supported-stack list scrolls as a slow marquee, pauses on hover or focus, and wraps into a static list when reduced motion is enabled.
 
+The "What Cryo does" animation lives in `site/_src/includes/maintenance-flow.html`, its styles in the `.mf-*` block of `site.css`, and its controller in `site.js`. The markup is the finished state (step 5), and `.is-animated[data-step]` rules hide whatever hasn't happened yet, so the section stays readable without JavaScript or with reduced motion. Playback starts the first time the section scrolls into view; clicking a step pauses on it. In the markdown export, each step button keeps its text (`data-go`), and other buttons are dropped.
+
 ## Writing a page
 
 Fragments are plain HTML plus a few components. Link internally with `href="@/maintenance/#admission"`,

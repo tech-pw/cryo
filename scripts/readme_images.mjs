@@ -56,7 +56,10 @@ try {
     await page.evaluate((s) => document.documentElement.setAttribute("data-theme", s), scheme);
     const shots = { ...SITE_SHOTS };
     // The maintenance flow is a dark instrument panel in both themes, so one file serves both.
-    if (scheme === "light") shots["maintenance-flow"] = ".maintenance-machine";
+    if (scheme === "light") {
+      shots["maintenance-flow"] = ".maintenance-machine";
+      await page.addStyleTag({ content: "[data-mf-play]{visibility:hidden}" });
+    }
     for (const [name, selector] of Object.entries(shots)) {
       const el = page.locator(selector).first();
       await el.scrollIntoViewIfNeeded();

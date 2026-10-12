@@ -794,34 +794,93 @@
     });
 
     /* ---------- home: maintenance flow ---------- */
-    var maintenanceFlow = $("[data-maintenance-flow]");
-    if (maintenanceFlow && !still.matches) {
-        var flowSteps = [["", 280], ["at-scan", 700], ["at-admit", 520], ["at-rewrite", 1600], ["at-done", 1100]];
-        var flowAt = 0;
-        var flowTimer = 0;
-        var flowAdvance = function() {
-            var step = flowSteps[flowAt];
-            if (step[0]) maintenanceFlow.classList.add(step[0]);
-            else maintenanceFlow.classList.remove("at-scan", "at-admit", "at-rewrite", "at-done");
-            flowAt = (flowAt + 1) % flowSteps.length;
-            flowTimer = setTimeout(flowAdvance, step[1]);
+    var mf = $("[data-maintenance-flow] [data-mf]");
+    if (mf) {
+        var mfSteps = [
+            ["Small files piling up", 900],
+            ["Scanning metadata", 2600],
+            ["Planning the rewrite", 2600],
+            ["Waiting for headroom", 2600],
+            ["Rewriting one partition", 3400],
+            ["Every action audited", 3200]
+        ];
+        var mfNodes = $$(".mf-node", mf);
+        var mfPanels = $$(".mf-panel", mf);
+        var mfButtons = $$("[data-go]", mf);
+        var mfState = $("[data-mf-state]", mf);
+        var mfPlay = $("[data-mf-play]", mf);
+        var mfTiles = $(".mf-tiles", mf);
+        var mfLast = mfSteps.length - 1;
+        var mfAt = mfLast;
+        var mfTimer = 0;
+        var mfVisible = false;
+        var mfStarted = false;
+        var mfPaused = still.matches;
+        $$("i", mfTiles).forEach(function(tile, i) {
+            tile.style.setProperty("--i", i);
+        });
+        var mfMark = function(els, n) {
+            els.forEach(function(el, i) {
+                el.classList.toggle("is-done", i + 1 < n);
+                el.classList.toggle("is-active", i + 1 === n);
+            });
         };
-        var flowRun = function(on) {
-            if (on === maintenanceFlow.classList.contains("is-running")) return;
-            maintenanceFlow.classList.toggle("is-running", on);
-            clearTimeout(flowTimer);
-            if (on) {
-                flowAt = 0;
-                flowAdvance();
+        var mfShow = function(n) {
+            mfAt = n;
+            mf.setAttribute("data-step", n);
+            if (n === 4) mf.classList.add("is-rewritten");
+            else if (n < 4) mf.classList.remove("is-rewritten");
+            mfMark(mfNodes, n);
+            mfMark(mfPanels, n);
+            mfMark(mfButtons, n);
+            mfButtons.forEach(function(btn, i) {
+                if (i + 1 === n) btn.setAttribute("aria-current", "step");
+                else btn.removeAttribute("aria-current");
+            });
+            mfState.textContent = mfSteps[n][0];
+            mf.style.setProperty("--mf-dur", mfSteps[n][1] + "ms");
+            mf.style.setProperty("--mf-scan-h", Math.max(0, mfTiles.clientHeight - 24) + "px");
+        };
+        var mfTick = function() {
+            mfShow((mfAt + 1) % mfSteps.length);
+            mfTimer = setTimeout(mfTick, mfSteps[mfAt][1]);
+        };
+        var mfSync = function() {
+            var run = mfVisible && !mfPaused;
+            clearTimeout(mfTimer);
+            mf.classList.toggle("is-playing", run);
+            if (run) mfTimer = setTimeout(mfTick, mfSteps[mfAt][1]);
+            mfPlay.textContent = !mfPaused ? "Pause" : mfAt === mfLast ? "Replay" : "Play";
+        };
+        mfButtons.forEach(function(btn) {
+            btn.addEventListener("click", function() {
+                mfPaused = true;
+                mfShow(Number(btn.getAttribute("data-go")));
+                mfSync();
+            });
+        });
+        mfPlay.addEventListener("click", function() {
+            mfPaused = !mfPaused;
+            if (!mfPaused && mfAt === mfLast) mfShow(0);
+            mfSync();
+        });
+        mf.classList.add("is-animated");
+        mfPlay.hidden = false;
+        mfShow(mfLast);
+        var mfSeen = function(on) {
+            mfVisible = on;
+            if (on && !mfStarted && !mfPaused) {
+                mfStarted = true;
+                mfShow(0);
             }
+            mfSync();
         };
-        maintenanceFlow.classList.add("is-animated");
         if (window.IntersectionObserver) {
             new IntersectionObserver(function(es) {
-                flowRun(es[0].isIntersecting);
-            }, { threshold: 0.18 }).observe(maintenanceFlow);
+                mfSeen(es[0].isIntersecting);
+            }, { threshold: 0.18 }).observe(mf);
         } else {
-            flowRun(true);
+            mfSeen(true);
         }
     }
 

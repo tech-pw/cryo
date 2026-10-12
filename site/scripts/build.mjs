@@ -198,7 +198,7 @@ function htmlToMarkdown(html) {
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<svg[\s\S]*?<\/svg>/gi, "")
-    .replace(/<button[\s\S]*?<\/button>/gi, "")
+    .replace(/<button(?![^>]*data-go)[\s\S]*?<\/button>/gi, "")
     .replace(/<em class="shot-demo">[\s\S]*?<\/em>/gi, "")
     .replace(/<div class="shot-bar">[\s\S]*?<\/div>/gi, "")
     .replace(/<figure class="code"[\s\S]*?<\/figure>/gi, (fig) => {

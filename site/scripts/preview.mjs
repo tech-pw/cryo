@@ -61,8 +61,15 @@ function schedule(reason) {
 await rebuild("startup");
 
 createServer((req, res) => {
-  const url = new URL(req.url || "/", "http://localhost");
-  let rel = decodeURIComponent(url.pathname);
+  // A path starting with "//" is a protocol-relative URL to new URL(path, base), which throws.
+  const url = new URL(`http://localhost${req.url || "/"}`);
+  let rel;
+  try {
+    rel = "/" + decodeURIComponent(url.pathname).replace(/^\/+/, "");
+  } catch {
+    res.writeHead(400).end();
+    return;
+  }
   const file = normalize(join(SITE, rel));
   if (!file.startsWith(SITE)) {
     res.writeHead(403).end();

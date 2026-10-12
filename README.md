@@ -39,7 +39,7 @@ down everything it did.
 > every time.*
 
 <p align="center">
-  <img src="docs/img/maintenance-flow.png" alt="One Iceberg table passes through Cryo. On the left, a fragmented table holds many small files. In the middle, the Cryo control plane scans, admits the work when engines have headroom, and rewrites. On the right, the same table holds a few right-sized files and an audit receipt." width="100%">
+  <img src="docs/img/maintenance-flow.png" alt="One partition of analytics.events passes through Cryo in five steps: scan, plan, admit, rewrite, receipt. On the left, before: 2,140 files averaging 18 MB, all of them small. In the middle, the audit log entry: optimize succeeded on trino-b in 4 minutes 12 seconds, 2,140 files down to 152. On the right, after: 152 files averaging 256 MB, none small, stamped with a receipt." width="100%">
 </p>
 
 ## Why Cryo
