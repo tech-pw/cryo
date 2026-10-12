@@ -31,9 +31,36 @@
   }
 }
 
+.login-panel {
+  animation: login-panel-arrive 400ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.login-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: rgb(255 255 255 / 45%);
+  pointer-events: none;
+}
+
+@keyframes login-panel-arrive {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
 @keyframes motion-highlight {
   from {
     background-color: var(--color-primary-soft);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .login-panel {
+    background: var(--primitive-surface);
+    backdrop-filter: none;
   }
 }
 

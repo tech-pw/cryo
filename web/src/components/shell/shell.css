@@ -233,42 +233,41 @@
 
 .cryo-shell__brand {
   flex: 0 0 auto;
-  height: 64px;
+  height: 48px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 0 16px;
+  border-bottom: 1px solid var(--color-border-default);
   color: var(--sidebar-text-active);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+
+.cryo-shell__brand:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
 }
 
 .cryo-shell__brand-mark {
   display: block;
   flex: none;
-  width: 32px;
-  height: 32px;
+  width: 22px;
+  height: 22px;
+}
+
+.cryo-shell--sidebar-collapsed .cryo-shell__brand-mark {
+  width: 20px;
+  height: 20px;
 }
 
 .cryo-shell__brand-copy {
-  display: flex;
   min-width: 0;
-  flex-direction: column;
-  line-height: 1.1;
-}
-
-.cryo-shell__brand-copy strong {
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.cryo-shell__brand-copy small {
-  margin-top: 3px;
-  color: #8f9cad;
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.035em;
+  overflow: visible;
+  line-height: 1.25;
+  padding-bottom: 0.08em;
 }
 
 .cryo-shell__nav {

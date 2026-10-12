@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 
 import { useAuth } from "../../lib/auth";
 import { CryoMark } from "../brand/CryoMark";
@@ -25,13 +25,10 @@ export const Sidebar = ({ pathname, mobileOpen, onNavigate }: SidebarProps) => {
       id="primary-navigation"
       aria-label="Primary navigation"
     >
-      <div className="cryo-shell__brand">
+      <Link to="/" className="cryo-shell__brand" aria-label="Cryo, go to home" onClick={onNavigate}>
         <CryoMark className="cryo-shell__brand-mark" aria-hidden />
-        <span className="cryo-shell__brand-copy">
-          <strong>Cryo</strong>
-          <small style={{ color: "var(--sidebar-text)", letterSpacing: 0 }}>Iceberg control plane</small>
-        </span>
-      </div>
+        <span className="cryo-shell__brand-copy">Cryo</span>
+      </Link>
       <nav className="cryo-shell__nav">
         {NAV_GROUPS.map((group) => {
           const items = group.items.filter((item) => !item.adminOnly || role === "admin");
