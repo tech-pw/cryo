@@ -27,8 +27,7 @@ pub struct OrphanScanSummary {
 }
 
 pub fn normalize_storage_path(path: &str) -> String {
-    path.replace("s3a://", "s3://")
-        .replace("s3n://", "s3://")
+    path.replace("s3a://", "s3://").replace("s3n://", "s3://")
 }
 
 /// Collect all file paths referenced by the table's live metadata and snapshots.
@@ -234,7 +233,8 @@ mod tests {
 
     #[test]
     fn parse_table_location() {
-        let (bucket, prefix) = parse_s3_location("s3://warehouse/db/table").expect("parse location");
+        let (bucket, prefix) =
+            parse_s3_location("s3://warehouse/db/table").expect("parse location");
         assert_eq!(bucket, "warehouse");
         assert_eq!(prefix, "db/table/");
     }

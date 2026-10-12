@@ -193,26 +193,18 @@ async fn execute_operation(
     info!(operation = %op.operation_type, "executing operation");
 
     match op.operation_type.as_str() {
-        "optimize" | "rewrite_data_files" => {
-            operations::rewrite_data_files(request, op)
-                .await
-                .context("rewrite_data_files failed")
-        }
-        "expire_snapshots" => {
-            operations::expire_snapshots(request, op)
-                .await
-                .context("expire_snapshots failed")
-        }
-        "remove_orphan_files" => {
-            operations::remove_orphan_files(request, op)
-                .await
-                .context("remove_orphan_files failed")
-        }
-        "optimize_manifests" | "rewrite_manifests" => {
-            operations::rewrite_manifests(request, op)
-                .await
-                .context("rewrite_manifests failed")
-        }
+        "optimize" | "rewrite_data_files" => operations::rewrite_data_files(request, op)
+            .await
+            .context("rewrite_data_files failed"),
+        "expire_snapshots" => operations::expire_snapshots(request, op)
+            .await
+            .context("expire_snapshots failed"),
+        "remove_orphan_files" => operations::remove_orphan_files(request, op)
+            .await
+            .context("remove_orphan_files failed"),
+        "optimize_manifests" | "rewrite_manifests" => operations::rewrite_manifests(request, op)
+            .await
+            .context("rewrite_manifests failed"),
         other => {
             anyhow::bail!("unsupported operation type: {other}")
         }

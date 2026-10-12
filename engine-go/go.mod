@@ -3,7 +3,7 @@ module github.com/cryo-lake/cryo/engine-go
 // Pinned apache/iceberg-go v0.6.0 (compaction #892, analyze #893, delete removal #851,
 // bin-pack #850, conflict detection #830). Default build: CGO_ENABLED=0 + gocloud FileIO.
 
-go 1.25.5
+go 1.27.2
 
 // CRYO PATCH: local fork with a one-function fix for a day/month/year/hour-transform
 // partition rewrite-commit bug (avro: cannot use time.Time with Avro type int). See

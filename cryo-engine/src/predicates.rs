@@ -9,7 +9,9 @@ use iceberg::spec::{DataFile, Literal, PrimitiveLiteral, Transform};
 use iceberg::table::Table;
 
 pub fn operation_has_predicates(op: &OperationRequest) -> bool {
-    op.predicates.iter().any(|predicate| !predicate.terms.is_empty())
+    op.predicates
+        .iter()
+        .any(|predicate| !predicate.terms.is_empty())
 }
 
 /// Returns a human-readable reason when execute-mode compaction cannot honor predicates.
@@ -38,7 +40,11 @@ fn term_unsupported_reason(term: &PredicateTermRequest) -> Option<String> {
 }
 
 /// True when the data file matches any OR-branch predicate (each branch is AND of terms).
-pub fn matches_any_predicate(data_file: &DataFile, table: &Table, predicates: &[PredicateRequest]) -> Result<bool> {
+pub fn matches_any_predicate(
+    data_file: &DataFile,
+    table: &Table,
+    predicates: &[PredicateRequest],
+) -> Result<bool> {
     if predicates.is_empty() {
         return Ok(true);
     }
@@ -156,8 +162,12 @@ fn identity_literal_matches(literal: &Literal, expected: &serde_json::Value) -> 
         Literal::Primitive(PrimitiveLiteral::String(actual)) => {
             expected.as_str().map(|v| v == actual).unwrap_or(false)
         }
-        Literal::Primitive(PrimitiveLiteral::Int(actual)) => json_as_i64(expected) == Some(*actual as i64),
-        Literal::Primitive(PrimitiveLiteral::Long(actual)) => json_as_i64(expected) == Some(*actual),
+        Literal::Primitive(PrimitiveLiteral::Int(actual)) => {
+            json_as_i64(expected) == Some(*actual as i64)
+        }
+        Literal::Primitive(PrimitiveLiteral::Long(actual)) => {
+            json_as_i64(expected) == Some(*actual)
+        }
         Literal::Primitive(PrimitiveLiteral::Boolean(actual)) => {
             expected.as_bool().map(|v| v == *actual).unwrap_or(false)
         }
@@ -199,10 +209,7 @@ mod tests {
     #[test]
     fn numeric_literal_matches_epoch_day() {
         let literal = Literal::Primitive(PrimitiveLiteral::Int(20337));
-        assert!(numeric_literal_matches(
-            &literal,
-            &serde_json::json!(20337)
-        ));
+        assert!(numeric_literal_matches(&literal, &serde_json::json!(20337)));
     }
 
     #[test]

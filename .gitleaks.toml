@@ -37,6 +37,10 @@ regexes = [
   # tests/test_assistant_actions.py's Slack-signature test fixture -- literal placeholder,
   # not a real secret.
   '''8f742231b10e8888abcd99yyyzzz85a5''',
+  # web/src/pages/ScanCost.test.tsx's query-engine client-name fixtures, not secrets --
+  # gitleaks' generic-api-key rule matches on string shape/entropy, not meaning.
+  '''Metabase v0\.60\.0''',
+  '''dbt-trino-1\.9\.2''',
 ]
 
 [[allowlists]]

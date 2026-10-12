@@ -68,9 +68,14 @@ pub async fn binpack_candidates_to_staging(
 
     let combined = concat_batches(&schema, &all_batches)?;
     let staging_prefix = staging_location(table);
-    let (output_files, bytes_written) =
-        write_binpack_output(&file_io, &staging_prefix, &schema, &combined, target_file_size_bytes)
-            .await?;
+    let (output_files, bytes_written) = write_binpack_output(
+        &file_io,
+        &staging_prefix,
+        &schema,
+        &combined,
+        target_file_size_bytes,
+    )
+    .await?;
 
     info!(
         input_files = candidates.len(),

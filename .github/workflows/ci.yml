@@ -13,6 +13,13 @@ on:
       - "docs/**"
       - "**.md"
       - "site/**"
+  # GitHub Actions does not reliably fire push events for force-pushes (confirmed live,
+  # 2026-10-12: a force-push to main from the OSS sync job produced no CI run at all,
+  # and this workflow has no other way to re-run against current main since dispatch
+  # didn't exist). The OSS mirror is force-pushed on every sync by design (see
+  # scripts/sync_oss_mirror.sh) -- this restores a manual way to get a CI result on
+  # current main without needing an unrelated push to trigger one.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -543,6 +550,7 @@ jobs:
           cache: pip
 
       - name: Install backend deps (for the API server the e2e hits)
+        working-directory: .
         run: |
           pip install -U pip
           pip install -e ".[dev]"
@@ -554,9 +562,11 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run DB migrations
+        working-directory: .
         run: alembic upgrade head
 
       - name: Start API + Vite dev server
+        working-directory: .
         run: |
           uvicorn cryo.api.app:create_app --factory --port 8000 --host 127.0.0.1 &
           API_PID=$!
