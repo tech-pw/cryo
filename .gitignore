@@ -10,6 +10,8 @@
 # Local AI-agent scratch state (plans, worktrees) — not project source
 .kilo/
 .cursor/plans/
+.agents/skills/
+skills-lock.json
 
 # Local operational docs (ticket writeups, incident notes) —
 # not part of the public OSS release; keep these out of history going forward.
