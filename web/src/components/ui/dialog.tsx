@@ -43,7 +43,7 @@ const DialogContent = forwardRef<
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-[var(--radius-sm)] opacity-70 transition-opacity duration-[var(--motion-fast)] hover:opacity-100 focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-ring">
+      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-[var(--radius-sm)] text-foreground opacity-80 transition-opacity duration-[var(--motion-fast)] hover:opacity-100 focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-ring">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
