@@ -19,6 +19,11 @@ Apache Iceberg tables decay quietly. Every streaming write and every small batch
 tiny Parquet file. Snapshots pile up. Failed jobs leave orphan files that nothing references but
 everyone still pays to store. Queries get slower, and the S3 bill gets bigger.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/table-decay-dark.png">
+  <img src="docs/img/table-decay-light.png" alt="What decays in an Iceberg table, and what Cryo runs for each, in run order. Delete files: convert_deletes and rewrite_position_deletes (Spark only). Small data files: optimize. Column statistics: compute_statistics. Manifests: optimize_manifests. Snapshots: expire_snapshots. Orphan files that no snapshot references: remove_orphan_files." width="100%">
+</picture>
+
 Most teams fight this with an Airflow DAG that computes stats, a second DAG that shells out to
 per-table dbt runs, and a set of macros holding the real logic. None of it shares state, none of
 it has a UI, and running maintenance on one table right now means hand-editing a macro and hoping
@@ -118,6 +123,40 @@ A table is **discovered** from a source (a catalog Cryo reads) and **maintained*
 4. **Worker** asks the **planner** for a partition-aware plan, renders it for Trino or Spark,
    and executes it, one table at a time, under a per-table lock.
 5. **Audit log** records the result. A failure on one table never fails the run.
+
+### Scan: every table gets a grade
+
+The scanner reads catalog metadata, never data files, and scores each table against 14 checks. The
+grade isn't a black box: every point lost comes with its reason and the operation that wins it back.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/health-grade-dark.png">
+  <img src="docs/img/health-grade-light.png" alt="How a table earns its grade. analytics.events starts at 100, loses 20 for small-file fragmentation (62.3% small files, fixed by optimize), 8 for snapshot retention buildup (184 snapshots, fixed by expire_snapshots) and 8 for manifest bloat (212 manifests, fixed by optimize_manifests), ending at 64, grade C. Bands: A from 90, B from 75, C from 60, D from 40, F below 40. Critical findings cost 20 points and warnings 8; count limits grow with table size." width="100%">
+</picture>
+
+### Plan: partition by partition, never the whole table
+
+The planner ranks partitions by small-file count from the stored scan, drops the ones that aren't
+worth rewriting, and packs the rest into chunks under a GB budget. One oversized partition runs on
+its own. The plan holds partition predicates, not SQL; each engine renders its own dialect.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/planner-chunks-dark.png">
+  <img src="docs/img/planner-chunks-light.png" alt="How the planner keeps OPTIMIZE from swamping Trino. Eight day partitions are ranked by small files; two with fewer than 128 small files are skipped. The rest pack into three chunks under a 100 GB budget: 79 GB with two partitions, a 160 GB partition that runs alone because it is over budget, and 78 GB with three partitions. Chunk 1 renders as a Trino ALTER TABLE EXECUTE optimize with a WHERE clause per partition, or as a Spark rewrite_data_files call with the same predicates." width="100%">
+</picture>
+
+### Admit: only when the engine has room
+
+Workers don't grab work on their own. The governor checks each job, then counts the rewrites
+already running on each Trino coordinator and admits work only into free slots. That's why adding
+workers never adds parallel `OPTIMIZE`s.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/governor-admission-dark.png">
+  <img src="docs/img/governor-admission-light.png" alt="How the governor decides when a job runs. A queued optimize job for analytics.events passes four groups of checks: is it allowed (not paused, access policy, approval for destructive operations, PII policy), is it due (cooldown, off-peak window, deadline and budget, optional ROI), is the table free (per-table lock), and is it safe (optional predicted p95 latency). It then needs a free slot: trino-a is full, trino-b has room and takes the job, trino-c has two free. A failed check defers the job with a reason; with no free slot it waits for the next governor wave." width="100%">
+</picture>
+
+### Rewrite and record
 
 <table>
   <tr>
