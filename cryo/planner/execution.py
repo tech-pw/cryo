@@ -146,19 +146,29 @@ def execution_plan_params(
 def skip_operations_from_preset(
     operations: tuple[OperationType, ...] | None,
 ) -> list[str]:
-    if not operations:
-        return []
-    requested = set(operations)
-    skipped = [
-        operation.value for operation in _PRESET_GATED_OPERATION_TYPES if operation not in requested
-    ]
-    if OperationType.OPTIMIZE not in requested:
-        skipped.extend(
-            operation.value
-            for operation in _COMPACTION_FAMILY_OPERATION_TYPES
-            if operation not in requested
-        )
-    return skipped
+    """Deliberately always returns []: Preset.operations no longer force-skips anything.
+
+    Until 2026-10, any operation type absent from a preset's `operations` list was force-
+    skipped here regardless of what the table actually needed -- confirmed live, 2026-10-13:
+    a table assigned the "default-spark-compact" preset (operations=["optimize"]) only ever
+    got optimize, even on a deep-mode run, with expire_snapshots/remove_orphan_files/
+    optimize_manifests silently dropped every single time by this allowlist, not by any
+    per-table decision.
+
+    build_plan() (cryo/planner/planner.py) already decides what a given table actually needs
+    -- small-files threshold for optimize, delete-ratio policy for convert_deletes vs.
+    rewrite_position_deletes, mode-gating for orphan/manifest work -- and already writes a
+    plan.notes entry explaining every operation it skips. That per-table decision is the
+    real gate now; a preset's operations list is no longer consulted as a second, blunter
+    one layered on top of it. _PRESET_GATED_OPERATION_TYPES/_COMPACTION_FAMILY_OPERATION_TYPES
+    above are kept only as a record of what used to be gated, not read by this function
+    anymore -- do not wire them back in without re-reading the regression comment in
+    planner.py's _apply_skip_operations, which is the reason this mechanism existed at all
+    (Preset.operations looked like it controlled execution for over a month without actually
+    doing so, until the 2026-08-03 fix made it a real gate -- this change removes it as a
+    gate again, deliberately, not by accident this time).
+    """
+    return []
 
 
 def gate_orphan_removal_on_shared_location(
@@ -213,19 +223,14 @@ def gate_native_optimize_manifests(
     operations: tuple[OperationType, ...] | None,
     destination: ExecutionDestination,
 ) -> MaintenancePlan:
-    if not destination_is_native(destination):
-        return plan
-    if all(operation.type is not OperationType.OPTIMIZE_MANIFESTS for operation in plan.operations):
-        return plan
-    if operations is not None and OperationType.OPTIMIZE_MANIFESTS in operations:
-        return plan
-    return MaintenancePlan(
-        table_ref=plan.table_ref,
-        mode=plan.mode,
-        operations=tuple(
-            operation
-            for operation in plan.operations
-            if operation.type is not OperationType.OPTIMIZE_MANIFESTS
-        ),
-        notes=plan.notes,
-    )
+    """Deliberately a no-op as of 2026-10-13: see skip_operations_from_preset's docstring.
+
+    This used to strip optimize_manifests from a native-engine plan unless the preset's
+    operations list explicitly named it -- the same preset-as-allowlist pattern removed
+    there, just special-cased to one operation and one engine. No documented reason was
+    found for why native/optimize_manifests needed a second, separate gate on top of
+    build_plan's own mode-gating (optimize_manifests is deep-only already) -- kept as a
+    pass-through, not deleted, so a real native-engine-specific constraint can be reinstated
+    here deliberately if one turns out to exist, rather than rediscovering this function.
+    """
+    return plan
