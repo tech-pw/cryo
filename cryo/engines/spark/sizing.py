@@ -91,6 +91,51 @@ DISPATCH_DRIVER_CPU_MILLI = 1000
 DISPATCH_DRIVER_MEM_MIB = 2048
 DISPATCH_DEADLINE_SECONDS = 7200
 
+# Confirmed live, 2026-10-13: this flat ceiling (correctly) stops a 1GB job from
+# reserving a big cluster, but applies identically to a 144.5GB/4,239-small-file table --
+# 2 executors x 1 vCPU/2GiB each, same as the smallest job on this destination. That
+# table's optimize alone took 1h51m against 84 partition predicates; more executors would
+# have let Spark actually parallelize across them instead of serializing through 2 slots.
+# Reuses _SIZE_TIERS' existing size breaks (already tuned against this destination's real
+# traffic) so a table's executor *ceiling* scales with the same breakpoints its executor
+# *fraction* already does -- just against a bigger max for tables that have earned it,
+# not a second, disconnected set of thresholds to keep in sync by hand.
+_DISPATCH_CEILING_TIERS: tuple[tuple[float, int, int, int], ...] = (
+    # (size_gb_upper_bound, executor_instances, executor_cpu_milli, executor_mem_mib)
+    (50.0, DISPATCH_EXECUTOR_INSTANCES, DISPATCH_EXECUTOR_CPU_MILLI, DISPATCH_EXECUTOR_MEM_MIB),
+    (500.0, 6, 2000, 4096),
+    (5_000.0, 12, 3000, 6144),
+)
+_DISPATCH_CEILING_EXECUTOR_INSTANCES = 20
+_DISPATCH_CEILING_EXECUTOR_CPU_MILLI = 3000
+_DISPATCH_CEILING_EXECUTOR_MEM_MIB = 6144
+# Driver stays flat across tiers (DISPATCH_DRIVER_* above, unchanged by any tier) -- it
+# coordinates partition predicates, doesn't process them, so its own cost scales far more
+# weakly with table size than executor count does (same reasoning _MIN_DRIVER_FRACTION
+# already uses for scale_executor_profile above).
+
+
+def _dispatch_ceiling_for_table(
+    total_size_gb: float | None,
+) -> tuple[int, int, int]:
+    """(max_executor_instances, max_executor_cpu_milli, max_executor_mem_mib) for this size.
+
+    Unknown size takes the smallest tier -- same fail-safe-small choice _tier_fraction and
+    cap_deadline_seconds_for_table both make when size isn't known yet.
+    """
+    if total_size_gb is None:
+        tier = _DISPATCH_CEILING_TIERS[0]
+        return tier[1], tier[2], tier[3]
+    for upper_bound, instances, cpu_milli, mem_mib in _DISPATCH_CEILING_TIERS:
+        if total_size_gb < upper_bound:
+            return instances, cpu_milli, mem_mib
+    return (
+        _DISPATCH_CEILING_EXECUTOR_INSTANCES,
+        _DISPATCH_CEILING_EXECUTOR_CPU_MILLI,
+        _DISPATCH_CEILING_EXECUTOR_MEM_MIB,
+    )
+
+
 # Confirmed live, 2026-10-07: a flat 7200s ceiling (below) correctly stopped small jobs
 # from holding capacity forever, but applies to every job regardless of table size, same
 # blind spot CPU/memory scaling above was built to fix. Of 50 tables dispatched on
@@ -139,15 +184,29 @@ _LIGHTWEIGHT_PROFILE = ExecutorProfile(
 
 
 def cap_dispatch_profile(
-    profile: ExecutorProfile, *, operation: str | None = None
+    profile: ExecutorProfile,
+    *,
+    operation: str | None = None,
+    total_size_gb: float | None = None,
 ) -> ExecutorProfile:
-    """Bound what a cryo-spark submit is allowed to reserve, whatever the destination says."""
+    """Bound what a cryo-spark submit is allowed to reserve, whatever the destination says.
+
+    total_size_gb scales the executor ceiling itself (not just the fraction of it a job
+    gets, which scale_executor_profile already does) -- see _dispatch_ceiling_for_table.
+    Omitted entirely, this falls back to the original flat DISPATCH_EXECUTOR_* ceiling, so
+    every existing caller that doesn't pass it keeps today's behavior unchanged.
+    """
     if operation in _LIGHTWEIGHT_OPS:
         return _LIGHTWEIGHT_PROFILE
+    max_instances, max_cpu_milli, max_mem_mib = (
+        _dispatch_ceiling_for_table(total_size_gb)
+        if total_size_gb is not None
+        else (DISPATCH_EXECUTOR_INSTANCES, DISPATCH_EXECUTOR_CPU_MILLI, DISPATCH_EXECUTOR_MEM_MIB)
+    )
     return ExecutorProfile(
-        executor_instances=min(profile.executor_instances, DISPATCH_EXECUTOR_INSTANCES),
-        executor_cpu_milli=min(profile.executor_cpu_milli, DISPATCH_EXECUTOR_CPU_MILLI),
-        executor_mem_mib=min(profile.executor_mem_mib, DISPATCH_EXECUTOR_MEM_MIB),
+        executor_instances=min(profile.executor_instances, max_instances),
+        executor_cpu_milli=min(profile.executor_cpu_milli, max_cpu_milli),
+        executor_mem_mib=min(profile.executor_mem_mib, max_mem_mib),
         driver_cpu_milli=min(profile.driver_cpu_milli, DISPATCH_DRIVER_CPU_MILLI),
         driver_mem_mib=min(profile.driver_mem_mib, DISPATCH_DRIVER_MEM_MIB),
     )

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from cryo.engines.spark.sizing import (
     DISPATCH_DEADLINE_SECONDS,
+    DISPATCH_EXECUTOR_INSTANCES,
     ExecutorProfile,
     cap_deadline_seconds_for_table,
     cap_dispatch_profile,
@@ -151,3 +152,70 @@ def test_deadline_still_caps_a_lower_configured_value() -> None:
 
 def test_deadline_unknown_size_falls_back_to_the_flat_cap() -> None:
     assert cap_deadline_seconds_for_table(14_400, total_size_gb=None) == DISPATCH_DEADLINE_SECONDS
+
+
+# Confirmed live, 2026-10-13: a 144.5GB table with 4,239 small files and 84 partition
+# predicates took 1h51m to optimize against the flat DISPATCH_EXECUTOR_* ceiling --
+# 2 executors x 1 vCPU/2GiB each, identical to what a 1GB job gets. cap_dispatch_profile's
+# total_size_gb parameter scales that CEILING itself (not just the fraction of it a job
+# gets, which scale_executor_profile already did), so a genuinely large table can actually
+# use more of the destination's configured capacity instead of serializing through the
+# same 2 slots as everything else on the destination.
+_BIG_PROFILE = ExecutorProfile(
+    executor_instances=20,
+    executor_cpu_milli=3000,
+    executor_mem_mib=6144,
+    driver_cpu_milli=2000,
+    driver_mem_mib=4096,
+)
+
+
+def test_dispatch_ceiling_small_table_matches_the_original_flat_cap() -> None:
+    # Omitting total_size_gb (every pre-existing caller) must be bit-for-bit identical to
+    # before this change -- no regression for callers that don't know a table's size yet.
+    with_size = cap_dispatch_profile(_BIG_PROFILE, total_size_gb=0.5)
+    without_size = cap_dispatch_profile(_BIG_PROFILE)
+    assert with_size == without_size
+    assert with_size.executor_instances == DISPATCH_EXECUTOR_INSTANCES
+
+
+def test_dispatch_ceiling_raises_for_a_mid_size_table() -> None:
+    profile = cap_dispatch_profile(_BIG_PROFILE, total_size_gb=144.5)
+    assert profile.executor_instances == 6
+    assert profile.executor_instances > DISPATCH_EXECUTOR_INSTANCES
+
+
+def test_dispatch_ceiling_raises_further_for_a_large_table() -> None:
+    profile = cap_dispatch_profile(_BIG_PROFILE, total_size_gb=800.0)
+    assert profile.executor_instances == 12
+
+
+def test_dispatch_ceiling_full_ceiling_for_a_huge_table() -> None:
+    profile = cap_dispatch_profile(_BIG_PROFILE, total_size_gb=6_000.0)
+    assert profile.executor_instances == 20
+
+
+def test_dispatch_ceiling_still_caps_a_lower_configured_value() -> None:
+    # The destination's own config (profile, here) can only ever shrink the result, same
+    # min() behavior as every other cap in this module -- a destination configured for 1
+    # executor on a 6TB table must not get bumped up to 20.
+    small_profile = ExecutorProfile(
+        executor_instances=1,
+        executor_cpu_milli=500,
+        executor_mem_mib=1024,
+        driver_cpu_milli=500,
+        driver_mem_mib=1024,
+    )
+    profile = cap_dispatch_profile(small_profile, total_size_gb=6_000.0)
+    assert profile.executor_instances == 1
+
+
+def test_dispatch_ceiling_lightweight_ops_ignore_table_size() -> None:
+    # expire_snapshots/orphan-removal/manifest-rewrite/stats don't rewrite data files, so
+    # table size shouldn't change their footprint -- the lightweight-op short-circuit must
+    # still fire before total_size_gb is ever consulted.
+    profile = cap_dispatch_profile(
+        _BIG_PROFILE, operation="expire_snapshots", total_size_gb=6_000.0
+    )
+    assert profile.executor_instances == 1
+    assert profile.executor_mem_mib == 1024
