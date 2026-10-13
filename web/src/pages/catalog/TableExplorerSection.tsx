@@ -1280,6 +1280,7 @@ export const TableExplorerSection = () => {
           <ExplorerTableMeta filters={filters} matchingTotal={matchingTotal} filtered={filtersActive} />
         <DataTable
           className="datalake-table"
+          fillAvailableWidth
           columns={groupColumns}
           data={(grouped.data?.rows ?? []) as GroupRow[]}
           density="compact"
@@ -1298,6 +1299,7 @@ export const TableExplorerSection = () => {
           <ExplorerTableMeta filters={filters} matchingTotal={matchingTotal} filtered={filtersActive} />
           <DataTable
             className="datalake-table"
+            fillAvailableWidth
             columns={tableColumns}
             data={pageItems}
             density="compact"

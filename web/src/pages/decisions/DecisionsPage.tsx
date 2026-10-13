@@ -406,8 +406,10 @@ export function DecisionsPage() {
       id: "state",
       header: "Review state",
       cell: ({ row }) => (
-        <div className="flex flex-col gap-0.5">
-          <Badge variant={statusVariant(row.original.status)}>{row.original.status}</Badge>
+        <div className="flex w-fit max-w-full flex-col gap-0.5">
+          <Badge variant={statusVariant(row.original.status)} className="w-fit capitalize">
+            {row.original.status}
+          </Badge>
           {reviewStamp(row.original) ? (
             <span className="text-xs text-muted-foreground">{reviewStamp(row.original)}</span>
           ) : null}

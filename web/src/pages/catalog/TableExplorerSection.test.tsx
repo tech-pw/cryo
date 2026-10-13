@@ -282,6 +282,9 @@ describe("TableExplorerSection filters", () => {
 
     const link = await screen.findByRole("link", { name: /analytics\.orders/i });
     expect(link).toHaveAttribute("href", "/tables/tbl-1");
+    const table = link.closest("table");
+    expect(table).toHaveClass("table-auto", "w-full");
+    expect(table?.querySelector("th")).not.toHaveAttribute("style");
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
     expect(screen.queryByText(/0 \/ /)).not.toBeInTheDocument();
   });

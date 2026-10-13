@@ -30,7 +30,6 @@ import { EmptyState } from "../components/ui/empty-state";
 import { FormField, FormProvider, useZodForm, zodResolver } from "../components/ui/form";
 import { FormErrorSummary } from "../components/ui/form-error-summary";
 import { Input } from "../components/ui/input";
-import { PageHeader } from "../components/ui/page-header";
 import { Select } from "../components/ui/select";
 import { Separator } from "../components/ui/separator";
 import { Skeleton } from "../components/ui/skeleton";
@@ -545,22 +544,24 @@ export const Skillsets = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title="AI Skillsets"
-        subtitle="Versioned prompt + tool definitions used by the Table Detail AI insights. Outcomes are recorded per recommendation; acceptance rate drives A/B rollouts. Only one version per skillset name is active at a time."
-        actions={
-          <Button
-            variant="primary"
-            disabled={!canWrite}
-            onClick={() => {
-              createForm.reset(DEFAULT_CREATE_VALUES);
-              setCreateOpen(true);
-            }}
-          >
-            Create candidate
-          </Button>
-        }
-      />
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-base font-medium tracking-[-0.01em]">AI Skillsets</h2>
+          <p className="mt-1 max-w-[68ch] text-sm leading-relaxed text-muted-foreground">
+            Versioned prompt + tool definitions used by the Table Detail AI insights. Outcomes are recorded per recommendation; acceptance rate drives A/B rollouts. Only one version per skillset name is active at a time.
+          </p>
+        </div>
+        <Button
+          variant="primary"
+          disabled={!canWrite}
+          onClick={() => {
+            createForm.reset(DEFAULT_CREATE_VALUES);
+            setCreateOpen(true);
+          }}
+        >
+          Create candidate
+        </Button>
+      </div>
 
       <Card>
         <CardContent className="flex flex-wrap gap-5 pt-6 text-sm text-muted-foreground">

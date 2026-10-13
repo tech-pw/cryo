@@ -95,7 +95,7 @@
   align-items: center;
   column-gap: 5px;
   row-gap: 5px;
-  width: max-content;
+  width: 100%;
 }
 
 .td-grid-label {
@@ -114,10 +114,9 @@
 .td-grid-bar {
   position: relative;
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  height: 96px;
-  padding: 0;
+  align-items: center;
+  height: 22px;
+  padding: 0 3px;
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -125,8 +124,10 @@
 }
 
 .td-grid-bar span {
-  width: 18px;
-  border-radius: 3px 3px 0 0;
+  display: block;
+  height: 8px;
+  min-width: 4px;
+  border-radius: 999px;
   background: var(--tone-queued);
 }
 
@@ -147,13 +148,13 @@
 
 .td-grid-manual {
   position: absolute;
-  top: 2px;
-  left: 50%;
-  width: 7px;
-  height: 7px;
+  top: 50%;
+  left: 5px;
+  width: 8px;
+  height: 8px;
   border: 1.5px solid var(--color-ink);
   border-radius: 50%;
-  transform: translateX(-50%);
+  transform: translateY(-50%);
 }
 
 .td-grid-cell {

@@ -50,6 +50,7 @@ export interface DataTableProps<TData> {
   getRowClassName?: (row: TData) => string | undefined;
   columnVisibility?: VisibilityState;
   onColumnVisibilityChange?: OnChangeFn<VisibilityState>;
+  fillAvailableWidth?: boolean;
 }
 
 const rowHeightClass: Record<TableDensity, string> = {
@@ -271,7 +272,8 @@ export function DataTable<TData>({
   tableClassName,
   getRowClassName,
   columnVisibility,
-  onColumnVisibilityChange
+  onColumnVisibilityChange,
+  fillAvailableWidth = false
 }: DataTableProps<TData>) {
   const selectionEnabled = enableRowSelection !== false && Boolean(enableRowSelection || rowSelection || onRowSelectionChange);
 
@@ -378,7 +380,13 @@ export function DataTable<TData>({
           className="cryo-hscroll overflow-x-auto"
           onScroll={(event) => syncScroll(event.currentTarget, trackRef.current)}
         >
-          <table className={cn("w-max min-w-full border-separate border-spacing-0 text-[13px]", tableClassName)}>
+          <table
+            className={cn(
+              fillAvailableWidth ? "w-full min-w-full table-auto" : "w-max min-w-full",
+              "border-separate border-spacing-0 text-[13px]",
+              tableClassName
+            )}
+          >
             <thead className="sticky top-0 z-10 bg-[var(--color-table-header)]">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id} className="border-b border-border">
@@ -389,7 +397,7 @@ export function DataTable<TData>({
                         "border-b border-border px-3 py-2 text-left text-xs font-medium text-muted-foreground",
                         stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "header")
                       )}
-                      style={{ width: header.getSize() }}
+                      style={fillAvailableWidth ? undefined : { width: header.getSize() }}
                     >
                       {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                     </th>

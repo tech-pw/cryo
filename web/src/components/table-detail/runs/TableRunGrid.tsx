@@ -125,7 +125,13 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
       ) : (
         <>
           <div className="td-grid-scroll">
-            <div className="td-grid" style={{ gridTemplateColumns: `minmax(112px, max-content) repeat(${columns.length}, 30px)` }}>
+            <div
+              className="td-grid"
+              style={{
+                gridTemplateColumns: `minmax(112px, max-content) repeat(${columns.length}, minmax(40px, 1fr))`,
+                minWidth: `${112 + columns.length * 45}px`
+              }}
+            >
               <div className="td-grid-label td-grid-label--bars">Duration</div>
               {columns.map((column) => (
                 <button
@@ -138,7 +144,14 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
                   title={`${formatTime(column.startedAt)} · ${TONE_LABEL[column.tone]} · ${formatMs(column.durationMs)} · ${column.manual ? "manual" : "nightly"}`}
                   onClick={() => select(column)}
                 >
-                  <span style={{ height: `${Math.max(6, ((column.durationMs ?? 0) / peak) * 100)}%` }} />
+                  <span
+                    style={{
+                      width:
+                        column.durationMs == null
+                          ? "8px"
+                          : `${Math.max(2, (column.durationMs / peak) * 100)}%`
+                    }}
+                  />
                   {column.manual ? <i className="td-grid-manual" aria-hidden="true" /> : null}
                 </button>
               ))}

@@ -139,6 +139,7 @@ describe("DecisionsPage", () => {
     expect(screen.getByRole("heading", { name: "Decisions" })).toBeInTheDocument();
     expect(screen.getByText("What is waiting on a person, and why was a table skipped?")).toBeInTheDocument();
     expect(await screen.findByText("analytics.events")).toBeInTheDocument();
+    expect(screen.getByText("pending")).toHaveClass("w-fit");
     expect(screen.queryByText("analytics.hidden")).not.toBeInTheDocument();
   });
 
