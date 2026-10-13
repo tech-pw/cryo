@@ -19,13 +19,14 @@ import type {
   SimilarityPairRead,
   SourceRead
 } from "../../api/types";
-import { EmptyState, PageHeader, QueryErrorAlert } from "../../components/common";
+import { PageHeader, QueryErrorAlert } from "../../components/common";
 import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { DataTable } from "../../components/ui/data-table";
+import { EmptyState } from "../../components/ui/empty-state";
+import { Segmented } from "../../components/ui/segmented";
 import { Skeleton } from "../../components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { useAuth } from "../../lib/auth";
 import { useWriteControl } from "../../lib/useWriteControl";
 import { toast } from "sonner";
@@ -110,9 +111,18 @@ const observedOverlap = (pairs: SimilarityPairRead[], status: "loading" | "error
   return fileOverlap ? `${overlap}; file overlap observed` : overlap;
 };
 
-const RoleLabel = ({ role }: { role: "keep" | "drop_candidate" }) => (
-  <Badge variant="outline">{role === "keep" ? "Keep" : "Drop candidate"}</Badge>
-);
+const RoleLabel = ({ role }: { role: "keep" | "drop_candidate" }) =>
+  role === "keep" ? (
+    <Badge variant="outline" className="font-normal text-muted-foreground">
+      Keep
+    </Badge>
+  ) : (
+    <Badge variant="outline" className="border-[var(--color-border-strong)] font-semibold">
+      Drop candidate
+    </Badge>
+  );
+
+const tabCount = (count: number | null): string => (count == null ? "—" : String(count));
 
 const RetryButton = ({ onClick, pending, label }: { onClick: () => void; pending: boolean; label: string }) => (
   <Button type="button" variant="outline" size="sm" onClick={onClick} disabled={pending}>
@@ -182,24 +192,29 @@ const DuplicatesPanel = () => {
 
   return (
     <section className="flex flex-col gap-4">
-      <div>
-        <h2 className="text-base font-semibold text-foreground">Which tables look like the same data?</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Ranked by drop-candidate size. A match is not proof that dropping one name is safe.
-          {clustersQuery.data?.generation != null ? ` Scan generation ${clustersQuery.data.generation}.` : ""}
-          {asOf ? ` As of ${formatTime(asOf)}.` : ""}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold leading-[26px] tracking-[-0.011em] text-foreground">
+            Which tables look like the same data?
+          </h2>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Ranked by drop-candidate size. A match is not proof that dropping one name is safe.
+            {clustersQuery.data?.generation != null ? ` Scan generation ${clustersQuery.data.generation}.` : ""}
+            {asOf ? ` As of ${formatTime(asOf)}.` : ""}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="shrink-0"
+          disabled={!scanAccess.allowed || scan.isPending}
+          title={scanAccess.reason ?? undefined}
+          onClick={() => scan.mutate()}
+        >
+          {scan.isPending ? "Scanning…" : "Run similarity scan"}
+        </Button>
       </div>
-      <Button
-        type="button"
-        variant="secondary"
-        size="sm"
-        disabled={!scanAccess.allowed || scan.isPending}
-        title={scanAccess.reason ?? undefined}
-        onClick={() => scan.mutate()}
-      >
-        {scan.isPending ? "Scanning…" : "Run similarity scan"}
-      </Button>
       {clusters.length === 0 ? (
         <EmptyState
           title={
@@ -224,55 +239,60 @@ const DuplicatesPanel = () => {
                   (a.role === "keep" ? 0 : 1) - (b.role === "keep" ? 0 : 1) || b.total_size_gb - a.total_size_gb
               );
             return (
-              <li key={cluster.cluster_id} className="rounded-lg border border-[var(--color-border)] p-4">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-foreground">Rank {index + 1}</h3>
-                  <p className="text-xs tabular-nums text-muted-foreground">
-                    Drop-candidate size {formatGb(cluster.reclaimable_gb)}
-                  </p>
+              <li
+                key={cluster.cluster_id}
+                className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--primitive-surface)] p-4 shadow-[var(--shadow-card)] transition-[transform,box-shadow,border-color] duration-[var(--motion-fast)] ease-[var(--ease-out)] motion-reduce:transition-none motion-reduce:hover:translate-y-0 [@media(hover:hover)_and_(pointer:fine)]:hover:-translate-y-px [@media(hover:hover)_and_(pointer:fine)]:hover:border-[var(--color-border-strong)] [@media(hover:hover)_and_(pointer:fine)]:hover:shadow-[0_1px_2px_rgb(19_27_36/6%),0_16px_32px_-18px_rgb(19_27_36/36%)]"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Rank {index + 1}</p>
+                    <h3 className="mt-0.5 text-lg font-semibold tabular-nums leading-[26px] tracking-[-0.011em] text-foreground">
+                      {formatGb(cluster.reclaimable_gb)}
+                    </h3>
+                    <p className="text-xs text-muted-foreground">Drop-candidate size</p>
+                  </div>
+                  <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Score</dt>
+                      <dd className="tabular-nums font-medium">
+                        {formatRatioPercent(cluster.max_pair_similarity)} max pair similarity
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Group size</dt>
+                      <dd className="tabular-nums font-medium">{formatGb(cluster.total_size_gb)}</dd>
+                    </div>
+                  </dl>
                 </div>
-                <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Score</dt>
-                    <dd>{formatRatioPercent(cluster.max_pair_similarity)} max pair similarity</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Group size</dt>
-                    <dd>{formatGb(cluster.total_size_gb)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Why they match</dt>
-                    <dd>{whyTheyMatch(matched, pairStatus)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Observed overlap</dt>
-                    <dd>{observedOverlap(matched, pairStatus)}</dd>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <dt className="text-xs text-muted-foreground">Uncertainty</dt>
-                    <dd>Similarity is not proof deletion is safe.</dd>
-                  </div>
-                </dl>
-                <ul className="mt-3 flex flex-col gap-2">
+                <p className="mt-3 text-sm text-foreground">
+                  <span className="text-muted-foreground">Why they match. </span>
+                  {whyTheyMatch(matched, pairStatus)}
+                </p>
+                <p className="mt-1 text-sm text-foreground">
+                  <span className="text-muted-foreground">Observed overlap. </span>
+                  {observedOverlap(matched, pairStatus)}
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">Similarity is not proof deletion is safe.</p>
+                <ul className="mt-3 flex flex-col divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
                   {members.map((member) => (
-                    <li key={member.table_id} className="flex items-start justify-between gap-3 text-sm">
+                    <li key={member.table_id} className="flex items-start justify-between gap-3 py-2.5 text-sm">
                       <div className="min-w-0">
-                        <Link
-                          to={`/tables/${member.table_id}`}
-                          className="text-[var(--color-primary)] hover:underline"
-                        >
-                          {member.schema_name}.{member.table_name}
-                        </Link>
+                        <div className="flex flex-wrap items-baseline gap-x-2">
+                          <Link
+                            to={`/tables/${member.table_id}`}
+                            className="font-medium text-[var(--color-primary)] hover:underline"
+                          >
+                            {member.schema_name}.{member.table_name}
+                          </Link>
+                          <span className="tabular-nums text-xs text-muted-foreground">
+                            {formatGb(member.total_size_gb)}
+                          </span>
+                        </div>
                         {member.keep_reason ? (
-                          <p className="truncate text-xs text-muted-foreground">{member.keep_reason}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">{member.keep_reason}</p>
                         ) : null}
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span className="tabular-nums text-xs text-muted-foreground">
-                          {formatGb(member.total_size_gb)}
-                        </span>
-                        <RoleLabel role={member.role} />
-                      </div>
+                      <RoleLabel role={member.role} />
                     </li>
                   ))}
                 </ul>
@@ -314,7 +334,7 @@ const SharedPathsPanel = () => {
         accessorKey: "shared_path",
         header: "Shared S3 path",
         cell: ({ row }: { row: { original: SharedS3Group } }) => (
-          <code className="break-all text-xs">{row.original.shared_path}</code>
+        <code className="break-all font-mono text-[13px] leading-5">{row.original.shared_path}</code>
         )
       },
       {
@@ -348,14 +368,34 @@ const SharedPathsPanel = () => {
     []
   );
 
+  const refreshButton = (
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      className="shrink-0"
+      disabled={!refreshAccess.allowed || refresh.isPending}
+      title={refreshAccess.reason ?? undefined}
+      onClick={() => refresh.mutate()}
+    >
+      {refresh.isPending ? "Harvesting…" : "Refresh from catalogs"}
+    </Button>
+  );
+
   return (
     <section className="flex flex-col gap-4">
-      <div>
-        <h2 className="text-base font-semibold text-foreground">Which names share one S3 location?</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Two catalog names on one warehouse prefix are one physical table. Unregister an alias, or drop it
-          without purge. Cryo skips orphan removal on these names. Expire snapshots does not delete the sibling.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold leading-[26px] tracking-[-0.011em] text-foreground">
+            Which names share one S3 location?
+          </h2>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Two catalog names on one warehouse prefix are one physical table. Unregister an alias, or drop it
+            without purge. Cryo skips orphan removal on these names. Expire snapshots does not delete the sibling.
+            Do not drop a name until the shared path is unique.
+          </p>
+        </div>
+        {refreshButton}
       </div>
 
       {reportQuery.isError ? (
@@ -381,18 +421,6 @@ const SharedPathsPanel = () => {
         <EmptyState
           title="Shared-path overlap has not been measured"
           description="No harvest yet. A missing harvest is not zero overlapping paths."
-          action={
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={!refreshAccess.allowed || refresh.isPending}
-              title={refreshAccess.reason ?? undefined}
-              onClick={() => refresh.mutate()}
-            >
-              {refresh.isPending ? "Harvesting…" : "Refresh from catalogs"}
-            </Button>
-          }
         />
       ) : null}
 
@@ -405,8 +433,9 @@ const SharedPathsPanel = () => {
 
       {groups.length > 0 ? (
         <>
-          <p className="text-xs text-muted-foreground">
-            Last harvest {formatTime(report?.generated_at)}. Do not drop a name until the shared path is unique.
+          <p className="text-sm text-muted-foreground">
+            Last harvest {formatTime(report?.generated_at)}. {groups.length}{" "}
+            {groups.length === 1 ? "overlapping group" : "overlapping groups"}.
           </p>
           <DataTable
             columns={columns}
@@ -446,13 +475,13 @@ const QueryResults = ({
       {
         id: "query_text",
         header: "Query",
+        size: 640,
         cell: ({ row }: { row: { original: QueryPerformanceData["queries"][number] } }) => {
           const text = row.original.query_text;
           if (!text) return <span className="text-muted-foreground">Query text not captured</span>;
-          const preview = text.length > 80 ? `${text.slice(0, 80)}…` : text;
           return (
-            <code className="text-[11px]" title={text}>
-              {preview}
+            <code className="block whitespace-pre-wrap break-words font-mono text-[13px] leading-5" title={text}>
+              {text}
             </code>
           );
         }
@@ -460,33 +489,47 @@ const QueryResults = ({
       {
         id: "engine",
         header: "Engine",
-        cell: ({ row }: { row: { original: QueryPerformanceData["queries"][number] } }) => row.original.engine
+        size: 88,
+        cell: ({ row }: { row: { original: QueryPerformanceData["queries"][number] } }) => (
+          <span className="whitespace-nowrap">{row.original.engine}</span>
+        )
       },
       {
         id: "duration_ms",
-        header: "Duration",
-        cell: ({ row }: { row: { original: QueryPerformanceData["queries"][number] } }) =>
-          formatDuration(row.original.duration_ms)
+        header: () => <span className="block text-right">Duration</span>,
+        size: 96,
+        cell: ({ row }: { row: { original: QueryPerformanceData["queries"][number] } }) => (
+          <span className="block whitespace-nowrap text-right tabular-nums">
+            {formatDuration(row.original.duration_ms)}
+          </span>
+        )
       },
       {
         id: "status",
         header: "Status",
-        cell: ({ row }: { row: { original: QueryPerformanceData["queries"][number] } }) => row.original.status
+        size: 104,
+        cell: ({ row }: { row: { original: QueryPerformanceData["queries"][number] } }) => (
+          <span className="whitespace-nowrap">{row.original.status}</span>
+        )
       },
       {
         id: "table_name",
         header: "Table",
+        size: 220,
         cell: ({ row }: { row: { original: QueryPerformanceData["queries"][number] } }) => {
           const name = row.original.table_name;
           if (!name) return "—";
           if (row.original.table_id) {
             return (
-              <Link to={`/tables/${row.original.table_id}`} className="text-[var(--color-primary)] hover:underline">
+              <Link
+                to={`/tables/${row.original.table_id}`}
+                className="whitespace-nowrap text-[var(--color-primary)] hover:underline"
+              >
                 {name}
               </Link>
             );
           }
-          return name;
+          return <span className="whitespace-nowrap">{name}</span>;
         }
       }
     ],
@@ -495,18 +538,18 @@ const QueryResults = ({
 
   return (
     <div className="flex flex-col gap-4">
-      <dl className="grid gap-3 text-sm sm:grid-cols-3">
-        <div>
+      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-border)] text-sm sm:grid-cols-4">
+        <div className="bg-[var(--color-surface)] px-4 py-3">
           <dt className="text-xs text-muted-foreground">Window</dt>
-          <dd>Last {hours} hours</dd>
+          <dd className="mt-1 tabular-nums font-medium">Last {hours} hours</dd>
         </div>
-        <div>
+        <div className="bg-[var(--color-surface)] px-4 py-3">
           <dt className="text-xs text-muted-foreground">Workload scope</dt>
-          <dd>{engine ?? "All engines"}</dd>
+          <dd className="mt-1 font-medium">{engine ?? "All engines"}</dd>
         </div>
-        <div>
+        <div className="bg-[var(--color-surface)] px-4 py-3">
           <dt className="text-xs text-muted-foreground">Query count</dt>
-          <dd>
+          <dd className="mt-1 font-medium">
             {data.total === 1
               ? "1 query in this window"
               : data.total > 1
@@ -514,28 +557,30 @@ const QueryResults = ({
                 : "Count not available"}
           </dd>
         </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">P50</dt>
-          <dd>{formatLatency(data.p50_latency_ms)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">P95</dt>
-          <dd>{formatLatency(data.p95_latency_ms)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">P99</dt>
-          <dd>{formatLatency(data.p99_latency_ms)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-muted-foreground">Average data scanned</dt>
-          <dd>{data.avg_bytes_scanned == null ? "—" : formatBytesGb(data.avg_bytes_scanned)}</dd>
-        </div>
-        <div className="sm:col-span-2">
+        <div className="bg-[var(--color-surface)] px-4 py-3">
           <dt className="text-xs text-muted-foreground">Failures</dt>
-          <dd>
+          <dd className="mt-1 font-medium">
             {data.failed_count > 0
               ? `${data.failed_count} failed among the slowest queries returned`
               : "No failures among the slowest queries returned"}
+          </dd>
+        </div>
+        <div className="bg-[var(--color-surface)] px-4 py-3">
+          <dt className="text-xs text-muted-foreground">P50</dt>
+          <dd className="mt-1 tabular-nums text-base font-semibold">{formatLatency(data.p50_latency_ms)}</dd>
+        </div>
+        <div className="bg-[var(--color-surface)] px-4 py-3">
+          <dt className="text-xs text-muted-foreground">P95</dt>
+          <dd className="mt-1 tabular-nums text-base font-semibold">{formatLatency(data.p95_latency_ms)}</dd>
+        </div>
+        <div className="bg-[var(--color-surface)] px-4 py-3">
+          <dt className="text-xs text-muted-foreground">P99</dt>
+          <dd className="mt-1 tabular-nums text-base font-semibold">{formatLatency(data.p99_latency_ms)}</dd>
+        </div>
+        <div className="bg-[var(--color-surface)] px-4 py-3">
+          <dt className="text-xs text-muted-foreground">Average data scanned</dt>
+          <dd className="mt-1 tabular-nums text-base font-semibold">
+            {data.avg_bytes_scanned == null ? "—" : formatBytesGb(data.avg_bytes_scanned)}
           </dd>
         </div>
       </dl>
@@ -544,6 +589,8 @@ const QueryResults = ({
         columns={columns}
         data={data.queries}
         getRowId={(row) => row.query_id}
+        getRowClassName={() => "h-auto"}
+        tableClassName="!w-full table-fixed"
         emptyTitle="Queries were counted but not listed"
         emptyDescription="The window has a count, but no query rows were returned."
       />
@@ -584,10 +631,12 @@ const QueriesPanel = () => {
   return (
     <section className="flex flex-col gap-4">
       <div>
-        <h2 className="text-base font-semibold text-foreground">Which queries are slow?</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Named percentiles over the last {hours} hours{engine ? `, ${engine}` : ", all engines"}. A missing query log is not a count
-          of slow queries.
+        <h2 className="text-lg font-semibold leading-[26px] tracking-[-0.011em] text-foreground">
+          Which queries are slow?
+        </h2>
+        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+          Named percentiles over the last {hours} hours{engine ? `, ${engine}` : ", all engines"}. A missing query
+          log is not a count of slow queries.
         </p>
       </div>
 
@@ -687,34 +736,69 @@ const QueryCoverageNotice = ({
 };
 
 export const InsightsPage = () => {
+  const { api } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
   const tab: InsightsTab = isInsightsTab(tabParam) ? tabParam : DEFAULT_TAB;
+  const clustersQuery = useQuery({
+    queryKey: ["similarity-clusters"],
+    queryFn: () => getSimilarityClusters(api)
+  });
+  const reportQuery = useQuery({
+    queryKey: ["shared-s3-anomalies", api.token],
+    queryFn: () => getSharedS3Anomalies(api)
+  });
+  const hours = queryWindowHours(searchParams.get("hours"));
+  const engine = searchParams.get("engine")?.trim() || undefined;
+  const performanceQuery = useQuery({
+    queryKey: ["query-performance", api.token, engine, hours],
+    queryFn: () => getQueryPerformanceDashboard(api, hours, engine)
+  });
 
-  const setTab = (next: string) => {
-    if (!isInsightsTab(next)) return;
+  const setTab = (next: InsightsTab) => {
     const params = new URLSearchParams(searchParams);
     if (next === DEFAULT_TAB) params.delete("tab");
     else params.set("tab", next);
     setSearchParams(params, { replace: true });
   };
 
+  const duplicateCount = clustersQuery.isSuccess ? clustersQuery.data.clusters.length : null;
+  const sharedCount = reportQuery.isSuccess
+    ? reportQuery.data.generated_at
+      ? reportQuery.data.groups.length
+      : null
+    : null;
+  const queryCount = performanceQuery.isSuccess
+    ? performanceQuery.data.total > 0 || performanceQuery.data.queries.length > 0
+      ? performanceQuery.data.total
+      : null
+    : null;
+
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Insights"
+        breadcrumbs={false}
+        className="!mb-0 !pb-3"
         subtitle="Which tables are the same physical data, and which queries are slow?"
       />
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList aria-label="Insights">
-          <TabsTrigger value="duplicates">Duplicates</TabsTrigger>
-          <TabsTrigger value="shared-paths">Shared paths</TabsTrigger>
-          <TabsTrigger value="queries">Queries</TabsTrigger>
-        </TabsList>
-        <TabsContent value="duplicates">{tab === "duplicates" ? <DuplicatesPanel /> : null}</TabsContent>
-        <TabsContent value="shared-paths">{tab === "shared-paths" ? <SharedPathsPanel /> : null}</TabsContent>
-        <TabsContent value="queries">{tab === "queries" ? <QueriesPanel /> : null}</TabsContent>
-      </Tabs>
+      <div role="tablist" aria-label="Insights" className="-mt-4">
+        <Segmented
+          aria-label="Insights"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "duplicates", label: `Duplicates · ${tabCount(duplicateCount)}` },
+            { value: "shared-paths", label: `Shared paths · ${tabCount(sharedCount)}` },
+            { value: "queries", label: `Queries · ${tabCount(queryCount)}` }
+          ]}
+        />
+      </div>
+      <div role="tabpanel" aria-label={tab === "duplicates" ? "Duplicates" : tab === "shared-paths" ? "Shared paths" : "Queries"}>
+        {tab === "duplicates" ? <DuplicatesPanel /> : null}
+        {tab === "shared-paths" ? <SharedPathsPanel /> : null}
+        {tab === "queries" ? <QueriesPanel /> : null}
+      </div>
     </div>
   );
 };
