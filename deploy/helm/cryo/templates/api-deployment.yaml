@@ -92,11 +92,11 @@ spec:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 10
+            initialDelaySeconds: {{ .Values.api.probe.livenessInitialDelaySeconds }}
           readinessProbe:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 5
+            initialDelaySeconds: {{ .Values.api.probe.readinessInitialDelaySeconds }}
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}

@@ -130,13 +130,13 @@ spec:
             httpGet:
               path: /healthz
               port: {{ .Values.observability.metricsPort }}
-            initialDelaySeconds: 10
-            periodSeconds: 30
-            failureThreshold: 2
+            initialDelaySeconds: {{ .Values.governor.probe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.governor.probe.periodSeconds }}
+            failureThreshold: {{ .Values.governor.probe.readinessFailureThreshold }}
           livenessProbe:
             httpGet:
               path: /healthz
               port: {{ .Values.observability.metricsPort }}
-            initialDelaySeconds: 10
-            periodSeconds: 30
-            failureThreshold: 3
+            initialDelaySeconds: {{ .Values.governor.probe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.governor.probe.periodSeconds }}
+            failureThreshold: {{ .Values.governor.probe.livenessFailureThreshold }}

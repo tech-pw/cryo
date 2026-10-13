@@ -16,7 +16,7 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      backoffLimit: 2
+      backoffLimit: {{ .Values.backup.backoffLimit }}
       template:
         metadata:
           labels:
