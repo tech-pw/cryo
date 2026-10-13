@@ -15,6 +15,7 @@ describe("SavingsByOperation", () => {
 
     const rows = screen.getAllByRole("listitem");
     expect(rows.map((row) => row.textContent)).toEqual(["Compaction$200/mo", "Snapshot expiry$100/mo"]);
+    expect(screen.getByText("$300")).toBeInTheDocument();
     expect(container.querySelector("svg")).toBeNull();
     expect(screen.queryByText("0 GB")).not.toBeInTheDocument();
   });

@@ -110,7 +110,7 @@ describe("CostOverviewTab", () => {
     expect(screen.queryByText("$0")).not.toBeInTheDocument();
   });
 
-  it("does not invent a saved-to-date dollar on Storage", async () => {
+  it("does not invent a saved-to-date dollar when realized savings are unmeasured", async () => {
     vi.mocked(getCostDashboard).mockResolvedValue({
       totals: {
         current_monthly_cost_usd: 80,
@@ -138,7 +138,8 @@ describe("CostOverviewTab", () => {
     renderTab();
 
     expect(await screen.findByText("Estimated storage cost")).toBeInTheDocument();
-    expect(screen.queryByText("Saved to date")).not.toBeInTheDocument();
+    expect(screen.getByText("Saved to date")).toBeInTheDocument();
+    expect(screen.getAllByText("Cost data unavailable").length).toBeGreaterThan(0);
     expect(screen.queryByText("$0")).not.toBeInTheDocument();
   });
 

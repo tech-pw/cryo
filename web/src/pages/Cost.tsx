@@ -1,3 +1,4 @@
+import { BarChart3, Cloud, Database, LineChart, ScanSearch } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/common";
@@ -42,31 +43,37 @@ const TABS: Array<{
   key: CostTabKey;
   label: string;
   subtitle: string;
+  icon: ReactNode;
 }> = [
   {
     key: "storage",
     label: "Storage",
-    subtitle: "What we pay for storage, and what maintenance would change."
-  },
-  {
-    key: "impact",
-    label: "Impact",
-    subtitle: "What maintenance already changed."
-  },
-  {
-    key: "reads",
-    label: "Reads",
-    subtitle: "Who is scanning data. Bytes, not dollars."
+    subtitle: "What we pay for storage, and what maintenance would change.",
+    icon: <BarChart3 className="size-3.5" aria-hidden="true" />
   },
   {
     key: "requests",
     label: "Requests",
-    subtitle: "What S3 API calls cost."
+    subtitle: "What S3 API calls cost.",
+    icon: <Database className="size-3.5" aria-hidden="true" />
+  },
+  {
+    key: "impact",
+    label: "Impact",
+    subtitle: "What maintenance already changed.",
+    icon: <LineChart className="size-3.5" aria-hidden="true" />
+  },
+  {
+    key: "reads",
+    label: "Reads",
+    subtitle: "Who is scanning data. Bytes, not dollars.",
+    icon: <ScanSearch className="size-3.5" aria-hidden="true" />
   },
   {
     key: "aws",
     label: "AWS",
-    subtitle: "Which lakehouses have a storage-metrics connection."
+    subtitle: "Which lakehouses have a storage-metrics connection.",
+    icon: <Cloud className="size-3.5" aria-hidden="true" />
   }
 ];
 
@@ -107,7 +114,8 @@ export const Cost = () => {
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
           {TABS.map((tab) => (
-            <TabsTrigger key={tab.key} value={tab.key}>
+            <TabsTrigger key={tab.key} value={tab.key} className="gap-1.5">
+              {tab.icon}
               {tab.label}
             </TabsTrigger>
           ))}
