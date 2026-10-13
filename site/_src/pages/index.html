@@ -7,7 +7,8 @@ updated: 2026-10-06
 <!--
 THESIS: A calm promise first; the maintenance mechanism earns its own full-width section below.
 OWN-WORLD: Sky gradient, dot grid, Cormorant + IBM Plex, one survey-orange marker at a time.
-STORY: Read the promise, then watch one table pass through Cryo and leave maintained, with a receipt.
+STORY: Read the promise, watch one partition pass through Cryo, then scroll one table's core sample through a month of
+decay and the run that pays it back on the S3 bill.
 FIRST VIEWPORT: Type-first hero, tally, actions, stack. No product graphic.
 -->
 <section class="hero sky" data-dots>
@@ -92,66 +93,15 @@ FIRST VIEWPORT: Type-first hero, tally, actions, stack. No product graphic.
     </div>
 </section>
 
-<section class="sect reveal" aria-labelledby="order">
-    <div class="wrap split">
-        <div class="split-sticky">
-            <p class="eyebrow">The order</p>
-            <h2 id="order">Compact first, then clean up.</h2>
-            <p class="sub">A run on one table walks seven operations in a fixed order. Compaction creates new files and expiry removes old ones, so a single pass reclaims the space its own compaction freed.</p>
-            <p><a class="btn" href="@/maintenance/">Read the guardrails</a></p>
-        </div>
-        <div class="ops">
-            <div class="ops-group">
-                <p class="ops-phase">Compact</p>
-                <ol>
-                    <li>
-                        <div><code>convert_deletes</code>
-                            <p>Apply delete files into data files.</p>
-                        </div>
-                    </li>
-                    <li>
-                        <div><code>rewrite_position_deletes</code>
-                            <p>Consolidate position deletes (Spark only).</p>
-                        </div>
-                    </li>
-                    <li class="is-focus">
-                        <div><code>optimize</code>
-                            <p>Merge small files, one partition chunk at a time.</p>
-                        </div>
-                    </li>
-                </ol>
-            </div>
-            <div class="ops-group">
-                <p class="ops-phase">Measure</p>
-                <ol>
-                    <li>
-                        <div><code>compute_statistics</code>
-                            <p>Refresh table statistics after the rewrite.</p>
-                        </div>
-                    </li>
-                </ol>
-            </div>
-            <div class="ops-group">
-                <p class="ops-phase">Clean up</p>
-                <ol>
-                    <li>
-                        <div><code>optimize_manifests</code>
-                            <p>Consolidate manifests.</p>
-                        </div>
-                    </li>
-                    <li>
-                        <div><code>expire_snapshots</code>
-                            <p>Drop snapshots the retention policy would not keep.</p>
-                        </div>
-                    </li>
-                    <li>
-                        <div><code>remove_orphan_files</code>
-                            <p>Delete files that no snapshot references.</p>
-                        </div>
-                    </li>
-                </ol>
-            </div>
-        </div>
+<section class="journey" aria-labelledby="journey-title">
+    <div class="wrap">
+        <header class="maintenance-demo-head">
+            <p class="eyebrow">The life of one table</p>
+            <h2 id="journey-title">Thirty days of writes.<br> One maintenance run.</h2>
+            <p>Follow a 1&nbsp;TB Iceberg table through a month of streaming writes, then through each Cryo operation in order. Beside it: what is inside the table, and what S3 charges for it.</p>
+        </header>
+        <include src="includes/table-journey.html"/>
+        <p class="tj-note">Illustrative example: one 1&nbsp;TB table partitioned by day, a commit every five minutes, and 20,000 dashboard queries a month that each read one day. Prices are <a href="https://aws.amazon.com/s3/pricing/">S3 Standard in us-east-1</a>: $0.023 per GB-month and $0.0004 per 1,000 GET requests. Request counts assume one GET per file opened, which is a floor. Each step is shown at full effect with no new writes in between. File lifecycle follows the <a href="https://iceberg.apache.org/docs/latest/maintenance/">Iceberg maintenance docs</a>. Cryo's scanner reports the real numbers for your tables.</p>
     </div>
 </section>
 

@@ -884,7 +884,307 @@
         }
     }
 
-    /* ---------- home: stats count, ops progress, receipt feed ---------- */
+    /* ---------- home: table journey ---------- */
+    var tj = $("[data-tj]");
+    if (tj && window.IntersectionObserver) {
+        // Must match the prices and counts written in table-journey.html.
+        var TJ_GB_MONTH = 0.023,
+            TJ_PER_GET = 0.0004 / 1000,
+            TJ_QUERIES = 20000,
+            TJ_LIVE_TILES = 48,
+            TJ_TILES = 72,
+            TJ_SVG = "http://www.w3.org/2000/svg";
+        var tjBase = { live: 1000, del: 0, ghost: 0, orphan: 0, frag: 0, gets: 66, files: 1953, snaps: 1, manifests: 8, stats: 1, layers: 3 };
+        var tjDecayed = { del: 40, ghost: 300, orphan: 100, frag: 1, gets: 9700, files: 250000, snaps: 8640, manifests: 640, stats: 0, layers: 14 };
+        // [when, change, hot bill rows, what Cryo says, marker x, marker y]
+        var tjStages = [
+            ["Day 1", {}, ["live"], "Table looks healthy. Nothing to plan.", 240, 64],
+            ["Day 30", tjDecayed, ["gets", "ghost", "del", "orphan"], "250,000 small files across 30 partitions. Planning a run.", 150, 64],
+            ["Step 1 of 6", { del: 0, ghost: 440, gets: 8333 }, ["del", "gets"], "Folding 40,000 delete files into the data.", 96, 64],
+            ["Step 2 of 6", { ghost: 1440, frag: 0, gets: 66, files: 1953 }, ["gets", "ghost"], "Rewriting 30 days into 512 MB files while Trino has headroom.", 240, 64],
+            ["Step 3 of 6", { stats: 1 }, [], "Collecting distinct-value counts.", 500, 168],
+            ["Step 4 of 6", { manifests: 12 }, [], "Merging 640 manifests into 12.", 428, 28],
+            ["Step 5 of 6", { ghost: 0, snaps: 288, layers: 4 }, ["ghost"], "Expiring 8,352 snapshots older than 1 day.", 356, 190],
+            ["Step 6 of 6", { orphan: 0 }, ["orphan"], "Deleting 100 GB that nothing references.", 420, 212],
+            ["Done", {}, ["live"], "Run complete. 6 audit rows written.", 240, 64]
+        ];
+        var tjState = [];
+        tjStages.reduce(function(prev, s) {
+            var next = Object.assign({}, prev, s[1]);
+            tjState.push(next);
+            return next;
+        }, tjBase);
+        var tjCost = function(st) {
+            return {
+                live: st.live * TJ_GB_MONTH,
+                del: st.del * TJ_GB_MONTH,
+                ghost: st.ghost * TJ_GB_MONTH,
+                orphan: st.orphan * TJ_GB_MONTH,
+                gets: st.gets * TJ_QUERIES * TJ_PER_GET
+            };
+        };
+        var tjSum = function(c) { return c.live + c.del + c.ghost + c.orphan + c.gets; };
+        var tjMoney = function(n) { return "$" + n.toFixed(2); };
+        var tjDay1 = tjSum(tjCost(tjState[0]));
+        var tjDay30 = tjSum(tjCost(tjState[1]));
+
+        var tjSeed = 11;
+        var tjRnd = function() { tjSeed = (tjSeed * 16807) % 2147483647; return (tjSeed - 1) / 2147483646; };
+        var tjEl = function(tag, attrs, parent) {
+            var el = doc.createElementNS(TJ_SVG, tag);
+            Object.keys(attrs).forEach(function(k) { el.setAttribute(k, attrs[k]); });
+            parent.appendChild(el);
+            return el;
+        };
+        var tjVars = function(el, vars) {
+            Object.keys(vars).forEach(function(k) { el.style.setProperty("--" + k, vars[k]); });
+        };
+
+        // Shuffle the 12 x 6 cells so live and ghost tiles end up scattered through the core.
+        var tjCells = [];
+        for (var ci = 0; ci < TJ_TILES; ci++) tjCells.push(ci);
+        for (var cj = tjCells.length - 1; cj > 0; cj--) {
+            var ck = Math.floor(tjRnd() * (cj + 1)), cv = tjCells[cj];
+            tjCells[cj] = tjCells[ck];
+            tjCells[ck] = cv;
+        }
+        var tjTileBox = $("[data-tj-tiles]", tj), tjTiles = [];
+        tjCells.forEach(function(cell, i) {
+            var x = 62 + (cell % 12) * 32.3 + (tjRnd() - 0.5) * 12, y = 84 + Math.floor(cell / 12) * 14 + (tjRnd() - 0.5) * 3;
+            var t = tjEl("rect", { class: "c-tile", x: -5.5, y: -5.5, width: 11, height: 11, rx: 1.5 }, tjTileBox);
+            tjVars(t, { x: x.toFixed(1) + "px", y: y.toFixed(1) + "px", r: ((tjRnd() - 0.5) * 50).toFixed(0) + "deg",
+                tx: (164 + ((x - 46) / 388) * 172).toFixed(1) + "px", ty: "198px", i: i });
+            tjTiles.push(t);
+        });
+        var tjSlipBox = $("[data-tj-slips]", tj), tjSlips = [];
+        for (var si = 0; si < 8; si++) {
+            var sg = tjEl("g", { class: "c-slip" }, tjSlipBox);
+            tjEl("rect", { x: -5, y: -3.5, width: 10, height: 7, rx: 1 }, sg);
+            tjEl("path", { d: "M-3 2L3 -2" }, sg);
+            tjVars(sg, { x: (70 + si * 46 + tjRnd() * 18).toFixed(0) + "px", y: (88 + tjRnd() * 60).toFixed(0) + "px", r: ((tjRnd() - 0.5) * 40).toFixed(0) + "deg", i: si });
+            tjSlips.push(sg);
+        }
+        var tjStrayBox = $("[data-tj-strays]", tj), tjStrays = [];
+        for (var oi = 0; oi < 6; oi++) {
+            var o = tjEl("rect", { class: "c-stray", x: -5, y: -5, width: 10, height: 10, rx: 1.5 }, tjStrayBox);
+            tjVars(o, { x: (22 + oi * 22 + tjRnd() * 10).toFixed(0) + "px", y: (190 + tjRnd() * 14).toFixed(0) + "px", r: ((tjRnd() - 0.5) * 60).toFixed(0) + "deg",
+                px: (384 + (oi % 3) * 11) + "px", py: (206 - Math.floor(oi / 3) * 9) + "px", i: oi });
+            tjStrays.push(o);
+        }
+        var tjLayerBox = $("[data-tj-layers]", tj), tjLayers = [];
+        for (var li = 0; li < 16; li++) tjLayers.push(tjEl("line", { class: "c-layer", x1: 42, x2: 438, y1: 0, y2: 0 }, tjLayerBox));
+        var tjCardBox = $("[data-tj-cards]", tj), tjCards = [];
+        for (var di = 0; di < 18; di++) {
+            var cd = tjEl("rect", { class: "c-card", x: -2, y: -20, width: 4, height: 20, rx: 1 }, tjCardBox);
+            tjVars(cd, { jy: (tjRnd() * 8).toFixed(1) + "px", jr: ((tjRnd() - 0.5) * 34).toFixed(0) + "deg", i: di });
+            tjCards.push(cd);
+        }
+
+        var tjCore = $(".tj-core", tj);
+        var tjBlocks = $("[data-tj-blocks]", tj);
+        var tjTag = $("[data-tj-tag]", tj);
+        var tjDrawer = $("[data-tj-drawer]", tj);
+        var tjMarker = $("[data-tj-marker]", tj);
+        var tjScan = $("[data-tj-scan]", tj);
+        var tjMark = $("[data-tj-mark]", tj);
+        var tjSay = $("[data-tj-say]", tj);
+        var tjWhen = $("[data-tj-when]", tj);
+        var tjTotal = $("[data-tj-total]", tj);
+        var tjDelta = $("[data-tj-delta]", tj);
+        var tjRows = $$("[data-tj-row]", tj);
+        var tjSegs = $$("[data-tj-seg]", tj);
+        var tjMeters = $$("[data-tj-m]", tj);
+        var tjChapters = $$("[data-tj-stage]", tj);
+        var tjLong = $(".tj-ch-long", tj);
+        var tjCard = $(".tj-card", tj);
+        var tjMouth = $("[data-tj-mouth]", tj);
+        var tjFace = $("[data-tj-face]", tj);
+        var tjFMouth = $("[data-tj-fmouth]", tj);
+        var tjBrow = $("[data-tj-brow]", tj);
+        var tjTear = $("[data-tj-tear]", tj);
+        var tjMoodWord = $("[data-tj-mood]", tj);
+        var tjMult = $("[data-tj-mult]", tj);
+        var tjX = $$("[data-tj-x]", tj);
+        // Healthy reference per meter: what one maintained day looks like (288 commits, a dozen manifests).
+        var tjHealthy = { files: 1953, snaps: 288, manifests: 12, gets: 66 };
+        var tjClamp = function(v) { return Math.max(0, Math.min(1, v)); };
+        var tjLogMood = function(v, good, bad) { return v <= good ? 0 : tjClamp(Math.log(v / good) / Math.log(bad / good)); };
+        // 0 = green and smiling, 1 = red and crying; amber in the middle.
+        var tjHue = function(m) { return m < 0.4 ? 145 - 250 * m : 45 - 68 * (m - 0.4); };
+        var tjColor = function(m, l) { return "hsl(" + tjHue(m).toFixed(0) + " 78% " + (l || 58) + "%)"; };
+        var tjPath = function(el, d) {
+            el.setAttribute("d", d);
+            el.style.d = 'path("' + d + '")';
+        };
+        var tjWord = function(m) { return m < 0.12 ? "Healthy" : m < 0.4 ? "Fine" : m < 0.7 ? "Pricey" : "Painful"; };
+        var tjShown = tjDay1;
+        var tjRaf = 0;
+        var tjTick = 0;
+        var tjAt = -1;
+
+        var tjCount = function(to) {
+            cancelAnimationFrame(tjRaf);
+            var from = tjShown, t0 = performance.now();
+            if (still.matches) { tjShown = to; tjTotal.textContent = tjMoney(to); return; }
+            (function step(t) {
+                var k = Math.min(1, (t - t0) / 650), ease = 1 - Math.pow(1 - k, 3);
+                tjShown = from + (to - from) * ease;
+                tjTotal.textContent = tjMoney(tjShown);
+                if (k < 1) tjRaf = requestAnimationFrame(step);
+            })(t0);
+        };
+        var tjReplay = function(el, cls) {
+            if (still.matches) return;
+            el.classList.remove(cls);
+            void el.getBoundingClientRect();
+            el.classList.add(cls);
+        };
+        var tjRender = function(st, n, when, instant) {
+            var s = tjStages[n], cost = tjCost(st), total = tjSum(cost), hot = s[2];
+            tjWhen.textContent = when;
+            if (instant) {
+                cancelAnimationFrame(tjRaf);
+                tjShown = total;
+                tjTotal.textContent = tjMoney(total);
+            } else {
+                tjCount(total);
+            }
+            var last = n === tjStages.length - 1;
+            var diff = last ? total - tjDay30 : total - tjDay1;
+            tjDelta.className = Math.abs(diff) < 0.005 ? "" : diff > 0 ? "is-up" : "is-down";
+            tjDelta.textContent = Math.abs(diff) < 0.005 ? "" :
+                (diff > 0 ? "+" : "−") + tjMoney(Math.abs(diff)) + (last ? " vs day 30" : " vs day 1");
+            tjRows.forEach(function(row) {
+                var key = row.getAttribute("data-tj-row");
+                $("b", row).textContent = tjMoney(cost[key]);
+                row.classList.toggle("is-hot", hot.indexOf(key) !== -1);
+            });
+            // Segments are sized against the day-30 bill, so the whole bar shrinks as the run pays off.
+            tjSegs.forEach(function(seg) {
+                var key = seg.getAttribute("data-tj-seg");
+                seg.style.width = ((cost[key] / tjDay30) * 100).toFixed(2) + "%";
+                seg.classList.toggle("is-hot", hot.indexOf(key) !== -1);
+            });
+            tjMeters.forEach(function(dd) {
+                dd.textContent = Math.round(st[dd.getAttribute("data-tj-m")]).toLocaleString("en-US");
+            });
+            tjX.forEach(function(dd) {
+                var key = dd.getAttribute("data-tj-x"), v = st[key], good = tjHealthy[key];
+                var m = tjLogMood(v, good, tjDecayed[key]);
+                var ratio = v / good;
+                dd.textContent = ratio >= 1.5 ? Math.round(ratio).toLocaleString("en-US") + "× healthy" : "healthy";
+                dd.style.color = tjColor(m, 66);
+                dd.previousElementSibling.style.color = m < 0.12 ? "" : tjColor(m, 70);
+            });
+
+            var mood = tjClamp((total - tjDay1) / (tjDay30 - tjDay1));
+            var moodColor = tjColor(mood);
+            tjCard.style.setProperty("--mood", moodColor);
+            tjTotal.style.color = tjColor(mood, 66);
+            tjFace.style.setProperty("--face", moodColor);
+            var y0 = 26 + 3 * mood, cy = y0 + 9 * (1 - 2 * mood);
+            tjPath(tjFMouth, "M12 " + y0.toFixed(1) + "Q20 " + cy.toFixed(1) + " 28 " + y0.toFixed(1));
+            var inner = (12 - 4 * mood).toFixed(1);
+            tjPath(tjBrow, "M9 12.5L16 " + inner + "M24 " + inner + "L31 12.5");
+            tjBrow.style.opacity = tjClamp((mood - 0.4) * 2.5).toFixed(2);
+            tjTear.style.opacity = tjClamp((mood - 0.8) * 5).toFixed(2);
+            tjPath(tjMouth, "M24.9 43.5Q28.8 " + (45.75 + 3.6 * (1 - 2 * mood)).toFixed(2) + " 32.7 48");
+            tjMoodWord.textContent = tjWord(mood);
+            tjMoodWord.style.color = tjColor(mood, 66);
+            tjMult.textContent = (total / tjDay1).toFixed(1) + "× the day-1 bill";
+
+            var loose = Math.round(st.frag * TJ_LIVE_TILES), ghosts = Math.round(st.ghost / 20);
+            tjTiles.forEach(function(t, i) {
+                var rank = i >= TJ_LIVE_TILES ? i - TJ_LIVE_TILES : i + (TJ_TILES - TJ_LIVE_TILES);
+                var cls = i < TJ_LIVE_TILES && i < loose ? " is-loose" : rank < ghosts ? " is-ghost" : n >= 6 ? " is-gone" : "";
+                t.setAttribute("class", "c-tile" + cls);
+            });
+            var slips = Math.round(st.del / 5);
+            tjSlips.forEach(function(g, i) { g.classList.toggle("is-on", i < slips); });
+            var strays = Math.round(st.orphan * 0.06);
+            tjStrays.forEach(function(o, i) {
+                o.classList.toggle("is-on", i < strays);
+                o.classList.toggle("is-swept", i >= strays && n >= 7);
+            });
+            var layers = Math.round(st.layers);
+            tjLayers.forEach(function(ln, k) {
+                var on = k < layers;
+                ln.style.setProperty("--y", (on ? 70 + ((k + 1) * 96) / (layers + 1) : 166).toFixed(1) + "px");
+                ln.classList.toggle("is-on", on);
+            });
+            tjBlocks.style.setProperty("--on", (1 - st.frag).toFixed(3));
+            var cards = st.manifests > 12 ? Math.round(5 + 13 * Math.min(1, (st.manifests - 12) / 628)) : 5;
+            var messy = st.manifests > 60;
+            tjDrawer.classList.toggle("is-messy", messy);
+            tjCards.forEach(function(cd, k) {
+                var on = k < cards;
+                var x = messy ? 336 + k * 4.7 : 344 + (k * 64) / Math.max(1, cards - 1);
+                cd.style.setProperty("--x", x.toFixed(1) + "px");
+                cd.classList.toggle("is-on", on);
+            });
+            tjTag.classList.toggle("is-fresh", st.stats >= 0.5);
+            tjCore.setAttribute("data-n", n);
+            tjMarker.style.transform = "translate(" + s[4] + "px," + s[5] + "px)";
+            if (tjSay.textContent !== s[3]) tjSay.textContent = s[3];
+        };
+        var tjScrub = function() {
+            tjTick = 0;
+            if (tjAt !== 1) return;
+            var r = tjLong.getBoundingClientRect();
+            var p = Math.max(0, Math.min(1, (innerHeight / 2 - r.top) / (r.height * 0.8)));
+            var a = tjState[0], b = tjState[1], st = {};
+            Object.keys(b).forEach(function(k) { st[k] = a[k] + (b[k] - a[k]) * p; });
+            tjRender(st, 1, "Day " + (1 + Math.round(29 * p)), true);
+            if (p < 0.98) tjSay.textContent = "Watching. " + Math.round(st.files).toLocaleString("en-US") + " data files and counting.";
+        };
+        var tjShow = function(n) {
+            if (n === tjAt) return;
+            var from = tjAt;
+            tjAt = n;
+            tjChapters.forEach(function(ch, j) {
+                ch.classList.toggle("is-active", j === n);
+                ch.classList.toggle("is-seen", j < n);
+            });
+            if (n === 1) {
+                tjScrub();
+            } else {
+                tjRender(tjState[n], n, tjStages[n][0], false);
+            }
+            if (n >= 2 && n <= 7) tjReplay(tjScan, "is-on");
+            if (n === 3 && from !== 3) tjReplay(tjMark, "is-fusing");
+        };
+
+        tj.classList.add("is-live");
+        tjShow(0);
+        var tjIo = new IntersectionObserver(function(es) {
+            es.forEach(function(e) {
+                if (e.isIntersecting) tjShow(Number(e.target.getAttribute("data-tj-stage")));
+            });
+        }, { rootMargin: "-50% 0px -50% 0px" });
+        tjChapters.forEach(function(ch) { tjIo.observe(ch); });
+        addEventListener("scroll", function() {
+            if (tjAt === 1 && !tjTick) tjTick = requestAnimationFrame(tjScrub);
+        }, { passive: true });
+
+        var tjCalcN = $("[data-tj-calc-n]", tj);
+        if (tjCalcN) {
+            var tjCalcOut = $("[data-tj-calc-out]", tj);
+            var tjCalcMo = $("[data-tj-calc-mo]", tj);
+            var tjCalcYr = $("[data-tj-calc-yr]", tj);
+            var tjFmt = function(v) { return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+            var tjCalc = function() {
+                var count = Number(tjCalcN.value), saved = (tjDay30 - tjDay1) * count;
+                tjCalcOut.textContent = count + (count === 1 ? " table" : " tables");
+                tjCalcMo.textContent = tjFmt(saved);
+                tjCalcYr.textContent = tjFmt(saved * 12);
+                tjCalcN.style.setProperty("--fill", (((count - 1) / 199) * 100).toFixed(1) + "%");
+            };
+            tjCalcN.addEventListener("input", tjCalc);
+            tjCalc();
+        }
+    }
+
+    /* ---------- home: stats count, receipt feed ---------- */
     if (window.IntersectionObserver && !still.matches) {
         var counters = $$("[data-count]");
         var co = new IntersectionObserver(function(es) {
@@ -905,21 +1205,6 @@
         }, { threshold: 0.6 });
         counters.forEach(function(el) { el.textContent = el.dataset.from || "0";
             co.observe(el); });
-    }
-
-    var opsBox = $(".home .ops");
-    if (opsBox) {
-        var opsItems = $$("li", opsBox);
-        opsBox.classList.add("is-live");
-        var paintOps = function() {
-            var r = opsBox.getBoundingClientRect(),
-                mid = window.innerHeight * 0.6;
-            var p = Math.max(0, Math.min(1, (mid - r.top) / r.height));
-            opsBox.style.setProperty("--p", p.toFixed(3));
-            opsItems.forEach(function(li) { li.classList.toggle("is-lit", li.getBoundingClientRect().top < mid); });
-        };
-        window.addEventListener("scroll", paintOps, { passive: true });
-        paintOps();
     }
 
     var feed = $(".receipt-feed");
