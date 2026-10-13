@@ -581,7 +581,7 @@
 }
 
 .datalake-table .table-name-cell {
-  min-width: 320px;
+  min-width: 0;
 }
 
 .datalake-table .table-name-link {

@@ -35,6 +35,7 @@ import { Button } from "../../components/ui/button";
 import { ColumnVisibilityMenu, DataTable, type ColumnVisibilityOption } from "../../components/ui/data-table";
 import { Input } from "../../components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
+import { TruncationTooltip } from "../../components/ui/tooltip";
 import { Segmented } from "../../components/ui/segmented";
 import { Select } from "../../components/ui/select";
 import { useAuth } from "../../lib/auth";
@@ -852,33 +853,38 @@ export const TableExplorerSection = () => {
       {
         id: "table",
         header: "Table",
-        size: 280,
+        size: 168,
+        minSize: 96,
+        maxSize: 480,
         cell: ({ row }) => {
           const name = schemaTableName(row.original);
           const facts = hiddenColumnFacts(row.original, columnVisibility);
           const tooltip = [tableTooltipName(row.original), facts].filter(Boolean).join(" · ");
           return (
-            <Link to={`/tables/${row.original.id}`} className="table-name-link" title={tooltip}>
-              <span className="table-name-cell block max-w-[16rem] truncate font-medium">{name}</span>
-              {facts ? (
-                <span className="block max-w-[16rem] truncate text-xs text-muted-foreground">{facts}</span>
-              ) : null}
-            </Link>
+            <TruncationTooltip content={tooltip}>
+              <Link to={`/tables/${row.original.id}`} className="table-name-link block min-w-0">
+                <span className="table-name-cell block min-w-0 truncate font-medium">{name}</span>
+                {facts ? (
+                  <span className="block min-w-0 truncate text-xs text-muted-foreground">{facts}</span>
+                ) : null}
+              </Link>
+            </TruncationTooltip>
           );
         }
       },
       {
         id: "catalog",
         header: "Catalog",
-        size: 140,
-        cell: ({ row }) => (
-          <span
-            className="block max-w-[8rem] truncate"
-            title={row.original.catalog_name ?? row.original.source_name ?? undefined}
-          >
-            {row.original.catalog_name ?? row.original.source_name ?? "-"}
-          </span>
-        )
+        size: 120,
+        minSize: 80,
+        cell: ({ row }) => {
+          const catalog = row.original.catalog_name ?? row.original.source_name;
+          return (
+            <TruncationTooltip content={catalog}>
+              <span className="block min-w-0 truncate">{catalog ?? "-"}</span>
+            </TruncationTooltip>
+          );
+        }
       },
       {
         id: "grade",
@@ -996,11 +1002,12 @@ export const TableExplorerSection = () => {
       {
         id: "partition",
         header: "Partition",
-        size: 156,
+        size: 120,
+        minSize: 80,
         cell: ({ row }) => (
-          <span className="block max-w-[9rem] truncate" title={row.original.stats?.partition_col ?? undefined}>
-            {row.original.stats?.partition_col ?? "-"}
-          </span>
+          <TruncationTooltip content={row.original.stats?.partition_col}>
+            <span className="block min-w-0 truncate">{row.original.stats?.partition_col ?? "-"}</span>
+          </TruncationTooltip>
         )
       },
       {
@@ -1299,7 +1306,8 @@ export const TableExplorerSection = () => {
           <ExplorerTableMeta filters={filters} matchingTotal={matchingTotal} filtered={filtersActive} />
           <DataTable
             className="datalake-table"
-            fillAvailableWidth
+            enableColumnResizing
+            columnSizingStorageKey="cryo.catalog.columnSizing.v1"
             columns={tableColumns}
             data={pageItems}
             density="compact"

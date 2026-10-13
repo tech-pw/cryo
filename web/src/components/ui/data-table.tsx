@@ -3,13 +3,15 @@ import {
   getCoreRowModel,
   useReactTable,
   type ColumnDef,
+  type ColumnSizingState,
+  type Header,
   type OnChangeFn,
   type RowSelectionState,
   type TableOptions,
   type VisibilityState
 } from "@tanstack/react-table";
 import { ChevronLeft, ChevronRight, Columns3, Rows2, Rows3 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "./button";
 import { Checkbox } from "./checkbox";
@@ -50,6 +52,11 @@ export interface DataTableProps<TData> {
   getRowClassName?: (row: TData) => string | undefined;
   columnVisibility?: VisibilityState;
   onColumnVisibilityChange?: OnChangeFn<VisibilityState>;
+  columnSizing?: ColumnSizingState;
+  onColumnSizingChange?: OnChangeFn<ColumnSizingState>;
+  columnSizingStorageKey?: string;
+  enableColumnResizing?: boolean;
+  /** Stretch to the container. Extra space is not dumped into column 1 when resizing is on. */
   fillAvailableWidth?: boolean;
 }
 
@@ -57,6 +64,60 @@ const rowHeightClass: Record<TableDensity, string> = {
   default: "h-[var(--table-row-height-default)]",
   compact: "h-[var(--table-row-height-compact)]"
 };
+
+function readStoredColumnSizing(key: string | undefined): ColumnSizingState {
+  if (!key) return {};
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        (entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1])
+      )
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredColumnSizing(key: string, value: ColumnSizingState): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // private mode / quota — degrade silently
+  }
+}
+
+function columnSizeStyle(size: number): CSSProperties {
+  return { width: size, minWidth: size, maxWidth: size };
+}
+
+function ColumnResizeHandle<TData>({ header }: { header: Header<TData, unknown> }) {
+  if (!header.column.getCanResize()) return null;
+  const resizing = header.column.getIsResizing();
+  return (
+    <div
+      aria-hidden="true"
+      data-column-resize={header.column.id}
+      className={cn(
+        "absolute top-0 right-0 z-30 h-full w-2 cursor-col-resize touch-none select-none",
+        "after:pointer-events-none after:absolute after:top-1.5 after:right-0 after:bottom-1.5 after:w-px after:bg-border",
+        "after:opacity-0 hover:after:opacity-100",
+        resizing && "after:bg-primary after:opacity-100"
+      )}
+      onMouseDown={header.getResizeHandler()}
+      onTouchStart={header.getResizeHandler()}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        header.column.resetSize();
+      }}
+    />
+  );
+}
 
 /** Pin the leading identity column. With row selection, that is the checkbox plus the next column. */
 function stickyColumnClass(columnIndex: number, selectionEnabled: boolean, layer: "header" | "body" | "footer"): string | undefined {
@@ -273,9 +334,31 @@ export function DataTable<TData>({
   getRowClassName,
   columnVisibility,
   onColumnVisibilityChange,
+  columnSizing: columnSizingProp,
+  onColumnSizingChange,
+  columnSizingStorageKey,
+  enableColumnResizing = false,
   fillAvailableWidth = false
 }: DataTableProps<TData>) {
+  const columnResizingEnabled = enableColumnResizing || Boolean(columnSizingStorageKey);
   const selectionEnabled = enableRowSelection !== false && Boolean(enableRowSelection || rowSelection || onRowSelectionChange);
+  const [uncontrolledSizing, setUncontrolledSizing] = useState<ColumnSizingState>(() =>
+    readStoredColumnSizing(columnSizingStorageKey)
+  );
+  const columnSizing = columnSizingProp ?? uncontrolledSizing;
+
+  useEffect(() => {
+    if (columnSizingProp !== undefined || !columnSizingStorageKey) return;
+    writeStoredColumnSizing(columnSizingStorageKey, uncontrolledSizing);
+  }, [columnSizingProp, columnSizingStorageKey, uncontrolledSizing]);
+
+  const handleColumnSizingChange: OnChangeFn<ColumnSizingState> = (updater) => {
+    if (onColumnSizingChange) {
+      onColumnSizingChange(updater);
+      return;
+    }
+    setUncontrolledSizing((current) => (typeof updater === "function" ? updater(current) : updater));
+  };
 
   const tableColumns = useMemo(() => {
     if (!selectionEnabled) return columns;
@@ -299,7 +382,10 @@ export function DataTable<TData>({
         />
       ),
       enableSorting: false,
-      size: 40
+      enableResizing: false,
+      size: 40,
+      minSize: 40,
+      maxSize: 40
     };
 
     return [selectColumn, ...columns];
@@ -311,15 +397,24 @@ export function DataTable<TData>({
     getCoreRowModel: getCoreRowModel(),
     getRowId,
     enableRowSelection,
+    enableColumnResizing: columnResizingEnabled,
+    columnResizeMode: "onChange",
     onRowSelectionChange,
     onColumnVisibilityChange,
+    onColumnSizingChange: handleColumnSizingChange,
+    defaultColumn: {
+      minSize: 64,
+      maxSize: 720
+    },
     state: {
       rowSelection: rowSelection ?? {},
-      columnVisibility: columnVisibility ?? {}
+      columnVisibility: columnVisibility ?? {},
+      columnSizing
     },
     manualPagination: Boolean(pagination),
     pageCount: pagination ? Math.max(1, Math.ceil(pagination.totalRows / pagination.pageSize)) : undefined
   });
+  const isResizing = Boolean(table.getState().columnSizingInfo.isResizingColumn);
 
   const showToolbar = Boolean(toolbar || (showDensityToggle && onDensityChange));
   const isEmpty = !loading && data.length === 0;
@@ -343,7 +438,7 @@ export function DataTable<TData>({
     const tableEl = scroller.querySelector("table");
     if (tableEl) observer.observe(tableEl);
     return () => observer.disconnect();
-  }, [isEmpty, data, tableColumns, density]);
+  }, [isEmpty, data, tableColumns, density, columnSizing]);
 
   const syncingScroll = useRef(false);
 
@@ -377,15 +472,20 @@ export function DataTable<TData>({
       ) : (
         <div
           ref={tableScrollRef}
-          className="cryo-hscroll overflow-x-auto"
+          className={cn("cryo-hscroll overflow-x-auto", isResizing && "select-none")}
           onScroll={(event) => syncScroll(event.currentTarget, trackRef.current)}
         >
           <table
             className={cn(
-              fillAvailableWidth ? "w-full min-w-full table-auto" : "w-max min-w-full",
+              columnResizingEnabled
+                ? "table-fixed"
+                : fillAvailableWidth
+                  ? "w-full min-w-full table-auto"
+                  : "w-max min-w-full",
               "border-separate border-spacing-0 text-[13px]",
               tableClassName
             )}
+            style={columnResizingEnabled ? { width: table.getTotalSize() } : undefined}
           >
             <thead className="sticky top-0 z-10 bg-[var(--color-table-header)]">
               {table.getHeaderGroups().map((headerGroup) => (
@@ -394,12 +494,19 @@ export function DataTable<TData>({
                     <th
                       key={header.id}
                       className={cn(
-                        "border-b border-border px-3 py-2 text-left text-xs font-medium text-muted-foreground",
+                        "relative border-b border-border px-3 py-2 text-left text-xs font-medium text-muted-foreground",
                         stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "header")
                       )}
-                      style={fillAvailableWidth ? undefined : { width: header.getSize() }}
+                      style={
+                        columnResizingEnabled
+                          ? columnSizeStyle(header.getSize())
+                          : fillAvailableWidth
+                            ? undefined
+                            : { width: header.getSize() }
+                      }
                     >
                       {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                      {columnResizingEnabled ? <ColumnResizeHandle header={header} /> : null}
                     </th>
                   ))}
                 </tr>
@@ -409,13 +516,15 @@ export function DataTable<TData>({
               {loading && data.length === 0
                 ? Array.from({ length: pagination?.pageSize ?? 5 }).map((_, rowIndex) => (
                     <tr key={`loading-${rowIndex}`} className={cn("group", rowHeightClass[density])}>
-                      {tableColumns.map((column, columnIndex) => (
+                      {table.getVisibleLeafColumns().map((column, columnIndex) => (
                         <td
-                          key={`${column.id ?? columnIndex}-loading`}
+                          key={`${column.id}-loading`}
                           className={cn(
                             "border-b border-border/70 px-3 py-2",
+                            columnResizingEnabled && "overflow-hidden",
                             stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "body")
                           )}
+                          style={columnResizingEnabled ? columnSizeStyle(column.getSize()) : undefined}
                         >
                           <Skeleton className="h-4 w-full max-w-[12rem]" />
                         </td>
@@ -438,8 +547,10 @@ export function DataTable<TData>({
                           key={cell.id}
                           className={cn(
                             "border-b border-border/70 px-3 py-2 align-middle text-foreground",
+                            columnResizingEnabled && "overflow-hidden",
                             stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "body")
                           )}
+                          style={columnResizingEnabled ? columnSizeStyle(cell.column.getSize()) : undefined}
                         >
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </td>
@@ -456,8 +567,10 @@ export function DataTable<TData>({
                         key={header.id}
                         className={cn(
                           "border-t-2 border-border px-3 py-2 text-left text-xs font-semibold text-foreground [font-variant-numeric:tabular-nums]",
+                          columnResizingEnabled && "overflow-hidden",
                           stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "footer")
                         )}
+                        style={columnResizingEnabled ? columnSizeStyle(header.getSize()) : undefined}
                       >
                         {header.isPlaceholder ? null : flexRender(header.column.columnDef.footer, header.getContext())}
                       </td>

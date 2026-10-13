@@ -1,5 +1,5 @@
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
-import { forwardRef, type ComponentPropsWithoutRef } from "react";
+import { forwardRef, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 const TooltipProvider = TooltipPrimitive.Provider;
@@ -37,4 +37,22 @@ function CryoTooltipProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider, CryoTooltipProvider };
+function TruncationTooltip({
+  content,
+  children,
+  contentClassName
+}: {
+  content?: ReactNode;
+  children: ReactElement;
+  contentClassName?: string;
+}) {
+  if (content == null || content === "") return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent className={contentClassName}>{content}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider, CryoTooltipProvider, TruncationTooltip };
