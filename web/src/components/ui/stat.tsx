@@ -2,6 +2,7 @@ import { type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { metric, metricTooltip, provenanceLabel, type MetricId } from "../../lib/metrics";
 import { Skeleton } from "./skeleton";
+import { TruncationTooltip } from "./tooltip";
 
 type StatBaseProps = {
   value: ReactNode;
@@ -73,15 +74,16 @@ export function Stat({
       aria-pressed={onClick ? Boolean(pressed) : undefined}
     >
       <div className="flex items-center gap-1.5">
-        <p
-          className={cn(
-            "text-[11px] font-semibold leading-4 tracking-[0.015em] text-muted-foreground",
-            entry && "cursor-help"
-          )}
-          title={tooltip}
-        >
-          {shownLabel}
-        </p>
+        <TruncationTooltip content={tooltip}>
+          <p
+            className={cn(
+              "text-[11px] font-semibold leading-4 tracking-[0.015em] text-muted-foreground",
+              entry && "cursor-help"
+            )}
+          >
+            {shownLabel}
+          </p>
+        </TruncationTooltip>
         {entry ? (
           <span
             data-metric-provenance={entry.provenance}

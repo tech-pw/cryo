@@ -233,37 +233,36 @@ export const AskCryoDrawer = () => {
 
   const onResizeDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
+    const handle = event.currentTarget;
+    const pointerId = event.pointerId;
     const startX = event.clientX;
     const startWidth = width;
+    handle.setPointerCapture(pointerId);
     const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
       const next = Math.min(960, Math.max(360, startWidth + (startX - ev.clientX)));
       setWidth(next);
       setExpanded(false);
     };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+    const up = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+      if (handle.hasPointerCapture(pointerId)) {
+        handle.releasePointerCapture(pointerId);
+      }
       setWidth((current) => {
         writeWidth(current);
         return current;
       });
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
   };
 
   return (
-    <>
-    {!open ? (
-      <button
-        type="button"
-        className="fixed bottom-5 right-5 z-40 flex h-12 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground shadow-lg"
-        aria-label="Ask Cryo"
-        onClick={() => openAssistant()}
-      >
-        Ask Cryo
-      </button>
-    ) : null}
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="right"
@@ -302,7 +301,7 @@ export const AskCryoDrawer = () => {
                 className={cn(
                   "relative px-3 pb-2.5 pt-1.5 text-[13px] font-medium tracking-[-0.01em] transition-colors duration-[var(--motion-fast)]",
                   "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-ring",
-                  "active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100",
+                  "active:scale-[0.97] motion-reduce:transition-none motion-reduce:active:scale-100",
                   selected ? "text-foreground" : "text-muted-foreground hover:text-foreground"
                 )}
                 onClick={() => setPanel(id)}
@@ -397,6 +396,5 @@ export const AskCryoDrawer = () => {
         )}
       </SheetContent>
     </Sheet>
-    </>
   );
 };

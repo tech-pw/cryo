@@ -31,12 +31,12 @@ const sheetVariants = cva(
   {
     variants: {
       side: {
-        top: "inset-x-0 top-0 border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top duration-[var(--motion-medium)] data-[state=closed]:duration-[var(--motion-slow)] data-[state=closed]:ease-[var(--ease-in)]",
+        top: "inset-x-0 top-0 border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top duration-[var(--motion-medium)] data-[state=closed]:duration-[var(--motion-fast)]",
         bottom:
-          "inset-x-0 bottom-0 border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom duration-[var(--motion-medium)] data-[state=closed]:duration-[var(--motion-slow)] data-[state=closed]:ease-[var(--ease-in)]",
-        left: "inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left duration-[var(--motion-medium)] data-[state=closed]:duration-[var(--motion-slow)] data-[state=closed]:ease-[var(--ease-in)]",
+          "inset-x-0 bottom-0 border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom duration-[var(--motion-medium)] data-[state=closed]:duration-[var(--motion-fast)]",
+        left: "inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left duration-[var(--motion-medium)] data-[state=closed]:duration-[var(--motion-fast)]",
         right:
-          "inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right duration-[var(--motion-medium)] data-[state=closed]:duration-[var(--motion-slow)] data-[state=closed]:ease-[var(--ease-in)]"
+          "inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right duration-[var(--motion-medium)] data-[state=closed]:duration-[var(--motion-fast)]"
       }
     },
     defaultVariants: {

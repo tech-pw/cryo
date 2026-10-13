@@ -83,8 +83,8 @@ describe("DiscoveredList", () => {
 
     const name = within(rows[0]).getByRole("link", { name: "sales.err" });
     expect(name).toHaveClass("font-mono");
-    expect(name.getAttribute("title")).toMatch(/^sales\.err\n/);
-    expect(name.getAttribute("title")).toContain("too many small files");
+    expect(name.getAttribute("data-finding-tooltip")).toMatch(/^sales\.err\n/);
+    expect(name.getAttribute("data-finding-tooltip")).toContain("too many small files");
     const describedBy = name.getAttribute("aria-describedby");
     expect(describedBy).toBeTruthy();
     expect(document.getElementById(describedBy ?? "")).toHaveTextContent("too many small files");
@@ -94,7 +94,7 @@ describe("DiscoveredList", () => {
     expect(rows[2].querySelector(".h-2.w-2")?.className).toContain("--color-status-warning");
     expect(rows[4].querySelector(".h-2.w-2")?.className).toContain("--color-muted-subtle");
     expect(within(rows[2]).getByText("Small files")).toBeInTheDocument();
-    expect(within(rows[4]).getByTitle("partition evolution pending")).toBeInTheDocument();
+    expect(within(rows[4]).getByText("partition evolution pending")).toBeInTheDocument();
     expect(screen.getByText(DESCRIPTION)).toBeInTheDocument();
     expect(document.querySelector("section")).toHaveClass("font-sans");
   });
@@ -106,8 +106,8 @@ describe("DiscoveredList", () => {
     expect(link).toHaveAttribute("href", "/tables/missing?tab=files#files-properties");
     expect(link).toHaveTextContent("No target size");
     const name = within(list).getByRole("link", { name: "sales.events_raw" });
-    expect(name.getAttribute("title")).toContain("Open property recommendations");
-    expect(name.getAttribute("title")).toContain("write.target-file-size-bytes is unset");
+    expect(name.getAttribute("data-finding-tooltip")).toContain("Open property recommendations");
+    expect(name.getAttribute("data-finding-tooltip")).toContain("write.target-file-size-bytes is unset");
   });
 
   it("formats age as now, minutes, hours, and days", () => {

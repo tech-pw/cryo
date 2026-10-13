@@ -154,12 +154,12 @@
   --color-input: var(--color-control-border);
   --color-ring: var(--color-focus-ring);
 
-  --sidebar-bg: #f5fafd;
-  --sidebar-active-bg: #eaf7fd;
-  --sidebar-text: #5c667a;
-  --sidebar-text-active: #1f5f94;
-  --sidebar-accent: #277abe;
-  --sidebar-hover-bg: #eef1f6;
+  --sidebar-bg: var(--primitive-page);
+  --sidebar-active-bg: var(--primitive-accent-100);
+  --sidebar-text: var(--primitive-neutral-600);
+  --sidebar-text-active: var(--primitive-on-tint);
+  --sidebar-accent: var(--primitive-accent-500);
+  --sidebar-hover-bg: var(--primitive-neutral-200);
   --sidebar-hover: var(--sidebar-hover-bg);
 
   /* Legacy aliases — global CSS and shell.css until styles.css is deleted */
@@ -198,12 +198,12 @@
   --color-segment-active-border: #4a5d74;
   --color-primary-foreground: var(--primitive-black);
   --color-destructive-foreground: var(--primitive-black);
-  --sidebar-bg: #0e141f;
-  --sidebar-active-bg: #0f2a40;
-  --sidebar-text: #a6b2c0;
-  --sidebar-text-active: #90d4f0;
-  --sidebar-accent: #68c1ea;
-  --sidebar-hover-bg: #141c28;
+  --sidebar-bg: var(--primitive-surface);
+  --sidebar-active-bg: var(--primitive-accent-100);
+  --sidebar-text: var(--primitive-neutral-600);
+  --sidebar-text-active: var(--primitive-on-tint);
+  --sidebar-accent: var(--primitive-accent-500);
+  --sidebar-hover-bg: var(--primitive-neutral-200);
   --cryo-mark-line: #0b0f16;
   --cryo-mark-dash: #b8e1f3;
 }

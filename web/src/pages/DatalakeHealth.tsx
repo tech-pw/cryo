@@ -11,6 +11,7 @@ import { getEngineLoad } from "../api/engineLoad";
 import { getCryoVitals } from "../api/vitals";
 import { Alert } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
+import { PageHeader } from "../components/ui/page-header";
 import { useAuth } from "../lib/auth";
 import { optionalNumber } from "../lib/batchSummary";
 import { formatNumber } from "../lib/format";
@@ -128,15 +129,22 @@ export const DatalakeHealth = () => {
 
   return (
     <div className="home-overview">
-      <header className="home-lead">
-        <div>
-          <h1>Home</h1>
-          <p>Your lake at a glance. Health, maintenance and the next best action.</p>
-        </div>
-        <Button variant="ghost" size="icon" aria-label={refreshing ? "Refreshing overview" : "Refresh overview"} disabled={refreshing} onClick={() => void Promise.allSettled(queries.map((query) => query.refetch()))}>
-          <RefreshCw size={16} aria-hidden="true" className={refreshing ? "motion-safe:animate-spin" : ""} />
-        </Button>
-      </header>
+      <PageHeader
+        title="Home"
+        subtitle="Your lake at a glance. Health, maintenance and the next best action."
+        breadcrumbs={false}
+        actions={
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={refreshing ? "Refreshing overview" : "Refresh overview"}
+            disabled={refreshing}
+            onClick={() => void Promise.allSettled(queries.map((query) => query.refetch()))}
+          >
+            <RefreshCw size={16} aria-hidden="true" className={refreshing ? "motion-safe:animate-spin" : ""} />
+          </Button>
+        }
+      />
       {dashboard.isError ? (
         <Alert
           className="page-alert"

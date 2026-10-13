@@ -1,6 +1,6 @@
 import type { ColumnDef, RowSelectionState } from "@tanstack/react-table";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Info } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bar,
@@ -77,7 +77,7 @@ const MetricHint = ({ label }: { label: string }) => (
   <Tooltip delayDuration={0}>
     <TooltipTrigger asChild>
       <button type="button" className="cursor-help text-muted-foreground" aria-label={label}>
-        ⓘ
+        <Info className="size-3.5" aria-hidden="true" />
       </button>
     </TooltipTrigger>
     <TooltipContent>{label}</TooltipContent>

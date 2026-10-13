@@ -76,7 +76,7 @@
 }
 
 .cryo-metric-tile--action:active {
-  transform: scale(0.98);
+  transform: scale(0.97);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -263,18 +263,23 @@
   min-height: 68px;
   padding: 12px;
   background: var(--bg);
-  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.stat-strip > *:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(19, 27, 36, 0.05);
-  position: relative;
-  z-index: 2;
-}
+@media (hover: hover) and (pointer: fine) {
+  .stat-strip > * {
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
 
-[data-theme="dark"] .stat-strip > *:hover {
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  .stat-strip > *:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(19, 27, 36, 0.05);
+    position: relative;
+    z-index: 2;
+  }
+
+  [data-theme="dark"] .stat-strip > *:hover {
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  }
 }
 
 .metric-with-sparkline {

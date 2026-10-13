@@ -19,6 +19,7 @@ const TooltipContent = forwardRef<
       className={cn(
         "z-50 overflow-hidden rounded-[var(--radius-sm)] border border-border bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-sm",
         "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+        "data-[side=bottom]:origin-top data-[side=top]:origin-bottom data-[side=left]:origin-right data-[side=right]:origin-left",
         "data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1",
         "duration-[var(--motion-fast)] ease-[var(--ease-out)]",
         className
@@ -31,7 +32,7 @@ TooltipContent.displayName = TooltipPrimitive.Content.displayName;
 
 function CryoTooltipProvider({ children }: { children: React.ReactNode }) {
   return (
-    <TooltipProvider delayDuration={400} skipDelayDuration={0}>
+    <TooltipProvider delayDuration={400} skipDelayDuration={300}>
       {children}
     </TooltipProvider>
   );

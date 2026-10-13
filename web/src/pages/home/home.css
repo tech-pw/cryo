@@ -1,7 +1,4 @@
 .home-overview { min-width: 0; }
-.home-overview .home-lead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
-.home-overview .home-lead h1 { margin: 0; color: var(--color-ink); font-size: 24px; font-weight: 650; line-height: 32px; letter-spacing: -0.025em; }
-.home-overview .home-lead p { max-width: 68ch; margin-top: 4px; color: var(--color-muted); font-size: 14px; line-height: 20px; }
 .home-overview .home-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 20px; }
 .home-overview .home-card { display: flex; flex-direction: column; min-width: 0; padding: 22px; }
 .home-overview .home-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }

@@ -32,8 +32,7 @@ export function SettingsLayout({
           className={cn(
             "settings-nav flex w-full shrink-0 flex-row gap-1 overflow-x-auto p-1.5 md:w-56 md:flex-col md:overflow-visible",
             "rounded-[var(--radius-lg)] border border-border",
-            "bg-[color-mix(in_srgb,var(--primitive-surface)_78%,transparent)] shadow-[var(--shadow-card)] backdrop-blur-xl",
-            "supports-[backdrop-filter]:bg-[color-mix(in_srgb,var(--primitive-surface)_72%,transparent)]"
+            "bg-[var(--color-surface-raised)] shadow-[var(--shadow-card)]"
           )}
         >
           {sections.map((section) => {
@@ -46,7 +45,7 @@ export function SettingsLayout({
                 className={cn(
                   "relative shrink-0 rounded-[var(--radius-default)] px-3 py-2 text-left text-sm text-foreground",
                   "transition-[background-color,color,transform,box-shadow] duration-[var(--motion-fast)] ease-[var(--ease-out)]",
-                  "active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100",
+                  "active:scale-[0.97] motion-reduce:transition-none motion-reduce:active:scale-100",
                   "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-[var(--focus-ring-color)]",
                   selected
                     ? "bg-[var(--color-surface-raised)] font-medium text-foreground shadow-[inset_2px_0_0_var(--color-primary),0_1px_1px_rgb(0_0_0/0.04)]"

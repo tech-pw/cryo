@@ -1,9 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
-import { Layers, Moon, Search, Sparkles, Sun, User } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Layers, Menu, Moon, Search, Sparkles, Sun, User } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { getAssistantCapabilities } from "../../api/assistant";
 import { Button } from "../ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from "../ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useAssistant } from "../assistant/AssistantProvider";
 import { useAuth } from "../../lib/auth";
 import { loadDraft, MAINTENANCE_BATCH_CHANGE_EVENT, membershipSummary } from "../../lib/maintenanceBatch";
@@ -39,33 +46,6 @@ export const Topbar = ({ onMenuClick, menuOpen = false }: TopbarProps) => {
     staleTime: 60_000,
     retry: false
   });
-  const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const userMenuRef = useRef<HTMLDivElement>(null);
-  const userTriggerRef = useRef<HTMLButtonElement>(null);
-  const signOutRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!userMenuOpen) return;
-    signOutRef.current?.focus();
-    const onPointerDown = (event: MouseEvent) => {
-      if (!userMenuRef.current?.contains(event.target as Node)) {
-        setUserMenuOpen(false);
-      }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      setUserMenuOpen(false);
-      userTriggerRef.current?.focus();
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [userMenuOpen]);
-
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
   const cmdLabel = isMac ? "⌘K" : "Ctrl+K";
   const askLabel = isMac ? "⌘I" : "Ctrl+I";
@@ -90,41 +70,62 @@ export const Topbar = ({ onMenuClick, menuOpen = false }: TopbarProps) => {
           aria-controls="primary-navigation"
           onClick={onMenuClick}
         >
-          <span aria-hidden>☰</span>
+          <Menu size={16} aria-hidden />
         </Button>
       </div>
 
       <div className="cryo-shell__topbar-center">
         <CatalogSearch />
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={openCommandPalette}
-          aria-label="Open command palette"
-          title={`Command palette (${cmdLabel})`}
-        >
-          <Search size={14} aria-hidden />
-          <span className="cryo-shell__kbd">{cmdLabel}</span>
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={openCommandPalette}
+              aria-label="Open command palette"
+            >
+              <Search size={14} aria-hidden />
+              <span className="cryo-shell__kbd">{cmdLabel}</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{`Command palette (${cmdLabel})`}</TooltipContent>
+        </Tooltip>
       </div>
 
       <div className="cryo-shell__topbar-right">
-        <Button type="button" variant="secondary" size="sm" onClick={openBatch} aria-label={`Review batch, ${batchCount}`} title={`Review batch: ${batchCount}`} className="cryo-shell__batch-button">
-          <Layers size={14} aria-hidden className="cryo-shell__batch-icon" /><span>Batch · {batchCount}</span>
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={openBatch}
+              aria-label={`Review batch, ${batchCount}`}
+              className="cryo-shell__batch-button"
+            >
+              <Layers size={14} aria-hidden className="cryo-shell__batch-icon" />
+              <span>Batch · {batchCount}</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{`Review batch: ${batchCount}`}</TooltipContent>
+        </Tooltip>
         {askHidden ? null : (
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => openAssistant()}
-            aria-label="Ask Cryo"
-            title={`Ask Cryo (${askLabel})`}
-          >
-            <Sparkles size={14} aria-hidden />
-            <span className="cryo-shell__ask-label">Ask Cryo</span>
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => openAssistant()}
+                aria-label="Ask Cryo"
+              >
+                <Sparkles size={14} aria-hidden />
+                <span className="cryo-shell__ask-label">Ask Cryo</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{`Ask Cryo (${askLabel})`}</TooltipContent>
+          </Tooltip>
         )}
         <Button
           type="button"
@@ -136,37 +137,19 @@ export const Topbar = ({ onMenuClick, menuOpen = false }: TopbarProps) => {
           {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
         </Button>
 
-        <div className="cryo-shell__user-menu" ref={userMenuRef}>
-          <button
-            ref={userTriggerRef}
-            type="button"
-            className="cryo-shell__user-trigger"
-            aria-label={`${subject} · ${role}`}
-            aria-expanded={userMenuOpen}
-            aria-haspopup="menu"
-            onClick={() => setUserMenuOpen((open) => !open)}
-          >
-            <User size={16} aria-hidden />
-            <span>
-              {subject} · {role}
-            </span>
-          </button>
-          {userMenuOpen ? (
-            <div className="cryo-shell__user-dropdown" role="menu">
-              <button
-                ref={signOutRef}
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setUserMenuOpen(false);
-                  signOut();
-                }}
-              >
-                Sign out
-              </button>
-            </div>
-          ) : null}
-        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" className="cryo-shell__user-trigger" aria-label={`${subject} · ${role}`}>
+              <User size={16} aria-hidden />
+              <span>
+                {subject} · {role}
+              </span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={6} className="w-44">
+            <DropdownMenuItem onSelect={() => signOut()}>Sign out</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   );

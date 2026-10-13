@@ -471,8 +471,8 @@ export const OperationsHome = () => {
       </span>
       <section className="ops-control-hero" aria-labelledby="ops-control-hero-title">
         <div className="ops-control-hero__copy">
-          <p className="ops-control-hero__eyebrow">Execution control room</p>
-          <h2 id="ops-control-hero-title">See the fleet, then follow the work.</h2>
+          <p className="ops-control-hero__eyebrow">Fleet</p>
+          <h2 id="ops-control-hero-title">See the fleet, then follow the work</h2>
           <p>
             Start with the signal, move to the workflow, and open the exact run that needs attention.
             Every status below is backed by a live run or scanner record.

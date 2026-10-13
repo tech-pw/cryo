@@ -9,13 +9,10 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 1rem;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-border));
-  border-radius: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
   padding: 1rem 1.1rem;
-  background:
-    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--color-primary) 16%, transparent), transparent 38%),
-    var(--color-card);
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--color-primary) 7%, transparent);
+  background: var(--color-card);
 }
 
 .ops-control-hero__copy {
@@ -24,11 +21,10 @@
 
 .ops-control-hero__eyebrow {
   margin: 0 0 0.25rem;
-  color: var(--color-primary);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 550;
+  letter-spacing: -0.01em;
 }
 
 .ops-control-hero h2 {

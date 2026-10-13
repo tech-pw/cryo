@@ -136,7 +136,7 @@ export const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="cryo-cmdk" aria-describedby={undefined}>
+      <DialogContent className="cryo-cmdk animate-none duration-0" aria-describedby={undefined}>
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <Command label="Command palette" shouldFilter>
           <Command.Input

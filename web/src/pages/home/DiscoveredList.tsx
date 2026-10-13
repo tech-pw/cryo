@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { QueryErrorAlert } from "../../components/common";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "../../components/ui/sheet";
 import { Skeleton } from "../../components/ui/skeleton";
+import { TruncationTooltip } from "../../components/ui/tooltip";
 import { cn } from "../../lib/cn";
 import { formatTime } from "../../lib/format";
 
@@ -88,40 +89,32 @@ const rowKey = (finding: Discovery, index: number): string =>
   `${finding.table_id}-${finding.finding_type}-${finding.detected_at}-${index}`;
 
 const FindingRow = ({ finding, reasonId }: { finding: Discovery; reasonId: string }) => {
-  const [focused, setFocused] = useState(false);
   const tooltip = tooltipText(finding);
   const missingTarget = finding.finding_type === "missing_target_file_size";
   const label = typeLabel(finding.finding_type);
   return (
-    <li
-      className={cn(
-        "relative min-h-8 border-b border-border last:border-b-0 hover:bg-[var(--color-panel)]",
-        focused && "z-20"
-      )}
-    >
+    <li className="relative min-h-8 border-b border-border last:border-b-0 hover:bg-[var(--color-panel)]">
       <div className="grid min-h-8 grid-cols-[minmax(0,1fr)_88px_120px_36px] items-center gap-x-4 whitespace-nowrap px-4 max-sm:grid-cols-[minmax(0,1fr)_88px] max-sm:gap-y-1 max-sm:py-2">
         <div className="relative min-w-0">
-          <Link
-            to={`/tables/${finding.table_id}`}
-            title={tooltip}
-            aria-describedby={reasonId}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
-            className="block truncate font-mono text-sm font-medium text-[var(--color-link)] hover:underline"
+          <TruncationTooltip
+            content={
+              <span className="block max-w-[320px] whitespace-normal">
+                <span className="block font-mono">{finding.table_name}</span>
+                <span className="block">{finding.reason}</span>
+                <span className="block">{formatTime(finding.detected_at)}</span>
+                {missingTarget ? <span className="block">Open property recommendations</span> : null}
+              </span>
+            }
           >
-            {finding.table_name}
-          </Link>
-          {focused ? (
-            <span
-              aria-hidden="true"
-              className="absolute left-0 top-full z-20 mt-1 max-w-[320px] whitespace-normal rounded-[var(--radius-sm)] border border-border bg-popover px-3 py-1.5 font-sans text-xs font-normal text-popover-foreground shadow-sm"
+            <Link
+              to={`/tables/${finding.table_id}`}
+              aria-describedby={reasonId}
+              data-finding-tooltip={tooltip}
+              className="block truncate font-mono text-sm font-medium text-[var(--color-link)] hover:underline"
             >
-              <span className="block font-mono">{finding.table_name}</span>
-              <span className="block">{finding.reason}</span>
-              <span className="block">{formatTime(finding.detected_at)}</span>
-              {missingTarget ? <span className="block">Open property recommendations</span> : null}
-            </span>
-          ) : null}
+              {finding.table_name}
+            </Link>
+          </TruncationTooltip>
         </div>
         <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
           <span aria-hidden="true" className={cn("h-2 w-2 shrink-0 rounded-full", severityDotClass(finding.severity))} />
@@ -136,9 +129,9 @@ const FindingRow = ({ finding, reasonId }: { finding: Discovery; reasonId: strin
             No target size
           </Link>
         ) : (
-          <span className="block min-w-0 truncate text-sm text-[var(--color-muted)]" title={label}>
-            {label}
-          </span>
+          <TruncationTooltip content={label}>
+            <span className="block min-w-0 truncate text-sm text-[var(--color-muted)]">{label}</span>
+          </TruncationTooltip>
         )}
         <time
           dateTime={finding.detected_at}
