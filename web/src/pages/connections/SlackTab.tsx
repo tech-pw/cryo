@@ -117,30 +117,47 @@ export const SlackTab = () => {
   );
 
   return (
-    <div className="flex w-full flex-col gap-3">
-      <p className="tab-intro text-sm text-muted-foreground">
-        Connect Slack to receive daily anomaly reports with AI-generated summaries. Configure your webhook URL,
-        reporting schedule, and channel.
-      </p>
+    <div className="flex w-full flex-col gap-5">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-default)] bg-[var(--color-primary-soft)] text-primary">
+          <MessageSquare className="size-4" aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold tracking-[-0.015em]">Slack delivery</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+            Send daily anomaly reports to your workspace. Add a webhook, then choose its channel and reporting schedule.
+          </p>
+        </div>
+      </div>
       {role !== "viewer" ? (
         <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>Manual daily report</CardTitle>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base tracking-[-0.01em]">Manual daily report</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Generate and optionally send a report using your default Slack connection.
+            </p>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-4">
-              <label className="inline-flex items-center gap-2 text-sm">
-                <Switch checked={sendReportToSlack} onCheckedChange={setSendReportToSlack} />
-                Send to Slack
-              </label>
-              <label className="inline-flex items-center gap-2 text-sm">
-                <Switch checked={reportUseAi} onCheckedChange={setReportUseAi} />
-                AI summary
-              </label>
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+                <label className="inline-flex items-center gap-2.5 text-sm">
+                  <Switch checked={sendReportToSlack} onCheckedChange={setSendReportToSlack} />
+                  Send to Slack
+                </label>
+                <label className="inline-flex items-center gap-2.5 text-sm">
+                  <Switch checked={reportUseAi} onCheckedChange={setReportUseAi} />
+                  AI summary
+                </label>
+              </div>
+              <Button
+                className="w-full sm:w-auto"
+                variant="primary"
+                loading={dailyReport.isPending}
+                onClick={() => dailyReport.mutate()}
+              >
+                Generate report now
+              </Button>
             </div>
-            <Button variant="primary" loading={dailyReport.isPending} onClick={() => dailyReport.mutate()}>
-              Generate report now
-            </Button>
             {dailyReportResult ? (
               <Alert
                 variant="success"
@@ -157,21 +174,35 @@ export const SlackTab = () => {
           </CardContent>
         </Card>
       ) : null}
-      <div>
-        <Button variant="primary" onClick={() => setSlackDrawer("new")}>
-          <Plus className="size-4" aria-hidden="true" />
-          New Slack connection
-        </Button>
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold tracking-[-0.015em]">Slack connections</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Manage webhook destinations, test delivery, and choose the default for scheduled reports.
+            </p>
+          </div>
+          {role !== "viewer" ? (
+            <Button className="w-full sm:w-auto" variant="primary" onClick={() => setSlackDrawer("new")}>
+              <Plus className="size-4" aria-hidden="true" />
+              New Slack connection
+            </Button>
+          ) : null}
+        </div>
+        <DataTable
+          columns={columns}
+          data={slackConfigs.data ?? []}
+          density="default"
+          loading={slackConfigs.isLoading}
+          getRowId={(row) => row.id ?? `slack-${row.name}-${row.channel}`}
+          emptyTitle="No Slack connections yet"
+          emptyDescription={
+            role === "viewer"
+              ? "An admin can add a Slack webhook to start delivering reports."
+              : "Add a Slack webhook to deliver daily anomaly reports and test the connection."
+          }
+        />
       </div>
-      <DataTable
-        columns={columns}
-        data={slackConfigs.data ?? []}
-        density="compact"
-        loading={slackConfigs.isLoading}
-        getRowId={(row) => row.id ?? `slack-${row.name}-${row.channel}`}
-        emptyTitle="No Slack connections configured"
-        emptyDescription="Add a Slack webhook to receive daily anomaly reports with AI-generated summaries."
-      />
     </div>
   );
 };

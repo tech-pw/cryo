@@ -13,7 +13,10 @@ const AiAccessTable = lazy(() => import("./AiAccessTable").then((m) => ({ defaul
 const useSettingsTab = () => useSearchParams()[0].get("tab");
 
 export const SettingsConnectionsHome = () => (
-  <SettingsLayout>
+  <SettingsLayout
+    title="Connections"
+    subtitle="Manage your Iceberg catalogs, maintenance engines, and integrations."
+  >
     <Connections embedded />
   </SettingsLayout>
 );
@@ -32,7 +35,7 @@ export const SettingsAiHome = () => {
   return (
     <SettingsLayout>
       <AiAccessTable />
-      <p className="mt-3 text-sm text-muted-foreground">
+      <p className="settings-note mt-3 text-sm text-muted-foreground">
         <Link to="/settings/ai/models" className="text-primary underline-offset-2 hover:underline">
           AI model settings
         </Link>{" "}
@@ -62,10 +65,10 @@ export const SettingsAdminHome = () => {
 };
 
 export const SettingsNotificationsHome = () => (
-  <SettingsLayout>
-    <p className="mb-3 text-sm text-muted-foreground">
-      Slack daily report is edited on the Slack connection. This page does not store a second webhook.
-    </p>
+  <SettingsLayout
+    title="Notifications"
+    subtitle="Configure Slack delivery and generate operational reports."
+  >
     <Connections embedded forcedTab="slack" />
   </SettingsLayout>
 );

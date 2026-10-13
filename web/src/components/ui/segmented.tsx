@@ -29,7 +29,7 @@ export function Segmented<T extends string>({
       role="group"
       aria-label={ariaLabel}
       className={cn(
-        "inline-flex max-w-full overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--color-control-border)] bg-background p-0.5",
+        "cryo-segmented inline-flex max-w-full overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--color-control-border)] bg-background p-0.5",
         block && "flex w-full",
         className
       )}

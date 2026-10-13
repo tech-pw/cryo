@@ -4,13 +4,13 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { getDeepHealth, getMetricsText, getShallowHealth, triggerGitOpsWebhook } from "../api/client";
 import { EmptyState, QueryErrorAlert } from "./common";
+import { PrometheusPreview } from "./PrometheusPreview";
 import { useAuth } from "../lib/auth";
 import { Alert } from "./ui/alert";
 import { Link } from "react-router-dom";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Descriptions } from "./ui/descriptions";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 
@@ -85,69 +85,76 @@ export const OpsPanel = () => {
         .
       </p>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle>Liveness</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <QueryErrorAlert error={shallowHealth.error} title="Liveness check failed" />
-            {shallowHealth.data ? (
-              <>
-                <Badge variant="success">{shallowHealth.data.status}</Badge>
-                <Button variant="ghost" size="sm" asChild>
+      <div className="grid items-stretch gap-3 md:grid-cols-2">
+        <Card className="h-full">
+          <CardHeader className="space-y-2 p-3">
+            <div className="flex h-5 items-center gap-2">
+              <CardTitle className="whitespace-nowrap">Liveness</CardTitle>
+              {shallowHealth.data ? <Badge variant="success">{shallowHealth.data.status}</Badge> : null}
+            </div>
+            <div className="flex h-7 items-center">
+              {shallowHealth.data ? (
+                <Button variant="ghost" size="sm" className="-ml-2 h-7" asChild>
                   <a href="/healthz" target="_blank" rel="noreferrer">
                     <ExternalLink className="size-3.5" />
                     Open /healthz
                   </a>
                 </Button>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">Checking…</p>
-            )}
-          </CardContent>
+              ) : (
+                <p className="text-sm text-muted-foreground">Checking…</p>
+              )}
+            </div>
+          </CardHeader>
+          {shallowHealth.error ? (
+            <CardContent className="px-3 pb-3 pt-0">
+              <QueryErrorAlert error={shallowHealth.error} title="Liveness check failed" />
+            </CardContent>
+          ) : null}
         </Card>
 
-        <Card className="md:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Deep health</CardTitle>
-            <Button
-              size="sm"
-              loading={deepHealth.isFetching}
-              onClick={() => void deepHealth.refetch()}
-            >
-              <RefreshCw className="size-3.5" />
-              Refresh
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <QueryErrorAlert error={deepHealth.error} title="Deep health check failed" />
-            {deepHealth.data ? (
-              <>
+        <Card className="h-full">
+          <CardHeader className="space-y-2 p-3">
+            <div className="flex h-5 items-center gap-2">
+              <CardTitle className="whitespace-nowrap">Deep health</CardTitle>
+              {deepHealth.data ? (
                 <Badge variant={deepHealth.data.status === "ok" ? "success" : "warning"}>
                   {deepHealth.data.status}
                 </Badge>
-                <Descriptions
-                  bordered
-                  size="small"
-                  column={1}
-                  items={Object.entries(deepHealth.data.checks).map(([name, check]) => ({
-                    label: name,
-                    children: (
-                      <span className="inline-flex items-center gap-2">
-                        <Badge variant={check.status === "ok" ? "success" : "danger"}>{check.status}</Badge>
-                        {check.detail ? <span className="text-muted-foreground">{check.detail}</span> : null}
-                      </span>
-                    )
-                  }))}
-                />
-                <Button variant="ghost" size="sm" asChild>
-                  <a href="/healthz/deep" target="_blank" rel="noreferrer">
-                    <ExternalLink className="size-3.5" />
-                    Open JSON
-                  </a>
-                </Button>
-              </>
+              ) : null}
+            </div>
+            <div className="flex h-7 items-center gap-1">
+              <Button variant="ghost" size="sm" className="-ml-2 h-7" asChild>
+                <a href="/healthz/deep" target="_blank" rel="noreferrer">
+                  <ExternalLink className="size-3.5" />
+                  Open JSON
+                </a>
+              </Button>
+              <Button
+                size="sm"
+                className="h-7"
+                loading={deepHealth.isFetching}
+                onClick={() => void deepHealth.refetch()}
+              >
+                <RefreshCw className="size-3.5" />
+                Refresh
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="px-3 pb-3 pt-0">
+            <QueryErrorAlert error={deepHealth.error} title="Deep health check failed" />
+            {deepHealth.data ? (
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(deepHealth.data.checks).map(([name, check]) => (
+                  <div
+                    key={name}
+                    className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[var(--radius-default)] border border-border bg-[var(--color-surface-sunken)] px-2.5"
+                  >
+                    <span className="text-xs font-medium text-muted-foreground">{name}</span>
+                    <Badge variant={check.status === "ok" ? "success" : "danger"}>{check.status}</Badge>
+                    {check.detail ? <span className="text-xs text-muted-foreground">{check.detail}</span> : null}
+                  </div>
+                ))}
+              </div>
             ) : deepHealth.isLoading ? (
               <p className="text-sm text-muted-foreground">Checking dependencies…</p>
             ) : (
@@ -156,10 +163,10 @@ export const OpsPanel = () => {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-1">
-          <CardHeader className="flex flex-row items-center justify-between gap-2">
+        <Card className="md:col-span-3">
+          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 p-3">
             <CardTitle>Prometheus metrics</CardTitle>
-            <div className="flex gap-2">
+            <div className="flex shrink-0 gap-2">
               <Button size="sm" loading={loadMetrics.isPending} onClick={() => loadMetrics.mutate()}>
                 Preview
               </Button>
@@ -171,13 +178,13 @@ export const OpsPanel = () => {
               </Button>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-3 pb-3 pt-0">
             <p className="text-sm text-muted-foreground">
               Exposes registered Prometheus metrics at <code>/metrics</code> for scraping. Preview loads the first
               lines only.
             </p>
             {metricsPreview ? (
-              <pre className="inline-json mt-3">{metricsPreview}</pre>
+              <PrometheusPreview text={metricsPreview} />
             ) : (
               <EmptyState
                 title="No preview loaded"
@@ -188,10 +195,10 @@ export const OpsPanel = () => {
         </Card>
 
         <Card className="md:col-span-3">
-          <CardHeader>
+          <CardHeader className="p-3 pb-2">
             <CardTitle>GitOps policy webhook</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-3 px-3 pb-3 pt-0">
             <p className="text-sm text-muted-foreground">
               Simulates a Git push webhook to reload YAML policies from <code>CRYO_GITOPS_REPO_PATH</code>. Requires
               GitOps repo configured on the API. If <code>CRYO_GITOPS_WEBHOOK_SECRET</code> is set, pass it below.

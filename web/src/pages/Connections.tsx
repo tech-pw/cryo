@@ -1,3 +1,4 @@
+import { Cpu, Database, Layers } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { Alert } from "../components/ui/alert";
@@ -80,10 +81,26 @@ const ConnectionsTabs = ({ forcedTab }: { forcedTab?: ConnectionsTabKey }) => {
     <>
       {testResult ? <DestinationTestResultPanel result={testResult} onDismiss={() => setTestResult(null)} /> : null}
       <Tabs value={activeTab} onValueChange={handleTabChange}>
+        {forcedTab ? null : (
         <TabsList>
-          <TabsTrigger value="sources">Lakehouses</TabsTrigger>
-          <TabsTrigger value="destinations">Engines</TabsTrigger>
-          <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
+          <TabsTrigger value="sources">
+            <span className="inline-flex items-center gap-1.5">
+              <Database className="size-3.5" aria-hidden="true" />
+              Lakehouses
+            </span>
+          </TabsTrigger>
+          <TabsTrigger value="destinations">
+            <span className="inline-flex items-center gap-1.5">
+              <Cpu className="size-3.5" aria-hidden="true" />
+              Engines
+            </span>
+          </TabsTrigger>
+          <TabsTrigger value="capabilities">
+            <span className="inline-flex items-center gap-1.5">
+              <Layers className="size-3.5" aria-hidden="true" />
+              Capabilities
+            </span>
+          </TabsTrigger>
           <TabsTrigger value="ai-providers">
             <AiProvidersTabLabel />
           </TabsTrigger>
@@ -96,6 +113,7 @@ const ConnectionsTabs = ({ forcedTab }: { forcedTab?: ConnectionsTabKey }) => {
             </TabsTrigger>
           ) : null}
         </TabsList>
+        )}
         <TabsContent value="sources">{activeTab === "sources" ? <LakehousesTab /> : null}</TabsContent>
         <TabsContent value="destinations">{activeTab === "destinations" ? <EnginesTab /> : null}</TabsContent>
         <TabsContent value="capabilities">

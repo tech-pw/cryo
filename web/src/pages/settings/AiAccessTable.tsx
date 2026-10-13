@@ -57,16 +57,25 @@ export const AI_ROUTE_ACCESS: AiRouteAccess[] = [
 
 export function AiAccessTable() {
   return (
-    <section aria-label="AI route access, read-only">
-      <div className="mb-3 flex items-center gap-2">
-        <h2 className="text-sm font-semibold">Who may call the model</h2>
+    <section
+      aria-label="AI route access, read-only"
+      className="overflow-hidden rounded-[var(--radius-lg)] border border-border bg-[var(--primitive-surface)] shadow-[var(--shadow-card)]"
+    >
+      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+        <h2 className="text-sm font-semibold tracking-[-0.01em]">Who may call the model</h2>
         <Badge variant="outline">Read-only</Badge>
       </div>
       <SimpleTable
+        className="px-1 pb-1"
         columns={[
           { title: "Capability", dataIndex: "capability", key: "capability" },
           { title: "Method", dataIndex: "method", key: "method" },
-          { title: "Route", dataIndex: "path", key: "path" },
+          {
+            title: "Route",
+            dataIndex: "path",
+            key: "path",
+            render: (value) => <span className="font-mono text-xs [font-variant-numeric:tabular-nums]">{String(value ?? "—")}</span>
+          },
           { title: "Role", dataIndex: "role", key: "role" }
         ]}
         dataSource={AI_ROUTE_ACCESS}

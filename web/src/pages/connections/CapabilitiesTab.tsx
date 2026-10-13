@@ -203,8 +203,8 @@ export const CapabilityLedger = ({ manifest }: { manifest: CapabilityManifest })
   const executingEngines = manifest.engines.filter((engine) => engine.execution_available).length;
 
   return (
-    <div className="space-y-6">
-      <div className="grid overflow-hidden border-y border-border bg-[var(--color-surface-sunken)] sm:grid-cols-3">
+    <div className="space-y-4">
+      <div className="grid overflow-hidden rounded-[var(--radius-lg)] border border-border bg-[var(--color-surface-sunken)] sm:grid-cols-3">
         {[
           ["Contract", `v${manifest.schema_version}`],
           ["Declared cells", manifest.matrix.length.toString()],
@@ -225,10 +225,10 @@ export const CapabilityLedger = ({ manifest }: { manifest: CapabilityManifest })
         ))}
       </div>
 
-      <div>
-        <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+      <section className="overflow-hidden rounded-[var(--radius-lg)] border border-border bg-[var(--primitive-surface)] shadow-[var(--shadow-card)]">
+        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border px-4 py-3">
           <div>
-            <h3 className="text-base font-semibold">Maintenance execution matrix</h3>
+            <h3 className="text-sm font-semibold tracking-[-0.01em]">Maintenance execution matrix</h3>
             <p className="mt-1 text-sm text-muted-foreground">
               {executingEngines} engines execute work; configuration-only paths are never counted
               as success.
@@ -279,18 +279,21 @@ export const CapabilityLedger = ({ manifest }: { manifest: CapabilityManifest })
             </div>
           }
         />
-      </div>
+      </section>
 
-      <section aria-labelledby="catalog-capabilities-heading">
-        <div className="mb-3">
-          <h3 id="catalog-capabilities-heading" className="text-base font-semibold">
+      <section
+        aria-labelledby="catalog-capabilities-heading"
+        className="overflow-hidden rounded-[var(--radius-lg)] border border-border bg-[var(--primitive-surface)] shadow-[var(--shadow-card)]"
+      >
+        <div className="border-b border-border px-4 py-3">
+          <h3 id="catalog-capabilities-heading" className="text-sm font-semibold tracking-[-0.01em]">
             Catalog read adapters
           </h3>
           <p className="mt-1 text-sm text-muted-foreground">
             Catalog access discovers metadata. It never selects or executes a maintenance engine.
           </p>
         </div>
-        <div className="divide-y divide-border border-y border-border">
+        <div className="divide-y divide-border">
           {manifest.catalogs.map((catalog) => (
             <div
               key={catalog.catalog_type}
@@ -324,7 +327,10 @@ export const CapabilitiesTab = () => {
 
   if (capabilities.isError) {
     return (
-      <div role="alert" className="border-y border-[var(--color-status-danger)] px-4 py-3 text-sm">
+      <div
+        role="alert"
+        className="rounded-[var(--radius-lg)] border border-[var(--color-status-danger)] px-4 py-3 text-sm"
+      >
         Capability contract unavailable: {(capabilities.error as Error).message}
       </div>
     );
@@ -333,8 +339,8 @@ export const CapabilitiesTab = () => {
   if (!capabilities.data) {
     return (
       <div className="space-y-3" aria-label="Loading capability contract">
-        <div className="h-20 animate-pulse bg-[var(--color-surface-sunken)]" />
-        <div className="h-72 animate-pulse bg-[var(--color-surface-sunken)]" />
+        <div className="h-20 animate-pulse rounded-[var(--radius-lg)] bg-[var(--color-surface-sunken)]" />
+        <div className="h-72 animate-pulse rounded-[var(--radius-lg)] bg-[var(--color-surface-sunken)]" />
       </div>
     );
   }

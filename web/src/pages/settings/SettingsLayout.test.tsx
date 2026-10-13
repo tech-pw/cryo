@@ -54,4 +54,19 @@ describe("SettingsLayout", () => {
     expect(screen.getByRole("link", { name: "Admin" })).toHaveAttribute("href", "/settings/admin");
     expect(screen.getByRole("link", { name: "Admin" })).toHaveAttribute("aria-current", "page");
   });
+
+  it("allows a settings section to provide a specific page heading", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/settings/notifications"]}>
+          <SettingsLayout title="Notifications" subtitle="Configure Slack delivery and reports.">
+            <p>Notification settings</p>
+          </SettingsLayout>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    expect(screen.getByRole("heading", { name: "Notifications" })).toBeInTheDocument();
+    expect(screen.getByText("Configure Slack delivery and reports.")).toBeInTheDocument();
+  });
 });

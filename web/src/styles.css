@@ -145,7 +145,44 @@
 
 .tab-intro {
   max-width: 68ch;
-  margin-bottom: 4px !important;
+  margin-bottom: 0 !important;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+  line-height: 1.5;
+}
+
+.settings-note {
+  max-width: 68ch;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+  line-height: 1.5;
+}
+
+.settings-page-header.cryo-page-header {
+  margin-bottom: 0;
+  padding-bottom: 12px;
+}
+
+.settings-page-header .cryo-page-header__body {
+  min-height: 0;
+}
+
+.settings-page-header .cryo-page-header__title {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .settings-nav {
+    background: var(--primitive-surface);
+    backdrop-filter: none;
+  }
 }
 
 .page-alert {

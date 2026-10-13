@@ -120,7 +120,7 @@ export const LakehousesTab = () => {
         these to discover tables and scan health. Read-only: nothing here ever runs maintenance, it only tells
         Cryo what tables exist.
       </p>
-      {role === "viewer" ? <p className="text-xs text-muted-foreground">{VIEWER_REASON}</p> : null}
+      {role === "viewer" ? <p className="settings-note text-xs text-muted-foreground">{VIEWER_REASON}</p> : null}
       <div>
         <Button
           variant="primary"

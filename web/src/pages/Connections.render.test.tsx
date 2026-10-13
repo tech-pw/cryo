@@ -84,6 +84,13 @@ describe("Connections tab URL sync", () => {
     expect(await screen.findByRole("tab", { name: "Lakehouses", selected: true })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Ops" })).not.toBeInTheDocument();
   });
+
+  it("shows the Slack delivery and connections sections on the Slack tab", async () => {
+    renderConnections(["/connections?tab=slack"]);
+    expect(await screen.findByRole("heading", { name: "Slack delivery" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Manual daily report" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Slack connections" })).toBeInTheDocument();
+  });
 });
 
 describe("Connections URL-backed edit context", () => {

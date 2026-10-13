@@ -191,6 +191,11 @@
   --color-surface-1: var(--primitive-neutral-100);
   --color-surface-2: var(--primitive-neutral-200);
   --color-surface-raised: var(--primitive-surface);
+  /* Segmented controls need a chip that sits above the sunken track.
+     surface-2 and surface-sunken both resolve to #0e141f in dark mode. */
+  --color-segment-track: #080c13;
+  --color-segment-active: #1c2736;
+  --color-segment-active-border: #4a5d74;
   --color-primary-foreground: var(--primitive-black);
   --color-destructive-foreground: var(--primitive-black);
   --sidebar-bg: #0e141f;
@@ -249,6 +254,30 @@
 
 [data-theme="dark"] {
   --shadow-card: 0 1px 2px rgb(0 0 0 / 28%), 0 14px 30px -22px rgb(0 0 0 / 86%);
+}
+
+/* Segmented tabs: dark track and selected chip must not share a surface token.
+   surface-sunken and surface-2 both resolve to #0e141f, so the active chip
+   disappears. Light mode keeps the sunken-track / raised-chip pairing. */
+html[data-theme="dark"] .cryo-tabs {
+  background-color: var(--color-segment-track);
+  box-shadow: inset 0 0 0 1px var(--color-border), inset 0 1px 2px rgb(0 0 0 / 45%);
+}
+
+html[data-theme="dark"] .cryo-tabs [role="tab"][data-state="active"] {
+  background-color: var(--color-segment-active);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 45%), 0 0 0 1px var(--color-segment-active-border);
+}
+
+html[data-theme="dark"] .cryo-segmented {
+  background-color: var(--color-segment-track);
+  border-color: var(--color-border);
+}
+
+html[data-theme="dark"] .cryo-segmented [aria-pressed="true"] {
+  background-color: var(--color-segment-active);
+  color: var(--color-text-primary);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 45%), 0 0 0 1px var(--color-segment-active-border);
 }
 
 @theme inline {

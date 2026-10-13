@@ -161,7 +161,7 @@ export const EnginesTab = () => {
         iceberg-rust subprocess engines. Presets and manual runs target one of these to do the real work
         (compaction, snapshot expiry, orphan cleanup).
       </p>
-      {role === "viewer" ? <p className="text-xs text-muted-foreground">{VIEWER_REASON}</p> : null}
+      {role === "viewer" ? <p className="settings-note text-xs text-muted-foreground">{VIEWER_REASON}</p> : null}
       <div>
         <Button
           variant="primary"
