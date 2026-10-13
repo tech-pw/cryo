@@ -84,3 +84,14 @@ describe("AppShell sidebar shortcut", () => {
     expect(shell()).toHaveAttribute("data-sidebar-collapsed", "true");
   });
 });
+
+describe("AppShell skip link", () => {
+  it("keeps skip-to-content inside the shell so it cannot stretch the document", () => {
+    renderShell();
+    const skip = screen.getByRole("link", { name: "Skip to main content" });
+    expect(skip).toHaveClass("cryo-shell__skip");
+    expect(skip).toHaveAttribute("href", "#main-content");
+    expect(shell()?.contains(skip)).toBe(true);
+    expect(document.getElementById("main-content")).not.toBeNull();
+  });
+});

@@ -214,6 +214,9 @@ const AppShellFrame = ({ children }: AppShellProps) => {
         style={{ background: "var(--color-layout-bg)" }}
       >
         <style>{SIDEBAR_COLLAPSED_CSS}</style>
+        <a href="#main-content" className="cryo-shell__skip">
+          Skip to main content
+        </a>
         {mobileOpen ? (
           <button
             type="button"

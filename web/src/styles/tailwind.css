@@ -5,6 +5,7 @@
 @layer base {
   html {
     color-scheme: light;
+    height: 100%;
   }
 
   [data-theme="dark"] html,
@@ -16,12 +17,28 @@
     @apply border-border;
   }
 
+  html,
+  body,
+  #root {
+    height: 100%;
+    max-height: 100%;
+  }
+
+  html,
+  body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
   body {
     @apply m-0 bg-background text-foreground font-sans;
     font-variant-numeric: tabular-nums;
-    min-height: 100vh;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
+  }
+
+  #root {
+    overflow: hidden;
   }
 
   :focus-visible {
