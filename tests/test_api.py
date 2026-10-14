@@ -218,6 +218,79 @@ def test_source_test_endpoint_hive_reports_namespaces_without_listing_tables() -
     mock_catalog.list_tables.assert_not_called()
 
 
+def test_source_test_suggests_a_warehouse_when_the_config_has_none() -> None:
+    """A connection test passes without a warehouse, but every scan then fails.
+
+    list_namespaces() doesn't need one, so onboarding reported success and the scanner
+    later failed every table with "source config missing warehouse". Deriving it from the
+    catalog's own database locations means the operator never has to invent a value.
+    """
+    mock_catalog = MagicMock()
+    mock_catalog.list_namespaces.return_value = ["sales"]
+
+    with (
+        patch("cryo.sources.pyiceberg_catalog.load_catalog", return_value=mock_catalog),
+        patch(
+            "cryo.api.routes.derive_hive_warehouse_root",
+            return_value="s3a://lake-prod/iceberg/warehouse",
+        ),
+    ):
+        response = _client().post(
+            "/api/v1/sources/test",
+            headers=AUTH_HEADERS,
+            json={"type": "hive", "config": {"uri": "thrift://localhost:9083"}},
+        )
+
+    body = response.json()
+    assert body["ok"] is True
+    assert body["suggested_warehouse"] == "s3a://lake-prod/iceberg/warehouse"
+
+
+def test_source_test_leaves_an_existing_warehouse_alone() -> None:
+    """Never second-guess a warehouse the operator already set."""
+    mock_catalog = MagicMock()
+    mock_catalog.list_namespaces.return_value = ["sales"]
+
+    with (
+        patch("cryo.sources.pyiceberg_catalog.load_catalog", return_value=mock_catalog),
+        patch("cryo.api.routes.derive_hive_warehouse_root") as derive,
+    ):
+        response = _client().post(
+            "/api/v1/sources/test",
+            headers=AUTH_HEADERS,
+            json={
+                "type": "hive",
+                "config": {"uri": "thrift://localhost:9083", "warehouse": "s3://mine/wh"},
+            },
+        )
+
+    assert response.json()["suggested_warehouse"] is None
+    derive.assert_not_called()
+
+
+def test_source_test_survives_warehouse_derivation_failure() -> None:
+    """Derivation is a convenience -- it must never break the connection test itself."""
+    mock_catalog = MagicMock()
+    mock_catalog.list_namespaces.return_value = ["sales"]
+
+    with (
+        patch("cryo.sources.pyiceberg_catalog.load_catalog", return_value=mock_catalog),
+        patch(
+            "cryo.api.routes.derive_hive_warehouse_root",
+            side_effect=RuntimeError("metastore refused"),
+        ),
+    ):
+        response = _client().post(
+            "/api/v1/sources/test",
+            headers=AUTH_HEADERS,
+            json={"type": "hive", "config": {"uri": "thrift://localhost:9083"}},
+        )
+
+    body = response.json()
+    assert body["ok"] is True
+    assert body["suggested_warehouse"] is None
+
+
 def test_discover_storage_reports_buckets_from_table_locations() -> None:
     """Buckets come from TABLE locations, not the database default.
 

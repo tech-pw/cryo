@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getSourceNamespaces, testSource } from "../../api/client";
 import type { SourceRead, SourceWrite } from "../../api/types";
@@ -68,6 +68,11 @@ export const SourceDrawer = ({
     (existingConfig as { s3_auth_method?: "default" | "access_key" | "assume_role" }).s3_auth_method ?? "default"
   );
   const [testPassed, setTestPassed] = useState(false);
+  const [warehouseAutofilled, setWarehouseAutofilled] = useState(false);
+  // Set while Cryo writes the derived warehouse into the form. Every watched field clears
+  // a passing test, so without this the autofill would instantly invalidate the very test
+  // that produced the value.
+  const applyingSuggestionRef = useRef(false);
   const [schemaOptions, setSchemaOptions] = useState<string[]>(
     editingSource ? editingSource.maintenance_schema_names ?? [] : []
   );
@@ -90,6 +95,7 @@ export const SourceDrawer = ({
     setS3AuthMethod(defaults.s3_auth_method ?? "default");
     setSchemaOptions(value !== "new" ? value.maintenance_schema_names ?? [] : []);
     setTestPassed(false);
+    setWarehouseAutofilled(false);
     setStep("connect");
     setFurthestStep("connect");
   }, [value, form]);
@@ -120,6 +126,15 @@ export const SourceDrawer = ({
       if (data.ok) {
         setSchemaOptions(data.namespaces);
         setFurthestStep((prev) => (prev === "connect" ? "storage" : prev));
+        // The test passes without a warehouse, but every scan then fails with "source
+        // config missing warehouse" -- so fill it from the catalog's own database
+        // locations rather than leaving a field the operator has to guess at.
+        if (data.suggested_warehouse && !String(form.getValues("warehouse") ?? "").trim()) {
+          applyingSuggestionRef.current = true;
+          form.setValue("warehouse", data.suggested_warehouse);
+          applyingSuggestionRef.current = false;
+          setWarehouseAutofilled(true);
+        }
       }
     },
     onError: (error) => {
@@ -179,6 +194,7 @@ export const SourceDrawer = ({
         setS3AuthMethod(formValues.s3_auth_method ?? "default");
       }
       if (name === "maintenance_schema_names") return;
+      if (applyingSuggestionRef.current) return;
       setTestPassed(false);
       testConnection.reset();
     });
@@ -208,6 +224,17 @@ export const SourceDrawer = ({
     }
     if (values.s3_auth_method === "assume_role" && !values.s3_role_arn?.trim()) {
       form.setError("s3_role_arn", { message: "Role ARN is required for assume role auth" });
+      return;
+    }
+    // Mandatory because the connection test can't catch its absence: listing namespaces
+    // works without a warehouse, so the lakehouse saves cleanly and then every table fails
+    // to scan with "source config missing warehouse". Cryo fills this from the catalog on
+    // a successful test; this blocks the case where that inference found no single root.
+    if (!values.warehouse?.trim()) {
+      form.setError("warehouse", {
+        message: "Required — scans can't resolve table paths without it"
+      });
+      setStep("connect");
       return;
     }
     try {
@@ -246,6 +273,7 @@ export const SourceDrawer = ({
               labels={{
                 name: "Name",
                 uri: "Catalog URI",
+                warehouse: "Warehouse",
                 s3_role_arn: "Role ARN"
               }}
             />
@@ -294,10 +322,20 @@ export const SourceDrawer = ({
               </FormField>
             ) : null}
 
-            <FormField name="warehouse" label="Warehouse">
+            <FormField
+              name="warehouse"
+              label={
+                <HintLabel
+                  label="Warehouse"
+                  tooltip="Root location the catalog stores tables under. Scans resolve every table path against it, so a placeholder value fails every table. Cryo fills this in from the catalog when you test the connection."
+                />
+              }
+            >
               {(field) => (
                 <Input
-                  placeholder={catalogType === "glue" ? "s3://my-bucket/warehouse" : "warehouse"}
+                  // A bare "warehouse" placeholder invited exactly the value that breaks
+                  // scanning; show the shape of a real root instead.
+                  placeholder="s3://my-bucket/warehouse"
                   value={String(field.value ?? "")}
                   onChange={field.onChange}
                   onBlur={field.onBlur}
@@ -306,6 +344,12 @@ export const SourceDrawer = ({
                 />
               )}
             </FormField>
+            {warehouseAutofilled ? (
+              <p className="-mt-2 text-xs text-muted-foreground">
+                Filled in from this catalog&apos;s own database locations. Change it if your tables
+                live somewhere else.
+              </p>
+            ) : null}
 
             <FormField
               name="catalog_name"

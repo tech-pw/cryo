@@ -62,6 +62,8 @@ export interface SourceTestResult {
   // response-shape compatibility; table/schema discovery happens via the async Scanner instead.
   table_count: number;
   sample_tables: string[];
+  /** Warehouse root inferred from the catalog's own database locations, when it has none set. */
+  suggested_warehouse?: string | null;
   error?: string | null;
   note?: string | null;
 }

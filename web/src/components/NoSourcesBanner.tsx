@@ -7,7 +7,6 @@
  * for already-onboarded operators.
  */
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
 import { Link } from "react-router-dom";
 
 import { listSources } from "../api/client";
@@ -17,22 +16,19 @@ import { Button } from "./ui/button";
 
 export const NoSourcesBanner = () => {
   const { api, token } = useAuth();
+  // Same key the Connections page uses, so saving a lakehouse (which invalidates
+  // ["sources"]) clears this too. Under its own key the banner outlived the first
+  // connected catalog -- nothing invalidated it, and staleTime kept serving the
+  // cached "zero sources" answer, so the UI told operators to connect a catalog
+  // they had just connected.
   const sourcesQuery = useQuery({
-    queryKey: ["no-sources-banner", token],
+    queryKey: ["sources", token],
     queryFn: () => listSources(api),
     refetchOnWindowFocus: false,
     staleTime: 30_000
   });
 
-  const isFirstRun =
-    sourcesQuery.isSuccess && (sourcesQuery.data?.length ?? 0) === 0;
-
-  useEffect(() => {
-    // Drop the result into the cache under a stable key so it can be shared
-    // with other components that need the source count (e.g. the FirstRun
-    // empty-state at /health). Prevents a second /sources round-trip on
-    // first render.
-  }, []);
+  const isFirstRun = sourcesQuery.isSuccess && (sourcesQuery.data?.length ?? 0) === 0;
 
   if (!isFirstRun) return null;
 
