@@ -439,10 +439,19 @@ export const testSource = (
   body: { type: string; config: Record<string, unknown>; source_id?: UUID }
 ) => apiFetch<SourceTestResult>("/sources/test", api, { method: "POST", body });
 
+export type BucketAccess = "readable" | "denied" | "missing" | "unknown";
+
+export interface DiscoveredBucket {
+  name: string;
+  tables: number;
+  schemas: number;
+  access: BucketAccess;
+  access_detail?: string | null;
+}
+
 export interface SourceStorageDiscoveryResult {
   ok: boolean;
-  buckets: string[];
-  locations: string[];
+  buckets: DiscoveredBucket[];
   scanned: number;
   total: number;
   error?: string | null;

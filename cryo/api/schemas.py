@@ -134,21 +134,44 @@ class SourceStorageDiscoveryRequest(BaseModel):
     limit: int = 25
 
 
+class DiscoveredBucket(BaseModel):
+    """One object-store bucket the catalog's tables live in, with how much is in it.
+
+    ``tables``/``schemas`` are what make the list usable: a real catalog's buckets are not
+    equal partners. Measured on a 251-schema metastore, four buckets held 99.5% of tables
+    while eight were long-tail noise (dev leakage, ``-audit`` siblings, a POC bucket with
+    one table). Counts let the UI rank them instead of presenting twelve identical chips.
+
+    ``access`` is the result of a read probe:
+      - ``readable``      -- a list call succeeded
+      - ``denied``        -- credentials reached S3 but aren't allowed to read it
+      - ``missing``       -- the bucket does not exist (stale catalog location)
+      - ``unknown``       -- not probed, or the probe itself failed for another reason
+    Surfacing this during onboarding turns a silent first-scan failure into an answer the
+    operator gets while they still have the credentials dialog in front of them.
+    """
+
+    name: str
+    tables: int = 0
+    schemas: int = 0
+    access: str = "unknown"
+    access_detail: str | None = None
+
+
 class SourceStorageDiscoveryResponse(BaseModel):
-    """Distinct object-store buckets the catalog's namespaces actually point at.
+    """Buckets the catalog's tables live in, for one slice of the database walk.
 
-    Deliberately NOT part of test_source: this reads one location per namespace, so it is
-    O(namespaces) round-trips -- the exact cost test_source was trimmed down to avoid. The
-    UI triggers it explicitly on the storage step, where a human has chosen to wait.
+    Deliberately NOT part of test_source: locations are read per table (a database's own
+    location is only a default most of its tables don't follow), which is far more round
+    trips than the single call test_source is held to.
 
-    ``scanned``/``total`` report how far the walk got, so a partial result (timeout, or a
-    catalog that errors on some namespaces) can say so instead of presenting an incomplete
-    bucket list as if it were the whole picture.
+    ``scanned``/``total`` report how far the walk got, so a partial result -- a timeout, or
+    a slice the catalog refused -- can say so instead of presenting an incomplete bucket
+    list as if it were the whole picture.
     """
 
     ok: bool
-    buckets: list[str] = Field(default_factory=list)
-    locations: list[str] = Field(default_factory=list)
+    buckets: list[DiscoveredBucket] = Field(default_factory=list)
     scanned: int = 0
     total: int = 0
     error: str | None = None

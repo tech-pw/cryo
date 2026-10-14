@@ -1,19 +1,52 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { discoverSourceStorage } from "../../api/client";
-import type { ApiOptions } from "../../api/client";
+import type { ApiOptions, DiscoveredBucket } from "../../api/client";
 import type { UUID } from "../../api/types";
 
 export type StorageDiscoveryStatus = "idle" | "running" | "done" | "error";
 
 export interface StorageDiscoveryState {
   status: StorageDiscoveryStatus;
-  buckets: string[];
+  /** Accumulated across slices, biggest first -- see mergeBuckets. */
+  buckets: DiscoveredBucket[];
   scanned: number;
   total: number;
   /** Non-fatal problems from slices that were skipped, so a partial walk can say so. */
   warnings: string[];
   error: string | null;
 }
+
+/**
+ * Fold one slice's buckets into the running totals.
+ *
+ * Counts are additive because each slice covers a distinct set of databases, so the same
+ * bucket legitimately reappears with more tables. Access status is per-bucket rather than
+ * per-slice, so a later slice must not downgrade a known answer back to "unknown".
+ */
+export const mergeBuckets = (
+  current: Map<string, DiscoveredBucket>,
+  incoming: DiscoveredBucket[]
+): Map<string, DiscoveredBucket> => {
+  const next = new Map(current);
+  for (const bucket of incoming) {
+    const existing = next.get(bucket.name);
+    if (!existing) {
+      next.set(bucket.name, { ...bucket });
+      continue;
+    }
+    next.set(bucket.name, {
+      ...existing,
+      tables: existing.tables + bucket.tables,
+      schemas: existing.schemas + bucket.schemas,
+      access: existing.access === "unknown" ? bucket.access : existing.access,
+      access_detail: existing.access_detail ?? bucket.access_detail
+    });
+  }
+  return next;
+};
+
+const rank = (buckets: Map<string, DiscoveredBucket>): DiscoveredBucket[] =>
+  [...buckets.values()].sort((a, b) => b.tables - a.tables || a.name.localeCompare(b.name));
 
 const INITIAL: StorageDiscoveryState = {
   status: "idle",
@@ -50,7 +83,7 @@ export const useStorageDiscovery = (api: ApiOptions) => {
       const runId = ++runIdRef.current;
       setState({ ...INITIAL, status: "running" });
 
-      const found = new Set<string>();
+      let found = new Map<string, DiscoveredBucket>();
       const warnings: string[] = [];
       let offset = 0;
 
@@ -78,14 +111,14 @@ export const useStorageDiscovery = (api: ApiOptions) => {
           return;
         }
 
-        for (const bucket of page.buckets) found.add(bucket);
+        found = mergeBuckets(found, page.buckets);
         if (page.error) warnings.push(page.error);
 
         const scanned = page.scanned;
         const total = page.total;
         setState({
           status: scanned >= total ? "done" : "running",
-          buckets: [...found].sort(),
+          buckets: rank(found),
           scanned,
           total,
           warnings: [...warnings],

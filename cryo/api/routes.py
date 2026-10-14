@@ -6,7 +6,8 @@ import io
 import json
 import logging
 import uuid
-from collections.abc import Callable, Sequence
+from collections import Counter
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
@@ -60,6 +61,7 @@ from cryo.api.schemas import (
     DestinationRead,
     DestinationTestRequest,
     DestinationTestResponse,
+    DiscoveredBucket,
     EffectiveParamsResponse,
     EffectivePresetResponse,
     JobRead,
@@ -177,7 +179,12 @@ from cryo.sources.hms_thrift import (
     list_hive_databases_from_uri,
     list_hive_table_locations_for_databases,
 )
-from cryo.sources.locations import bucket_from_location
+from cryo.sources.locations import (
+    CatalogTableLocation,
+    bucket_from_location,
+    probe_bucket_access,
+    s3_client_for_source_config,
+)
 
 router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger(__name__)
@@ -464,7 +471,7 @@ def discover_source_storage(
     offset = max(payload.offset, 0)
     slice_names = databases[offset : offset + max(payload.limit, 1)]
 
-    locations: list[str] = []
+    rows_with_location: list[CatalogTableLocation] = []
     if slice_names:
         try:
             rows = _run_with_timeout(
@@ -481,17 +488,57 @@ def discover_source_storage(
                 total=total,
                 error=f"Skipped {len(slice_names)} schema(s): {exc}"[:500],
             )
-        locations = [row.location for row in rows if row.location]
+        rows_with_location = [row for row in rows if row.location]
 
-    scanned = offset + len(slice_names)
-    buckets = sorted({b for b in (bucket_from_location(loc) for loc in locations) if b})
+    # Per-bucket weight, so the client can rank rather than show every bucket as an equal
+    # chip -- real catalogs are lopsided (one measured fleet put 99.5% of tables in four of
+    # twelve buckets, the rest being dev leakage and one-table audit siblings).
+    table_counts: Counter[str] = Counter()
+    schema_names: dict[str, set[str]] = {}
+    for row in rows_with_location:
+        bucket = bucket_from_location(row.location)
+        if not bucket:
+            continue
+        table_counts[bucket] += 1
+        schema_names.setdefault(bucket, set()).add(row.schema_name)
+
+    access = _probe_bucket_access_for_config(config, sorted(table_counts))
+
+    buckets = [
+        DiscoveredBucket(
+            name=name,
+            tables=count,
+            schemas=len(schema_names.get(name, ())),
+            access=access.get(name, ("unknown", None))[0],
+            access_detail=access.get(name, ("unknown", None))[1],
+        )
+        for name, count in table_counts.most_common()
+    ]
     return SourceStorageDiscoveryResponse(
         ok=True,
         buckets=buckets,
-        locations=sorted(set(locations)),
-        scanned=scanned,
+        scanned=offset + len(slice_names),
         total=total,
     )
+
+
+def _probe_bucket_access_for_config(
+    config: Mapping[str, Any], buckets: list[str]
+) -> dict[str, tuple[str, str | None]]:
+    """Read-probe each bucket with the credentials being onboarded, never the ambient ones.
+
+    Uses the config under test rather than the pod's default chain, because the whole point
+    is to answer "will the settings on this screen work?" -- a probe that quietly succeeded
+    via some other credential would be worse than no probe at all. Failures here degrade to
+    "unknown" rather than failing discovery: an unprobeable bucket is still worth listing.
+    """
+    if not buckets:
+        return {}
+    try:
+        return probe_bucket_access(s3_client_for_source_config(dict(config)), buckets)
+    except Exception:
+        logger.warning("bucket access probe failed", exc_info=True)
+        return {}
 
 
 @router.patch(
