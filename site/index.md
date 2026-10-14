@@ -1,19 +1,19 @@
 ---
 title: Cryo
-description: Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. It reads your catalogs, plans maintenance, admits the work to Trino or Spark, and leaves a receipt for every decision.
+description: Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Connect your lake and keep every table healthy without deciding when or how to optimize it — Cryo ranks the work from real query workload and explains every decision.
 canonical: https://tech-pw.github.io/cryo/
 updated: 2026-10-06
 ---
 
 # Cryo
 
-Cryo reads your Apache Iceberg catalogs, plans maintenance, and admits the work to Trino or Spark. Reading and writing never share a code path, and every run leaves a receipt.
+Cryo reads your Apache Iceberg catalogs, ranks what is worth doing from real query workload, and admits the work to its native engine when the cluster has headroom. Reading and writing never share a code path, and every run leaves a receipt.
 
 Pre-1.0 · Apache-2.0→
 
-# Iceberg maintenance with a receipt for every decision.
+# Keep every table healthy without deciding when or how.
 
-Cryo reads your catalogs, plans compaction and cleanup, and admits the work to Trino or Spark only when they have headroom.
+Cryo reads your catalogs, plans compaction and cleanup, and admits the work to its native engine when the cluster has headroom — every decision explained.
 
 Operations7
 Engines2
