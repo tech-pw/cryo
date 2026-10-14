@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { getSourceNamespaces, testSource } from "../../api/client";
@@ -23,6 +24,8 @@ import { useAuth } from "../../lib/auth";
 import { AWS_REGIONS, CATALOG_TYPES, CATALOG_URI_HINT, S3_AUTH_METHODS, type SourceFormValues } from "./constants";
 import { buildSourceConfig, decomposeSourceConfig } from "./sourceConfig";
 import { SourceScansPanel } from "./SourceScansPanel";
+import { SourceDrawerSteps, type SourceDrawerStep } from "./SourceDrawerSteps";
+import { CopyStorageConfigPicker } from "./CopyStorageConfigPicker";
 import { SourceTestResultPanel } from "./SourceTestResultPanel";
 
 const buildDefaultValues = (
@@ -43,11 +46,13 @@ const buildDefaultValues = (
 
 export const SourceDrawer = ({
   value,
+  otherSources,
   saving,
   onClose,
   onSave
 }: {
   value: SourceRead | "new" | null;
+  otherSources: SourceRead[];
   saving: boolean;
   onClose: () => void;
   onSave: (body: SourceWrite) => void;
@@ -65,6 +70,12 @@ export const SourceDrawer = ({
     editingSource ? editingSource.maintenance_schema_names ?? [] : []
   );
 
+  // Stepping only applies to a fresh "new" source — an already-working connection has
+  // nothing to progress through, so editing shows every section at once as before.
+  const [step, setStep] = useState<SourceDrawerStep>("connect");
+  const [furthestStep, setFurthestStep] = useState<SourceDrawerStep>("connect");
+  const isStepped = !isEditing;
+
   const form = useForm<SourceFormValues>({
     defaultValues: buildDefaultValues(value)
   });
@@ -77,6 +88,8 @@ export const SourceDrawer = ({
     setS3AuthMethod(defaults.s3_auth_method ?? "default");
     setSchemaOptions(value !== "new" ? value.maintenance_schema_names ?? [] : []);
     setTestPassed(false);
+    setStep("connect");
+    setFurthestStep("connect");
   }, [value, form]);
 
   const savedNamespaces = useQuery({
@@ -104,6 +117,7 @@ export const SourceDrawer = ({
       setTestPassed(Boolean(data.ok));
       if (data.ok) {
         setSchemaOptions(data.namespaces);
+        setFurthestStep((prev) => (prev === "connect" ? "storage" : prev));
       }
     },
     onError: (error) => {
@@ -183,6 +197,9 @@ export const SourceDrawer = ({
       <SheetContent side="right" className="flex h-full w-full flex-col overflow-y-auto sm:max-w-[620px]">
         <SheetHeader>
           <SheetTitle>{isEditing ? "Edit lakehouse" : "New lakehouse"}</SheetTitle>
+          {isStepped ? (
+            <SourceDrawerSteps current={step} furthestReached={furthestStep} onJump={setStep} />
+          ) : null}
         </SheetHeader>
         <FormProvider {...form}>
           <form className="flex flex-col gap-4" onSubmit={form.handleSubmit(submit)}>
@@ -194,6 +211,8 @@ export const SourceDrawer = ({
               }}
             />
 
+            {!isStepped || step === "connect" ? (
+              <>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Identity</p>
             <FormField name="name" label="Name">
               {(field) => (
@@ -280,37 +299,20 @@ export const SourceDrawer = ({
             ) : null}
             {testConnection.data ? <SourceTestResultPanel result={testConnection.data} /> : null}
 
-            {showSchemaFilter ? (
-              <>
-                <Separator />
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Tuning</p>
-              </>
-            ) : null}
-            {showSchemaFilter ? (
-              <FormField
-                name="maintenance_schema_names"
-                label={
-                  <HintLabel
-                    label="Schemas for maintenance"
-                    tooltip="Only tables in the selected schemas are scanned and eligible for maintenance. Leave empty to include every schema discovered in this catalog."
-                  />
-                }
+            {isStepped && testPassed ? (
+              <Button
+                type="button"
+                className="self-end"
+                onClick={() => {
+                  setFurthestStep((prev) => (prev === "connect" ? "storage" : prev));
+                  setStep("storage");
+                }}
               >
-                {(field) => (
-                  <MultiSelect
-                    value={(field.value as string[] | undefined) ?? []}
-                    onChange={field.onChange}
-                    placeholder="All schemas (no filter)"
-                    options={schemaSelectOptions.map((schema) => ({
-                      value: schema,
-                      label: schema || "(unnamed)"
-                    }))}
-                    onBlur={field.onBlur}
-                    name={field.name}
-                    ref={field.ref}
-                  />
-                )}
-              </FormField>
+                Continue to storage
+                <ArrowRight />
+              </Button>
+            ) : null}
+              </>
             ) : null}
 
             {isEditing ? (
@@ -321,12 +323,31 @@ export const SourceDrawer = ({
               </>
             ) : null}
 
+            {!isStepped || step === "storage" ? (
+              <>
             <Separator />
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Storage connection</p>
             <p className="text-sm text-muted-foreground">
               Configure how Cryo authenticates to S3 storage. For production, use IAM roles.
               Access keys are only recommended for local/dev environments (e.g. MinIO).
             </p>
+
+            {!isEditing ? (
+              <CopyStorageConfigPicker
+                otherSources={otherSources}
+                onApply={(config) => {
+                  form.setValue("s3_auth_method", config.s3_auth_method);
+                  form.setValue("s3_region", config.s3_region ?? "");
+                  form.setValue("s3_endpoint", config.s3_endpoint ?? "");
+                  form.setValue("s3_role_arn", config.s3_role_arn ?? "");
+                  form.setValue("s3_external_id", config.s3_external_id ?? "");
+                  form.setValue("s3_role_session_name", config.s3_role_session_name ?? "");
+                  form.setValue("s3_path_style_access", config.s3_path_style_access ?? false);
+                  setS3AuthMethod(config.s3_auth_method);
+                  toast.success("Storage auth copied — re-enter the secret key below if this source used one.");
+                }}
+              />
+            ) : null}
 
             <FormField
               name="s3_auth_method"
@@ -532,6 +553,62 @@ export const SourceDrawer = ({
               </div>
             ) : null}
 
+            {isStepped ? (
+              <div className="flex items-center justify-between">
+                <Button type="button" variant="ghost" onClick={() => setStep("connect")}>
+                  <ArrowLeft />
+                  Back
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setFurthestStep((prev) => (prev === "storage" ? "review" : prev));
+                    setStep("review");
+                  }}
+                >
+                  Continue to review
+                  <ArrowRight />
+                </Button>
+              </div>
+            ) : null}
+              </>
+            ) : null}
+
+            {!isStepped || step === "review" ? (
+              <>
+            {showSchemaFilter ? (
+              <>
+                <Separator />
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Tuning</p>
+              </>
+            ) : null}
+            {showSchemaFilter ? (
+              <FormField
+                name="maintenance_schema_names"
+                label={
+                  <HintLabel
+                    label="Schemas for maintenance"
+                    tooltip="Only tables in the selected schemas are scanned and eligible for maintenance. Leave empty to include every schema discovered in this catalog."
+                  />
+                }
+              >
+                {(field) => (
+                  <MultiSelect
+                    value={(field.value as string[] | undefined) ?? []}
+                    onChange={field.onChange}
+                    placeholder="All schemas (no filter)"
+                    options={schemaSelectOptions.map((schema) => ({
+                      value: schema,
+                      label: schema || "(unnamed)"
+                    }))}
+                    onBlur={field.onBlur}
+                    name={field.name}
+                    ref={field.ref}
+                  />
+                )}
+              </FormField>
+            ) : null}
+
             <FormField name="secret_ref" label="Secret reference">
               {(field) => (
                 <Input
@@ -603,9 +680,19 @@ export const SourceDrawer = ({
               />
             ) : null}
 
-            <Button type="submit" loading={saving} disabled={!testPassed}>
-              Save
-            </Button>
+            <div className={isStepped ? "flex items-center justify-between" : undefined}>
+              {isStepped ? (
+                <Button type="button" variant="ghost" onClick={() => setStep("storage")}>
+                  <ArrowLeft />
+                  Back
+                </Button>
+              ) : null}
+              <Button type="submit" loading={saving} disabled={!testPassed}>
+                Save
+              </Button>
+            </div>
+              </>
+            ) : null}
           </form>
         </FormProvider>
       </SheetContent>
