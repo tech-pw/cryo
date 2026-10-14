@@ -94,7 +94,11 @@ describe("Stat metricId", () => {
     render(createElement(Stat, { metricId: "tracked_tables", value: "12" }));
     expect(screen.getByText("Tracked tables")).toBeInTheDocument();
     expect(screen.getByText("Measured")).toBeInTheDocument();
-    expect(screen.getByTitle(/Every table row Cryo stores/)).toBeInTheDocument();
+    // The description lives in a Radix tooltip now, not a title attribute, so it is only
+    // in the DOM once hovered. Assert the registry still supplies it rather than reaching
+    // for markup that no longer exists -- getByTitle broke here when Stat moved to
+    // TruncationTooltip and left main red.
+    expect(metricTooltip("tracked_tables")).toMatch(/Every table row Cryo stores/);
   });
 
   it("keeps an explicit label when metricId is omitted", () => {

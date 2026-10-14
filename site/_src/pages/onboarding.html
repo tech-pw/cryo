@@ -1,0 +1,115 @@
+---
+title: Connect a lakehouse
+lede: Wire a catalog into Cryo, then scan it. The connection test proves reachability; the scan is what fills the UI.
+description: Connect a REST, Hive Metastore, Glue, Polaris or Nessie catalog to Cryo, choose S3 credentials, and run the first scan. Covers every field, what the scan reads, and the failures that look like success.
+updated: 2026-10-14
+---
+<callout type="note" title="Two separate steps">
+  <p>Connecting a catalog tells Cryo <em>what tables exist</em>. Scanning reads those tables and stores their file counts, sizes and grades. A connected catalog with no scan leaves the UI empty — that is expected, not a failure.</p>
+</callout>
+
+<h2 id="before">What you need</h2>
+<p>Cryo reads catalogs and object storage. It needs two things that are often owned by different people, so collect both before you start:</p>
+<ul>
+  <li><strong>Catalog endpoint</strong> — a REST URI, a Hive Metastore thrift address, or an AWS region for Glue.</li>
+  <li><strong>Read access to the buckets your tables live in</strong> — an IAM role is the production answer. Catalog access alone is not enough: the catalog records <em>where</em> tables are, object storage holds the files Cryo measures.</li>
+</ul>
+
+<h2 id="connect">Connect a catalog</h2>
+<p>Open <strong>Settings → Connections → Lakehouses</strong> and choose <strong>New lakehouse</strong>. The drawer walks three steps: Connect, Storage, Review. Later steps stay closed until the connection test passes, because nothing after it can be filled in sensibly without a working catalog.</p>
+
+<steps>
+  <step title="Identity and catalog">
+    <p>Name the lakehouse anything you will recognise in a run log. <strong>Catalog type</strong> decides which other fields matter, and <strong>Catalog URI</strong> takes the endpoint for that type — the placeholder shows the expected shape.</p>
+    <p><strong>Warehouse</strong> is the root location the catalog stores tables under. Leave it blank for Hive: Cryo reads it from the catalog's own database locations when you test the connection, and fills the field in. Set it yourself and Cryo will not overwrite it.</p>
+    <p><strong>Catalog name</strong> is optional. It overrides the name PyIceberg registers the catalog under; blank uses the lakehouse name.</p>
+  </step>
+  <step title="Test the connection">
+    <p>This makes one <code>list_namespaces()</code> call. It proves the endpoint is reachable and the credentials are accepted, nothing more — it deliberately does not enumerate tables, which is slow enough on a large metastore to be unusable as a button a human waits on.</p>
+    <p class="expect">Done when the panel reports the schema count. That number is also the first honest signal that you pointed at the catalog you meant to.</p>
+  </step>
+  <step title="Storage credentials">
+    <p>Once the test passes, Cryo walks the catalog to find which buckets your tables actually live in, and shows them ranked by how many tables each holds. Buckets appear as they are found rather than after the whole walk, so you can pick one without waiting.</p>
+    <p>Each bucket is read-probed with the credentials on this screen and labelled <strong>Readable</strong>, <strong>No access</strong> or <strong>Not found</strong>. Resolve the ones marked no-access here — see <a href="#auth">authentication</a> below.</p>
+  </step>
+  <step title="Review and save">
+    <p>The summary restates what will be stored, including whether the connection test passed. Save is disabled until it has.</p>
+    <p class="expect">Done when the lakehouse appears in the Lakehouses table. No tables are visible yet; that is the scan's job.</p>
+  </step>
+</steps>
+
+<h2 id="catalogs">Catalog types</h2>
+<p>Each type needs a different endpoint. Everything else on the form is shared.</p>
+
+<table>
+  <thead><tr><th>Type</th><th>Catalog URI</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>REST catalog</td><td><code>http://host:8181</code></td><td>Any Iceberg REST implementation. Pass OAuth credentials or custom headers through <strong>Advanced properties</strong>.</td></tr>
+    <tr><td>Hive Metastore</td><td><code>thrift://host:9083</code></td><td>Cryo reads table locations over Thrift directly, so it still sees tables whose Iceberg metadata will not load. Warehouse is inferred for this type.</td></tr>
+    <tr><td>AWS Glue</td><td><span class="no">Not used</span></td><td>No URI field. Region comes from the storage section; <strong>Warehouse</strong> takes an <code>s3://</code> path.</td></tr>
+    <tr><td>Apache Polaris</td><td><code>http://host:8181/api/catalog</code></td><td>REST under the hood. Credentials go in Advanced properties.</td></tr>
+    <tr><td>Project Nessie</td><td><code>http://host:19120/api/v1</code></td><td>REST under the hood. Branch or ref selection belongs in Advanced properties.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="auth">S3 authentication</h2>
+<p>Three methods, in the order you should prefer them.</p>
+
+<table>
+  <thead><tr><th>Method</th><th>Use when</th><th>Fields</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Default credentials</strong></td><td>Production. Cryo runs with an IAM role (IRSA on EKS, instance profile on EC2) and needs no secrets in its database.</td><td>Region. Optionally an endpoint.</td></tr>
+    <tr><td><strong>Access key + secret</strong></td><td>Local development and MinIO. Avoid in production — the secret is stored, and rotating it means editing every lakehouse that uses it.</td><td>Access key ID, secret access key. Usually a custom endpoint and path-style access.</td></tr>
+    <tr><td><strong>Assume IAM role</strong></td><td>The buckets live in another AWS account.</td><td>Role ARN. External ID and session name optional.</td></tr>
+  </tbody>
+</table>
+
+<callout type="caution" title="A catalog that connects can still fail every scan">
+  <p>Catalog permissions and bucket permissions are granted separately, often by different teams. The connection test cannot detect a storage problem — it never touches S3. That is why the storage step probes each bucket and says plainly when Cryo cannot read it. A bucket marked <strong>No access</strong> will fail every table stored in it, however healthy the catalog looks.</p>
+  <p>On Kubernetes the usual cause is the pod's ServiceAccount lacking an <code>eks.amazonaws.com/role-arn</code> annotation, so AWS calls fall back to the node instance role. Set <code>serviceAccount.annotations</code> in the chart, and make sure the role's trust policy names the namespace and ServiceAccount actually in use.</p>
+</callout>
+
+<h2 id="tuning">Limiting what gets scanned</h2>
+<p><strong>Schemas for maintenance</strong> restricts scanning and maintenance to the schemas you choose. Leave it empty to include every schema in the catalog.</p>
+<p>Worth setting on a large or shared metastore: an unscoped scan walks every namespace, which is slower and pulls in schemas nobody intends Cryo to maintain. The list is populated from the connection test, so it offers real schema names rather than free text.</p>
+
+<h2 id="scan">The first scan</h2>
+<p>Connecting stores configuration. Scanning is what produces data — until a scan completes, Tables, Home and Cost are all empty.</p>
+
+<h3 id="scan-what">What a scan reads</h3>
+<p>For every table in scope the scanner records the facts maintenance decisions are made from:</p>
+<ul>
+  <li><strong>File counts and sizes</strong> — total files, how many fall below the small-file threshold, and bytes on disk. This is what drives compaction decisions.</li>
+  <li><strong>Snapshots and manifests</strong> — how much history has accumulated, which is what expiry and manifest rewrites act on.</li>
+  <li><strong>Partition layout</strong> — so maintenance can target individual partitions instead of rewriting whole tables.</li>
+  <li><strong>A health grade</strong> — the letter grade on Home and Tables, derived from the measurements above.</li>
+</ul>
+<p>Scanning is read-only. It never rewrites data, and it does not schedule maintenance: that needs a preset assigned to the table.</p>
+
+<h3 id="scan-run">Running one</h3>
+<p>Trigger a scan from the lakehouse row, or let the scheduled scan pick it up — the chart's default is every six hours. Watch progress under <strong>Runs</strong>.</p>
+<p>The progress panel distinguishes four outcomes, and the difference matters when something is wrong:</p>
+
+<table>
+  <thead><tr><th>Counter</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Discovered</strong></td><td>Tables the catalog reported in scope. If this is zero, the problem is the catalog or the schema filter, not storage.</td></tr>
+    <tr><td><strong>Scanned</strong></td><td>Tables successfully measured. These are the rows that appear in the UI.</td></tr>
+    <tr><td><strong>Skipped</strong></td><td>Deliberately not measured — most often unchanged since the last scan.</td></tr>
+    <tr><td><strong>Failed</strong></td><td>Tables Cryo could not read. The live log names the table and the reason.</td></tr>
+  </tbody>
+</table>
+
+<callout type="note" title="Reading a failure count">
+  <p>A high failure count with a healthy <strong>Discovered</strong> number almost always means storage, not catalog: Cryo found the tables and could not read their files. Open the live log and read the first failure — one cause usually explains all of them.</p>
+  <p><code>source config missing warehouse</code> means the lakehouse has no warehouse root, so table paths cannot be resolved. Edit the lakehouse, clear the field, and re-test the connection to have it filled in.</p>
+  <p><code>AccessDenied</code> on an S3 path means credentials, not configuration. Re-open the storage step to see which buckets are readable.</p>
+</callout>
+
+<h2 id="after">After the first scan</h2>
+<ul>
+  <li><strong>Tables</strong> lists every scanned table with its grade and the counts behind it.</li>
+  <li><strong>Home</strong> summarises grades across the fleet.</li>
+  <li><strong>Runs</strong> keeps the receipt for each scan, including what failed and why.</li>
+</ul>
+<p>Nothing is maintained yet. Assign a preset to decide what Cryo is allowed to do, then see <a href="maintenance/">Maintenance</a> for how plans are built and admitted.</p>

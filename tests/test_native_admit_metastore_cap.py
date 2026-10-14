@@ -234,7 +234,16 @@ def test_admit_proceeds_when_metastore_has_headroom(monkeypatch) -> None:
     assert not any(reason.startswith("metastore_capacity") for _, reason in deferred_calls)
 
 
-def test_packed_native_plan_preserves_preset_operation_exclusions(monkeypatch) -> None:
+def test_packed_native_plan_is_not_narrowed_by_preset_operations(monkeypatch) -> None:
+    """A preset's operations list must NOT force-skip work the planner decided a table needs.
+
+    Until d630b206 any operation absent from Preset.operations was dropped here regardless
+    of table state, so a preset listing only `optimize` silently suppressed
+    expire_snapshots/remove_orphan_files on every deep run. build_plan() is the real gate
+    now -- it already decides per table and records why it skipped anything. This test
+    previously asserted the removed behaviour and kept main red; it now pins the intended
+    one, so reintroducing the allowlist fails here as well as in test_worker.py.
+    """
     monkeypatch.setattr("cryo.governor.native_admit.get_settings", lambda: _FakeSettings())
     job = replace(
         _job("job-1", "table-1"),
@@ -262,7 +271,12 @@ def test_packed_native_plan_preserves_preset_operation_exclusions(monkeypatch) -
     # Planning is persisted before the mocked infrastructure boundary is reached.
     plan = store.get_job(job.id).plan
     assert plan is not None
-    assert [op["type"] for op in plan["operations"]] == ["expire_snapshots"]
+    planned = [op["type"] for op in plan["operations"]]
+    # The job asked only for expire_snapshots; deep mode still plans the rest because the
+    # table needs them. Narrowing to exactly ["expire_snapshots"] would mean the preset
+    # allowlist is gating again.
+    assert "expire_snapshots" in planned
+    assert len(planned) > 1, "preset operations must not narrow the planner's decision"
 
 
 def _seed_source(session, *, uri: str) -> Source:
