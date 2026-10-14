@@ -29,6 +29,12 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.web.port }}
+          env:
+            # nginx.conf.template's envsubst target -- defaults to this release's own
+            # api Service (cryo.fullname), not a hardcoded "cryo-api", so web still
+            # finds its backend under any release name. See web/nginx.conf.template.
+            - name: CRYO_API_UPSTREAM
+              value: {{ .Values.web.apiUpstream | default (printf "%s-api:%v" (include "cryo.fullname" .) .Values.api.port) | quote }}
           livenessProbe:
             httpGet:
               path: /
