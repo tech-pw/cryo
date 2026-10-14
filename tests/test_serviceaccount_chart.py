@@ -55,9 +55,7 @@ def test_workloads_get_an_explicit_service_account_by_default() -> None:
 
 def test_chart_creates_that_service_account() -> None:
     """The name the pods reference must actually be rendered, or they get `default`."""
-    accounts = {
-        d["metadata"]["name"] for d in render() if d.get("kind") == "ServiceAccount"
-    }
+    accounts = {d["metadata"]["name"] for d in render() if d.get("kind") == "ServiceAccount"}
     assert "cryo" in accounts
 
 
