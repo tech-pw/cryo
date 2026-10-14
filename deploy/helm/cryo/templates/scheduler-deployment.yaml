@@ -29,6 +29,10 @@ spec:
       # SA before this sweep existed and never needed K8s API access; confirmed live,
       # 2026-08-12, that gap surfaced as 403 Forbidden on every sweep call.
       serviceAccountName: {{ include "cryo.fullname" . }}-native
+      {{- else }}
+      # Explicit SA even without the dispatch paths, so the pod keeps the chart
+      # ServiceAccount's IRSA role instead of silently falling back to `default`.
+      serviceAccountName: {{ include "cryo.serviceAccountName" . }}
       {{- end }}
       {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 6 }}
       containers:

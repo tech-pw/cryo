@@ -82,9 +82,19 @@ def call_hms(client: object, method: str, *args: Any) -> Any:
     return fn(*args)
 
 
-def list_hive_table_locations(client: object) -> list[CatalogTableLocation]:
-    """Enumerate HMS ``sd.location`` without loading Iceberg metadata.json."""
-    databases = list(call_hms(client, "get_all_databases"))
+def list_hive_table_locations(
+    client: object,
+    *,
+    databases: list[str] | None = None,
+) -> list[CatalogTableLocation]:
+    """Enumerate HMS ``sd.location`` without loading Iceberg metadata.json.
+
+    ``databases`` restricts the walk to a subset, letting a caller page through a large
+    metastore a slice at a time instead of blocking on all of them (14k tables takes well
+    over a minute on a real catalog). Default is every database, as before.
+    """
+    if databases is None:
+        databases = [str(name) for name in call_hms(client, "get_all_databases")]
     results: list[CatalogTableLocation] = []
     for database in databases:
         db_name = str(database)
@@ -214,3 +224,90 @@ def _glue_tables_in_database(glue_client: object, database: str) -> list[dict[st
     response = glue_client.get_tables(DatabaseName=database)  # type: ignore[attr-defined]
     tables.extend(response.get("TableList", []))
     return tables
+
+
+def bucket_from_location(location: str | None) -> str | None:
+    """Extract the bucket from an object-store warehouse URI, or None if there isn't one.
+
+    Accepts the schemes Iceberg warehouses actually appear under -- ``s3://``, plus the
+    Hadoop-era ``s3a://``/``s3n://`` spellings that HMS rows commonly still carry, and
+    ``gs://``/``abfss://`` so a non-AWS catalog degrades to "no bucket" rather than
+    silently reporting an AWS-looking one. Local paths (``file:///``, bare paths) yield
+    None by design: there is no bucket to offer.
+    """
+    if not location:
+        return None
+    text = str(location).strip()
+    for scheme in ("s3://", "s3a://", "s3n://", "gs://", "abfss://"):
+        if text.lower().startswith(scheme):
+            remainder = text[len(scheme) :]
+            # abfss://container@account.dfs.core.windows.net/path -- the container is the
+            # closest analogue to a bucket, so take the part before "@" when present.
+            host = remainder.split("/", 1)[0]
+            if "@" in host:
+                host = host.split("@", 1)[0]
+            return host or None
+    return None
+
+
+def probe_bucket_access(
+    s3_client: object, buckets: list[str], *, max_workers: int = 8
+) -> dict[str, tuple[str, str | None]]:
+    """Check whether these buckets can actually be read, returning ``{bucket: (status, detail)}``.
+
+    A bucket appearing in catalog metadata says nothing about whether Cryo's credentials can
+    read it -- the two are configured by different people, often at different times. Without
+    this, the first scan is where that mismatch surfaces, long after onboarding said
+    "Connected". One ``list_objects_v2(MaxKeys=1)`` per bucket is the cheapest call that
+    proves read access; measured at 0.34s for 12 buckets in parallel.
+
+    Never raises: a probe that fails for an unexpected reason reports ``unknown`` rather than
+    failing discovery, because an unprobeable bucket is still worth showing.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _probe(bucket: str) -> tuple[str, tuple[str, str | None]]:
+        try:
+            s3_client.list_objects_v2(Bucket=bucket, MaxKeys=1)  # type: ignore[attr-defined]
+            return bucket, ("readable", None)
+        except Exception as exc:  # noqa: BLE001 -- every failure mode maps to a status below
+            code = ""
+            response = getattr(exc, "response", None)
+            if isinstance(response, dict):
+                code = str(response.get("Error", {}).get("Code", ""))
+            if code in {"AccessDenied", "AllAccessDisabled", "403"}:
+                return bucket, ("denied", "Credentials can't read this bucket")
+            if code in {"NoSuchBucket", "404"}:
+                return bucket, ("missing", "Bucket does not exist")
+            return bucket, ("unknown", str(exc)[:200])
+
+    if not buckets:
+        return {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        return dict(pool.map(_probe, buckets))
+
+
+def s3_client_kwargs_for_source_config(source_config: dict[str, Any]) -> dict[str, Any]:
+    """Translate a source's S3 settings into ``boto3.client("s3", **kwargs)`` arguments.
+
+    Returns kwargs rather than a client so each caller passes its own ``boto3`` reference.
+    Callers that build the client here instead would move the patch point into this module
+    and silently break anything stubbing ``boto3`` where the client is actually used.
+    Sharing the translation is the part that matters: the orphan scanner and the onboarding
+    bucket probe must interpret endpoint/keys/region/path-style identically, or the probe
+    would greenlight settings the scanner then fails on.
+    """
+    from botocore.config import Config
+
+    path_style = str(source_config.get("s3.path-style-access", "false")).lower() in {
+        "true",
+        "1",
+        "yes",
+    }
+    return {
+        "endpoint_url": source_config.get("s3.endpoint"),
+        "aws_access_key_id": source_config.get("s3.access-key-id"),
+        "aws_secret_access_key": source_config.get("s3.secret-access-key"),
+        "region_name": source_config.get("s3.region", "us-east-1"),
+        "config": Config(s3={"addressing_style": "path" if path_style else "auto"}),
+    }

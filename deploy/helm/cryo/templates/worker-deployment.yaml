@@ -109,6 +109,10 @@ spec:
       # the Spark driver/executor pods run under their own -spark SA (rbac-spark.yaml),
       # not this one.
       serviceAccountName: {{ include "cryo.fullname" . }}-native
+      {{- else }}
+      # Explicit SA even without the dispatch paths, so the pod keeps the chart
+      # ServiceAccount's IRSA role instead of silently falling back to `default`.
+      serviceAccountName: {{ include "cryo.serviceAccountName" . }}
       {{- end }}
       {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 6 }}
       containers:

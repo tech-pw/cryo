@@ -117,6 +117,66 @@ class SourceNamespacesResponse(BaseModel):
     error: str | None = None
 
 
+class SourceStorageDiscoveryRequest(BaseModel):
+    """One slice of a bucket-discovery walk over a not-yet-saved catalog config.
+
+    Paged because the walk reads table locations (see ``discover_source_storage`` for why
+    database-level is not accurate enough), which is minutes on a large metastore. The
+    client advances ``offset`` by the returned ``scanned`` until it reaches ``total``.
+    """
+
+    type: str
+    config: JsonDict = Field(default_factory=dict)
+    source_id: uuid.UUID | None = None
+    offset: int = 0
+    # Databases per request. Small enough that first buckets appear within a couple of
+    # seconds, large enough not to spend the whole walk on HTTP round trips.
+    limit: int = 25
+
+
+class DiscoveredBucket(BaseModel):
+    """One object-store bucket the catalog's tables live in, with how much is in it.
+
+    ``tables``/``schemas`` are what make the list usable: a real catalog's buckets are not
+    equal partners. Measured on a 251-schema metastore, four buckets held 99.5% of tables
+    while eight were long-tail noise (dev leakage, ``-audit`` siblings, a POC bucket with
+    one table). Counts let the UI rank them instead of presenting twelve identical chips.
+
+    ``access`` is the result of a read probe:
+      - ``readable``      -- a list call succeeded
+      - ``denied``        -- credentials reached S3 but aren't allowed to read it
+      - ``missing``       -- the bucket does not exist (stale catalog location)
+      - ``unknown``       -- not probed, or the probe itself failed for another reason
+    Surfacing this during onboarding turns a silent first-scan failure into an answer the
+    operator gets while they still have the credentials dialog in front of them.
+    """
+
+    name: str
+    tables: int = 0
+    schemas: int = 0
+    access: str = "unknown"
+    access_detail: str | None = None
+
+
+class SourceStorageDiscoveryResponse(BaseModel):
+    """Buckets the catalog's tables live in, for one slice of the database walk.
+
+    Deliberately NOT part of test_source: locations are read per table (a database's own
+    location is only a default most of its tables don't follow), which is far more round
+    trips than the single call test_source is held to.
+
+    ``scanned``/``total`` report how far the walk got, so a partial result -- a timeout, or
+    a slice the catalog refused -- can say so instead of presenting an incomplete bucket
+    list as if it were the whole picture.
+    """
+
+    ok: bool
+    buckets: list[DiscoveredBucket] = Field(default_factory=list)
+    scanned: int = 0
+    total: int = 0
+    error: str | None = None
+
+
 class SourceNamespaceTablesResponse(BaseModel):
     """Live table names within one already-known namespace -- one cheap call
     (list_tables_in_namespace), not the O(all namespaces) walk a full scan does. Lets the

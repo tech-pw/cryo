@@ -38,6 +38,10 @@ spec:
       # Worker/Governor already get from the -native SA (see rbac-native.yaml); the Spark
       # driver/executor pods still run under their own -spark SA, not this one.
       serviceAccountName: {{ include "cryo.fullname" . }}-native
+      {{- else }}
+      # Still an explicit SA when Spark is off: falling through to `default` leaves the pod
+      # with no IRSA role, so S3 auth silently becomes the node instance role.
+      serviceAccountName: {{ include "cryo.serviceAccountName" . }}
       {{- end }}
       {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 6 }}
       containers:

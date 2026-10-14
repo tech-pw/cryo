@@ -17,6 +17,20 @@ image:
 
 imagePullSecrets: []
 
+# ServiceAccount every Cryo pod runs as. On EKS, put the IRSA role here -- without it
+# pods fall back to the node instance role, which typically cannot read the warehouse
+# buckets, and scans fail with AccessDenied well after onboarding reported success.
+#
+#   serviceAccount:
+#     annotations:
+#       eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<cryo-role>
+serviceAccount:
+  create: true
+  # Defaults to the release fullname. Set this (with create: false) to reuse a
+  # ServiceAccount managed outside this chart.
+  name: ""
+  annotations: {}
+
 # Applied to every pod. UID/GID 10001 is the `cryo` user baked into the Cryo image; redis and
 # web override it to their own images' non-root users. fsGroup also lets the non-root user read
 # the projected IRSA web-identity token, which is otherwise root-only.

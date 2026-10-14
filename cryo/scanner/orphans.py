@@ -6,10 +6,10 @@ from typing import Any
 from urllib.parse import urlparse
 
 import boto3
-from botocore.config import Config
 
 from cryo.config import Settings
 from cryo.db.models import TableCost
+from cryo.sources.locations import s3_client_kwargs_for_source_config
 
 S3_LIST_KEYS_PER_PAGE = 1000
 
@@ -250,20 +250,6 @@ def parse_s3_location(location: str) -> tuple[str | None, str]:
 
 
 def _s3_client(source_config: dict[str, Any]) -> Any:
-    endpoint = source_config.get("s3.endpoint")
-    access_key = source_config.get("s3.access-key-id")
-    secret_key = source_config.get("s3.secret-access-key")
-    region = source_config.get("s3.region", "us-east-1")
-    path_style = str(source_config.get("s3.path-style-access", "false")).lower() in {
-        "true",
-        "1",
-        "yes",
-    }
-    return boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        region_name=region,
-        config=Config(s3={"addressing_style": "path" if path_style else "auto"}),
-    )
+    """S3 client for this source. Config translation is shared (see locations.py); the
+    boto3 call stays here so it remains this module's own patchable reference."""
+    return boto3.client("s3", **s3_client_kwargs_for_source_config(source_config))

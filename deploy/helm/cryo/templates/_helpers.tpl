@@ -106,3 +106,12 @@ prometheus.io/port: {{ .Values.observability.metricsPort | quote }}
   {{- end -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+Name of the ServiceAccount Cryo's pods run as. Defaults to the release fullname so a
+default install gets a real, annotatable SA; point serviceAccount.name at an existing one
+(and set create=false) to reuse an SA managed outside this chart.
+*/}}
+{{- define "cryo.serviceAccountName" -}}
+{{- default (include "cryo.fullname" .) .Values.serviceAccount.name }}
+{{- end }}

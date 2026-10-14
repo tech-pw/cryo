@@ -25,19 +25,13 @@ def render(*args: str) -> list[dict]:
 
 
 def _web_container(docs: list[dict]) -> dict:
-    web = next(
-        d
-        for d in docs
-        if d["kind"] == "Deployment" and d["metadata"]["name"] == "cryo-web"
-    )
+    web = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "cryo-web")
     return web["spec"]["template"]["spec"]["containers"][0]
 
 
 def test_web_is_off_by_default() -> None:
     docs = render()
-    assert not any(
-        d["kind"] == "Deployment" and d["metadata"]["name"] == "cryo-web" for d in docs
-    )
+    assert not any(d["kind"] == "Deployment" and d["metadata"]["name"] == "cryo-web" for d in docs)
 
 
 def test_web_injects_api_fqdn_and_local_resolvers() -> None:
@@ -45,9 +39,7 @@ def test_web_injects_api_fqdn_and_local_resolvers() -> None:
     env = {item["name"]: item["value"] for item in _web_container(docs)["env"]}
     assert env["NGINX_ENTRYPOINT_LOCAL_RESOLVERS"] == "1"
     assert env["NGINX_ENVSUBST_FILTER"] == "NGINX_LOCAL_RESOLVERS|CRYO_API_UPSTREAM"
-    assert env["CRYO_API_UPSTREAM"] == (
-        "http://cryo-api.cryo.svc.cluster.local:8000"
-    )
+    assert env["CRYO_API_UPSTREAM"] == ("http://cryo-api.cryo.svc.cluster.local:8000")
 
 
 def test_web_api_upstream_follows_release_namespace_and_service_port() -> None:
@@ -60,6 +52,4 @@ def test_web_api_upstream_follows_release_namespace_and_service_port() -> None:
         "platform",
     )
     env = {item["name"]: item["value"] for item in _web_container(docs)["env"]}
-    assert env["CRYO_API_UPSTREAM"] == (
-        "http://cryo-api.platform.svc.cluster.local:9000"
-    )
+    assert env["CRYO_API_UPSTREAM"] == ("http://cryo-api.platform.svc.cluster.local:9000")

@@ -28,7 +28,11 @@ spec:
       {{- include "cryo.imagePullSecrets" . | nindent 6 }}
       {{- include "cryo.nodeSelector" . | nindent 6 }}
       {{- if or .Values.native.enabled .Values.spark.k8s.enabled }}
+      # Job/Secret dispatch permissions (governor-rbac.yaml) -- only rendered with those paths on.
       serviceAccountName: {{ include "cryo.fullname" . }}-governor
+      {{- else }}
+      # Still an explicit SA otherwise, so the pod keeps whatever IRSA role the chart SA carries.
+      serviceAccountName: {{ include "cryo.serviceAccountName" . }}
       {{- end }}
       {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 6 }}
       containers:
