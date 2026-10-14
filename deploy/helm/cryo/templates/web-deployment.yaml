@@ -30,11 +30,17 @@ spec:
             - name: http
               containerPort: {{ .Values.web.port }}
           env:
-            # nginx.conf.template's envsubst target -- defaults to this release's own
-            # api Service (cryo.fullname), not a hardcoded "cryo-api", so web still
-            # finds its backend under any release name. See web/nginx.conf.template.
+            # nginx-unprivileged 15-local-resolvers.envsh exports NGINX_LOCAL_RESOLVERS
+            # from the pod's nameserver (NodeLocal DNSCache 169.254.20.10 on EKS).
+            # kube-dns.kube-system.svc.cluster.local is often unreachable from the
+            # pod when that cache is installed; short names also fail because nginx
+            # does not apply search domains. See docs/CRYO_WEB_AUTH_502_2026-10-13.md.
+            - name: NGINX_ENTRYPOINT_LOCAL_RESOLVERS
+              value: "1"
+            - name: NGINX_ENVSUBST_FILTER
+              value: "NGINX_LOCAL_RESOLVERS|CRYO_API_UPSTREAM"
             - name: CRYO_API_UPSTREAM
-              value: {{ .Values.web.apiUpstream | default (printf "%s-api:%v" (include "cryo.fullname" .) .Values.api.port) | quote }}
+              value: "http://{{ include "cryo.fullname" . }}-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}"
           livenessProbe:
             httpGet:
               path: /
