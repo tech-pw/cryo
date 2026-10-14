@@ -393,6 +393,9 @@ migration:
 web:
   enabled: false
   replicas: 2
+  # "" computes "<release>-api:<api.port>" (see templates/web-deployment.yaml) --
+  # only set this if web needs to reach an api Service outside this release.
+  apiUpstream: ""
   image:
     repository: cryo-web
     tag: latest

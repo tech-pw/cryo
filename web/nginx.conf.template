@@ -30,7 +30,17 @@ server {
     index index.html;
 
     resolver kube-dns.kube-system.svc.cluster.local valid=10s;
-    set $cryo_api_upstream http://cryo-api:8000;
+    # CRYO_API_UPSTREAM is substituted at container start by nginx-unprivileged's
+    # built-in docker-entrypoint.d/20-envsubst-on-templates.sh (this file ships as
+    # nginx.conf.template, see Dockerfile.prod). NGINX_ENVSUBST_FILTER (set in the
+    # Dockerfile) scopes substitution to CRYO_API_UPSTREAM only -- otherwise envsubst
+    # would also mangle nginx's own $cryo_upgrade/$cryo_connection/$http_upgrade
+    # variables below, which share the same ${...} syntax it scans for.
+    #
+    # The Helm release name prefixes the api Service name (cryo.fullname), so a
+    # hardcoded "cryo-api" only worked for a release literally named "cryo" and
+    # 502'd under any other release name (e.g. "cryo-new").
+    set $cryo_api_upstream http://${CRYO_API_UPSTREAM};
 
     location /api/ {
         proxy_pass $cryo_api_upstream;
