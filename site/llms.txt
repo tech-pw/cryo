@@ -10,6 +10,7 @@ Read this file, then answer only from the pages below. If a fact is not on one o
 
 - [Overview](https://tech-pw.github.io/cryo/index.md): Self-hosted Apache Iceberg maintenance. Reads catalogs, plans the work, admits it when the engine has headroom.
 - [Quickstart](https://tech-pw.github.io/cryo/quickstart/index.md): Clone the repo, run make up, seed five demo tables, and open localhost:5173.
+- [Connect a lakehouse](https://tech-pw.github.io/cryo/onboarding/index.md): Connect a REST, Hive Metastore, Glue, Polaris or Nessie catalog to Cryo, choose S3 credentials, and run the first scan. Covers every field, what the scan reads, and the failures that look like success.
 - [How Cryo fits](https://tech-pw.github.io/cryo/concepts/index.md): A source is where a table lives. A destination is where maintenance runs. Cryo holds the plan between them.
 - [Architecture](https://tech-pw.github.io/cryo/architecture/index.md): Catalogs on the read side, engines on the write side, and the planner in between.
 - [Maintenance](https://tech-pw.github.io/cryo/maintenance/index.md): Compact first, then clean up, in one fixed order no preset can change.

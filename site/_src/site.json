@@ -6,22 +6,69 @@
   "tagline": "Apache Iceberg maintenance, with receipts",
   "description": "Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. It reads your catalogs, plans maintenance, admits the work to Trino or Spark, and leaves a receipt for every decision.",
   "groups": [
-    { "id": "start", "label": "Get started", "items": [
-      { "slug": "", "label": "Overview" },
-      { "slug": "quickstart", "label": "Quickstart" }
-    ]},
-    { "id": "concepts", "label": "Concepts", "items": [
-      { "slug": "concepts", "label": "How Cryo fits" },
-      { "slug": "architecture", "label": "Architecture" },
-      { "slug": "maintenance", "label": "Maintenance" }
-    ]},
-    { "id": "operate", "label": "Operate", "items": [
-      { "slug": "health", "label": "Health and cost" },
-      { "slug": "engines", "label": "Engines" },
-      { "slug": "deployment", "label": "Deployment" }
-    ]},
-    { "id": "reference", "label": "Reference", "items": [
-      { "slug": "reference", "label": "Reference" }
-    ]}
+    {
+      "id": "start",
+      "label": "Get started",
+      "items": [
+        {
+          "slug": "",
+          "label": "Overview"
+        },
+        {
+          "slug": "quickstart",
+          "label": "Quickstart"
+        },
+        {
+          "slug": "onboarding",
+          "label": "Connect a lakehouse"
+        }
+      ]
+    },
+    {
+      "id": "concepts",
+      "label": "Concepts",
+      "items": [
+        {
+          "slug": "concepts",
+          "label": "How Cryo fits"
+        },
+        {
+          "slug": "architecture",
+          "label": "Architecture"
+        },
+        {
+          "slug": "maintenance",
+          "label": "Maintenance"
+        }
+      ]
+    },
+    {
+      "id": "operate",
+      "label": "Operate",
+      "items": [
+        {
+          "slug": "health",
+          "label": "Health and cost"
+        },
+        {
+          "slug": "engines",
+          "label": "Engines"
+        },
+        {
+          "slug": "deployment",
+          "label": "Deployment"
+        }
+      ]
+    },
+    {
+      "id": "reference",
+      "label": "Reference",
+      "items": [
+        {
+          "slug": "reference",
+          "label": "Reference"
+        }
+      ]
+    }
   ]
 }

@@ -1,0 +1,151 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect a lakehouse · Cryo</title><meta name="description" content="Connect a REST, Hive Metastore, Glue, Polaris or Nessie catalog to Cryo, choose S3 credentials, and run the first scan. Covers every field, what the scan reads, and the failures that look like success."><link rel="canonical" href="https://tech-pw.github.io/cryo/onboarding/"><link rel="alternate" type="text/markdown" href="../onboarding/index.md" title="Markdown version"><meta name="theme-color" content="#F5FAFD" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0F16" media="(prefers-color-scheme: dark)"><meta property="og:type" content="website"><meta property="og:site_name" content="Cryo"><meta property="og:title" content="Connect a lakehouse · Cryo"><meta property="og:description" content="Connect a REST, Hive Metastore, Glue, Polaris or Nessie catalog to Cryo, choose S3 credentials, and run the first scan. Covers every field, what the scan reads, and the failures that look like success."><meta property="og:url" content="https://tech-pw.github.io/cryo/onboarding/"><meta property="og:image" content="https://tech-pw.github.io/cryo/assets/img/og.png"><meta name="twitter:card" content="summary_large_image"><link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="../assets/fonts/ibm-plex-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin><script>(function(){try{var t=localStorage.getItem("cryo-site-theme");if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}})()</script><link rel="stylesheet" href="../assets/css/site.css?v=94ae6f4f7c"></head><body class="docs" data-page="onboarding" data-root="../"><a class="skip" href="#main">Skip to content</a><header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><a class="logo" href="../" aria-label="Cryo home"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true"><g stroke-width="1.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
+    <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
+    <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
+    <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
+    <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
+    <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
+    <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
+    <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
+    <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="2" stroke-linecap="round" style="stroke:var(--cryo-mark-dash,#5C667A)">
+    <path d="M17 19.5L20 22.3"/>
+    <path d="M27.6 14.5L29 18"/>
+    <path d="M13.9 34.1L17.2 34.7"/>
+  </g>
+  <g stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
+    <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
+    <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="1.1">
+    <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
+    <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
+    <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
+  </g>
+  <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)"/>
+  <g stroke="#FFFFFF" stroke-linecap="round">
+    <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
+    <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><nav class="hdr-tabs" aria-label="Sections"><a class="hdr-tab" href="../quickstart/" aria-current="true">Get started</a><a class="hdr-tab" href="../concepts/">Concepts</a><a class="hdr-tab" href="../health/">Operate</a><a class="hdr-tab" href="../reference/">Reference</a></nav><div class="hdr-end"><button class="search-open" type="button" aria-label="Search the docs" aria-haspopup="dialog"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="so-text">Search</span><kbd class="so-kbd">⌘K</kbd></button><a class="icon-btn" href="https://github.com/tech-pw/cryo" aria-label="Cryo on GitHub"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><button class="icon-btn theme-toggle" type="button" aria-label="Toggle colour theme"><svg class="i-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="i-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></button></div></div></header><div class="shell"><nav class="side" id="side" aria-label="Documentation"><div class="side-in"><div class="nav-group"><p class="nav-label">Get started</p><ul><li><a class="nav-link" href="../">Overview</a></li><li><a class="nav-link" href="../quickstart/">Quickstart</a></li><li><a class="nav-link" href="../onboarding/" aria-current="page">Connect a lakehouse</a></li></ul></div><div class="nav-group"><p class="nav-label">Concepts</p><ul><li><a class="nav-link" href="../concepts/">How Cryo fits</a></li><li><a class="nav-link" href="../architecture/">Architecture</a></li><li><a class="nav-link" href="../maintenance/">Maintenance</a></li></ul></div><div class="nav-group"><p class="nav-label">Operate</p><ul><li><a class="nav-link" href="../health/">Health and cost</a></li><li><a class="nav-link" href="../engines/">Engines</a></li><li><a class="nav-link" href="../deployment/">Deployment</a></li></ul></div><div class="nav-group"><p class="nav-label">Reference</p><ul><li><a class="nav-link" href="../reference/">Reference</a></li></ul></div></div><button class="side-collapse" type="button" aria-label="Collapse sidebar" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg></button></nav><div class="scrim" hidden></div><main class="main" id="main"><article class="doc"><header class="doc-head"><nav class="crumbs" aria-label="Breadcrumb"><a href="../" aria-label="Cryo home"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></a><span class="crumb-sep" aria-hidden="true">›</span><span>Get started</span><span class="crumb-sep" aria-hidden="true">›</span><span class="crumb-here" aria-current="page">Connect a lakehouse</span></nav><h1>Connect a lakehouse</h1><p class="lede">Wire a catalog into Cryo, then scan it. The connection test proves reachability; the scan is what fills the UI.</p><div class="doc-meta"><span>Updated <time datetime="2026-10-14">2026-10-14</time></span><span class="dot" aria-hidden="true"></span><span>6 min read</span><span class="meta-links"><a href="https://github.com/tech-pw/cryo/edit/main/site/_src/pages/onboarding.html"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>Edit this page</a><button class="share-page" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"/></svg><span>Share</span></button><a href="https://github.com/tech-pw/cryo/issues/new?title=docs%3A%20Connect%20a%20lakehouse&body=Page%3A%20https%3A%2F%2Ftech-pw.github.io%2Fcryo%2Fonboarding%2F%0A%0AWhat%20is%20wrong%20or%20missing%3F%0A&labels=documentation"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="13" rx="5"/><path d="M9 7a3 3 0 0 1 6 0M3 13h4M17 13h4M4 7l3 2M20 7l-3 2M4 19l3-2M20 19l-3-2"/></svg>Report an issue</a><a class="md-page" href="../onboarding/index.md">View as Markdown</a></span><button class="copy-page" type="button" data-md="../onboarding/index.md">Copy page</button></div></header><details class="toc-m"><summary>On this page</summary><ul><li class="toc-l2"><a href="#before">What you need</a></li><li class="toc-l2"><a href="#connect">Connect a catalog</a></li><li class="toc-l2"><a href="#catalogs">Catalog types</a></li><li class="toc-l2"><a href="#auth">S3 authentication</a></li><li class="toc-l2"><a href="#tuning">Limiting what gets scanned</a></li><li class="toc-l2"><a href="#scan">The first scan</a></li><li class="toc-l3"><a href="#scan-what">What a scan reads</a></li><li class="toc-l3"><a href="#scan-run">Running one</a></li><li class="toc-l2"><a href="#after">After the first scan</a></li></ul></details><div class="prose"><aside class="callout callout-note" role="note"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8h.01M11 12h1v5h1"/><circle cx="12" cy="12" r="9"/></svg><div class="callout-body"><p class="callout-title">Two separate steps</p><p>Connecting a catalog tells Cryo <em>what tables exist</em>. Scanning reads those tables and stores their file counts, sizes and grades. A connected catalog with no scan leaves the UI empty — that is expected, not a failure.</p></div></aside>
+
+<h2 id="before">What you need<a class="anchor" href="#before" aria-label="Link to What you need">#</a></h2>
+<p>Cryo reads catalogs and object storage. It needs two things that are often owned by different people, so collect both before you start:</p>
+<ul>
+  <li><strong>Catalog endpoint</strong> — a REST URI, a Hive Metastore thrift address, or an AWS region for Glue.</li>
+  <li><strong>Read access to the buckets your tables live in</strong> — an IAM role is the production answer. Catalog access alone is not enough: the catalog records <em>where</em> tables are, object storage holds the files Cryo measures.</li>
+</ul>
+
+<h2 id="connect">Connect a catalog<a class="anchor" href="#connect" aria-label="Link to Connect a catalog">#</a></h2>
+<p>Open <strong>Settings → Connections → Lakehouses</strong> and choose <strong>New lakehouse</strong>. The drawer walks three steps: Connect, Storage, Review. Later steps stay closed until the connection test passes, because nothing after it can be filled in sensibly without a working catalog.</p>
+
+<ol class="steps"><li><p class="step-title">Identity and catalog</p><p>Name the lakehouse anything you will recognise in a run log. <strong>Catalog type</strong> decides which other fields matter, and <strong>Catalog URI</strong> takes the endpoint for that type — the placeholder shows the expected shape.</p>
+    <p><strong>Warehouse</strong> is the root location the catalog stores tables under. Leave it blank for Hive: Cryo reads it from the catalog's own database locations when you test the connection, and fills the field in. Set it yourself and Cryo will not overwrite it.</p>
+    <p><strong>Catalog name</strong> is optional. It overrides the name PyIceberg registers the catalog under; blank uses the lakehouse name.</p></li><li><p class="step-title">Test the connection</p><p>This makes one <code>list_namespaces()</code> call. It proves the endpoint is reachable and the credentials are accepted, nothing more — it deliberately does not enumerate tables, which is slow enough on a large metastore to be unusable as a button a human waits on.</p>
+    <p class="expect">Done when the panel reports the schema count. That number is also the first honest signal that you pointed at the catalog you meant to.</p></li><li><p class="step-title">Storage credentials</p><p>Once the test passes, Cryo walks the catalog to find which buckets your tables actually live in, and shows them ranked by how many tables each holds. Buckets appear as they are found rather than after the whole walk, so you can pick one without waiting.</p>
+    <p>Each bucket is read-probed with the credentials on this screen and labelled <strong>Readable</strong>, <strong>No access</strong> or <strong>Not found</strong>. Resolve the ones marked no-access here — see <a href="#auth">authentication</a> below.</p></li><li><p class="step-title">Review and save</p><p>The summary restates what will be stored, including whether the connection test passed. Save is disabled until it has.</p>
+    <p class="expect">Done when the lakehouse appears in the Lakehouses table. No tables are visible yet; that is the scan's job.</p></li></ol>
+
+<h2 id="catalogs">Catalog types<a class="anchor" href="#catalogs" aria-label="Link to Catalog types">#</a></h2>
+<p>Each type needs a different endpoint. Everything else on the form is shared.</p>
+
+<table>
+  <thead><tr><th>Type</th><th>Catalog URI</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>REST catalog</td><td><code>http://host:8181</code></td><td>Any Iceberg REST implementation. Pass OAuth credentials or custom headers through <strong>Advanced properties</strong>.</td></tr>
+    <tr><td>Hive Metastore</td><td><code>thrift://host:9083</code></td><td>Cryo reads table locations over Thrift directly, so it still sees tables whose Iceberg metadata will not load. Warehouse is inferred for this type.</td></tr>
+    <tr><td>AWS Glue</td><td><span class="no">Not used</span></td><td>No URI field. Region comes from the storage section; <strong>Warehouse</strong> takes an <code>s3://</code> path.</td></tr>
+    <tr><td>Apache Polaris</td><td><code>http://host:8181/api/catalog</code></td><td>REST under the hood. Credentials go in Advanced properties.</td></tr>
+    <tr><td>Project Nessie</td><td><code>http://host:19120/api/v1</code></td><td>REST under the hood. Branch or ref selection belongs in Advanced properties.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="auth">S3 authentication<a class="anchor" href="#auth" aria-label="Link to S3 authentication">#</a></h2>
+<p>Three methods, in the order you should prefer them.</p>
+
+<table>
+  <thead><tr><th>Method</th><th>Use when</th><th>Fields</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Default credentials</strong></td><td>Production. Cryo runs with an IAM role (IRSA on EKS, instance profile on EC2) and needs no secrets in its database.</td><td>Region. Optionally an endpoint.</td></tr>
+    <tr><td><strong>Access key + secret</strong></td><td>Local development and MinIO. Avoid in production — the secret is stored, and rotating it means editing every lakehouse that uses it.</td><td>Access key ID, secret access key. Usually a custom endpoint and path-style access.</td></tr>
+    <tr><td><strong>Assume IAM role</strong></td><td>The buckets live in another AWS account.</td><td>Role ARN. External ID and session name optional.</td></tr>
+  </tbody>
+</table>
+
+<aside class="callout callout-caution" role="note"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2.8 20h18.4L12 4zM12 10v4.5M12 17.5h.01"/></svg><div class="callout-body"><p class="callout-title">A catalog that connects can still fail every scan</p><p>Catalog permissions and bucket permissions are granted separately, often by different teams. The connection test cannot detect a storage problem — it never touches S3. That is why the storage step probes each bucket and says plainly when Cryo cannot read it. A bucket marked <strong>No access</strong> will fail every table stored in it, however healthy the catalog looks.</p>
+  <p>On Kubernetes the usual cause is the pod's ServiceAccount lacking an <code>eks.amazonaws.com/role-arn</code> annotation, so AWS calls fall back to the node instance role. Set <code>serviceAccount.annotations</code> in the chart, and make sure the role's trust policy names the namespace and ServiceAccount actually in use.</p></div></aside>
+
+<h2 id="tuning">Limiting what gets scanned<a class="anchor" href="#tuning" aria-label="Link to Limiting what gets scanned">#</a></h2>
+<p><strong>Schemas for maintenance</strong> restricts scanning and maintenance to the schemas you choose. Leave it empty to include every schema in the catalog.</p>
+<p>Worth setting on a large or shared metastore: an unscoped scan walks every namespace, which is slower and pulls in schemas nobody intends Cryo to maintain. The list is populated from the connection test, so it offers real schema names rather than free text.</p>
+
+<h2 id="scan">The first scan<a class="anchor" href="#scan" aria-label="Link to The first scan">#</a></h2>
+<p>Connecting stores configuration. Scanning is what produces data — until a scan completes, Tables, Home and Cost are all empty.</p>
+
+<h3 id="scan-what">What a scan reads<a class="anchor" href="#scan-what" aria-label="Link to What a scan reads">#</a></h3>
+<p>For every table in scope the scanner records the facts maintenance decisions are made from:</p>
+<ul>
+  <li><strong>File counts and sizes</strong> — total files, how many fall below the small-file threshold, and bytes on disk. This is what drives compaction decisions.</li>
+  <li><strong>Snapshots and manifests</strong> — how much history has accumulated, which is what expiry and manifest rewrites act on.</li>
+  <li><strong>Partition layout</strong> — so maintenance can target individual partitions instead of rewriting whole tables.</li>
+  <li><strong>A health grade</strong> — the letter grade on Home and Tables, derived from the measurements above.</li>
+</ul>
+<p>Scanning is read-only. It never rewrites data, and it does not schedule maintenance: that needs a preset assigned to the table.</p>
+
+<h3 id="scan-run">Running one<a class="anchor" href="#scan-run" aria-label="Link to Running one">#</a></h3>
+<p>Trigger a scan from the lakehouse row, or let the scheduled scan pick it up — the chart's default is every six hours. Watch progress under <strong>Runs</strong>.</p>
+<p>The progress panel distinguishes four outcomes, and the difference matters when something is wrong:</p>
+
+<table>
+  <thead><tr><th>Counter</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Discovered</strong></td><td>Tables the catalog reported in scope. If this is zero, the problem is the catalog or the schema filter, not storage.</td></tr>
+    <tr><td><strong>Scanned</strong></td><td>Tables successfully measured. These are the rows that appear in the UI.</td></tr>
+    <tr><td><strong>Skipped</strong></td><td>Deliberately not measured — most often unchanged since the last scan.</td></tr>
+    <tr><td><strong>Failed</strong></td><td>Tables Cryo could not read. The live log names the table and the reason.</td></tr>
+  </tbody>
+</table>
+
+<aside class="callout callout-note" role="note"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8h.01M11 12h1v5h1"/><circle cx="12" cy="12" r="9"/></svg><div class="callout-body"><p class="callout-title">Reading a failure count</p><p>A high failure count with a healthy <strong>Discovered</strong> number almost always means storage, not catalog: Cryo found the tables and could not read their files. Open the live log and read the first failure — one cause usually explains all of them.</p>
+  <p><code>source config missing warehouse</code> means the lakehouse has no warehouse root, so table paths cannot be resolved. Edit the lakehouse, clear the field, and re-test the connection to have it filled in.</p>
+  <p><code>AccessDenied</code> on an S3 path means credentials, not configuration. Re-open the storage step to see which buckets are readable.</p></div></aside>
+
+<h2 id="after">After the first scan<a class="anchor" href="#after" aria-label="Link to After the first scan">#</a></h2>
+<ul>
+  <li><strong>Tables</strong> lists every scanned table with its grade and the counts behind it.</li>
+  <li><strong>Home</strong> summarises grades across the fleet.</li>
+  <li><strong>Runs</strong> keeps the receipt for each scan, including what failed and why.</li>
+</ul>
+<p>Nothing is maintained yet. Assign a preset to decide what Cryo is allowed to do, then see <a href="../maintenance/">Maintenance</a> for how plans are built and admitted.</p>
+</div><aside class="community"><div><p class="cm-h">Stuck, or have an idea?</p><p>Cryo is built in the open. Ask in GitHub Discussions, open an issue, or send a pull request.</p></div><div class="cm-actions"><a class="btn btn-sm" href="https://github.com/tech-pw/cryo/discussions">Discussions</a><a class="btn btn-sm" href="https://github.com/tech-pw/cryo/issues">Issues</a><a class="btn btn-sm btn-primary" href="https://github.com/tech-pw/cryo"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>Star on GitHub</a></div></aside><nav class="pager" aria-label="Previous and next pages"><a class="pg pg-prev" href="../quickstart/"><span class="pg-k">Previous</span><span class="pg-t">Quickstart</span></a><a class="pg pg-next" href="../concepts/"><span class="pg-k">Next</span><span class="pg-t">How Cryo fits</span></a></nav></article></main><aside class="toc" aria-label="On this page"><p class="toc-h">On this page</p><ul><li class="toc-l2"><a href="#before">What you need</a></li><li class="toc-l2"><a href="#connect">Connect a catalog</a></li><li class="toc-l2"><a href="#catalogs">Catalog types</a></li><li class="toc-l2"><a href="#auth">S3 authentication</a></li><li class="toc-l2"><a href="#tuning">Limiting what gets scanned</a></li><li class="toc-l2"><a href="#scan">The first scan</a></li><li class="toc-l3"><a href="#scan-what">What a scan reads</a></li><li class="toc-l3"><a href="#scan-run">Running one</a></li><li class="toc-l2"><a href="#after">After the first scan</a></li></ul><a class="toc-top" href="#main">Back to top ↑</a></aside></div><footer class="foot"><div class="foot-in"><div class="foot-brand"><a class="logo" href="../"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true"><g stroke-width="1.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
+    <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
+    <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
+    <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
+    <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
+    <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
+    <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
+    <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
+    <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="2" stroke-linecap="round" style="stroke:var(--cryo-mark-dash,#5C667A)">
+    <path d="M17 19.5L20 22.3"/>
+    <path d="M27.6 14.5L29 18"/>
+    <path d="M13.9 34.1L17.2 34.7"/>
+  </g>
+  <g stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
+    <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
+    <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="1.1">
+    <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
+    <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
+    <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
+  </g>
+  <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)"/>
+  <g stroke="#FFFFFF" stroke-linecap="round">
+    <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
+    <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><p>Apache-2.0, self-hosted Iceberg maintenance with a receipt for every decision.</p></div><div><p class="foot-h">Docs</p><ul><li><a href="../quickstart/">Quickstart</a></li><li><a href="../concepts/">Concepts</a></li><li><a href="../architecture/">Architecture</a></li><li><a href="../reference/">Reference</a></li></ul></div><div><p class="foot-h">Operate</p><ul><li><a href="../maintenance/">Maintenance</a></li><li><a href="../health/">Health and cost</a></li><li><a href="../engines/">Engines</a></li><li><a href="../deployment/">Deployment</a></li></ul></div><div><p class="foot-h">Project</p><ul><li><a href="https://github.com/tech-pw/cryo">GitHub</a></li><li><a href="https://github.com/tech-pw/cryo/issues">Issues</a></li><li><a href="../llms.txt">llms.txt</a></li><li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 licence</a></li></ul></div></div><p class="foot-fine">Apache, Apache Iceberg, Iceberg and Apache Spark are trademarks of The Apache Software Foundation. Other names may be trademarks of their respective owners.</p></footer><dialog class="search" id="search" aria-label="Search the docs"><form method="dialog" class="search-box"><div class="search-field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="search-input" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="search-list"><kbd>Esc</kbd></div><ul class="search-list" id="search-list" role="listbox"></ul><p class="search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to open</span></p></form></dialog><script src="../assets/js/site.js?v=342fbdae58" defer></script></body></html>
