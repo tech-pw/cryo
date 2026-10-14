@@ -367,7 +367,7 @@ def test_discover_storage_still_lists_buckets_when_the_probe_fails() -> None:
             return_value=[CatalogTableLocation("sales", "a", "s3://some-bucket/a")],
         ),
         patch(
-            "cryo.api.routes.s3_client_for_source_config",
+            "cryo.api.routes.s3_client_kwargs_for_source_config",
             side_effect=RuntimeError("no credentials"),
         ),
     ):

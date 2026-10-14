@@ -287,14 +287,16 @@ def probe_bucket_access(
         return dict(pool.map(_probe, buckets))
 
 
-def s3_client_for_source_config(source_config: dict[str, Any]) -> Any:
-    """boto3 S3 client honouring a source's own endpoint/keys/region/path-style settings.
+def s3_client_kwargs_for_source_config(source_config: dict[str, Any]) -> dict[str, Any]:
+    """Translate a source's S3 settings into ``boto3.client("s3", **kwargs)`` arguments.
 
-    Shared so credential handling lives in one place: the orphan scanner and the onboarding
-    bucket probe must build the client identically, or the probe would greenlight settings
-    the scanner then fails on.
+    Returns kwargs rather than a client so each caller passes its own ``boto3`` reference.
+    Callers that build the client here instead would move the patch point into this module
+    and silently break anything stubbing ``boto3`` where the client is actually used.
+    Sharing the translation is the part that matters: the orphan scanner and the onboarding
+    bucket probe must interpret endpoint/keys/region/path-style identically, or the probe
+    would greenlight settings the scanner then fails on.
     """
-    import boto3
     from botocore.config import Config
 
     path_style = str(source_config.get("s3.path-style-access", "false")).lower() in {
@@ -302,11 +304,10 @@ def s3_client_for_source_config(source_config: dict[str, Any]) -> Any:
         "1",
         "yes",
     }
-    return boto3.client(
-        "s3",
-        endpoint_url=source_config.get("s3.endpoint"),
-        aws_access_key_id=source_config.get("s3.access-key-id"),
-        aws_secret_access_key=source_config.get("s3.secret-access-key"),
-        region_name=source_config.get("s3.region", "us-east-1"),
-        config=Config(s3={"addressing_style": "path" if path_style else "auto"}),
-    )
+    return {
+        "endpoint_url": source_config.get("s3.endpoint"),
+        "aws_access_key_id": source_config.get("s3.access-key-id"),
+        "aws_secret_access_key": source_config.get("s3.secret-access-key"),
+        "region_name": source_config.get("s3.region", "us-east-1"),
+        "config": Config(s3={"addressing_style": "path" if path_style else "auto"}),
+    }

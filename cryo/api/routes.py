@@ -12,6 +12,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
+import boto3
 from fastapi import (
     APIRouter,
     Depends,
@@ -183,7 +184,7 @@ from cryo.sources.locations import (
     CatalogTableLocation,
     bucket_from_location,
     probe_bucket_access,
-    s3_client_for_source_config,
+    s3_client_kwargs_for_source_config,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -535,7 +536,9 @@ def _probe_bucket_access_for_config(
     if not buckets:
         return {}
     try:
-        return probe_bucket_access(s3_client_for_source_config(dict(config)), buckets)
+        return probe_bucket_access(
+            boto3.client("s3", **s3_client_kwargs_for_source_config(dict(config))), buckets
+        )
     except Exception:
         logger.warning("bucket access probe failed", exc_info=True)
         return {}

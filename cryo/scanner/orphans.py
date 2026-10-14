@@ -5,9 +5,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
+import boto3
+
 from cryo.config import Settings
 from cryo.db.models import TableCost
-from cryo.sources.locations import s3_client_for_source_config
+from cryo.sources.locations import s3_client_kwargs_for_source_config
 
 S3_LIST_KEYS_PER_PAGE = 1000
 
@@ -248,5 +250,6 @@ def parse_s3_location(location: str) -> tuple[str | None, str]:
 
 
 def _s3_client(source_config: dict[str, Any]) -> Any:
-    """Thin alias for the shared builder -- kept so existing call sites don't churn."""
-    return s3_client_for_source_config(source_config)
+    """S3 client for this source. Config translation is shared (see locations.py); the
+    boto3 call stays here so it remains this module's own patchable reference."""
+    return boto3.client("s3", **s3_client_kwargs_for_source_config(source_config))
