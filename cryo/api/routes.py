@@ -177,6 +177,7 @@ from cryo.sources.factory import (
     source_catalog_for,
 )
 from cryo.sources.hms_thrift import (
+    derive_hive_warehouse_root,
     list_hive_databases_from_uri,
     list_hive_table_locations_for_databases,
 )
@@ -410,9 +411,25 @@ def test_source(payload: SourceTestRequest, session: SessionDep) -> SourceTestRe
     except Exception as exc:
         return SourceTestResponse(ok=False, error=str(exc))
 
+    # Offer a warehouse root when the config has none. The test above passes without one
+    # (list_namespaces doesn't need a warehouse), but the scanner can't resolve a single
+    # table without it -- so onboarding would "succeed" and then fail every table.
+    suggested_warehouse: str | None = None
+    if payload.type == "hive" and not str(config.get("warehouse") or "").strip():
+        uri = str(config.get("uri") or "")
+        if uri:
+            try:
+                suggested_warehouse = _run_with_timeout(
+                    lambda: derive_hive_warehouse_root(uri),
+                    seconds=_NAMESPACE_LIST_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                logger.warning("warehouse derivation failed", exc_info=True)
+
     return SourceTestResponse(
         ok=True,
         namespaces=namespaces,
+        suggested_warehouse=suggested_warehouse,
         note=(
             "Connection verified. Table/schema discovery runs as a background scan after "
             "saving -- it isn't part of this quick check."

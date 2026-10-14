@@ -102,6 +102,12 @@ class SourceTestResponse(BaseModel):
     # Kept (always empty) rather than removed, so older frontend builds don't break on the
     # response shape.
     table_count: int = 0
+    # Warehouse root inferred from where the catalog's databases actually live, so the UI
+    # can fill the field instead of letting an operator invent a value. A connection test
+    # passes without a warehouse (listing namespaces doesn't need one) but every scan then
+    # fails with "source config missing warehouse", so a wrong-but-present value is the
+    # worst outcome -- see routes.test_source.
+    suggested_warehouse: str | None = None
     sample_tables: list[str] = Field(default_factory=list)
     error: str | None = None
     note: str | None = None
