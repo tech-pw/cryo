@@ -393,15 +393,14 @@ migration:
 web:
   enabled: false
   replicas: 2
-  # "" computes "<release>-api:<api.port>" (see templates/web-deployment.yaml) --
-  # only set this if web needs to reach an api Service outside this release.
-  apiUpstream: ""
   image:
     repository: cryo-web
     tag: latest
     digest: ""
     pullPolicy: Always # see the comment on image.pullPolicy above
   # nginx-unprivileged's `nginx` user; it listens on 8080 (web/nginx.conf).
+  # The web Deployment injects CRYO_API_UPSTREAM as the API Service FQDN and
+  # NGINX_ENTRYPOINT_LOCAL_RESOLVERS so nginx uses the pod nameserver, not kube-dns.
   port: 8080
   probe:
     livenessInitialDelaySeconds: 5

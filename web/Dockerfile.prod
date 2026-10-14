@@ -20,16 +20,14 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:0f5f7068c5f5bf7046dbf649a08810ec1693967a9f488b8ff3998be6dd34bf6c
 
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+# envsubst at start: NGINX_LOCAL_RESOLVERS from the pod's /etc/resolv.conf, and
+# CRYO_API_UPSTREAM from Helm (API Service FQDN). Do not bake kube-dns here.
+COPY nginx.conf /etc/nginx/templates/default.conf.template
+RUN rm -f /etc/nginx/conf.d/default.conf
 
-# Scopes 20-envsubst-on-templates.sh to only CRYO_API_UPSTREAM -- unset (the default)
-# it would substitute every $VAR-shaped token in the template, including nginx's own
-# $cryo_upgrade/$cryo_connection/$http_upgrade map variables.
-ENV NGINX_ENVSUBST_FILTER=CRYO_API_UPSTREAM
-# Matches the chart default api Service name for a release literally named "cryo"
-# (cryo.fullname collapses "cryo-cryo" to "cryo") -- deploy/helm/cryo overrides this
-# via web.apiUpstream for every other release name.
-ENV CRYO_API_UPSTREAM=cryo-api:8000
+ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
+ENV NGINX_ENVSUBST_FILTER="NGINX_LOCAL_RESOLVERS|CRYO_API_UPSTREAM"
+ENV CRYO_API_UPSTREAM=http://cryo-api:8000
 
 USER 101
 
