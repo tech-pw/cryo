@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from cryo.api.app import create_app
 from cryo.config import Settings
+from cryo.sources.locations import CatalogTableLocation
 from tests.auth_helpers import OPERATOR_HEADERS as AUTH_HEADERS
 
 
@@ -215,6 +216,119 @@ def test_source_test_endpoint_hive_reports_namespaces_without_listing_tables() -
     assert body["table_count"] == 0
     assert body["sample_tables"] == []
     mock_catalog.list_tables.assert_not_called()
+
+
+def test_discover_storage_reports_buckets_from_table_locations() -> None:
+    """Buckets come from TABLE locations, not the database default.
+
+    A database's DB_LOCATION_URI is just its default -- on a real metastore nearly every
+    database inherits one warehouse default while its tables sit in several different
+    buckets, so reading database-level locations reports a small wrong answer.
+    """
+    with (
+        patch(
+            "cryo.api.routes.list_hive_databases_from_uri",
+            return_value=["sales", "marketing"],
+        ),
+        patch(
+            "cryo.api.routes.list_hive_table_locations_for_databases",
+            return_value=[
+                CatalogTableLocation("sales", "orders", "s3a://bronze-layer/sales/orders"),
+                CatalogTableLocation("sales", "returns", "s3a://gold-layer/sales/returns"),
+                CatalogTableLocation("marketing", "leads", "s3a://bronze-layer/mk/leads"),
+            ],
+        ),
+    ):
+        response = _client().post(
+            "/api/v1/sources/discover-storage",
+            headers=AUTH_HEADERS,
+            json={
+                "type": "hive",
+                "config": {"uri": "thrift://localhost:9083"},
+                "offset": 0,
+                "limit": 25,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["buckets"] == ["bronze-layer", "gold-layer"]
+    assert body["total"] == 2
+    assert body["scanned"] == 2
+
+
+def test_discover_storage_pages_through_databases() -> None:
+    """Each call walks only its slice and reports a cursor, so the UI can show buckets
+    as they arrive instead of blocking on a full multi-minute sweep."""
+    captured: dict[str, object] = {}
+
+    def _fake_locations(uri: str, databases: list[str]) -> list[CatalogTableLocation]:
+        captured["databases"] = databases
+        return [CatalogTableLocation(databases[0], "t", "s3://second-slice/x")]
+
+    with (
+        patch(
+            "cryo.api.routes.list_hive_databases_from_uri",
+            return_value=["a", "b", "c", "d"],
+        ),
+        patch("cryo.api.routes.list_hive_table_locations_for_databases", _fake_locations),
+    ):
+        response = _client().post(
+            "/api/v1/sources/discover-storage",
+            headers=AUTH_HEADERS,
+            json={
+                "type": "hive",
+                "config": {"uri": "thrift://localhost:9083"},
+                "offset": 2,
+                "limit": 2,
+            },
+        )
+
+    body = response.json()
+    assert captured["databases"] == ["c", "d"]
+    assert body["scanned"] == 4
+    assert body["total"] == 4
+    assert body["buckets"] == ["second-slice"]
+
+
+def test_discover_storage_skips_a_failing_slice_without_losing_the_walk() -> None:
+    """One unreadable slice must advance the cursor, not abort discovery."""
+    with (
+        patch("cryo.api.routes.list_hive_databases_from_uri", return_value=["a", "b", "c"]),
+        patch(
+            "cryo.api.routes.list_hive_table_locations_for_databases",
+            side_effect=RuntimeError("permission denied"),
+        ),
+    ):
+        response = _client().post(
+            "/api/v1/sources/discover-storage",
+            headers=AUTH_HEADERS,
+            json={
+                "type": "hive",
+                "config": {"uri": "thrift://localhost:9083"},
+                "offset": 0,
+                "limit": 2,
+            },
+        )
+
+    body = response.json()
+    assert body["ok"] is True
+    assert body["scanned"] == 2  # cursor advanced past the bad slice
+    assert "permission denied" in body["error"]
+
+
+def test_discover_storage_rejects_non_hive_catalogs() -> None:
+    """Only HMS exposes table locations cheaply; others would need a load_table per table."""
+    response = _client().post(
+        "/api/v1/sources/discover-storage",
+        headers=AUTH_HEADERS,
+        json={"type": "rest", "config": {"uri": "http://localhost:8181"}},
+    )
+
+    body = response.json()
+    assert body["ok"] is False
+    assert "Hive Metastore" in body["error"]
 
 
 def test_source_test_endpoint_reports_connection_failure() -> None:

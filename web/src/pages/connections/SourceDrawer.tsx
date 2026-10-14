@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { getSourceNamespaces, testSource } from "../../api/client";
 import type { SourceRead, SourceWrite } from "../../api/types";
@@ -25,6 +25,8 @@ import { AWS_REGIONS, CATALOG_TYPES, CATALOG_URI_HINT, S3_AUTH_METHODS, type Sou
 import { buildSourceConfig, decomposeSourceConfig } from "./sourceConfig";
 import { SourceScansPanel } from "./SourceScansPanel";
 import { SourceDrawerSteps, type SourceDrawerStep } from "./SourceDrawerSteps";
+import { StorageBucketDiscovery } from "./StorageBucketDiscovery";
+import { useStorageDiscovery } from "./useStorageDiscovery";
 import { CopyStorageConfigPicker } from "./CopyStorageConfigPicker";
 import { SourceTestResultPanel } from "./SourceTestResultPanel";
 
@@ -131,6 +133,43 @@ export const SourceDrawer = ({
       );
     }
   });
+
+  /**
+   * Which discovered bucket the operator acknowledged. Deliberately NOT written back into
+   * the form: every catalog-config field is watched and clears a passing connection test
+   * (see the form.watch subscription below), so auto-filling Warehouse here would knock
+   * the user back to "not yet passed" for picking a bucket Cryo itself just reported. The
+   * selection is surfaced in Review instead, where it informs without side effects.
+   */
+  const [selectedBucket, setSelectedBucket] = useState<string | null>(null);
+
+  // Buckets the catalog's tables actually live in, so the storage step offers a choice
+  // instead of asking the operator to recall a bucket name. Started on entering the step
+  // rather than from a button: by then the connection is proven, and the walk is slow
+  // enough that waiting for a second click wastes real time.
+  const storageDiscovery = useStorageDiscovery(api);
+  const { start: startDiscovery, reset: resetDiscovery, status: discoveryStatus } =
+    storageDiscovery;
+
+  const runDiscovery = useCallback(() => {
+    const current = form.getValues();
+    void startDiscovery({
+      type: current.type,
+      config: buildSourceConfig(current),
+      source_id: isEditing ? value.id : undefined
+    });
+  }, [form, isEditing, startDiscovery, value]);
+
+  // Drop any previous catalog's buckets when the drawer is reopened on a different source.
+  useEffect(() => {
+    resetDiscovery();
+  }, [value, resetDiscovery]);
+
+  useEffect(() => {
+    if (!isStepped || step !== "storage" || !testPassed) return;
+    if (discoveryStatus !== "idle") return;
+    runDiscovery();
+  }, [isStepped, step, testPassed, discoveryStatus, runDiscovery]);
 
   useEffect(() => {
     const subscription = form.watch((formValues, { name }) => {
@@ -331,6 +370,15 @@ export const SourceDrawer = ({
               Configure how Cryo authenticates to S3 storage. For production, use IAM roles.
               Access keys are only recommended for local/dev environments (e.g. MinIO).
             </p>
+
+            {isStepped ? (
+              <StorageBucketDiscovery
+                state={storageDiscovery}
+                selectedBucket={selectedBucket}
+                onSelect={setSelectedBucket}
+                onRetry={runDiscovery}
+              />
+            ) : null}
 
             {!isEditing ? (
               <CopyStorageConfigPicker
@@ -670,14 +718,37 @@ export const SourceDrawer = ({
                 <dt className="text-muted-foreground">Connection test</dt>
                 <dd className="font-medium">{testPassed ? "Passed" : "Not yet passed"}</dd>
               </div>
+              {selectedBucket ? (
+                <div className="flex justify-between gap-2 sm:block">
+                  <dt className="text-muted-foreground">Storage bucket</dt>
+                  <dd className="font-medium">{selectedBucket}</dd>
+                </div>
+              ) : null}
             </dl>
 
             {!testPassed ? (
-              <Alert
-                variant="warning"
-                title="Test the connection before saving"
-                description="Click &quot;Test connection&quot; above with a passing result to enable Save."
-              />
+              <>
+                <Alert
+                  variant="warning"
+                  title="Re-test the connection before saving"
+                  // Editing any field that forms part of the catalog config invalidates an
+                  // earlier pass (see the form.watch subscription above), which on a stepped
+                  // flow means filling in storage credentials can clear a test that passed on
+                  // step 1. Without a Test button on *this* step that left Save permanently
+                  // disabled with nothing on screen to fix it.
+                  description="Settings changed since the last successful test, so Save is disabled until it passes again."
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="self-start"
+                  loading={testConnection.isPending}
+                  onClick={() => testConnection.mutate()}
+                >
+                  Test connection
+                </Button>
+                {testConnection.data ? <SourceTestResultPanel result={testConnection.data} /> : null}
+              </>
             ) : null}
 
             <div className={isStepped ? "flex items-center justify-between" : undefined}>

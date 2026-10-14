@@ -15,7 +15,11 @@ from hive_metastore import ThriftHiveMetastore
 from thrift.protocol import TBinaryProtocol
 from thrift.transport import TSocket, TTransport
 
-from cryo.sources.locations import CatalogTableLocation, list_hive_table_locations
+from cryo.sources.locations import (
+    CatalogTableLocation,
+    call_hms,
+    list_hive_table_locations,
+)
 
 DEFAULT_HMS_PORT = 9083
 _HMS_URI_SCHEMES = {"thrift", "hive", "tcp"}
@@ -76,3 +80,22 @@ def list_hive_table_locations_from_uri(uri: str) -> list[CatalogTableLocation]:
     """List HMS ``sd.location`` for every table via a direct Thrift session."""
     with open_hms_thrift_client(uri) as client:
         return list_hive_table_locations(client)
+
+
+def list_hive_databases_from_uri(uri: str) -> list[str]:
+    """Every database name in the metastore -- one cheap call, no table enumeration."""
+    with open_hms_thrift_client(uri) as client:
+        return [str(name) for name in call_hms(client, "get_all_databases")]
+
+
+def list_hive_table_locations_for_databases(
+    uri: str, databases: list[str]
+) -> list[CatalogTableLocation]:
+    """``sd.location`` for the tables in just these databases.
+
+    Lets a caller walk a large metastore in slices so partial results can be shown while
+    the rest is still going, rather than holding everything back until the full 14k-table
+    sweep completes.
+    """
+    with open_hms_thrift_client(uri) as client:
+        return list_hive_table_locations(client, databases=databases)

@@ -439,6 +439,36 @@ export const testSource = (
   body: { type: string; config: Record<string, unknown>; source_id?: UUID }
 ) => apiFetch<SourceTestResult>("/sources/test", api, { method: "POST", body });
 
+export interface SourceStorageDiscoveryResult {
+  ok: boolean;
+  buckets: string[];
+  locations: string[];
+  scanned: number;
+  total: number;
+  error?: string | null;
+}
+
+/**
+ * One slice of a bucket-discovery walk. Reads TABLE locations (a database's own location
+ * is just a default most tables don't follow), which is slow enough on a real metastore
+ * that callers page through with `offset`/`limit` and show buckets as they accumulate
+ * rather than waiting for the whole sweep.
+ */
+export const discoverSourceStorage = (
+  api: ApiOptions,
+  body: {
+    type: string;
+    config: Record<string, unknown>;
+    source_id?: UUID;
+    offset?: number;
+    limit?: number;
+  }
+) =>
+  apiFetch<SourceStorageDiscoveryResult>("/sources/discover-storage", api, {
+    method: "POST",
+    body
+  });
+
 export interface SourceNamespacesResult {
   ok: boolean;
   namespaces: string[];

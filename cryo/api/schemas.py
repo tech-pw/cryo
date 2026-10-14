@@ -117,6 +117,43 @@ class SourceNamespacesResponse(BaseModel):
     error: str | None = None
 
 
+class SourceStorageDiscoveryRequest(BaseModel):
+    """One slice of a bucket-discovery walk over a not-yet-saved catalog config.
+
+    Paged because the walk reads table locations (see ``discover_source_storage`` for why
+    database-level is not accurate enough), which is minutes on a large metastore. The
+    client advances ``offset`` by the returned ``scanned`` until it reaches ``total``.
+    """
+
+    type: str
+    config: JsonDict = Field(default_factory=dict)
+    source_id: uuid.UUID | None = None
+    offset: int = 0
+    # Databases per request. Small enough that first buckets appear within a couple of
+    # seconds, large enough not to spend the whole walk on HTTP round trips.
+    limit: int = 25
+
+
+class SourceStorageDiscoveryResponse(BaseModel):
+    """Distinct object-store buckets the catalog's namespaces actually point at.
+
+    Deliberately NOT part of test_source: this reads one location per namespace, so it is
+    O(namespaces) round-trips -- the exact cost test_source was trimmed down to avoid. The
+    UI triggers it explicitly on the storage step, where a human has chosen to wait.
+
+    ``scanned``/``total`` report how far the walk got, so a partial result (timeout, or a
+    catalog that errors on some namespaces) can say so instead of presenting an incomplete
+    bucket list as if it were the whole picture.
+    """
+
+    ok: bool
+    buckets: list[str] = Field(default_factory=list)
+    locations: list[str] = Field(default_factory=list)
+    scanned: int = 0
+    total: int = 0
+    error: str | None = None
+
+
 class SourceNamespaceTablesResponse(BaseModel):
     """Live table names within one already-known namespace -- one cheap call
     (list_tables_in_namespace), not the O(all namespaces) walk a full scan does. Lets the

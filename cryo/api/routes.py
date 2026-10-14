@@ -92,6 +92,8 @@ from cryo.api.schemas import (
     SourceNamespaceTablesResponse,
     SourcePatch,
     SourceRead,
+    SourceStorageDiscoveryRequest,
+    SourceStorageDiscoveryResponse,
     SourceTestRequest,
     SourceTestResponse,
     TableAlertSubscriptionCreate,
@@ -171,6 +173,11 @@ from cryo.sources.factory import (
     catalog_from_config,
     source_catalog_for,
 )
+from cryo.sources.hms_thrift import (
+    list_hive_databases_from_uri,
+    list_hive_table_locations_for_databases,
+)
+from cryo.sources.locations import bucket_from_location
 
 router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger(__name__)
@@ -357,6 +364,13 @@ def create_source(payload: SourceCreate, session: SessionDep) -> Source:
 
 _CONNECTION_TEST_TIMEOUT_SECONDS = CONNECTION_TEST_TIMEOUT_SECONDS
 _NAMESPACE_LIST_TIMEOUT_SECONDS = NAMESPACE_LIST_TIMEOUT_SECONDS
+# One location read per namespace, so this scales with catalog size unlike the single
+# round trip the connection test makes. Measured against a real 251-database HMS: 1.5s for
+# the whole walk, because a database's location is one local row lookup on the metastore's
+# own Postgres -- nothing like the per-table enumeration test_source was trimmed of. 60s is
+# therefore a wide margin for a much larger or slower catalog, not an expected wait; a walk
+# that does hit it returns what it found rather than failing (see discover_source_storage).
+_STORAGE_DISCOVERY_TIMEOUT_SECONDS = 60
 
 
 @router.post(
@@ -395,6 +409,88 @@ def test_source(payload: SourceTestRequest, session: SessionDep) -> SourceTestRe
             "Connection verified. Table/schema discovery runs as a background scan after "
             "saving -- it isn't part of this quick check."
         ),
+    )
+
+
+@router.post(
+    "/sources/discover-storage",
+    response_model=SourceStorageDiscoveryResponse,
+    dependencies=[Depends(require_operator)],
+)
+def discover_source_storage(
+    payload: SourceStorageDiscoveryRequest, session: SessionDep
+) -> SourceStorageDiscoveryResponse:
+    """Find which object-store buckets a catalog's tables actually live in, one slice
+    of databases per call.
+
+    Reads locations at the TABLE level, not the database level. A database's
+    ``DB_LOCATION_URI`` is only its default: measured against a real 251-database
+    metastore, 248 of them inherit the same warehouse default while their tables are
+    spread across 12 buckets, so a database-level answer reports 3 buckets and silently
+    hides where most of the data lives.
+
+    That accuracy costs round trips -- 14k tables took ~84s on that catalog -- which is
+    why this is paged rather than one request. The caller walks ``databases`` in slices
+    (``offset``/``limit``) and accumulates buckets as they arrive, so the common ones show
+    up within seconds instead of after the whole sweep. It is also why this is a separate
+    endpoint from ``test_source``, which must stay a single fast round trip.
+    """
+    config = payload.config
+    if payload.source_id is not None:
+        existing = get_scoped_resource(session, Source, payload.source_id, resource_type="Source")
+        config = unredact_merge(config, dict(existing.config or {}))
+
+    if payload.type != "hive":
+        # Only HMS exposes table locations cheaply over Thrift. Other catalogs would need a
+        # load_table() per table (minutes, and it fails on exactly the broken tables worth
+        # finding), so report "unsupported" rather than hanging the storage step.
+        return SourceStorageDiscoveryResponse(
+            ok=False, error="Bucket discovery is only available for Hive Metastore catalogs."
+        )
+
+    uri = str(config.get("uri") or "")
+    if not uri:
+        return SourceStorageDiscoveryResponse(ok=False, error="Catalog URI is required.")
+
+    try:
+        databases = _run_with_timeout(
+            lambda: list_hive_databases_from_uri(uri),
+            seconds=_NAMESPACE_LIST_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        return SourceStorageDiscoveryResponse(ok=False, error=str(exc))
+
+    total = len(databases)
+    offset = max(payload.offset, 0)
+    slice_names = databases[offset : offset + max(payload.limit, 1)]
+
+    locations: list[str] = []
+    if slice_names:
+        try:
+            rows = _run_with_timeout(
+                lambda: list_hive_table_locations_for_databases(uri, slice_names),
+                seconds=_STORAGE_DISCOVERY_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            # This slice failed, but earlier slices already gave the caller buckets. Report
+            # the failure with the cursor advanced so the walk can continue past it rather
+            # than retrying the same bad slice forever.
+            return SourceStorageDiscoveryResponse(
+                ok=True,
+                scanned=offset + len(slice_names),
+                total=total,
+                error=f"Skipped {len(slice_names)} schema(s): {exc}"[:500],
+            )
+        locations = [row.location for row in rows if row.location]
+
+    scanned = offset + len(slice_names)
+    buckets = sorted({b for b in (bucket_from_location(loc) for loc in locations) if b})
+    return SourceStorageDiscoveryResponse(
+        ok=True,
+        buckets=buckets,
+        locations=sorted(set(locations)),
+        scanned=scanned,
+        total=total,
     )
 
 
