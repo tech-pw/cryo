@@ -283,8 +283,16 @@ describe("TableExplorerSection filters", () => {
     const link = await screen.findByRole("link", { name: /analytics\.orders/i });
     expect(link).toHaveAttribute("href", "/tables/tbl-1");
     const table = link.closest("table");
-    expect(table).toHaveClass("table-auto", "w-full");
-    expect(table?.querySelector("th")).not.toHaveAttribute("style");
+    expect(table).toBeInTheDocument();
+    // This used to assert table-auto/w-full and that no th carried an inline style. Both
+    // became wrong when the catalog table gained resizable columns (e5414f17): the layout
+    // moved to table-fixed and each th now needs an explicit width for resizing to work.
+    // The test kept asserting the pre-feature markup and left main red, so it now checks
+    // the rendering behaviour the feature actually guarantees -- every column sized, which
+    // is what table-fixed requires -- rather than the classes it happens to use.
+    const headers = Array.from(table?.querySelectorAll("th") ?? []);
+    expect(headers.length).toBeGreaterThan(0);
+    expect(headers.every((th) => th.style.width !== "")).toBe(true);
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
     expect(screen.queryByText(/0 \/ /)).not.toBeInTheDocument();
   });
