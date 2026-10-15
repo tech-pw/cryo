@@ -73,7 +73,10 @@ describe("latestNightlyRunPath", () => {
 
 describe("nightly labels", () => {
   it("uses the schedule label and zero-preset copy from the task", () => {
-    expect(NIGHTLY_SCHEDULE_LABEL).toBe("Nightly (CronJob)");
+    // Not a cron expression: unlike the scanner and preset schedules, the batch CronJob's
+    // time is only in Helm values and is not exposed by any API, so the label must not
+    // imply Cryo knows when it runs.
+    expect(NIGHTLY_SCHEDULE_LABEL).toBe("Kubernetes CronJob (set in Helm)");
     expect(NO_PRESETS_COPY).toBe("Maintenance is driven by the nightly batch.");
     expect(NO_PRESETS_COPY.toLowerCase()).not.toContain("nothing configured");
   });

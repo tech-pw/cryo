@@ -1,10 +1,18 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Clock3, Info, LoaderCircle } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { cancelRun, diagnoseRunFailure, forceAdmitJob, getRun, getRunJobs, listRuns } from "../../api/client";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  cancelRun,
+  diagnoseRunFailure,
+  forceAdmitJob,
+  getRun,
+  getRunJobs,
+  getScannerStatus,
+  listRuns
+} from "../../api/client";
 import type { JobRead, RunRead } from "../../api/types";
 import { PageHeader, StatStrip } from "../../components/common";
 import { ConfirmAction } from "../../components/confirm";
@@ -30,6 +38,8 @@ import { Input } from "../../components/ui/input";
 import { MetricGrid, MetricTile } from "../../components/ui/metric-grid";
 import { RunLanes } from "../../components/charts";
 import { StatusTag, RunKindTag } from "../../components/status";
+import { describeCronSchedule } from "../../components/operations/scheduleSummary";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { useRunLiveEvents, isTerminalRunStatus } from "../../hooks/useRunLiveEvents";
 import { useShellOptional } from "../../components/shell/ShellContext";
 import { useAuth } from "../../lib/auth";
@@ -177,6 +187,89 @@ const DescriptionGrid = ({
   </dl>
 );
 
+type ScanFailureEntry = { table?: string; error?: string; ts?: string };
+
+const scanFailureList = (summary: RunRead["summary"], key: string): ScanFailureEntry[] => {
+  const raw = summary && typeof summary === "object" ? (summary as Record<string, unknown>)[key] : undefined;
+  return Array.isArray(raw) ? (raw as ScanFailureEntry[]) : [];
+};
+
+/**
+ * What went wrong in a scan run, in place of the Jobs panel.
+ *
+ * A scan creates no jobs, so the Jobs card renders four zero chips and an empty grid for
+ * these runs. The scan summary already carries the answer -- which tables failed, which
+ * were unreadable, and the error for each -- and nothing was showing it, so a run saying
+ * "6 failed" gave no way to find out what those six were.
+ *
+ * Failed and unreadable are kept apart because they mean different things: failed is Cryo
+ * hitting an error it owns, unreadable is usually the object store refusing a read.
+ */
+const ScanFailures = ({ summary }: { summary: RunRead["summary"] }) => {
+  const failed = scanFailureList(summary, "failed_tables");
+  const unreadable = scanFailureList(summary, "unreadable_tables");
+  const unreadableTotal = summaryNumber(summary, "unreadable");
+  const [showUnreadable, setShowUnreadable] = useState(false);
+
+  if (failed.length === 0 && unreadable.length === 0) return null;
+
+  const entryRow = (entry: ScanFailureEntry, idx: number) => (
+    <li key={`${entry.table ?? idx}-${idx}`} className="border-t border-border px-3 py-2 first:border-t-0">
+      <p className="truncate font-mono text-xs font-medium">{entry.table ?? "(unnamed table)"}</p>
+      {entry.error ? (
+        <p className="mt-0.5 break-words text-xs text-muted-foreground">{entry.error}</p>
+      ) : null}
+    </li>
+  );
+
+  return (
+    <Card className="run-jobs-card">
+      <CardHeader className="pb-2">
+        <CardTitle>What failed</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 p-0 pb-3">
+        {failed.length > 0 ? (
+          <div>
+            <p className="px-3 pt-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Failed · {failed.length}
+            </p>
+            <ul className="mt-1">{failed.map(entryRow)}</ul>
+          </div>
+        ) : null}
+
+        {unreadable.length > 0 ? (
+          <div>
+            <div className="flex items-baseline justify-between gap-2 px-3 pt-1">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Unreadable · {formatNumber(unreadableTotal || unreadable.length)}
+              </p>
+              {/* The summary keeps only a sample, so say so rather than implying this is all. */}
+              {unreadableTotal > unreadable.length ? (
+                <span className="text-xs text-muted-foreground">
+                  showing {unreadable.length}
+                </span>
+              ) : null}
+            </div>
+            <p className="px-3 pt-0.5 text-xs text-muted-foreground">
+              Cryo could not read these tables' metadata. A 403 here is storage permissions,
+              not a Cryo error.
+            </p>
+            {showUnreadable ? (
+              <ul className="mt-1">{unreadable.map(entryRow)}</ul>
+            ) : (
+              <div className="px-3 pt-2">
+                <Button type="button" size="sm" variant="secondary" onClick={() => setShowUnreadable(true)}>
+                  Show {unreadable.length} example{unreadable.length === 1 ? "" : "s"}
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+};
+
 const RunOutcomeSummary = ({
   run,
   jobs,
@@ -220,11 +313,16 @@ const RunOutcomeSummary = ({
               : { label: "Status unavailable", icon: Info, tone: "muted", copy: "The run exists, but its outcome has not been recorded yet." };
   const OutcomeIcon = outcome.icon;
   const scanRecords = scan && typeof summary?.discovered === "number" ? summary.discovered : counts.total;
-  const scanCompleted = scan
-    ? (typeof summary?.scanned === "number" ? summary.scanned : 0) +
-      (typeof summary?.skipped === "number" ? summary.skipped : 0)
-    : counts.completed;
-  const scanAttention = scan && typeof summary?.failed === "number" ? summary.failed : counts.attention;
+  const scanScanned = scan && typeof summary?.scanned === "number" ? summary.scanned : 0;
+  const scanSkipped = scan && typeof summary?.skipped === "number" ? summary.skipped : 0;
+  const scanUnreadable = scan && typeof summary?.unreadable === "number" ? summary.unreadable : 0;
+  const scanCompleted = scan ? scanScanned + scanSkipped : counts.completed;
+  // Unreadable belongs with failed, not with pending. It is a settled outcome -- Cryo tried
+  // the table and the store refused -- so counting it as pending told operators a finished
+  // failure was still in flight (observed live: 1,330 unreadable shown as "pending 1,330").
+  const scanAttention = scan
+    ? (typeof summary?.failed === "number" ? summary.failed : 0) + scanUnreadable
+    : counts.attention;
   const scanPending = scan ? Math.max(0, scanRecords - scanCompleted - scanAttention) : counts.pending;
   const evidenceValue = savingsLabel
     ?.replace(/^Freed\s+/i, "")
@@ -243,8 +341,24 @@ const RunOutcomeSummary = ({
         </span>
       </div>
       <dl className="run-outcome-card__metrics">
-        <div><dt>{scan ? "Records" : "Jobs"}</dt><dd>{formatNumber(scanRecords)}</dd></div>
-        <div><dt>Completed</dt><dd>{formatNumber(scanCompleted)}</dd></div>
+        <div><dt>{scan ? "Tables found" : "Jobs"}</dt><dd>{formatNumber(scanRecords)}</dd></div>
+        {/* Scanned and skipped are split rather than summed into "Completed". A run that
+            measured 1,372 of 13,093 tables and skipped 10,385 as unchanged was reporting
+            "Completed 11,757", which reads as near-total coverage of work that mostly did
+            not happen this run. */}
+        {scan ? (
+          <>
+            <div><dt>Measured</dt><dd>{formatNumber(scanScanned)}</dd></div>
+            <div>
+              <dt>Unchanged</dt>
+              <dd title="Already scanned today, so re-measuring was skipped">
+                {formatNumber(scanSkipped)}
+              </dd>
+            </div>
+          </>
+        ) : (
+          <div><dt>Completed</dt><dd>{formatNumber(scanCompleted)}</dd></div>
+        )}
         <div><dt>Attention · pending</dt><dd>{formatNumber(scanAttention)} · {formatNumber(scanPending)}</dd></div>
         <div><dt>Duration</dt><dd>{duration}</dd></div>
         {evidenceValue ? <div><dt>Storage freed</dt><dd>{evidenceValue}</dd></div> : null}
@@ -364,9 +478,35 @@ const BatchRunSummary = ({ summary }: { summary: NonNullable<RunRead["summary"]>
   );
 };
 
+const RUN_TABS = ["overview", "failures", "log"] as const;
+type RunTab = (typeof RUN_TABS)[number];
+
 export const RunDetail = () => {
   const { runId } = useParams();
   const navigate = useNavigate();
+  // Tab lives in the URL so a link to a specific failure survives being pasted into a
+  // ticket or a chat, which is how these pages actually get shared.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlTab = searchParams.get("tab");
+  const tabFromUrl: RunTab = RUN_TABS.includes(urlTab as RunTab) ? (urlTab as RunTab) : "overview";
+  // Local state is the source of truth, with the URL synced alongside (same shape as
+  // Governance). Deriving the active tab from the URL alone makes the click depend on a
+  // router round-trip, which does not settle synchronously -- the tab reads as unchanged.
+  const [activeTab, setActiveTabState] = useState<RunTab>(tabFromUrl);
+  useEffect(() => {
+    setActiveTabState(tabFromUrl);
+  }, [tabFromUrl]);
+  const setActiveTab = useCallback(
+    (next: string) => {
+      if (!RUN_TABS.includes(next as RunTab)) return;
+      setActiveTabState(next as RunTab);
+      const params = new URLSearchParams(searchParams);
+      if (next === "overview") params.delete("tab");
+      else params.set("tab", next);
+      setSearchParams(params, { replace: true });
+    },
+    [searchParams, setSearchParams]
+  );
   const queryClient = useQueryClient();
   const { api, token, role } = useAuth();
   const cancelAccess = useWriteControl("cancelRun");
@@ -482,7 +622,22 @@ export const RunDetail = () => {
     return messages.filter((item) => item.job_id === logJob.id);
   }, [logJob, messages]);
 
+  // A finished run says nothing about when the next one lands, which is the question an
+  // operator has right after reading a failure. Scanner status already carries both the
+  // cadence and next_scan_at; nothing was showing either.
+  const scannerStatus = useQuery({
+    queryKey: ["scanner-status", token],
+    queryFn: () => getScannerStatus(api),
+    enabled: scan,
+    staleTime: 30_000
+  });
+
   const summary = runData?.summary;
+  // Badge on the Failures tab. Counts unreadable alongside failed, matching the outcome
+  // card -- both are settled failures, so showing only `failed` here would understate it
+  // by three orders of magnitude on a run where the store refused most reads.
+  const attentionCount =
+    summaryNumber(runData?.summary, "failed") + summaryNumber(runData?.summary, "unreadable");
   const scanPercent = useMemo(() => {
     if (!scan) return 0;
     const assigned = summaryNumber(summary, "assigned");
@@ -731,13 +886,28 @@ export const RunDetail = () => {
         scan={scan}
       />
 
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="failures">
+            Failures{attentionCount > 0 ? ` · ${formatNumber(attentionCount)}` : ""}
+          </TabsTrigger>
+          <TabsTrigger value="log">Log</TabsTrigger>
+        </TabsList>
+
+      <TabsContent value="overview">
       <div className="run-detail-main-grid grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
         <div className="flex flex-col gap-3">
-          <Card className="run-pipeline-card">
-            <CardContent className="pt-4">
-              <OperationPipeline steps={pipelineSteps} title={scan ? "Scan pipeline" : "Maintenance pipeline"} />
-            </CardContent>
-          </Card>
+          {/* Scan runs carry no pipeline stages -- the API returns none for kind="scan" -- so
+              rendering this for them shows four rows of "Not recorded" and nothing else.
+              Scan progress (below) is the equivalent, and it has real data. */}
+          {scan ? null : (
+            <Card className="run-pipeline-card">
+              <CardContent className="pt-4">
+                <OperationPipeline steps={pipelineSteps} title="Maintenance pipeline" />
+              </CardContent>
+            </Card>
+          )}
 
           {isBatchPipeline(summary) ? <BatchRunSummary summary={summary} /> : null}
 
@@ -776,13 +946,54 @@ export const RunDetail = () => {
                     { label: "Scope", value: summary?.scope?.toString() ?? "—" },
                     { label: "Trigger", value: runData?.trigger ?? "—" },
                     { label: "Current table", value: summaryText(summary, "current_table") ?? "—" },
-                    { label: "Finished", value: formatTime(runData?.finished_at) }
+                    { label: "Finished", value: formatTime(runData?.finished_at) },
+                    {
+                      label: "Schedule",
+                      value:
+                        describeCronSchedule(scannerStatus.data?.config?.schedule_cron) ??
+                        scannerStatus.data?.config?.schedule_cron ??
+                        "—"
+                    },
+                    {
+                      label: "Next scan",
+                      // Scheduled scans only run while the scanner is enabled, so a time here
+                      // when it is off would promise a run that never comes.
+                      value: scannerStatus.data?.config?.enabled
+                        ? formatTime(scannerStatus.data?.next_scan_at)
+                        : "Scanner disabled"
+                    }
                   ]}
                 />
               </CardContent>
             </Card>
           ) : null}
 
+          {/* A scan run has no jobs -- the API returns jobs: [] for kind="scan" -- so the
+              filter chips and table below render as four zeros and an empty grid. What an
+              operator actually needs here is which tables failed and why, which the scan
+              summary already carries and nothing was showing. */}
+        </div>
+        <div className="flex flex-col gap-3">
+          <RunHistoryGrid runs={workflowRuns.data ?? []} loading={workflowRuns.isLoading} />
+          {targetTableId(runData ?? { id: runId, kind: "", status: "", created_at: "" }) ? (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle>Target table</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Link to={`/tables/${targetTableId(runData!)}`} className="text-sm text-primary hover:underline">
+                  Open table detail
+                </Link>
+              </CardContent>
+            </Card>
+          ) : null}
+        </div>
+      </div>
+      </TabsContent>
+
+      <TabsContent value="failures">
+        <div className="flex flex-col gap-3">
+          {scan ? <ScanFailures summary={summary} /> : (
           <Card className="run-jobs-card">
             <CardHeader className="pb-2">
               <CardTitle>Jobs</CardTitle>
@@ -861,7 +1072,13 @@ export const RunDetail = () => {
               />
             </CardContent>
           </Card>
+          )}
 
+        </div>
+      </TabsContent>
+
+      <TabsContent value="log">
+        <div className="flex flex-col gap-3">
           <div className="run-console-card">
             <ConsoleShell
             title="Live log"
@@ -876,23 +1093,9 @@ export const RunDetail = () => {
             />
           </div>
         </div>
+      </TabsContent>
+      </Tabs>
 
-        <div className="flex flex-col gap-3">
-          <RunHistoryGrid runs={workflowRuns.data ?? []} loading={workflowRuns.isLoading} />
-          {targetTableId(runData ?? { id: runId, kind: "", status: "", created_at: "" }) ? (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle>Target table</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Link to={`/tables/${targetTableId(runData!)}`} className="text-sm text-primary hover:underline">
-                  Open table detail
-                </Link>
-              </CardContent>
-            </Card>
-          ) : null}
-        </div>
-      </div>
 
       <Sheet open={Boolean(logJob)} onOpenChange={(open) => !open && setLogJob(null)}>
         <SheetContent side="right" className="w-full sm:max-w-xl">

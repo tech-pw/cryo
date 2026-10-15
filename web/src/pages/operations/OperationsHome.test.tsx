@@ -124,7 +124,9 @@ describe("OperationsHome", () => {
     const nightlyRow = within(row as HTMLElement);
 
     expect(nightlyLink).toHaveAttribute("href", "/runs/bbbbbbbb-0000-0000-0000-000000000002");
-    expect(nightlyRow.getByText("Nightly (CronJob)")).toBeInTheDocument();
+    // The batch CronJob's time is only in Helm values and not exposed by any API, so the
+    // row names where it is configured rather than implying Cryo knows the schedule.
+    expect(nightlyRow.getByText("Kubernetes CronJob (set in Helm)")).toBeInTheDocument();
     expect(nightlyRow.getByText("Partial")).toBeInTheDocument();
     expect(nightlyRow.getByRole("list", { name: /last 2 runs/i })).toBeInTheDocument();
     expect(nightlyRow.getByRole("button", { name: "Nightly maintenance actions" })).toBeInTheDocument();
