@@ -26,31 +26,40 @@ test.describe("Cryo critical-path", () => {
   });
 
   test("create source → scan → preview plan → run → view logs", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("cryo-onboarding-dismissed", "1");
+    });
     await page.goto("/");
 
     await page.getByLabel("Username").fill("e2e-critical");
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page.getByText("Datalake health").first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("heading", { name: "Home", exact: true })).toBeVisible({ timeout: 15_000 });
 
-    await page.getByRole("link", { name: /Connections/ }).click();
-    await expect(page.getByRole("heading", { name: /Connections/ }).first()).toBeVisible();
+    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Connections", exact: true })).toBeVisible();
 
     const sourceName = `e2e-cp-${Date.now()}`;
-    await page.getByRole("button", { name: /Add (source|Source|connection)/i }).first().click();
+    await page.getByRole("button", { name: /New lakehouse|Add (source|Source|connection)/i }).first().click();
     await page.getByLabel(/Name/i).first().fill(sourceName);
     await page.getByLabel(/Catalog URI|Type/i).first().fill("rest");
     await page.getByRole("button", { name: /Create|Save|Test/i }).first().click();
+    await page.keyboard.press("Escape");
 
-    await page.getByRole("link", { name: /Scanner/ }).click();
-    await expect(page.getByRole("heading", { name: /Scanner/ }).first()).toBeVisible();
+    await page.getByRole("link", { name: "Runs", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Runs", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Scanner", exact: true }).first().click();
+    await expect(page.getByRole("heading", { name: "Scanner", exact: true })).toBeVisible();
     await page
       .getByLabel(/Source/i)
       .first()
       .selectOption({ label: sourceName })
       .catch(() => undefined);
-    await page.getByRole("button", { name: /Trigger|Scan|Run scan/i }).first().click();
+    const triggerScan = page.getByRole("button", { name: /Trigger scan|Run scan/i }).first();
+    if (await triggerScan.isVisible().catch(() => false)) {
+      await triggerScan.click();
+    }
 
-    await page.getByRole("link", { name: /Catalogs/ }).click();
+    await page.getByRole("link", { name: "Tables", exact: true }).click();
     await expect(page.getByRole("heading", { name: /Catalogs/ }).first()).toBeVisible();
 
     const previewButton = page.getByRole("button", { name: /Preview plan/i }).first();

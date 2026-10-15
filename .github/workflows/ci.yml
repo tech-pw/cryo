@@ -646,9 +646,11 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run DB migrations
+        working-directory: .
         run: alembic upgrade head
 
       - name: Start API + Vite dev server
+        working-directory: .
         run: |
           uvicorn cryo.api.app:create_app --factory --port 8000 --host 127.0.0.1 &
           API_PID=$!
