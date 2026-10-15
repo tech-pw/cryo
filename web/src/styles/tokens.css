@@ -27,6 +27,7 @@
 
   --primitive-success: #1e8e5a;
   --primitive-warning: #a9791e;
+  --primitive-warning-fg: #7a5614;
   --primitive-danger: #b23a2e;
 
   --primitive-grade-a: #1e8e5a;
@@ -64,6 +65,7 @@
 
   --primitive-success: #3fbe85;
   --primitive-warning: #e0b03d;
+  --primitive-warning-fg: #e0b03d;
   --primitive-danger: #f0665a;
 
   --primitive-grade-a: #3fbe85;
@@ -120,6 +122,7 @@
 
   --color-status-success: var(--primitive-success);
   --color-status-warning: var(--primitive-warning);
+  --color-status-warning-fg: var(--primitive-warning-fg);
   --color-status-danger: var(--primitive-danger);
 
   --color-destructive: var(--color-status-danger);

@@ -224,7 +224,7 @@ async function signInAsAdmin(page: Page): Promise<void> {
   await page.getByLabel("Username").fill("a11y-e2e");
   await page.getByLabel("Role").selectOption("admin");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByText("Datalake health").first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Home", exact: true })).toBeVisible({ timeout: 15_000 });
 }
 
 async function scanRoute(page: Page, path: string): Promise<void> {

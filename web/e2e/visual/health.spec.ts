@@ -26,7 +26,7 @@ for (const theme of themes) {
       await page.goto("/health");
       await settlePage(page);
 
-      await expect(page.getByRole("heading", { name: "Datalake health" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Home", exact: true })).toBeVisible();
       await expect(page).toHaveScreenshot(`health-${theme}.png`, {
         fullPage: true,
         animations: "disabled"

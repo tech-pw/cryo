@@ -111,15 +111,39 @@ async fn load_table(request: &ExecuteRequest) -> Result<(Arc<dyn Catalog>, Table
     Ok((catalog, table))
 }
 
-fn build_expire_transaction(table: &Table, op: &OperationRequest) -> Result<Transaction> {
+fn retention_days(op: &OperationRequest) -> Option<i64> {
+    op.params.get("retention_days").and_then(|v| v.as_i64())
+}
+
+fn retain_last(op: &OperationRequest) -> Option<u64> {
+    op.params.get("retain_last").and_then(|v| v.as_u64())
+}
+
+/// REST catalogs reject removing more than one snapshot in a single commit.
+/// When more than `retain_last + 1` snapshots exist, keep all but the oldest so
+/// each commit expires one. Mirrors `engine-go/internal/ops/expire.go`.
+fn step_retain_last(snapshot_count: usize, retain_last: Option<u64>) -> Option<u64> {
+    match retain_last {
+        Some(keep) if keep > 0 && snapshot_count > keep as usize + 1 => {
+            Some((snapshot_count - 1) as u64)
+        }
+        other => other,
+    }
+}
+
+fn build_expire_transaction(
+    table: &Table,
+    retention_days: Option<i64>,
+    retain_last: Option<u64>,
+) -> Result<Transaction> {
     let tx = Transaction::new(table);
     let mut action = tx.expire_snapshots();
-    if let Some(retention_days) = op.params.get("retention_days").and_then(|v| v.as_i64()) {
-        let cutoff_ms = (Utc::now() - Duration::days(retention_days)).timestamp_millis();
+    if let Some(days) = retention_days {
+        let cutoff_ms = (Utc::now() - Duration::days(days)).timestamp_millis();
         action = action.expire_older_than_ms(cutoff_ms);
     }
-    if let Some(retain_last) = op.params.get("retain_last").and_then(|v| v.as_u64()) {
-        action = action.retain_last(retain_last as usize);
+    if let Some(keep) = retain_last {
+        action = action.retain_last(keep as usize);
     }
     action
         .apply(Transaction::new(table))
@@ -320,16 +344,37 @@ pub async fn expire_snapshots(
     emit_started("expire_snapshots");
 
     let (catalog, table) = load_table(request).await?;
-    let before = snapshot_ids(&table);
-    let tx = build_expire_transaction(&table, op)?;
+    let days = retention_days(op);
+    let keep = retain_last(op);
 
     let to_expire = if is_execute_mode(&request.mode) {
-        let updated = tx
-            .commit(catalog.as_ref())
-            .await
-            .context("failed to commit expire_snapshots transaction")?;
-        before.difference(&snapshot_ids(&updated)).count() as u64
+        let mut current = table;
+        let mut total = 0u64;
+        let max_steps = snapshot_ids(&current).len().max(1);
+        for _ in 0..max_steps {
+            let before = snapshot_ids(&current);
+            if let Some(retain) = keep {
+                if before.len() <= retain as usize {
+                    break;
+                }
+            }
+            let step = step_retain_last(before.len(), keep);
+            let tx = build_expire_transaction(&current, days, step)?;
+            let updated = tx
+                .commit(catalog.as_ref())
+                .await
+                .context("failed to commit expire_snapshots transaction")?;
+            let removed = before.difference(&snapshot_ids(&updated)).count() as u64;
+            total += removed;
+            let stepped = step != keep;
+            current = updated;
+            if removed == 0 || !stepped {
+                break;
+            }
+        }
+        total
     } else {
+        let tx = build_expire_transaction(&table, days, keep)?;
         let preview = PreviewCatalog::new(catalog);
         tx.commit(&preview)
             .await
@@ -532,7 +577,7 @@ pub async fn rewrite_manifests(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_table_ident;
+    use super::{parse_table_ident, step_retain_last};
 
     #[test]
     fn parse_schema_table() {
@@ -545,6 +590,14 @@ mod tests {
         let ident = parse_table_ident("rest.demo.orders").unwrap();
         assert_eq!(ident.name(), "orders");
         assert_eq!(ident.namespace().to_string(), "demo");
+    }
+
+    #[test]
+    fn rest_expire_steps_one_snapshot_when_several_are_eligible() {
+        assert_eq!(step_retain_last(3, Some(1)), Some(2));
+        assert_eq!(step_retain_last(2, Some(1)), Some(1));
+        assert_eq!(step_retain_last(5, Some(4)), Some(4));
+        assert_eq!(step_retain_last(1, None), None);
     }
 
     #[test]

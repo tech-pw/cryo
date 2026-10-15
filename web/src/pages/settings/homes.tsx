@@ -36,7 +36,7 @@ export const SettingsAiHome = () => {
     <SettingsLayout>
       <AiAccessTable />
       <p className="settings-note mt-3 text-sm text-muted-foreground">
-        <Link to="/settings/ai/models" className="text-primary underline-offset-2 hover:underline">
+        <Link to="/settings/ai/models" className="text-primary underline underline-offset-2">
           AI model settings
         </Link>{" "}
         control Ask Cryo, tiers, and API keys. Experimental models are labelled experimental.

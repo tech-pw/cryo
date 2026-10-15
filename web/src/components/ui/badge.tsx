@@ -11,7 +11,7 @@ const badgeVariants = cva(
         secondary: "border-border bg-[var(--color-surface-sunken)] text-foreground",
         outline: "border-border bg-transparent text-foreground",
         success: "border-transparent bg-[color-mix(in_srgb,var(--color-status-success)_14%,transparent)] text-[var(--color-status-success)]",
-        warning: "border-transparent bg-[color-mix(in_srgb,var(--color-status-warning)_14%,transparent)] text-[var(--color-status-warning)]",
+        warning: "border-transparent bg-[color-mix(in_srgb,var(--color-status-warning)_14%,transparent)] text-[var(--color-status-warning-fg)]",
         danger: "border-transparent bg-[color-mix(in_srgb,var(--color-status-danger)_14%,transparent)] text-[var(--color-status-danger)]",
         gradeA: "border-transparent bg-[color-mix(in_srgb,var(--grade-a)_14%,transparent)] text-[var(--grade-a)]",
         gradeB: "border-transparent bg-[var(--color-primary-soft)] text-[var(--color-on-tint)]",

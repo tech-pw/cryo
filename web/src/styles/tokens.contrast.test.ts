@@ -187,6 +187,7 @@ describe("tokens.css Iceberg palette", () => {
       [lightValue("--sidebar-text"), lightValue("--sidebar-bg")],
       [lightValue("--color-muted"), lightValue("--primitive-white")],
       [lightValue("--color-muted"), lightValue("--primitive-page")],
+      [lightValue("--primitive-warning-fg"), "#eae8de"],
       [darkValue("--color-primary-foreground"), darkValue("--color-primary")],
       [darkValue("--primitive-black"), darkValue("--primitive-accent-600")],
       [darkValue("--sidebar-text-active"), darkValue("--sidebar-active-bg")],

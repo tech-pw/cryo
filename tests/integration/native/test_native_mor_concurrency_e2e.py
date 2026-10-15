@@ -98,7 +98,13 @@ def test_native_mor_c2_concurrent_delete_during_compaction() -> None:
 @requires_engine
 @requires_go
 def test_native_mor_c3_concurrent_compactions() -> None:
-    """C3: overlapping compactions — one wins, the other aborts without corrupting data."""
+    """C3: overlapping compactions serialize via commit-conflict retry; neither corrupts data.
+
+    The Go engine retries a lost OCC race by reloading the table and re-planning
+    from the latest snapshot (see engine-go/internal/ops/compaction.go), so both
+    concurrent optimize calls are expected to succeed — the loser just re-runs
+    against the winner's snapshot instead of hard-failing.
+    """
     spawn_error = _spawn_error()
     if spawn_error is not None:
         pytest.skip(spawn_error)
@@ -119,12 +125,10 @@ def test_native_mor_c3_concurrent_compactions() -> None:
     result_b = join_optimize(second)
 
     outcomes = [result_a.ok, result_b.ok]
-    assert outcomes.count(True) == 1, (
-        f"expected exactly one successful compaction, got {outcomes} "
-        f"errors=({result_a.error}, {result_b.error})"
+    assert outcomes.count(True) == 2, (
+        f"expected both concurrent compactions to succeed via commit-conflict retry, "
+        f"got {outcomes} errors=({result_a.error}, {result_b.error})"
     )
-    failed = result_b if result_a.ok else result_a
-    assert is_commit_conflict_error(failed), failed.error or failed.stderr
 
     table = _load_table(table_ref)
     after = capture_table_snapshot(table)

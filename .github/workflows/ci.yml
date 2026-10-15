@@ -556,6 +556,21 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      - name: Start MinIO and Iceberg REST
+        # critical-path.spec.ts drives the real "New lakehouse" wizard, whose
+        # Test connection step makes a real list_namespaces() call -- it needs
+        # something listening at the REST URI it fills in, same as native-e2e.
+        working-directory: .
+        run: |
+          docker compose -f docker-compose.dev-datalake.yml up -d minio minio-init iceberg-rest
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8181/v1/config >/dev/null; then
+              echo "Iceberg REST is ready"
+              break
+            fi
+            sleep 2
+          done
+
       - name: Run DB migrations
         working-directory: .
         run: alembic upgrade head
@@ -646,9 +661,11 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run DB migrations
+        working-directory: .
         run: alembic upgrade head
 
       - name: Start API + Vite dev server
+        working-directory: .
         run: |
           uvicorn cryo.api.app:create_app --factory --port 8000 --host 127.0.0.1 &
           API_PID=$!
