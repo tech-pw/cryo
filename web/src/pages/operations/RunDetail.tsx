@@ -177,6 +177,89 @@ const DescriptionGrid = ({
   </dl>
 );
 
+type ScanFailureEntry = { table?: string; error?: string; ts?: string };
+
+const scanFailureList = (summary: RunRead["summary"], key: string): ScanFailureEntry[] => {
+  const raw = summary && typeof summary === "object" ? (summary as Record<string, unknown>)[key] : undefined;
+  return Array.isArray(raw) ? (raw as ScanFailureEntry[]) : [];
+};
+
+/**
+ * What went wrong in a scan run, in place of the Jobs panel.
+ *
+ * A scan creates no jobs, so the Jobs card renders four zero chips and an empty grid for
+ * these runs. The scan summary already carries the answer -- which tables failed, which
+ * were unreadable, and the error for each -- and nothing was showing it, so a run saying
+ * "6 failed" gave no way to find out what those six were.
+ *
+ * Failed and unreadable are kept apart because they mean different things: failed is Cryo
+ * hitting an error it owns, unreadable is usually the object store refusing a read.
+ */
+const ScanFailures = ({ summary }: { summary: RunRead["summary"] }) => {
+  const failed = scanFailureList(summary, "failed_tables");
+  const unreadable = scanFailureList(summary, "unreadable_tables");
+  const unreadableTotal = summaryNumber(summary, "unreadable");
+  const [showUnreadable, setShowUnreadable] = useState(false);
+
+  if (failed.length === 0 && unreadable.length === 0) return null;
+
+  const entryRow = (entry: ScanFailureEntry, idx: number) => (
+    <li key={`${entry.table ?? idx}-${idx}`} className="border-t border-border px-3 py-2 first:border-t-0">
+      <p className="truncate font-mono text-xs font-medium">{entry.table ?? "(unnamed table)"}</p>
+      {entry.error ? (
+        <p className="mt-0.5 break-words text-xs text-muted-foreground">{entry.error}</p>
+      ) : null}
+    </li>
+  );
+
+  return (
+    <Card className="run-jobs-card">
+      <CardHeader className="pb-2">
+        <CardTitle>What failed</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 p-0 pb-3">
+        {failed.length > 0 ? (
+          <div>
+            <p className="px-3 pt-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Failed · {failed.length}
+            </p>
+            <ul className="mt-1">{failed.map(entryRow)}</ul>
+          </div>
+        ) : null}
+
+        {unreadable.length > 0 ? (
+          <div>
+            <div className="flex items-baseline justify-between gap-2 px-3 pt-1">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Unreadable · {formatNumber(unreadableTotal || unreadable.length)}
+              </p>
+              {/* The summary keeps only a sample, so say so rather than implying this is all. */}
+              {unreadableTotal > unreadable.length ? (
+                <span className="text-xs text-muted-foreground">
+                  showing {unreadable.length}
+                </span>
+              ) : null}
+            </div>
+            <p className="px-3 pt-0.5 text-xs text-muted-foreground">
+              Cryo could not read these tables' metadata. A 403 here is storage permissions,
+              not a Cryo error.
+            </p>
+            {showUnreadable ? (
+              <ul className="mt-1">{unreadable.map(entryRow)}</ul>
+            ) : (
+              <div className="px-3 pt-2">
+                <Button type="button" size="sm" variant="secondary" onClick={() => setShowUnreadable(true)}>
+                  Show {unreadable.length} example{unreadable.length === 1 ? "" : "s"}
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+};
+
 const RunOutcomeSummary = ({
   run,
   jobs,
@@ -733,11 +816,16 @@ export const RunDetail = () => {
 
       <div className="run-detail-main-grid grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
         <div className="flex flex-col gap-3">
-          <Card className="run-pipeline-card">
-            <CardContent className="pt-4">
-              <OperationPipeline steps={pipelineSteps} title={scan ? "Scan pipeline" : "Maintenance pipeline"} />
-            </CardContent>
-          </Card>
+          {/* Scan runs carry no pipeline stages -- the API returns none for kind="scan" -- so
+              rendering this for them shows four rows of "Not recorded" and nothing else.
+              Scan progress (below) is the equivalent, and it has real data. */}
+          {scan ? null : (
+            <Card className="run-pipeline-card">
+              <CardContent className="pt-4">
+                <OperationPipeline steps={pipelineSteps} title="Maintenance pipeline" />
+              </CardContent>
+            </Card>
+          )}
 
           {isBatchPipeline(summary) ? <BatchRunSummary summary={summary} /> : null}
 
@@ -783,6 +871,11 @@ export const RunDetail = () => {
             </Card>
           ) : null}
 
+          {/* A scan run has no jobs -- the API returns jobs: [] for kind="scan" -- so the
+              filter chips and table below render as four zeros and an empty grid. What an
+              operator actually needs here is which tables failed and why, which the scan
+              summary already carries and nothing was showing. */}
+          {scan ? <ScanFailures summary={summary} /> : (
           <Card className="run-jobs-card">
             <CardHeader className="pb-2">
               <CardTitle>Jobs</CardTitle>
@@ -861,6 +954,7 @@ export const RunDetail = () => {
               />
             </CardContent>
           </Card>
+          )}
 
           <div className="run-console-card">
             <ConsoleShell

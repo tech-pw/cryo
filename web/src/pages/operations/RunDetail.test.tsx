@@ -399,4 +399,71 @@ describe("RunDetail", () => {
     expect(within(pipeline).queryByText("queued")).not.toBeInTheDocument();
     expect(screen.queryByText("queued")).not.toBeInTheDocument();
   });
+
+  describe("scan runs", () => {
+    // Mirrors a real scan payload: kind="scan" returns jobs: [] and no pipeline stages,
+    // while the summary carries the failure detail. Taken from a live run that reported
+    // 6 failed and 1,330 unreadable out of 13,093 discovered.
+    const scanRun: RunRead = {
+      id: "33333333-3333-3333-3333-333333333333",
+      kind: "scan",
+      status: "partial_failed",
+      created_at: new Date().toISOString(),
+      summary: {
+        scope: "all",
+        discovered: 13093,
+        scanned: 1372,
+        skipped: 10385,
+        failed: 6,
+        unreadable: 1330,
+        failed_tables: [
+          { table: "cdp.xylem_bq.bronze_logout", error: "duplicate key value violates unique constraint", ts: "2026-10-15T03:50:48Z" }
+        ],
+        unreadable_tables: [
+          { table: "cdp.ux.city_entity_leaderboard_evolving", error: "S3: GetObject 403", ts: "2026-10-15T04:29:45Z" }
+        ]
+      }
+    };
+
+    it("hides the pipeline and jobs panels, which carry no scan data", async () => {
+      // A scan has no pipeline stages and no jobs, so these rendered as four rows of
+      // "Not recorded" and four zero chips -- noise that pushed the real answer off screen.
+      vi.mocked(getRun).mockResolvedValue(scanRun);
+      renderPage(scanRun.id);
+
+      await screen.findByText("What failed");
+      expect(screen.queryByText("Scan pipeline")).not.toBeInTheDocument();
+      expect(screen.queryByText("Maintenance pipeline")).not.toBeInTheDocument();
+      expect(screen.queryByText("Jobs")).not.toBeInTheDocument();
+    });
+
+    it("names the tables that failed and why", async () => {
+      vi.mocked(getRun).mockResolvedValue(scanRun);
+      renderPage(scanRun.id);
+
+      expect(await screen.findByText("cdp.xylem_bq.bronze_logout")).toBeInTheDocument();
+      expect(
+        screen.getByText(/duplicate key value violates unique constraint/)
+      ).toBeInTheDocument();
+    });
+
+    it("separates unreadable tables and reports the full count, not the sample size", async () => {
+      // The summary keeps only a sample of unreadable tables; showing "1" when 1,330 were
+      // unreadable would understate the problem.
+      vi.mocked(getRun).mockResolvedValue(scanRun);
+      renderPage(scanRun.id);
+
+      await screen.findByText("What failed");
+      expect(screen.getByText(/Unreadable · 1,330/)).toBeInTheDocument();
+      expect(screen.getByText(/showing 1/)).toBeInTheDocument();
+    });
+
+    it("keeps the jobs panel for maintenance runs", async () => {
+      // The panels are only hidden for scans -- maintenance runs genuinely use them.
+      renderPage();
+      // "Jobs" also appears as a stat label, so match the card heading specifically.
+      expect(await screen.findByRole("heading", { name: "Jobs" })).toBeInTheDocument();
+      expect(screen.queryByText("What failed")).not.toBeInTheDocument();
+    });
+  });
 });
