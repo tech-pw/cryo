@@ -67,6 +67,17 @@ const job = (overrides: Partial<JobRead>): JobRead => ({
   ...overrides
 });
 
+/** Content is split across Overview / Failures / Log tabs, so a test asserting on jobs or
+ *  the live log has to open that tab first -- same as an operator would. */
+const openTab = async (name: RegExp) => {
+  const tab = await screen.findByRole("tab", { name });
+  // Radix Tabs activate on pointer-down, not click, so fireEvent.click alone leaves the
+  // tab unselected and every assertion below reads the previous tab's content.
+  fireEvent.mouseDown(tab);
+  fireEvent.click(tab);
+  await waitFor(() => expect(tab).toHaveAttribute("aria-selected", "true"));
+  return tab;
+};
 const renderPage = (runId = baseRun.id) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
@@ -186,6 +197,7 @@ describe("RunDetail", () => {
       messages: [{ ts: new Date().toISOString(), message: "Optimizing table foo", level: "info" }]
     });
     renderPage();
+    await openTab(/^Log$/);
     expect(await screen.findByText("Optimizing table foo")).toBeInTheDocument();
     expect(screen.getByLabelText("Search log")).toBeInTheDocument();
   });
@@ -278,6 +290,7 @@ describe("RunDetail", () => {
     );
 
     renderPage();
+    await openTab(/Failures/);
 
     await screen.findByText("1 / 30");
     const detailLinks = screen.getAllByRole("link", { name: "Detail" });
@@ -303,6 +316,7 @@ describe("RunDetail", () => {
     );
 
     renderPage();
+    await openTab(/Failures/);
     await screen.findByText("1 / 30");
     expect(screen.queryByText("db.needle-1")).not.toBeInTheDocument();
 
@@ -430,6 +444,7 @@ describe("RunDetail", () => {
       // "Not recorded" and four zero chips -- noise that pushed the real answer off screen.
       vi.mocked(getRun).mockResolvedValue(scanRun);
       renderPage(scanRun.id);
+      await openTab(/Failures/);
 
       await screen.findByText("What failed");
       expect(screen.queryByText("Scan pipeline")).not.toBeInTheDocument();
@@ -440,6 +455,8 @@ describe("RunDetail", () => {
     it("names the tables that failed and why", async () => {
       vi.mocked(getRun).mockResolvedValue(scanRun);
       renderPage(scanRun.id);
+      await openTab(/Failures/);
+      // eslint-disable-next-line no-console
 
       expect(await screen.findByText("cdp.xylem_bq.bronze_logout")).toBeInTheDocument();
       expect(
@@ -452,15 +469,37 @@ describe("RunDetail", () => {
       // unreadable would understate the problem.
       vi.mocked(getRun).mockResolvedValue(scanRun);
       renderPage(scanRun.id);
+      await openTab(/Failures/);
 
       await screen.findByText("What failed");
       expect(screen.getByText(/Unreadable · 1,330/)).toBeInTheDocument();
       expect(screen.getByText(/showing 1/)).toBeInTheDocument();
     });
 
+    it("counts unreadable as attention, not as pending work", async () => {
+      // The header read "Completed 11,757 | Attention 6 · pending 1,330" on a run where
+      // 1,330 tables were unreadable -- a settled failure shown as still in flight, and
+      // 10,385 unscanned tables folded into "Completed". Both now read honestly.
+      vi.mocked(getRun).mockResolvedValue(scanRun);
+      renderPage(scanRun.id);
+
+      const outcome = (await screen.findByText("Scan outcome")).closest(".run-outcome-card");
+      const card = within(outcome as HTMLElement);
+      // 6 failed + 1,330 unreadable, and nothing left pending.
+      // Labels and values are split across text nodes, so read the <dl> as text.
+      const text = (outcome as HTMLElement).textContent?.replace(/\s+/g, " ") ?? "";
+      expect(text).toContain("1,336 · 0");
+      // Measured and unchanged are separate, so 10.5% fresh coverage is visible rather
+      // than hidden inside a single "Completed 11,757".
+      expect(card.getByText("Measured")).toBeInTheDocument();
+      expect(card.getByText("Unchanged")).toBeInTheDocument();
+      expect(card.queryByText("11,757")).not.toBeInTheDocument();
+    });
+
     it("keeps the jobs panel for maintenance runs", async () => {
       // The panels are only hidden for scans -- maintenance runs genuinely use them.
       renderPage();
+      await openTab(/Failures/);
       // "Jobs" also appears as a stat label, so match the card heading specifically.
       expect(await screen.findByRole("heading", { name: "Jobs" })).toBeInTheDocument();
       expect(screen.queryByText("What failed")).not.toBeInTheDocument();
