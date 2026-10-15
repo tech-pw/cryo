@@ -27,7 +27,8 @@ vi.mock("../../api/client", () => ({
   listRuns: vi.fn(),
   cancelRun: vi.fn(),
   diagnoseRunFailure: vi.fn(),
-  forceAdmitJob: vi.fn()
+  forceAdmitJob: vi.fn(),
+  getScannerStatus: vi.fn()
 }));
 
 const mockUseRunLiveEvents = vi.fn();
@@ -36,7 +37,7 @@ vi.mock("../../hooks/useRunLiveEvents", async (importOriginal) => ({
   useRunLiveEvents: (...args: unknown[]) => mockUseRunLiveEvents(...args)
 }));
 
-import { getRun, getRunJobs, listRuns } from "../../api/client";
+import { getRun, getRunJobs, getScannerStatus, listRuns } from "../../api/client";
 import { formatBytesGb, formatGb, formatNumber } from "../../lib/format";
 
 const baseRun: RunRead = {
@@ -98,6 +99,10 @@ describe("RunDetail", () => {
     vi.mocked(getRun).mockResolvedValue(baseRun);
     vi.mocked(getRunJobs).mockResolvedValue([]);
     vi.mocked(listRuns).mockResolvedValue([]);
+    vi.mocked(getScannerStatus).mockResolvedValue({
+      config: { schedule_cron: "0 2 * * *", enabled: true },
+      next_scan_at: "2026-10-16T02:00:00Z"
+    } as never);
     mockUseRunLiveEvents.mockReturnValue(liveEventsDefault);
   });
 
@@ -494,6 +499,27 @@ describe("RunDetail", () => {
       expect(card.getByText("Measured")).toBeInTheDocument();
       expect(card.getByText("Unchanged")).toBeInTheDocument();
       expect(card.queryByText("11,757")).not.toBeInTheDocument();
+    });
+
+    it("says when the next scan runs, not just what this one did", async () => {
+      // A finished run gave no hint when the next one lands -- the page had no schedule
+      // anywhere, so "is this already fixed on the next pass?" meant leaving the page.
+      vi.mocked(getRun).mockResolvedValue(scanRun);
+      renderPage(scanRun.id);
+
+      expect(await screen.findByText("Daily at 02:00 UTC")).toBeInTheDocument();
+      expect(screen.getByText("Next scan")).toBeInTheDocument();
+    });
+
+    it("does not promise a next scan while the scanner is disabled", async () => {
+      vi.mocked(getScannerStatus).mockResolvedValue({
+        config: { schedule_cron: "0 2 * * *", enabled: false },
+        next_scan_at: "2026-10-16T02:00:00Z"
+      } as never);
+      vi.mocked(getRun).mockResolvedValue(scanRun);
+      renderPage(scanRun.id);
+
+      expect(await screen.findByText("Scanner disabled")).toBeInTheDocument();
     });
 
     it("keeps the jobs panel for maintenance runs", async () => {

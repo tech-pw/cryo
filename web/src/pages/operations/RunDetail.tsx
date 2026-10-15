@@ -4,7 +4,15 @@ import { AlertTriangle, CheckCircle2, Clock3, Info, LoaderCircle } from "lucide-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { cancelRun, diagnoseRunFailure, forceAdmitJob, getRun, getRunJobs, listRuns } from "../../api/client";
+import {
+  cancelRun,
+  diagnoseRunFailure,
+  forceAdmitJob,
+  getRun,
+  getRunJobs,
+  getScannerStatus,
+  listRuns
+} from "../../api/client";
 import type { JobRead, RunRead } from "../../api/types";
 import { PageHeader, StatStrip } from "../../components/common";
 import { ConfirmAction } from "../../components/confirm";
@@ -30,6 +38,7 @@ import { Input } from "../../components/ui/input";
 import { MetricGrid, MetricTile } from "../../components/ui/metric-grid";
 import { RunLanes } from "../../components/charts";
 import { StatusTag, RunKindTag } from "../../components/status";
+import { describeCronSchedule } from "../../components/operations/scheduleSummary";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { useRunLiveEvents, isTerminalRunStatus } from "../../hooks/useRunLiveEvents";
 import { useShellOptional } from "../../components/shell/ShellContext";
@@ -613,6 +622,16 @@ export const RunDetail = () => {
     return messages.filter((item) => item.job_id === logJob.id);
   }, [logJob, messages]);
 
+  // A finished run says nothing about when the next one lands, which is the question an
+  // operator has right after reading a failure. Scanner status already carries both the
+  // cadence and next_scan_at; nothing was showing either.
+  const scannerStatus = useQuery({
+    queryKey: ["scanner-status", token],
+    queryFn: () => getScannerStatus(api),
+    enabled: scan,
+    staleTime: 30_000
+  });
+
   const summary = runData?.summary;
   // Badge on the Failures tab. Counts unreadable alongside failed, matching the outcome
   // card -- both are settled failures, so showing only `failed` here would understate it
@@ -927,7 +946,22 @@ export const RunDetail = () => {
                     { label: "Scope", value: summary?.scope?.toString() ?? "—" },
                     { label: "Trigger", value: runData?.trigger ?? "—" },
                     { label: "Current table", value: summaryText(summary, "current_table") ?? "—" },
-                    { label: "Finished", value: formatTime(runData?.finished_at) }
+                    { label: "Finished", value: formatTime(runData?.finished_at) },
+                    {
+                      label: "Schedule",
+                      value:
+                        describeCronSchedule(scannerStatus.data?.config?.schedule_cron) ??
+                        scannerStatus.data?.config?.schedule_cron ??
+                        "—"
+                    },
+                    {
+                      label: "Next scan",
+                      // Scheduled scans only run while the scanner is enabled, so a time here
+                      // when it is off would promise a run that never comes.
+                      value: scannerStatus.data?.config?.enabled
+                        ? formatTime(scannerStatus.data?.next_scan_at)
+                        : "Scanner disabled"
+                    }
                   ]}
                 />
               </CardContent>
