@@ -31,6 +31,7 @@ test.describe("Cryo critical-path", () => {
   test("create source → scan → preview plan → run → view logs", async ({
     page,
   }) => {
+    test.setTimeout(60_000);
     await page.addInitScript(() => {
       localStorage.setItem("cryo-onboarding-dismissed", "1");
     });
@@ -60,12 +61,29 @@ test.describe("Cryo critical-path", () => {
       .getByLabel("Catalog URI", { exact: true })
       .fill("http://localhost:8181");
     await page
-      .getByRole("button", { name: /Create|Save|Test/i })
-      .first()
-      .click();
-    await page.keyboard.press("Escape");
+      .getByRole("textbox", { name: "Warehouse", exact: false })
+      .fill("s3://e2e-critical-path/warehouse");
 
-    await page.getByRole("link", { name: "Runs", exact: true }).click();
+    // New lakehouse is a 3-step wizard (Connect -> Storage -> Review); Storage
+    // and Review stay disabled until the connect step's own test passes.
+    await page
+      .getByRole("button", { name: "Test connection", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Continue to storage" }),
+    ).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.getByRole("button", { name: "Continue to storage" }).click();
+    await page.getByRole("button", { name: "Continue to review" }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(
+      page.getByRole("dialog", { name: "New lakehouse" }),
+    ).not.toBeVisible({
+      timeout: 15_000,
+    });
+
+    await page.getByRole("link", { name: "Runs", exact: true }).first().click();
     await expect(
       page.getByRole("heading", { name: "Runs", exact: true }),
     ).toBeVisible();
@@ -76,16 +94,16 @@ test.describe("Cryo critical-path", () => {
     await expect(
       page.getByRole("heading", { name: "Scanner", exact: true }),
     ).toBeVisible();
-    await page
-      .getByLabel(/Source/i)
-      .first()
-      .selectOption({ label: sourceName })
-      .catch(() => undefined);
+    // Default scope is "all" (every configured lakehouse), which is already
+    // submittable without picking a single source -- no need to touch the
+    // per-source scope controls just to exercise the trigger-scan flow.
     const triggerScan = page
       .getByRole("button", { name: /Trigger scan|Run scan/i })
       .first();
     if (await triggerScan.isVisible().catch(() => false)) {
       await triggerScan.click();
+      // Trigger scan opens a confirmation dialog before the mutation fires.
+      await page.getByRole("button", { name: "Confirm", exact: true }).click();
     }
 
     await page.getByRole("link", { name: "Tables", exact: true }).click();
