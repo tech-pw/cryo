@@ -22,65 +22,107 @@ import { expect, test } from "@playwright/test";
 test.describe("Cryo critical-path", () => {
   test.beforeEach(async ({ request }) => {
     const health = await request.get("http://127.0.0.1:8000/healthz");
-    test.skip(!health.ok(), "API must be running on :8000 for critical-path e2e");
+    test.skip(
+      !health.ok(),
+      "API must be running on :8000 for critical-path e2e",
+    );
   });
 
-  test("create source → scan → preview plan → run → view logs", async ({ page }) => {
+  test("create source → scan → preview plan → run → view logs", async ({
+    page,
+  }) => {
     await page.addInitScript(() => {
       localStorage.setItem("cryo-onboarding-dismissed", "1");
     });
     await page.goto("/");
 
     await page.getByLabel("Username").fill("e2e-critical");
+    await page.getByRole("button", { name: "admin", exact: true }).click();
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page.getByRole("heading", { name: "Home", exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(
+      page.getByRole("heading", { name: "Home", exact: true }),
+    ).toBeVisible({ timeout: 15_000 });
 
     await page.getByRole("link", { name: "Settings", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Connections", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Connections", exact: true }),
+    ).toBeVisible();
 
     const sourceName = `e2e-cp-${Date.now()}`;
-    await page.getByRole("button", { name: /New lakehouse|Add (source|Source|connection)/i }).first().click();
+    await page
+      .getByRole("button", {
+        name: /New lakehouse|Add (source|Source|connection)/i,
+      })
+      .first()
+      .click();
     await page.getByLabel(/Name/i).first().fill(sourceName);
-    await page.getByLabel(/Catalog URI|Type/i).first().fill("rest");
-    await page.getByRole("button", { name: /Create|Save|Test/i }).first().click();
+    await page
+      .getByLabel(/Catalog URI|Type/i)
+      .first()
+      .fill("rest");
+    await page
+      .getByRole("button", { name: /Create|Save|Test/i })
+      .first()
+      .click();
     await page.keyboard.press("Escape");
 
     await page.getByRole("link", { name: "Runs", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Runs", exact: true })).toBeVisible();
-    await page.getByRole("link", { name: "Scanner", exact: true }).first().click();
-    await expect(page.getByRole("heading", { name: "Scanner", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Runs", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("link", { name: "Scanner", exact: true })
+      .first()
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Scanner", exact: true }),
+    ).toBeVisible();
     await page
       .getByLabel(/Source/i)
       .first()
       .selectOption({ label: sourceName })
       .catch(() => undefined);
-    const triggerScan = page.getByRole("button", { name: /Trigger scan|Run scan/i }).first();
+    const triggerScan = page
+      .getByRole("button", { name: /Trigger scan|Run scan/i })
+      .first();
     if (await triggerScan.isVisible().catch(() => false)) {
       await triggerScan.click();
     }
 
     await page.getByRole("link", { name: "Tables", exact: true }).click();
-    await expect(page.getByRole("heading", { name: /Catalogs/ }).first()).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /Catalogs/ }).first(),
+    ).toBeVisible();
 
-    const previewButton = page.getByRole("button", { name: /Preview plan/i }).first();
+    const previewButton = page
+      .getByRole("button", { name: /Preview plan/i })
+      .first();
     if (await previewButton.isVisible().catch(() => false)) {
       await previewButton.click();
-      await expect(page.getByText(/ALTER TABLE/i).first()).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(/ALTER TABLE/i).first()).toBeVisible({
+        timeout: 10_000,
+      });
     }
 
-    const runButton = page.getByRole("button", { name: /Run|Act now|Optimize/i }).first();
+    const runButton = page
+      .getByRole("button", { name: /Run|Act now|Optimize/i })
+      .first();
     if (await runButton.isVisible().catch(() => false)) {
       await runButton.click();
     }
 
     await page.getByRole("link", { name: /Runs/ }).click();
-    await expect(page.getByRole("heading", { name: /Runs/ }).first()).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /Runs/ }).first(),
+    ).toBeVisible();
 
     const runRow = page.getByRole("row", { name: /e2e-cp-/ }).first();
     if (await runRow.isVisible().catch(() => false)) {
       await runRow.click();
-      await expect(page.getByText(/logs|stdout|stderr|status/i).first()).toBeVisible({
-        timeout: 10_000
+      await expect(
+        page.getByText(/logs|stdout|stderr|status/i).first(),
+      ).toBeVisible({
+        timeout: 10_000,
       });
     }
   });
@@ -92,7 +134,9 @@ test.describe("Cryo critical-path", () => {
     await expect(usernameField).toBeVisible();
     await usernameField.focus();
     await page.keyboard.press("Tab");
-    const focused = await page.evaluate(() => document.activeElement?.tagName ?? "BODY");
+    const focused = await page.evaluate(
+      () => document.activeElement?.tagName ?? "BODY",
+    );
     expect(focused).not.toBe("BODY");
   });
 });
