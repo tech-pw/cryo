@@ -57,9 +57,8 @@ test.describe("Cryo critical-path", () => {
       .click();
     await page.getByLabel(/Name/i).first().fill(sourceName);
     await page
-      .getByLabel(/Catalog URI|Type/i)
-      .first()
-      .fill("rest");
+      .getByLabel("Catalog URI", { exact: true })
+      .fill("http://localhost:8181");
     await page
       .getByRole("button", { name: /Create|Save|Test/i })
       .first()
