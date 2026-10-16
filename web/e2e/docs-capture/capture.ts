@@ -38,7 +38,8 @@ const SHOTS: Array<{ name: string; path: string; waitFor?: string; height?: numb
   { name: "table-detail", path: `/tables/${DEMO_TABLES[0].id}`, height: 960 },
   { name: "runs", path: "/runs", height: 820 },
   { name: "run-detail", path: `/runs/${DEMO_RUN_ID}`, height: 960 },
-  { name: "connections", path: "/settings/connections", height: 820 }
+  { name: "connections", path: "/settings/connections", waitFor: "Iceberg catalogs Cryo reads", height: 820 },
+  { name: "connections-engines", path: "/settings/connections?tab=engines", waitFor: "Shipped with Cryo", height: 900 }
 ];
 
 const json = (route: Route, body: unknown) =>
@@ -110,7 +111,7 @@ for (const theme of THEMES) {
       await applyTheme(page, theme);
       await installDemo(page, unhandled);
       await page.goto(shot.path);
-      if (shot.waitFor) await page.getByText(shot.waitFor).first().waitFor({ timeout: 15_000 });
+      if (shot.waitFor) await page.getByText(shot.waitFor).first().waitFor({ timeout: 60_000 });
       await settlePage(page);
       await page.waitForTimeout(600);
       await page.screenshot({ path: join(OUT, `${shot.name}-${theme}.png`), animations: "disabled" });

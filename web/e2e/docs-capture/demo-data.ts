@@ -228,6 +228,22 @@ export function demoDestinations() {
       updated_at: VISUAL_NOW_ISO,
       support: "supported",
       unsupported_reason: null
+    },
+    {
+      id: "00000000-0000-4000-8000-0000000000e2",
+      name: "cryo-native",
+      engine: "native",
+      config: { slot_cap: 4 },
+      secret_ref: null,
+      offpeak_start: null,
+      offpeak_end: null,
+      enabled: true,
+      query_log_config: null,
+      query_log_retention_days: null,
+      created_at: VISUAL_NOW_ISO,
+      updated_at: VISUAL_NOW_ISO,
+      support: "supported",
+      unsupported_reason: null
     }
   ];
 }
