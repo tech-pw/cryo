@@ -2,7 +2,7 @@
 title: Connect a lakehouse
 lede: Wire a catalog into Cryo, then scan it. The connection test proves reachability; the scan is what fills the UI.
 description: Connect a REST, Hive Metastore, Glue, Polaris or Nessie catalog to Cryo, choose S3 credentials, and run the first scan. Covers every field, what the scan reads, and the failures that look like success.
-updated: 2026-10-14
+updated: 2026-10-16
 ---
 <callout type="note" title="Two separate steps">
   <p>Connecting a catalog tells Cryo <em>what tables exist</em>. Scanning reads those tables and stores their file counts, sizes and grades. A connected catalog with no scan leaves the UI empty — that is expected, not a failure.</p>
@@ -34,7 +34,7 @@ updated: 2026-10-14
   </step>
   <step title="Review and save">
     <p>The summary restates what will be stored, including whether the connection test passed. Save is disabled until it has.</p>
-    <p class="expect">Done when the lakehouse appears in the Lakehouses table. No tables are visible yet; that is the scan's job.</p>
+    <p class="expect">Done when the lakehouse appears in the Lakehouses list with an <strong>Enabled</strong> badge, its endpoint and its S3 auth method. No tables are visible yet; that is the scan's job.</p>
   </step>
 </steps>
 

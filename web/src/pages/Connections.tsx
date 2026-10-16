@@ -40,8 +40,19 @@ const isConnectionsTabKey = (value: string | null, isAdmin: boolean): value is C
   (CONNECTIONS_TAB_KEYS as readonly string[]).includes(value) &&
   (value !== "ops" || isAdmin);
 
+// Hidden from assistive tech so tab names stay stable; each list announces its own rows.
+const TabCount = ({ value }: { value: number | undefined }) =>
+  value === undefined ? null : (
+    <span
+      aria-hidden="true"
+      className="ml-0.5 rounded-full bg-[var(--color-surface-sunken)] px-1.5 text-[11px] font-medium leading-4 tabular-nums text-[var(--color-text-secondary)]"
+    >
+      {value}
+    </span>
+  );
+
 const ConnectionsTabs = ({ forcedTab }: { forcedTab?: ConnectionsTabKey }) => {
-  const { role, testResult, setTestResult } = useConnectionsContext();
+  const { role, testResult, setTestResult, sources, destinations } = useConnectionsContext();
   const { pathname } = useLocation();
   const isAdmin = role === "admin";
   const onSettings = pathname.startsWith("/settings");
@@ -87,12 +98,14 @@ const ConnectionsTabs = ({ forcedTab }: { forcedTab?: ConnectionsTabKey }) => {
             <span className="inline-flex items-center gap-1.5">
               <Database className="size-3.5" aria-hidden="true" />
               Lakehouses
+              <TabCount value={sources.data?.length} />
             </span>
           </TabsTrigger>
           <TabsTrigger value="destinations">
             <span className="inline-flex items-center gap-1.5">
               <Cpu className="size-3.5" aria-hidden="true" />
               Engines
+              <TabCount value={destinations.data?.length} />
             </span>
           </TabsTrigger>
           <TabsTrigger value="capabilities">

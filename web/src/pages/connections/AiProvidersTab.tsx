@@ -1,129 +1,88 @@
-import type { ColumnDef } from "@tanstack/react-table";
-import { Bot, CheckCircle2, Plus, XCircle } from "lucide-react";
-import { useMemo } from "react";
-import type { AIProviderRead } from "../../api/client";
+import { Bot, Plus, Trash2 } from "lucide-react";
 import { ConfirmAction } from "../../components/confirm";
-import { StatusTag } from "../../components/status";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { DataTable } from "../../components/ui/data-table";
+import { ConnectionList, ConnectionRow, ConnectionSection, ConnectionStatus } from "./ConnectionList";
 import { useConnectionsContext } from "./ConnectionsContext";
 
-export const AiProvidersTab = () => {
-  const {
-    aiProviders,
-    setAiProviderDrawer,
-    testAiProviderMutation,
-    deleteAiProviderMutation
-  } = useConnectionsContext();
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  azure_openai: "Azure OpenAI"
+};
 
-  const columns = useMemo<ColumnDef<AIProviderRead, unknown>[]>(
-    () => [
-      {
-        accessorKey: "name",
-        header: "Name",
-        cell: ({ row }) => (
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{row.original.name}</span>
-            {row.original.is_default ? <Badge variant="default">Default</Badge> : null}
-          </div>
-        )
-      },
-      {
-        accessorKey: "provider_type",
-        header: "Provider",
-        cell: ({ getValue }) => {
-          const value = String(getValue());
-          return (
-            <Badge variant={value === "anthropic" ? "warning" : "success"}>
-              {value === "anthropic" ? "Anthropic" : value === "azure_openai" ? "Azure OpenAI" : value === "openai" ? "OpenAI" : value}
-            </Badge>
-          );
-        }
-      },
-      {
-        accessorKey: "model",
-        header: "Model",
-        cell: ({ getValue }) => <code className="text-xs">{String(getValue())}</code>
-      },
-      {
-        accessorKey: "has_api_key",
-        header: "API Key",
-        cell: ({ getValue }) =>
-          getValue() ? (
-            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-              <CheckCircle2 className="size-3.5 text-[var(--color-status-success)]" aria-hidden="true" />
-              Configured
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-              <XCircle className="size-3.5 text-destructive" aria-hidden="true" />
-              Missing
-            </span>
-          )
-      },
-      {
-        accessorKey: "enabled",
-        header: "Enabled",
-        cell: ({ getValue }) => <StatusTag status={getValue() ? "succeeded" : "skipped"} />
-      },
-      {
-        id: "actions",
-        header: "",
-        size: 220,
-        cell: ({ row }) => (
-          <div className="flex flex-wrap items-center gap-1">
-            <Button size="sm" variant="secondary" onClick={() => setAiProviderDrawer(row.original)}>
-              Edit
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={testAiProviderMutation.isPending}
-              disabled={!row.original.has_api_key}
-              onClick={() => testAiProviderMutation.mutate(row.original.id)}
-            >
-              Test
-            </Button>
-            <ConfirmAction
-              title="Delete this AI provider?"
-              description="Copilot and other AI features will stop using this key immediately."
-              onConfirm={() => deleteAiProviderMutation.mutate(row.original.id)}
-            >
-              <Button size="sm" variant="danger" loading={deleteAiProviderMutation.isPending}>
-                Delete
-              </Button>
-            </ConfirmAction>
-          </div>
-        )
-      }
-    ],
-    [deleteAiProviderMutation, setAiProviderDrawer, testAiProviderMutation]
+export const AiProvidersTab = () => {
+  const { aiProviders, setAiProviderDrawer, testAiProviderMutation, deleteAiProviderMutation } =
+    useConnectionsContext();
+
+  const newButton = (
+    <Button variant="primary" onClick={() => setAiProviderDrawer("new")}>
+      <Plus aria-hidden="true" />
+      New AI provider
+    </Button>
   );
 
   return (
-    <div className="flex w-full flex-col gap-3">
-      <p className="tab-intro text-sm text-muted-foreground">
-        Connect an AI provider (Anthropic Claude or OpenAI GPT) to enable natural language queries,
-        intelligent health explanations, and AI-powered recommendations. API keys are stored encrypted and
-        never logged.
-      </p>
-      <div>
-        <Button variant="primary" onClick={() => setAiProviderDrawer("new")}>
-          <Plus className="size-4" aria-hidden="true" />
-          New AI provider
-        </Button>
-      </div>
-      <DataTable
-        columns={columns}
-        data={aiProviders.data ?? []}
-        density="compact"
+    <ConnectionSection
+      title="AI providers"
+      description="Anthropic, OpenAI, or Azure OpenAI keys power Ask Cryo, health explanations, and recommendations. Keys are encrypted at rest and never logged."
+      action={newButton}
+    >
+      <ConnectionList
+        label="AI providers"
         loading={aiProviders.isLoading}
-        getRowId={(row) => row.id ?? `ai-${row.provider_type}-${row.name}`}
         emptyTitle="No AI providers configured"
-        emptyDescription="Add an Anthropic or OpenAI API key to enable AI features like natural language queries and intelligent recommendations."
-      />
-    </div>
+        emptyDescription="Add an Anthropic or OpenAI API key to turn on Ask Cryo and AI health explanations."
+      >
+        {(aiProviders.data ?? []).map((provider) => (
+          <ConnectionRow
+            key={provider.id ?? `ai-${provider.provider_type}-${provider.name}`}
+            icon={<Bot />}
+            name={provider.name}
+            kind={PROVIDER_LABELS[provider.provider_type] ?? provider.provider_type}
+            enabled={Boolean(provider.enabled)}
+            status={<ConnectionStatus enabled={Boolean(provider.enabled)} />}
+            badges={provider.is_default ? <Badge variant="default">Default</Badge> : null}
+            details={[
+              { label: "Model", value: String(provider.model), mono: true },
+              { label: "API key", value: provider.has_api_key ? "Configured" : "Missing" }
+            ]}
+            actions={
+              <>
+                <Button size="sm" variant="secondary" onClick={() => setAiProviderDrawer(provider)}>
+                  Edit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  loading={testAiProviderMutation.isPending}
+                  disabled={!provider.has_api_key}
+                  onClick={() => testAiProviderMutation.mutate(provider.id)}
+                >
+                  Test
+                </Button>
+                <ConfirmAction
+                  title="Delete this AI provider?"
+                  description="Copilot and other AI features will stop using this key immediately."
+                  onConfirm={() => deleteAiProviderMutation.mutate(provider.id)}
+                >
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="connection-delete px-2"
+                    aria-label="Delete"
+                    title={`Delete ${provider.name}`}
+                    loading={deleteAiProviderMutation.isPending}
+                  >
+                    {deleteAiProviderMutation.isPending ? null : <Trash2 aria-hidden="true" />}
+                  </Button>
+                </ConfirmAction>
+              </>
+            }
+          />
+        ))}
+      </ConnectionList>
+    </ConnectionSection>
   );
 };
 

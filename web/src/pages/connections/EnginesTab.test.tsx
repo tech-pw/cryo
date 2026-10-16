@@ -1,11 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DestinationRead } from "../../api/types";
 import { EnginesTab } from "./EnginesTab";
 
 const apiFetch = vi.hoisted(() => vi.fn());
 const destinations = vi.hoisted(() => ({ data: [] as DestinationRead[] }));
+const setDestinationDrawer = vi.hoisted(() => vi.fn());
+const listPresets = vi.hoisted(() => vi.fn());
 
 vi.mock("../../lib/auth", () => ({
   useAuth: () => ({
@@ -18,6 +20,7 @@ vi.mock("../../lib/auth", () => ({
 
 vi.mock("../../api/client", () => ({
   apiFetch,
+  listPresets,
   patchDestination: vi.fn()
 }));
 
@@ -26,7 +29,7 @@ vi.mock("./ConnectionsContext", () => ({
     api: { token: "test-token" },
     destinations: { data: destinations.data, isLoading: false },
     pendingScanVersion: 0,
-    setDestinationDrawer: vi.fn(),
+    setDestinationDrawer,
     probe: { isPending: false, mutate: vi.fn() },
     purgeDestinationMutation: { isPending: false, mutate: vi.fn() },
     queryClient: { invalidateQueries: vi.fn() }
@@ -56,6 +59,7 @@ describe("EnginesTab native fleet flag", () => {
   beforeEach(() => {
     destinations.data = [nativeDestination];
     apiFetch.mockReset();
+    listPresets.mockResolvedValue([]);
   });
 
   it("labels a native engine disabled fleet-wide when the runtime flag is false", async () => {
@@ -70,7 +74,7 @@ describe("EnginesTab native fleet flag", () => {
     const status = await screen.findByText(
       "Disabled fleet-wide — work runs on the configured Spark SQL fallback"
     );
-    const row = status.closest("tr");
+    const row = status.closest("li");
     expect(row).not.toBeNull();
     expect(
       within(row as HTMLElement).getByText("Native (iceberg-go) (disabled fleet-wide)")
@@ -89,11 +93,70 @@ describe("EnginesTab native fleet flag", () => {
     renderTab();
 
     const name = await screen.findByText("iceberg-go");
-    const row = name.closest("tr");
+    const row = name.closest("li");
     expect(row).not.toBeNull();
     expect(within(row as HTMLElement).getByText("Native (iceberg-go)")).toBeInTheDocument();
     expect(within(row as HTMLElement).getByText("Enabled")).toBeInTheDocument();
     expect(screen.queryByText(/Disabled fleet-wide/)).not.toBeInTheDocument();
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  });
+});
+
+describe("EnginesTab grouping", () => {
+  const trino: DestinationRead = {
+    id: "dest-trino",
+    name: "trino-prod",
+    engine: "trino",
+    config: { coordinators: [{ host: "trino", port: 8080 }] },
+    enabled: true,
+    created_at: "",
+    updated_at: ""
+  };
+  const sparkK8s: DestinationRead = {
+    id: "dest-spark",
+    name: "spark-k8s",
+    engine: "spark_emr",
+    config: { submit_mode: "k8s" },
+    enabled: true,
+    created_at: "",
+    updated_at: ""
+  };
+
+  beforeEach(() => {
+    destinations.data = [trino, nativeDestination, sparkK8s];
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValue({ native_engine_enabled: true, maintenance_writes_enabled: true });
+    listPresets.mockResolvedValue([{ id: "p1", is_default: true, enabled: true, destination_id: "dest-spark" }]);
+    setDestinationDrawer.mockReset();
+  });
+
+  it("lists Cryo-run engines apart from the engines an operator added", async () => {
+    renderTab();
+    const cryo = screen.getByRole("list", { name: "Cryo engines" });
+    const yours = screen.getByRole("list", { name: "Your engines" });
+    expect(within(cryo).getByText("iceberg-go")).toBeInTheDocument();
+    expect(within(cryo).getByText("spark-k8s")).toBeInTheDocument();
+    expect(within(yours).getByText("trino-prod")).toBeInTheDocument();
+    expect(within(yours).queryByText("spark-k8s")).not.toBeInTheDocument();
+    const sparkRow = within(cryo).getByText("spark-k8s").closest("li") as HTMLElement;
+    expect(await within(sparkRow).findByText("Default preset")).toBeInTheDocument();
+  });
+
+  it("confirms the caveat before editing a Cryo engine", async () => {
+    renderTab();
+    const cryo = screen.getByRole("list", { name: "Cryo engines" });
+    const sparkRow = within(cryo).getByText("spark-k8s").closest("li") as HTMLElement;
+    fireEvent.click(within(sparkRow).getByRole("button", { name: "Edit" }));
+    expect(setDestinationDrawer).not.toHaveBeenCalled();
+    expect(await screen.findByText(/exactly one enabled Spark engine/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit anyway" }));
+    await vi.waitFor(() => expect(setDestinationDrawer).toHaveBeenCalledWith(sparkK8s));
+  });
+
+  it("opens a user engine's drawer straight away", () => {
+    renderTab();
+    const trinoRow = within(screen.getByRole("list", { name: "Your engines" })).getByText("trino-prod").closest("li") as HTMLElement;
+    fireEvent.click(within(trinoRow).getByRole("button", { name: "Edit" }));
+    expect(setDestinationDrawer).toHaveBeenCalledWith(trino);
   });
 });

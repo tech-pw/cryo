@@ -139,6 +139,25 @@ Every invalid field uses a stable label/error relationship and `aria-invalid`. O
 focus a summary whose links move to each invalid field without clearing entered values. Common tasks
 use structured controls; raw JSON remains an explicitly advanced mode.
 
+### Connection Lists
+
+Settings → Connections lists lakehouses, engines, AI providers, and Slack webhooks as a connection
+list (`web/src/pages/connections/ConnectionList.tsx`), not a `DataTable`. There are few rows and each
+carries several unrelated settings, so a config column overflowed the page. Each row shows a type
+mark, name, kind, an Enabled/Disabled dot with text, and a short summary of non-secret settings
+(endpoint, warehouse, region, S3 auth mode, coordinator, off-peak window). Never show secret
+values, and strip `user:pass@` from URIs. Edit and Test are secondary buttons, Enable/Disable is a
+ghost button, and Delete is a confirmed red icon button. Under 640px of container width, actions
+wrap below the details. Each tab has one section header holding its single primary action, and the
+empty state does not repeat that button.
+
+Engines are split in two. **Cryo engines** run inside the deployment: `native`, plus `spark_emr` with
+`submit_mode: "k8s"` (the seeded `native-datafusion` and `spark-k8s`). **Your engines** are
+Trino, EMR Serverless, and Flink clusters the operator connected. Cryo engines stay editable, but
+Edit and Disable first open a confirmation that names what depends on them, such as the nightly
+batch needing exactly one enabled Spark engine. A row shows a `Default preset` badge when the
+enabled default preset targets it.
+
 ### Filters
 
 Filters should feel like a query builder without exposing implementation detail. Use chips for active filters, quick reset per chip, and one clear `Clear all` action. Avoid redundant labels when the value already carries context.

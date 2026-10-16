@@ -2,7 +2,7 @@
 title: How Cryo fits
 description: The three parts of Cryo (source, preset, destination), the metadata-only scan path, and how a maintenance wave moves from scheduler to engine.
 canonical: https://tech-pw.github.io/cryo/concepts/
-updated: 2026-10-05
+updated: 2026-10-16
 ---
 
 # How Cryo fits
@@ -36,11 +36,11 @@ Text description
 
 - Step 4: Preset to Trino or Spark (write)
 
-The split shows up in the UI too. Under **Settings → Connections**, catalogs live on the **Lakehouses** tab and engines on the **Engines** tab, each with its own credentials.
+The split shows up in the UI too. Under **Settings → Connections**, catalogs live on the **Lakehouses** tab and engines on the **Engines** tab, each with its own credentials. Each lakehouse is one row that shows its catalog type, whether it is enabled, its endpoint and how it authenticates to S3. Credentials embedded in an endpoint URI are never shown.
 
 cryo.local/settings/connections
 
-*Sources are added as lakehouses. Engines are a separate tab and never share credentials with a catalog.*
+*Sources are added as lakehouses. A lakehouse only reads; engines are a separate tab and never share credentials with a catalog.*
 
 ## Scan path: metadata only, no live data files
 
