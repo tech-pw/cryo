@@ -16,6 +16,16 @@
   }
 }
 
+.td-mt-config-pointer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.td-mt-config-pointer .td-overview-link {
+  margin-top: 2px;
+}
+
 .td-mt-card {
   min-width: 0;
   padding: 20px;

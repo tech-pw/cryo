@@ -1,8 +1,9 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Copy, Crosshair, GitBranch, Tag } from "lucide-react";
+import { Archive, Copy, Crosshair, GitBranch, History, Tag } from "lucide-react";
 import { useMemo } from "react";
 import { toast } from "sonner";
+import { ConfirmAction } from "../../components/confirm";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { tableKeys } from "./tableKeys";
 import "./snapshotsTab.css";
@@ -11,6 +12,7 @@ import {
   listProtectedSnapshots,
   listTableSnapshots,
   protectTableSnapshot,
+  rollbackTableSnapshot,
   type SnapshotRef,
   type TableSnapshot,
   type TableSnapshotsResponse
@@ -28,7 +30,6 @@ import { useWriteControl } from "../../lib/useWriteControl";
 import { formatBytesGb, formatDuration, formatNumber, formatTime } from "../../lib/format";
 
 const PAGE_SIZE = 25;
-const RESTORE_REASON = "Restore is not enabled on this install";
 
 const pageFromUrl = (raw: string | null): number => {
   const parsed = Number(raw);
@@ -114,35 +115,72 @@ const shortId = (id: string): string => (id.length > 10 ? `…${id.slice(-8)}` :
 
 const SnapshotActions = ({
   snapshotId,
+  committedAt,
   alreadyExcluded,
   isCurrent,
   protectAllowed,
   protectReason,
   pending,
-  onProtect
+  onProtect,
+  rollbackAllowed,
+  rollbackReason,
+  rollbackPending,
+  onRollback
 }: {
   snapshotId: string;
+  committedAt: string | null;
   alreadyExcluded: boolean;
   isCurrent: boolean;
   protectAllowed: boolean;
   protectReason: string | null;
   pending: boolean;
   onProtect: (snapshotId: string) => void;
+  rollbackAllowed: boolean;
+  rollbackReason: string | null;
+  rollbackPending: boolean;
+  onRollback: (snapshotId: string) => void;
 }) => {
   return (
     <Popover>
       <PopoverTrigger asChild><Button type="button" size="sm" variant="ghost">Actions</Button></PopoverTrigger>
       <PopoverContent align="end" className="w-72 p-3">
-        <div role="group" aria-label="Snapshot actions">
+        <div role="group" aria-label="Snapshot actions" className="flex flex-col gap-1">
           <Button type="button" size="sm" variant="secondary" className="w-full justify-start" disabled={!protectAllowed || pending || alreadyExcluded} title={protectReason ?? undefined} onClick={() => onProtect(snapshotId)}>
             {alreadyExcluded ? "Already excluded" : "Protect"}
           </Button>
-          <p className="mt-2 text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Records snapshot {snapshotId} so a later Spark expire keeps it. It does not follow the branch.
             {isCurrent ? " This is the current commit, not later commits." : ""} Trino expire cannot skip one id.
           </p>
-          {protectReason ? <p className="mt-2 text-xs text-muted-foreground">{protectReason}</p> : null}
-          <p className="mt-3 text-xs text-muted-foreground">{RESTORE_REASON}.</p>
+          {protectReason ? <p className="text-xs text-muted-foreground">{protectReason}</p> : null}
+          <div className="mt-2 border-t pt-2">
+            <ConfirmAction
+              title="Roll back to this snapshot?"
+              description={
+                <>
+                  Moves the table's current pointer to snapshot {snapshotId}
+                  {committedAt ? ` (committed ${formatTime(committedAt)})` : ""}. Anything committed after it stops
+                  being current for every reader, not just Cryo. Data files stay on disk until a later expire run.
+                </>
+              }
+              okText="Roll back"
+              okButtonProps={{ danger: true, loading: rollbackPending }}
+              onConfirm={() => onRollback(snapshotId)}
+              disabled={!rollbackAllowed || rollbackPending || isCurrent}
+            >
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="w-full justify-start"
+                disabled={!rollbackAllowed || rollbackPending || isCurrent}
+                title={isCurrent ? "This is already the current snapshot" : (rollbackReason ?? undefined)}
+              >
+                <History size={14} aria-hidden="true" /> {isCurrent ? "Current snapshot" : "Apply (roll back)"}
+              </Button>
+            </ConfirmAction>
+            {rollbackReason && !isCurrent ? <p className="mt-2 text-xs text-muted-foreground">{rollbackReason}</p> : null}
+          </div>
         </div>
       </PopoverContent>
     </Popover>
@@ -182,6 +220,17 @@ export const SnapshotsTab = () => {
       });
       void queryClient.invalidateQueries({ queryKey: ["table-snapshots", tableId] });
       void queryClient.invalidateQueries({ queryKey: tableKeys.protectedSnapshots(tableId, token) });
+    },
+    onError: (error: Error) => toast.error(error.message)
+  });
+
+  const rollbackAccess = useWriteControl("rollbackSnapshot");
+  const rollback = useMutation({
+    mutationFn: (snapshotId: string) => rollbackTableSnapshot(api, tableId, snapshotId),
+    onSuccess: (result) => {
+      toast.success(`Table rolled back to snapshot ${result.snapshot_id}`);
+      void queryClient.invalidateQueries({ queryKey: ["table-snapshots", tableId] });
+      void queryClient.invalidateQueries({ queryKey: tableKeys.detail(tableId, token) });
     },
     onError: (error: Error) => toast.error(error.message)
   });
@@ -337,17 +386,33 @@ export const SnapshotsTab = () => {
         cell: ({ row }) => (
           <SnapshotActions
             snapshotId={row.original.snapshot_id}
+            committedAt={row.original.committed_at}
             alreadyExcluded={row.original.protected}
             isCurrent={row.original.snapshot_id === currentSnapshotId}
             protectAllowed={protectAccess.allowed}
             protectReason={protectAccess.reason}
             pending={protect.isPending && protect.variables === row.original.snapshot_id}
             onProtect={(snapshotId) => protect.mutate(snapshotId)}
+            rollbackAllowed={rollbackAccess.allowed}
+            rollbackReason={rollbackAccess.reason}
+            rollbackPending={rollback.isPending && rollback.variables === row.original.snapshot_id}
+            onRollback={(snapshotId) => rollback.mutate(snapshotId)}
           />
         )
       }
     ],
-    [currentSnapshotId, loadedIds, protect, protectAccess.allowed, protectAccess.reason, searchParams, setSearchParams]
+    [
+      currentSnapshotId,
+      loadedIds,
+      protect,
+      protectAccess.allowed,
+      protectAccess.reason,
+      rollback,
+      rollbackAccess.allowed,
+      rollbackAccess.reason,
+      searchParams,
+      setSearchParams
+    ]
   );
 
   return (
