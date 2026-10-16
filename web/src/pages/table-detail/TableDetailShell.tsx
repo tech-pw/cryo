@@ -1,4 +1,4 @@
-import { ChevronDown, GitBranch, Wrench } from "lucide-react";
+import { ChevronDown, GitBranch, SlidersHorizontal, Wrench } from "lucide-react";
 import { lazy, Suspense, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { PlanPreview } from "../../components/PlanPreview";
@@ -53,6 +53,7 @@ const SnapshotsTabPanel = lazy(() =>
 const MaintenanceTabPanel = lazy(() =>
   import("./MaintenanceTab").then((m) => ({ default: m.MaintenanceTab }))
 );
+const ConfigTabPanel = lazy(() => import("./ConfigTab").then((m) => ({ default: m.ConfigTab })));
 
 const TabFallback = () => (
   <AsyncBoundary isLoading skeleton={null}>
@@ -86,11 +87,19 @@ const MaintenanceTabLabel = () => (
   </span>
 );
 
+const ConfigTabLabel = () => (
+  <span>
+    <SlidersHorizontal className="mr-1 inline size-3.5" />
+    Config
+  </span>
+);
+
 const TABLE_SECTION_TABS = [
   { value: "overview", Label: OverviewTabLabel },
   { value: "files", Label: StructureTabLabel },
   { value: "snapshots", Label: SnapshotsTabLabel },
   { value: "maintenance", Label: MaintenanceTabLabel },
+  { value: "config", Label: ConfigTabLabel },
   { value: "usage", Label: LineageTabLabel },
   { value: "quality", Label: HealthQualityTabLabel },
   { value: "cost", Label: CostTabLabel }
@@ -221,6 +230,9 @@ export const TableDetailShell = () => {
               <TabsTrigger value="maintenance" className={tabTriggerClass}>
                 <MaintenanceTabLabel />
               </TabsTrigger>
+              <TabsTrigger value="config" className={tabTriggerClass}>
+                <ConfigTabLabel />
+              </TabsTrigger>
               <TabsTrigger value="usage" className={tabTriggerClass}>
                 <LineageTabLabel />
               </TabsTrigger>
@@ -242,6 +254,9 @@ export const TableDetailShell = () => {
             </TabsContent>
             <TabsContent value="maintenance" className="td-tab-content mt-0">
               {lazyPanel(MaintenanceTabPanel)}
+            </TabsContent>
+            <TabsContent value="config" className="td-tab-content mt-0">
+              {lazyPanel(ConfigTabPanel)}
             </TabsContent>
             <TabsContent value="usage" className="td-tab-content mt-0">
               <Suspense fallback={<TabFallback />}>

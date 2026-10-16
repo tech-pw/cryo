@@ -42,7 +42,8 @@ const SHOTS: Array<{ name: string; path: string; waitFor?: string; height?: numb
   { name: "runs", path: "/runs", waitFor: "Success rate · 7d", height: 1100 },
   { name: "runs-holds", path: "/runs?tab=holds", waitFor: "Active holds", height: 900 },
   { name: "run-detail", path: `/runs/${DEMO_RUN_ID}`, height: 960 },
-  { name: "connections", path: "/settings/connections", height: 820 }
+  { name: "connections", path: "/settings/connections", waitFor: "Iceberg catalogs Cryo reads", height: 820 },
+  { name: "connections-engines", path: "/settings/connections?tab=engines", waitFor: "Shipped with Cryo", height: 900 }
 ];
 
 const json = (route: Route, body: unknown) =>

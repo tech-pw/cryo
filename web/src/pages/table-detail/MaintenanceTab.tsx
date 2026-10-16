@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { ArrowUpRight } from "lucide-react";
+import { Link, useParams } from "react-router-dom";
 import { getTable, getTableAudit, getTableCost } from "../../api/client";
 import { MaintenanceActions } from "../../components/table-detail/operations/MaintenanceActions";
 import { readDeductionList } from "../../components/table-detail/operations/operationCatalog";
@@ -8,7 +9,6 @@ import {
   type BlockingReasonRead,
 } from "../../api/maintenanceStatus";
 import { CompactionAnalysis } from "../../components/table-detail/maintenance/CompactionAnalysis";
-import { EffectiveSettings } from "../../components/table-detail/maintenance/EffectiveSettings";
 import { TableRunGrid } from "../../components/table-detail/runs/TableRunGrid";
 import { QueryErrorAlert } from "../../components/common";
 import { Badge } from "../../components/ui/badge";
@@ -194,7 +194,19 @@ export const MaintenanceTab = () => {
             </>
           ) : null}
         </section>
-        <EffectiveSettings tableId={tableId} />
+        <aside className="td-mt-card td-mt-config-pointer" aria-labelledby="maintenance-config-pointer">
+          <p className="td-mt-kicker">Config</p>
+          <h3 id="maintenance-config-pointer" className="td-mt-status">
+            Preset, overrides & properties
+          </h3>
+          <p className="td-mt-lede">
+            The workflow preset, parameter overrides and Iceberg table properties that decide what maintenance does to
+            this table now live on the Config tab.
+          </p>
+          <Link className="td-overview-link" to={`/tables/${tableId}?tab=config`}>
+            Open Config <ArrowUpRight size={14} aria-hidden="true" />
+          </Link>
+        </aside>
       </div>
       <div className="td-mt-stage">
         <p className="td-mt-kicker">2 · Choose an action</p>

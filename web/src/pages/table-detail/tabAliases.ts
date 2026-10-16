@@ -5,6 +5,7 @@ export const TABLE_DETAIL_TABS = [
   "files",
   "snapshots",
   "maintenance",
+  "config",
   "usage",
   "quality",
   "cost"
@@ -23,6 +24,7 @@ export const TABLE_TAB_ALIASES: Record<string, TableDetailTab> = {
   lineage: "usage",
   usage: "usage",
   snapshots: "snapshots",
+  config: "config",
   cost: "cost"
 };
 

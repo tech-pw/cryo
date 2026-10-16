@@ -2,7 +2,7 @@
 title: Connect a lakehouse
 description: Connect a REST, Hive Metastore, Glue, Polaris or Nessie catalog to Cryo, choose S3 credentials, and run the first scan. Covers every field, what the scan reads, and the failures that look like success.
 canonical: https://tech-pw.github.io/cryo/onboarding/
-updated: 2026-10-14
+updated: 2026-10-16
 ---
 
 # Connect a lakehouse
@@ -45,7 +45,7 @@ Done when the panel reports the schema count. That number is also the first hone
 
 The summary restates what will be stored, including whether the connection test passed. Save is disabled until it has.
 
-Done when the lakehouse appears in the Lakehouses table. No tables are visible yet; that is the scan's job.
+Done when the lakehouse appears in the Lakehouses list with an **Enabled** badge, its endpoint and its S3 auth method. No tables are visible yet; that is the scan's job.
 
 ## Catalog types
 

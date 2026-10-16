@@ -10,7 +10,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from cryo.api.deps import SessionDep, require_operator, require_viewer
+from cryo.api.deps import SessionDep, require_admin, require_operator, require_viewer
 from cryo.api.extensions_helpers import build_mcp_server, table_stats_dict
 from cryo.api.security import Principal, Role
 from cryo.api.snapshot_presence import (
@@ -70,6 +70,28 @@ class UnprotectSnapshotResponse(BaseModel):
     table_id: uuid.UUID
     snapshot_id: str
     removed: bool
+
+
+class RollbackSnapshotRequest(BaseModel):
+    snapshot_id: str
+    # Required, not just a UI confirm dialog: rollback moves the table's current pointer
+    # backwards, which is the one write in this file that loses data other writers may
+    # already depend on (anything committed after the target snapshot stops being "current").
+    confirm: bool = False
+
+    @field_validator("snapshot_id", mode="before")
+    @classmethod
+    def decimal_snapshot_id(cls, value: object) -> str:
+        parsed = parse_snapshot_id(value)
+        if parsed is None:
+            raise ValueError("snapshot_id must be a non-negative decimal string")
+        return str(parsed)
+
+
+class RollbackSnapshotResponse(BaseModel):
+    table_id: uuid.UUID
+    snapshot_id: str
+    previous_snapshot_id: str | None = None
 
 
 class CatalogLatencyResponse(BaseModel):
@@ -376,6 +398,83 @@ def unprotect_snapshot(
         table_id=table_id,
         snapshot_id=str(parsed),
         removed=True,
+    )
+
+
+@router.post(
+    "/tables/{table_id}/snapshots/{snapshot_id}/rollback",
+    response_model=RollbackSnapshotResponse,
+    dependencies=[Depends(require_admin)],
+)
+def rollback_table_snapshot(
+    table_id: uuid.UUID,
+    snapshot_id: str,
+    payload: RollbackSnapshotRequest,
+    session: SessionDep,
+    principal: Annotated[Principal, Depends(require_admin)],
+) -> RollbackSnapshotResponse:
+    """Move the table's current snapshot pointer back to ``snapshot_id``.
+
+    Admin-gated, unlike protect/unprotect: this changes what every reader sees as
+    "the table" going forward, not just what Cryo retains. Loads the table fresh
+    immediately before the write (not from any cached metadata) so the commit is
+    against the real current state -- a stale load here would otherwise look like
+    a successful rollback that silently reverted someone else's commit too.
+    """
+    parsed = parse_snapshot_id(payload.snapshot_id)
+    if parsed is None or str(parsed) != snapshot_id:
+        raise HTTPException(
+            status_code=400, detail="snapshot_id must be a non-negative decimal string"
+        )
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="confirm must be true to roll back a table")
+
+    table = session.get(Table, table_id)
+    if table is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+    source = session.get(Source, table.source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    try:
+        present = load_current_snapshot_ids(
+            _source_view(source), table.schema_name, table.table_name
+        )
+    except CatalogMetadataError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Catalog metadata read failed: {exc}"[:500]
+        ) from exc
+    if parsed not in present:
+        raise HTTPException(status_code=404, detail="Snapshot not found in current table metadata")
+
+    try:
+        from cryo.sources.factory import source_catalog_for
+
+        catalog = source_catalog_for(_source_view(source))
+        iceberg_table = catalog.load_table(table.schema_name, table.table_name)
+        previous_snapshot_id = iceberg_table.metadata.current_snapshot_id
+        iceberg_table.manage_snapshots().rollback_to_snapshot(parsed).commit()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Rollback commit failed: {type(exc).__name__}: {exc}"[:500]
+        ) from exc
+
+    session.add(
+        AuditLog(
+            table_id=table_id,
+            action="snapshot.rollback",
+            status="OK",
+            detail=f"snapshot_id={parsed} previous_snapshot_id={previous_snapshot_id}",
+            actor=principal.subject,
+        )
+    )
+    session.commit()
+    return RollbackSnapshotResponse(
+        table_id=table_id,
+        snapshot_id=str(parsed),
+        previous_snapshot_id=(
+            str(previous_snapshot_id) if previous_snapshot_id is not None else None
+        ),
     )
 
 
