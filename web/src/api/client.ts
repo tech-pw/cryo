@@ -18,6 +18,8 @@ import type {
   JsonObject,
   MaintenanceControlRead,
   MaintenanceControlWrite,
+  MaintenanceExclusionRead,
+  MaintenanceExclusionWrite,
   MaintenanceIntentRead,
   MaintenancePreviewResponse,
   MaintenanceRunResponse,
@@ -430,6 +432,12 @@ export const resumeMaintenance = (api: ApiOptions, body: MaintenanceControlWrite
     method: "POST",
     body
   });
+export const listMaintenanceExclusions = (api: ApiOptions) =>
+  apiFetch<MaintenanceExclusionRead[]>("/maintenance/exclusions", api);
+export const createMaintenanceExclusion = (api: ApiOptions, body: MaintenanceExclusionWrite) =>
+  apiFetch<MaintenanceExclusionRead>("/maintenance/exclusions", api, { method: "POST", body });
+export const deleteMaintenanceExclusion = (api: ApiOptions, id: UUID) =>
+  apiFetch<void>(`/maintenance/exclusions/${id}`, api, { method: "DELETE" });
 export const createSource = (api: ApiOptions, body: SourceWrite) =>
   apiFetch<SourceRead>("/sources", api, { method: "POST", body });
 export const patchSource = (api: ApiOptions, id: UUID, body: Partial<SourceWrite>) =>
