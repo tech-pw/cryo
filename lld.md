@@ -830,6 +830,22 @@ Migration `20260804_0036` adds:
 - `effect_receipts`: write-ahead per-effect identity, submission reference, result, and probe state;
 - `maintenance_control_state`: generation-stamped global/tenant/destination pause state.
 
+Pause state is also enforced when durable intents are disabled:
+the scheduler fires no presets under a global pause, the batch coordinator records a `skipped`
+run when the global scope or its destination is paused, and the Worker defers a non-intent job
+whose destination or the global scope is paused (`MaintenancePausedError` → `deferred`).
+
+### 11.3 Operator exclusions
+
+Migration `20261016_1200` adds `maintenance_exclusions(id, source_id → sources ON DELETE CASCADE,
+schema_name, table_name NULL, reason, created_by, created_at)`, unique on
+`(source_id, schema_name, coalesce(table_name, ''))`. `table_name IS NULL` covers the whole
+schema. `cryo.db.repositories.exclusions.table_is_excluded()` is a correlated `EXISTS` over
+`Table` and is applied in `selection.load_candidates` (including explicit `table_ids`), the
+scheduler's table query, `MaintenanceRunService` (409 when nothing remains), and smart-maintenance
+layout apply. `MaintenanceBlock.OPERATOR_EXCLUDED` surfaces it in maintenance status. Scans and
+preset assignment ignore exclusions.
+
 Intent idempotency covers the full non-temporal execution contract; expiry is deliberately excluded so
 retrying the same scheduled job does not silently renew authority. A new scheduled job is the renewal
 boundary. Receipt reuse verifies intent step, operation, destination, and effect strategy.
@@ -901,6 +917,9 @@ POST  /api/v1/maintenance/run                                 # create adhoc run
 GET   /api/v1/maintenance/control                             # visible global/tenant/destination controls
 POST  /api/v1/maintenance/control/pause                       # operator; global requires admin
 POST  /api/v1/maintenance/control/resume
+GET   /api/v1/maintenance/exclusions                          # viewer; with source_name, table_count
+POST  /api/v1/maintenance/exclusions                          # operator; {source_id, schema_name, table_name?, reason}
+DELETE /api/v1/maintenance/exclusions/{id}                    # operator; audited
 GET   /api/v1/maintenance/duration-model                      # Ernest fit vs rate model, held-out MAPE
 GET   /api/v1/maintenance/safety/summary
 GET   /api/v1/maintenance/safety/intents

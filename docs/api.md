@@ -403,6 +403,40 @@ Control state is generation-stamped and scoped to `global`, `tenant`, or
 `destination`. Viewers can inspect visible controls; operators can control their
 tenant/destinations; global pause/resume requires admin.
 
+Pause body: `{"scope_type": "global" | "tenant" | "destination", "scope_id": "<id>", "reason": "..."}`.
+`scope_id` is omitted (or `"global"`) for a global pause, and the reason is 3–500 characters.
+
+A pause is enforced whether or not durable intents are enabled:
+
+- the scheduler fires no presets while a global pause is active;
+- the nightly batch records a `skipped` run when the global scope or its destination is paused;
+- a worker defers a non-intent job whose destination (or the global scope) is paused, and it is retried
+  after resume. Intent-bound jobs keep the existing pre-submit guard.
+
+Statements already submitted to an engine are not cancelled.
+
+### Maintenance exclusions
+
+```http
+GET    /api/v1/maintenance/exclusions          # viewer
+POST   /api/v1/maintenance/exclusions          # operator; 201, 409 duplicate, 404 unknown lakehouse
+DELETE /api/v1/maintenance/exclusions/{id}     # operator; 204
+```
+
+```json
+{"source_id": "<lakehouse uuid>", "schema_name": "finance", "table_name": "ledger", "reason": "Under migration"}
+```
+
+Omit `table_name` (or send `null`) to exclude the whole schema. One rule per
+`(source_id, schema_name, table_name)`. `GET` returns `source_name` and `table_count`
+(tables the rule currently covers). Create and delete write `maintenance_exclude` /
+`maintenance_include` audit rows.
+
+Excluded tables are skipped by the nightly batch, scheduled presets, `POST /maintenance/run`
+(409 when every selected table is excluded; the run summary reports `excluded_tables` otherwise),
+and smart-maintenance layout apply (409). `GET /tables/{id}/maintenance-status` reports the
+`operator_excluded` block. Scans are not affected.
+
 Safety reads are tenant-scoped. `effects` accepts `state`, `ambiguous_only`, and a
 bounded `limit`. Resolving an ambiguous effect requires an operator outcome
 (`succeeded` or `failed`), reason, and optional immutable engine evidence
