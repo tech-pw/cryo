@@ -77,3 +77,20 @@ export const unprotectTableSnapshot = (api: ApiOptions, tableId: string, snapsho
     api,
     { method: "DELETE" }
   );
+
+export interface RollbackSnapshotResponse {
+  table_id: string;
+  snapshot_id: string;
+  previous_snapshot_id: string | null;
+}
+
+/** Moves the table's current pointer back to `snapshotId`. Admin-gated; requires confirm: true. */
+export const rollbackTableSnapshot = (api: ApiOptions, tableId: string, snapshotId: string) =>
+  apiFetch<RollbackSnapshotResponse>(
+    `/tables/${tableId}/snapshots/${encodeURIComponent(snapshotId)}/rollback`,
+    api,
+    {
+      method: "POST",
+      body: { snapshot_id: snapshotId, confirm: true }
+    }
+  );

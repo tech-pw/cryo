@@ -1869,6 +1869,17 @@ export interface ApplyTablePropertiesResponse {
   message: string;
 }
 
+export interface OffPeakWindowResponse {
+  start_hour_ist: number;
+  end_hour_ist: number;
+  /** Equal start/end bounds disable the gate; the API reports that as false. */
+  enabled: boolean;
+}
+
+/** Governor-wide off-peak window. Read-only: not a per-table setting. */
+export const getGovernorOffPeakWindow = (api: ApiOptions) =>
+  apiFetch<OffPeakWindowResponse>("/governor/offpeak-window", api);
+
 export const getPropertyRecommendations = (api: ApiOptions, tableId: UUID) =>
   apiFetch<PropertyRecommendationsResponse>(`/tables/${tableId}/property-recommendations`, api);
 

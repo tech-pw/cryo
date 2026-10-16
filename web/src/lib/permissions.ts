@@ -20,6 +20,7 @@ export type WriteAction =
   | "executeLayout"
   | "protectSnapshot"
   | "unprotectSnapshot"
+  | "rollbackSnapshot"
   | "scheduleMaintenance"
   | "silentLossDryRun"
   | "applyProperty"
@@ -56,6 +57,9 @@ export const WRITE_MIN_ROLE: Record<WriteAction, MinRole> = {
   executeLayout: "operator",
   protectSnapshot: "operator",
   unprotectSnapshot: "operator",
+  // Moves the table's current pointer backwards -- every other write action here is
+  // additive or scoped to Cryo's own bookkeeping; this changes what every reader sees.
+  rollbackSnapshot: "admin",
   scheduleMaintenance: "operator",
   silentLossDryRun: "operator",
   applyProperty: "operator",

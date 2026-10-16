@@ -1158,6 +1158,22 @@ class MaintenancePreviewResponse(BaseModel):
     items: list[TablePreviewRead]
 
 
+class OffPeakWindowResponse(BaseModel):
+    """The governor-wide off-peak window heavy maintenance is restricted to.
+
+    Deliberately read-only and not table-scoped: ``offpeak_start_ist`` /
+    ``offpeak_end_ist`` are process settings on the Governor, so a per-table
+    editor here would imply an override the admission path cannot honour
+    (see cryo/governor/admission.py:is_offpeak).
+    """
+
+    start_hour_ist: int
+    end_hour_ist: int
+    # Equal bounds disable the gate entirely -- surfaced explicitly so the UI
+    # can say "any hour" instead of rendering a misleading 00:00-00:00 window.
+    enabled: bool
+
+
 class MaintenanceRunRequest(BaseModel):
     table_ids: list[uuid.UUID] = Field(default_factory=list)
     selection: AssignmentSelection | None = None

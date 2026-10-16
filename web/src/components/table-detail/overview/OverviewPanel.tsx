@@ -24,10 +24,12 @@ import { useAuth } from "../../../lib/auth";
 import { formatBytesGb, formatCurrency, formatDuration, formatNumber, formatTime } from "../../../lib/format";
 import { useWriteControl } from "../../../lib/useWriteControl";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
-import { MaintenanceActions } from "../operations/MaintenanceActions";
 import {
   OPERATION_CATALOG,
+  RUNNABLE_OPERATIONS,
   isFailureStatus,
+  operationEvidence,
+  pointsByOperation,
   readDeductionList,
   relativeTime,
   remedyForDeduction,
@@ -111,40 +113,13 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
         hasWorkflow={Boolean(preset.data?.preset_id)}
         statusLoading={maintenance.isPending || preset.isPending}
         statusError={maintenance.isError || preset.isError}
-      />
-
-      <MaintenanceActions
-        tableId={tableId}
         stats={stats}
         audit={auditRows}
         orphanBytes={cost.data?.orphan_bytes}
-        deductions={deductions}
-        footer={
-          <>
-            <span>
-              {preset.data?.preset_name ? (
-                <>
-                  Runs on the <b>{preset.data.preset_name}</b> workflow's engine
-                  {workflowPreset?.params && typeof workflowPreset.params.retention_days === "number"
-                    ? ` · ${workflowPreset.params.retention_days}-day snapshot retention`
-                    : ""}
-                </>
-              ) : (
-                "Assign a workflow to choose the engine and retention settings"
-              )}
-            </span>
-            <span className="td-ops-footer-actions">
-              {onPreview && preset.data?.preset_id ? (
-                <Button type="button" size="sm" variant="ghost" onClick={onPreview}>
-                  Preview full workflow plan
-                </Button>
-              ) : null}
-              <Link className="td-overview-link" to={`/tables/${tableId}?tab=maintenance`}>
-                Schedule, history & settings <ArrowUpRight size={14} aria-hidden="true" />
-              </Link>
-            </span>
-          </>
+        retentionDays={
+          typeof workflowPreset?.params?.retention_days === "number" ? workflowPreset.params.retention_days : null
         }
+        onPreview={preset.data?.preset_id ? onPreview : undefined}
       />
 
       <div className="td-ov-evidence">
@@ -229,7 +204,12 @@ function HealthHero({
   workflowName,
   hasWorkflow,
   statusLoading,
-  statusError
+  statusError,
+  stats,
+  audit,
+  orphanBytes,
+  retentionDays,
+  onPreview
 }: {
   tableId: string;
   score: number | null;
@@ -242,6 +222,11 @@ function HealthHero({
   hasWorkflow: boolean;
   statusLoading: boolean;
   statusError: boolean;
+  stats: TableStatsRead | null | undefined;
+  audit: AuditEntry[];
+  orphanBytes: number | null | undefined;
+  retentionDays: number | null;
+  onPreview?: () => void;
 }) {
   const launcher = useOperationLauncher();
   const lost = deductions.reduce((sum, item) => sum + item.deduction, 0);
@@ -294,7 +279,7 @@ function HealthHero({
                   <div className="td-ded-text">
                     <p>
                       <b>{item.label}</b>
-                      <span className="td-ded-sev">{severity === "critical" ? "Critical" : "Warning"}</span>
+                      <span className="td-ded-sev">{severity === "critical" ? "critical" : "warning"}</span>
                     </p>
                     <p className="td-ded-reason">{item.reason}</p>
                     <div className="td-ded-bar" aria-hidden="true">
@@ -332,8 +317,93 @@ function HealthHero({
             <p>{deductionsRecorded ? "Review file layout and maintenance history below for the supporting evidence." : "Refresh the table stats to collect the evidence behind this score."}</p>
           </div>
         )}
+        <OtherOperations tableId={tableId} stats={stats} audit={audit} orphanBytes={orphanBytes} deductions={deductions} />
+        <footer className="td-hero-footer">
+          <span>
+            {workflowName ? (
+              <>
+                Runs on the <b>{workflowName}</b> workflow's engine
+                {retentionDays != null ? ` · ${retentionDays}-day snapshot retention` : ""}
+              </>
+            ) : (
+              "Assign a workflow to choose the engine and retention settings"
+            )}
+          </span>
+          <span className="td-hero-footer-actions">
+            {onPreview ? (
+              <Button type="button" size="sm" variant="ghost" onClick={onPreview}>
+                Preview full workflow plan
+              </Button>
+            ) : null}
+            <Link className="td-overview-link" to={`/tables/${tableId}?tab=maintenance`}>
+              Schedule, history & settings <ArrowUpRight size={14} aria-hidden="true" />
+            </Link>
+          </span>
+        </footer>
       </div>
     </section>
+  );
+}
+
+/**
+ * Operations not already surfaced by a health deduction above. Collapsed by
+ * default: on a clean table every one of the four ops lands here, and a
+ * fully-open grid duplicating "Run on demand" was the thing being removed.
+ */
+function OtherOperations({
+  tableId,
+  stats,
+  audit,
+  orphanBytes,
+  deductions
+}: {
+  tableId: string;
+  stats: TableStatsRead | null | undefined;
+  audit: AuditEntry[];
+  orphanBytes: number | null | undefined;
+  deductions: Deduction[];
+}) {
+  const launcher = useOperationLauncher();
+  const recovery = pointsByOperation(deductions, tableId);
+  const other = RUNNABLE_OPERATIONS.filter((op) => !(recovery.get(op) ?? 0));
+  if (!other.length) return null;
+  const blocked = !launcher || Boolean(launcher.blockedReason) || launcher.pending;
+
+  return (
+    <details className="td-hero-other">
+      <summary>
+        Run another operation
+        <span className="td-hero-other-count">{other.length}</span>
+      </summary>
+      <ul className="td-hero-other-list">
+        {other.map((op) => {
+          const info = OPERATION_CATALOG[op];
+          const added = launcher?.inCart(op) ?? false;
+          const evidence = operationEvidence(op, stats, orphanBytes);
+          return (
+            <li key={op}>
+              <div>
+                <p className="td-hero-other-title">{info.title}</p>
+                <p className="td-hero-other-evidence">
+                  {evidence.value} {evidence.label}
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant={added ? "primary" : "secondary"}
+                aria-pressed={added}
+                disabled={blocked}
+                title={launcher?.blockedReason ?? undefined}
+                onClick={() => launcher?.toggle(op)}
+              >
+                {added ? "Added" : "Add to run"}
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+    </details>
   );
 }
 

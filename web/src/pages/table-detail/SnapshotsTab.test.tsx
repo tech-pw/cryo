@@ -5,16 +5,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TableSnapshotsResponse } from "../../api/snapshots";
 import { SnapshotsTab } from "./SnapshotsTab";
 
-const { listTableSnapshots, protectTableSnapshot, listProtectedSnapshots, authState } = vi.hoisted(() => ({
-  listTableSnapshots: vi.fn(),
-  protectTableSnapshot: vi.fn(),
-  listProtectedSnapshots: vi.fn(),
-  authState: { role: "viewer" }
-}));
+const { listTableSnapshots, protectTableSnapshot, rollbackTableSnapshot, listProtectedSnapshots, authState } =
+  vi.hoisted(() => ({
+    listTableSnapshots: vi.fn(),
+    protectTableSnapshot: vi.fn(),
+    rollbackTableSnapshot: vi.fn(),
+    listProtectedSnapshots: vi.fn(),
+    authState: { role: "viewer" }
+  }));
 
 vi.mock("../../api/snapshots", () => ({
   listTableSnapshots,
   protectTableSnapshot,
+  rollbackTableSnapshot,
   listProtectedSnapshots,
   unprotectTableSnapshot: vi.fn()
 }));
@@ -45,16 +48,16 @@ vi.mock("../../lib/auth", () => ({
 const payload = (): TableSnapshotsResponse => ({
   table_id: "table-1",
   current_snapshot_id: "42",
-  total: 1,
+  total: 2,
   pinned_count: 1,
   latest_committed_at: "2026-09-01T12:00:00Z",
-  oldest_committed_at: "2026-09-01T12:00:00Z",
+  oldest_committed_at: "2026-08-31T12:00:00Z",
   page: 1,
   page_size: 25,
   snapshots: [
     {
       snapshot_id: "42",
-      parent_snapshot_id: null,
+      parent_snapshot_id: "41",
       timestamp_ms: Date.parse("2026-09-01T12:00:00Z"),
       committed_at: "2026-09-01T12:00:00Z",
       sequence_number: 7,
@@ -76,6 +79,24 @@ const payload = (): TableSnapshotsResponse => ({
           max_ref_age_ms: null
         }
       ],
+      protected: false,
+      protected_label: null
+    },
+    {
+      snapshot_id: "41",
+      parent_snapshot_id: null,
+      timestamp_ms: Date.parse("2026-08-31T12:00:00Z"),
+      committed_at: "2026-08-31T12:00:00Z",
+      sequence_number: 6,
+      operation: "append",
+      summary: {
+        total_records: null,
+        total_files_size: null,
+        added_data_files: null,
+        deleted_data_files: null
+      },
+      is_current: false,
+      refs: [],
       protected: false,
       protected_label: null
     }
@@ -100,27 +121,56 @@ describe("SnapshotsTab", () => {
     authState.role = "viewer";
     listTableSnapshots.mockReset();
     protectTableSnapshot.mockReset();
+    rollbackTableSnapshot.mockReset();
     listProtectedSnapshots.mockReset();
     listProtectedSnapshots.mockResolvedValue({ table_id: "table-1", snapshots: [] });
     listTableSnapshots.mockResolvedValue(payload());
   });
 
-  it("marks the current row, shows unknown size, and disables Restore and viewer Protect", async () => {
+  it("marks the current row, shows unknown size, and disables viewer Protect and rollback", async () => {
     renderTab();
 
     expect(await screen.findByText("Current")).toBeInTheDocument();
-    expect(screen.getByText("Unknown")).toBeInTheDocument();
+    expect(screen.getAllByText("Unknown").length).toBeGreaterThan(0);
     expect(screen.queryByText("0 GB")).not.toBeInTheDocument();
     expect(screen.getAllByText("Excluded from Cryo expiry").length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-
-    expect(screen.queryByRole("button", { name: "Restore…" })).not.toBeInTheDocument();
-    expect(screen.getByText("Restore is not enabled on this install.")).toBeInTheDocument();
+    const actionButtons = screen.getAllByRole("button", { name: "Actions" });
+    fireEvent.click(actionButtons[0]);
 
     const protect = screen.getByRole("button", { name: "Protect" });
     expect(protect).toBeDisabled();
     expect(protectTableSnapshot).not.toHaveBeenCalled();
+
+    const currentRowRollback = screen.getByRole("button", { name: "Current snapshot" });
+    expect(currentRowRollback).toBeDisabled();
+
+    fireEvent.click(actionButtons[1]);
+    const otherRowRollback = screen.getByRole("button", { name: "Apply (roll back)" });
+    expect(otherRowRollback).toBeDisabled();
+  });
+
+  it("lets an admin roll back to a non-current snapshot after confirming", async () => {
+    authState.role = "admin";
+    rollbackTableSnapshot.mockResolvedValue({
+      table_id: "table-1",
+      snapshot_id: "41",
+      previous_snapshot_id: "42"
+    });
+    renderTab();
+
+    await screen.findByText("Current");
+    const actionButtons = screen.getAllByRole("button", { name: "Actions" });
+    fireEvent.click(actionButtons[1]);
+
+    const rollbackButton = screen.getByRole("button", { name: "Apply (roll back)" });
+    expect(rollbackButton).not.toBeDisabled();
+    fireEvent.click(rollbackButton);
+
+    const confirmButton = await screen.findByRole("button", { name: "Roll back" });
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => expect(rollbackTableSnapshot).toHaveBeenCalledWith(expect.anything(), "table-1", "41"));
   });
 
   it("reads the page number from the URL", async () => {

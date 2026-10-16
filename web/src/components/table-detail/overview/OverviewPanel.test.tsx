@@ -209,7 +209,7 @@ describe("OverviewPanel", () => {
     expect(screen.getByText("−36 points", { exact: false })).toBeInTheDocument();
     const order = [...document.querySelectorAll(".td-deductions li b")].map((node) => node.textContent);
     expect(order[0]).toBe("Small-file fragmentation");
-    expect(screen.getByText("Critical")).toBeInTheDocument();
+    expect(screen.getByText("critical")).toBeInTheDocument();
     expect(screen.getByText(/Write pattern/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Review" })).toHaveAttribute("href", "/tables/table-1?tab=files#files-properties");
 

@@ -70,6 +70,7 @@ from cryo.api.schemas import (
     MaintenancePreviewResponse,
     MaintenanceRunRequest,
     MaintenanceRunResponse,
+    OffPeakWindowResponse,
     OrphanScanCostRead,
     PaginatedTables,
     PresetCreate,
@@ -223,6 +224,30 @@ def get_datalake_dashboard(
 ) -> dict[str, object]:
     return datalake.dashboard_datalake(
         session, top_limit=top_limit, drift_limit=drift_limit, settings=Settings()
+    )
+
+
+@router.get(
+    "/governor/offpeak-window",
+    response_model=OffPeakWindowResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["governor"],
+)
+def get_governor_offpeak_window() -> OffPeakWindowResponse:
+    """Report the off-peak window the admission path gates heavy modes on.
+
+    Read-only on purpose. The window is a Governor process setting, so the
+    table Config tab shows it as inherited context rather than an editable
+    per-table field.
+    """
+    settings = get_settings()
+    start = settings.offpeak_start_ist
+    end = settings.offpeak_end_ist
+    return OffPeakWindowResponse(
+        start_hour_ist=start,
+        end_hour_ist=end,
+        # Mirrors is_offpeak()'s own short-circuit: equal bounds mean no gate.
+        enabled=start != end,
     )
 
 

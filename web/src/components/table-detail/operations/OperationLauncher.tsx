@@ -200,7 +200,7 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
           </DialogHeader>
 
           {cart.length === 0 ? (
-            <p className="td-cart-note">The cart is empty. Add an operation from the Run on demand section.</p>
+            <p className="td-cart-note">The cart is empty. Add an operation from the table page first.</p>
           ) : (
             <ol className="td-cart-steps">
               {cart.map((op, index) => {
