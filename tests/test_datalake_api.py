@@ -796,6 +796,12 @@ def test_maintenance_run_accepts_filter_selection(monkeypatch: Any) -> None:
                 )
             return None
 
+        def scalars(self, _statement: object) -> list[object]:
+            # excluded_table_ids() -- no MaintenanceExclusion rows exist in this test,
+            # so every selected table is unexcluded; this test asserts job_ids == [job_id]
+            # with no exclusions involved.
+            return []
+
         def add(self, model: object) -> None:
             if isinstance(model, MaintenanceJob):
                 self.jobs.append(model)
