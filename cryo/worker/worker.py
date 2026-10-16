@@ -479,6 +479,14 @@ class Worker:
         reconciliation_required = False
         effect_budget_usage = EffectBudgetUsage()
         try:
+            # Intent-bound jobs check the pause inside begin_attempt; legacy jobs have no
+            # attempt, so without this a hold set from the UI would not stop them.
+            if (
+                job.intent_id is None
+                and self._intent_store is not None
+                and self._intent_store.is_paused(destination_id=str(job.destination_id))
+            ):
+                raise MaintenancePausedError("maintenance execution is paused")
             table_data = self._store.get_table_data(job.table_id)
             set_context(snapshot_id=table_data.stats.get("snapshot_watermark"))
             table_ref = _table_ref_from_stats(table_data.stats)

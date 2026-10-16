@@ -1318,6 +1318,41 @@ class MaintenanceControlState(TimestampMixin, Base):
     changed_by: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class MaintenanceExclusion(Base):
+    """Operator opt-out from maintenance. ``table_name`` NULL excludes the whole schema.
+
+    Scans still read excluded tables so health stays visible; only maintenance skips them.
+    """
+
+    __tablename__ = "maintenance_exclusions"
+    __table_args__ = (
+        Index(
+            "uq_maintenance_exclusions_target",
+            "source_id",
+            "schema_name",
+            text("coalesce(table_name, '')"),
+            unique=True,
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.sources.id", ondelete="CASCADE"), nullable=False
+    )
+    schema_name: Mapped[str] = mapped_column(Text, nullable=False)
+    table_name: Mapped[str | None] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 _IMMUTABLE_INTENT_FIELDS = (
     "tenant_id",
     "job_id",
