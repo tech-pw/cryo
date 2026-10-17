@@ -147,7 +147,14 @@ Table configuration (the table detail Config tab):
 GET  /api/v1/tables/{table_id}/config?refresh=false
 POST /api/v1/tables/{table_id}/config/preview
 POST /api/v1/tables/{table_id}/config/apply
+PUT  /api/v1/tables/{table_id}/config/operations
 ```
+
+- `PUT …/config/operations` (operator) replaces the set of maintenance operations no plan may
+  include for this table. It takes `{excluded, reason (≥ 8 chars), confirm}`. Excluding
+  `expire_snapshots` needs `confirm`, otherwise 409. Changes are audited as `operation_exclude` /
+  `operation_include`. The `GET` response carries the same `operations` block, with a status per
+  operation, plus `property_details` (kind, explanation and doc link for every raw property).
 
 - `GET` (viewer) returns the curated settings: current value and its source, Cryo's
   recommendation, direction-aware risk, editor, and engine notes. It also returns table metadata

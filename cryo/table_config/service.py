@@ -15,7 +15,16 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from cryo.db.models import AuditLog, Destination, Source, Table, TableAssignment, TableStats
+from cryo.db.models import (
+    AuditLog,
+    Destination,
+    Source,
+    Table,
+    TableAssignment,
+    TableOperationExclusion,
+    TableStats,
+)
+from cryo.domain.enums import Mode
 from cryo.table_config import live
 from cryo.table_config.context import (
     ConfigContext,
@@ -30,7 +39,9 @@ from cryo.table_config.models import (
     ConfigChange,
     ConfigChangePreview,
     EngineNoteRead,
+    MaintenanceOperationRead,
     PartitionFieldRead,
+    PropertyDetailRead,
     RefRead,
     RiskDirectionRead,
     SettingEditorRead,
@@ -38,8 +49,16 @@ from cryo.table_config.models import (
     SortFieldRead,
     TableConfigResponse,
     TableMetadataRead,
+    TableOperationsRead,
     TableSettingRead,
 )
+from cryo.table_config.operations import (
+    OPERATIONS,
+    TableOperationFacts,
+    operation_state,
+    preset_mode,
+)
+from cryo.table_config.property_docs import describe_property
 from cryo.table_config.recommend import advise
 from cryo.table_config.risk import Assessment, Risk, assess, max_risk, normalize
 from cryo.table_config.settings import (
@@ -64,6 +83,10 @@ class TableInputs:
     preset_name: str | None
     preset_params: dict[str, Any]
     engine: str | None
+    preset_mode: Mode | None = None
+    operation_exclusions: tuple[TableOperationExclusion, ...] = ()
+    held: bool = False
+    shared_location: bool = False
 
 
 class ConfigApplyError(Exception):
@@ -74,7 +97,10 @@ class ConfigApplyError(Exception):
 
 
 def load_inputs(session: Session, table: Table) -> TableInputs:
+    from cryo.anomalies.report import shared_location_table_ids
     from cryo.db.repositories import presets as preset_repo
+    from cryo.db.repositories.exclusions import excluded_table_ids
+    from cryo.db.repositories.operation_exclusions import list_operation_exclusions
 
     table = preset_repo.get_table_with_stats(session, table.id) or table
     source = session.get(Source, table.source_id) if table.source_id else None
@@ -85,7 +111,9 @@ def load_inputs(session: Session, table: Table) -> TableInputs:
     engine: str | None = None
     preset_id: uuid.UUID | None = None
     preset_name: str | None = None
+    mode: Mode | None = None
     if effective_preset is not None:
+        mode = preset_mode(effective_preset.preset.mode)
         params = effective_preset.preset.params
         preset_params = dict(params) if isinstance(params, Mapping) else {}
         preset_name = effective_preset.preset.name
@@ -101,6 +129,10 @@ def load_inputs(session: Session, table: Table) -> TableInputs:
         preset_name=preset_name,
         preset_params=preset_params,
         engine=engine,
+        preset_mode=mode,
+        operation_exclusions=tuple(list_operation_exclusions(session, table.id)),
+        held=bool(excluded_table_ids(session, [table.id])),
+        shared_location=table.id in shared_location_table_ids(session),
     )
 
 
@@ -188,7 +220,90 @@ def build_response(
         settings=settings,
         metadata=_metadata_read(config) if config is not None else None,
         properties=dict(sorted(ctx.properties.items())),
+        property_details=_property_details(ctx.properties),
         columns=list(ctx.columns),
+        operations=operations_read(inputs, ctx),
+    )
+
+
+_PROPERTY_SETTINGS: dict[str, tuple[str, str, str]] = {
+    spec.key: (spec.key, spec.summary, spec.doc_url)
+    for spec in SETTINGS
+    if spec.kind in {"property", "format_version"}
+}
+_BLOOM_SETTING_KEY = next(spec.key for spec in SETTINGS if spec.kind == "bloom_columns")
+
+
+def _property_details(properties: Mapping[str, str]) -> list[PropertyDetailRead]:
+    out: list[PropertyDetailRead] = []
+    for key, value in sorted(properties.items()):
+        detail = describe_property(key, value, _PROPERTY_SETTINGS)
+        setting_key = detail.setting_key
+        if setting_key is None and key.startswith(BLOOM_FILTER_PREFIX):
+            setting_key = _BLOOM_SETTING_KEY
+        out.append(
+            PropertyDetailRead(
+                key=detail.key,
+                value=detail.value,
+                kind=detail.kind,
+                summary=detail.summary,
+                doc_url=detail.doc_url,
+                setting_key=setting_key,
+            )
+        )
+    return out
+
+
+def operations_read(inputs: TableInputs, ctx: ConfigContext) -> TableOperationsRead:
+    overrides = inputs.assignment.param_overrides if inputs.assignment else None
+    params = {**inputs.preset_params, **(dict(overrides) if isinstance(overrides, Mapping) else {})}
+    rows = {row.operation: row for row in inputs.operation_exclusions}
+    gc = ctx.properties.get("gc.enabled")
+    facts = TableOperationFacts(
+        mode=inputs.preset_mode,
+        preset_name=inputs.preset_name,
+        params=params,
+        excluded=rows.keys(),
+        held=inputs.held,
+        gc_disabled=gc is not None and gc.strip().lower() != "true",
+        shared_location=inputs.shared_location,
+        engine=inputs.engine,
+    )
+    operations: list[MaintenanceOperationRead] = []
+    for spec in OPERATIONS:
+        state = operation_state(spec, facts)
+        row = rows.get(spec.operation.value)
+        operations.append(
+            MaintenanceOperationRead(
+                operation=spec.operation.value,
+                label=spec.label,
+                phase=spec.phase,
+                summary=spec.summary,
+                when_planned=spec.when_planned,
+                exclude_consequence=spec.exclude_consequence,
+                exclude_risk=spec.exclude_risk,
+                reasons_to_exclude=list(spec.reasons_to_exclude),
+                companion_hint=spec.companion_hint,
+                companion_operation=(
+                    spec.companion_operation.value if spec.companion_operation else None
+                ),
+                engine_notes=[
+                    EngineNoteRead(engine=engine, note=note) for engine, note in spec.engines
+                ],
+                doc_url=spec.doc_url,
+                excluded=row is not None,
+                excluded_by=row.created_by if row else None,
+                excluded_at=row.created_at if row else None,
+                excluded_reason=row.reason if row else None,
+                status=state.status,
+                status_detail=state.detail,
+            )
+        )
+    return TableOperationsRead(
+        preset_name=inputs.preset_name,
+        mode=inputs.preset_mode.value if inputs.preset_mode else None,
+        held=inputs.held,
+        operations=operations,
     )
 
 

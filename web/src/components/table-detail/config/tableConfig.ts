@@ -1,4 +1,10 @@
-import type { ConfigChange, ConfigRisk, TableSettingRead } from "../../../api/types";
+import type {
+  ConfigChange,
+  ConfigRisk,
+  MaintenanceOperationRead,
+  PropertyDetailRead,
+  TableSettingRead
+} from "../../../api/types";
 
 export type ValueSource = TableSettingRead["current_source"];
 export type ValueType = TableSettingRead["editor"]["value_type"];
@@ -176,6 +182,72 @@ export const ENGINE_LABEL: Record<string, string> = {
   native: "Native (Go)",
   cryo: "Cryo"
 };
+
+export const settingAnchor = (key: string): string => `tc-setting-${key.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+
+export const PROPERTY_KIND_LABEL: Record<PropertyDetailRead["kind"], string> = {
+  setting: "Cryo setting",
+  read: "Read",
+  write: "Write",
+  behavior: "Table behavior",
+  reserved: "Reserved",
+  catalog: "Catalog",
+  engine: "Engine",
+  custom: "Custom"
+};
+
+export const matchesProperty = (detail: PropertyDetailRead, query: string): boolean => {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return [detail.key, detail.value, detail.summary].some((text) => text.toLowerCase().includes(needle));
+};
+
+type OperationStatus = MaintenanceOperationRead["status"];
+
+export const OPERATION_STATUS_LABEL: Record<OperationStatus, string> = {
+  runs: "Runs",
+  when_needed: "When needed",
+  not_in_mode: "Not in this mode",
+  off: "Off in preset",
+  blocked: "Blocked",
+  held: "Table on hold",
+  excluded: "Excluded",
+  not_scheduled: "Not scheduled",
+  unsupported: "Unsupported here"
+};
+
+export const OPERATION_STATUS_TONE: Record<OperationStatus, "ok" | "muted" | "warn" | "danger"> = {
+  runs: "ok",
+  when_needed: "ok",
+  not_in_mode: "muted",
+  off: "muted",
+  not_scheduled: "muted",
+  blocked: "warn",
+  held: "warn",
+  unsupported: "warn",
+  excluded: "danger"
+};
+
+export interface OperationDiff {
+  exclude: string[];
+  include: string[];
+}
+
+export const diffExclusions = (operations: MaintenanceOperationRead[], draft: ReadonlySet<string>): OperationDiff => ({
+  exclude: operations.filter((op) => !op.excluded && draft.has(op.operation)).map((op) => op.operation),
+  include: operations.filter((op) => op.excluded && !draft.has(op.operation)).map((op) => op.operation)
+});
+
+/** A companion hint applies when its operation is excluded but the one it names still runs. */
+export const companionWarnings = (
+  operations: MaintenanceOperationRead[],
+  draft: ReadonlySet<string>
+): { operation: string; hint: string }[] =>
+  operations.flatMap((op) =>
+    op.companion_hint && op.companion_operation && draft.has(op.operation) && !draft.has(op.companion_operation)
+      ? [{ operation: op.operation, hint: op.companion_hint }]
+      : []
+  );
 
 /** Turns an API error `detail` object (blocked list, param errors) into readable text. */
 export const describeApplyError = (error: unknown): string => {

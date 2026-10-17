@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -45,6 +45,7 @@ def build_execution_plan(
     operations: tuple[OperationType, ...] | None,
     protected_snapshot_ids: Sequence[int] = (),
     has_shared_location: bool = False,
+    excluded_operations: Collection[str] = (),
 ) -> MaintenancePlan:
     plan_params = execution_plan_params(params, destination, stats)
     skip_operations = skip_operations_from_preset(operations)
@@ -63,6 +64,7 @@ def build_execution_plan(
         Mode(mode),
         plan_params,
         protected_snapshot_ids=protected_snapshot_ids,
+        excluded_operations=excluded_operations,
     )
     plan = gate_orphan_removal_on_shared_location(
         plan,

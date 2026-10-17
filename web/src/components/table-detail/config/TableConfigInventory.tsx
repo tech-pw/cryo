@@ -16,6 +16,7 @@ import { Input } from "../../ui/input";
 import { Segmented } from "../../ui/segmented";
 import { Skeleton } from "../../ui/skeleton";
 import { ConfigReviewDialog } from "./ConfigReviewDialog";
+import { MaintenanceOperationsCard, OPERATIONS_SECTION_ID } from "./MaintenanceOperationsCard";
 import { RiskPill } from "./RiskPopover";
 import { SettingRow } from "./SettingRow";
 import { AllProperties, TableMetadataCard } from "./TableMetadataCard";
@@ -23,6 +24,7 @@ import {
   describeApplyError,
   matchesFilter,
   matchesSearch,
+  settingAnchor,
   toChanges,
   type SettingFilter,
   type StagedChanges
@@ -148,6 +150,16 @@ export const TableConfigInventory = ({ tableId }: { tableId: string }) => {
             setSearch={setSearch}
             refreshing={refresh.isPending}
             onRefresh={() => refresh.mutate()}
+            operations={
+              data.operations ? (
+                <MaintenanceOperationsCard
+                  tableId={tableId}
+                  operations={data.operations}
+                  configKey={configKey}
+                  access={operatorAccess}
+                />
+              ) : null
+            }
           >
             {(visible) =>
               visible.map((setting) => {
@@ -249,8 +261,16 @@ interface InventoryBodyProps {
   setSearch: (search: string) => void;
   refreshing: boolean;
   onRefresh: () => void;
+  operations: ReactNode;
   children: (visible: TableSettingRead[]) => ReactNode;
 }
+
+const scrollToId = (id: string) =>
+  window.setTimeout(() => {
+    const target = document.getElementById(id);
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+    target?.focus({ preventScroll: true });
+  }, 0);
 
 const InventoryBody = ({
   data,
@@ -262,8 +282,16 @@ const InventoryBody = ({
   setSearch,
   refreshing,
   onRefresh,
+  operations,
   children
 }: InventoryBodyProps) => {
+  const excludedOps = (data.operations?.operations ?? []).filter((op) => op.excluded).length;
+  const showSetting = (key: string) => {
+    setFilter("all");
+    setGroup("all");
+    setSearch("");
+    scrollToId(settingAnchor(key));
+  };
   const settings = data.settings;
   const differs = settings.filter((s) => s.matches_recommendation === false).length;
   const setOnTable = settings.filter((s) => s.current_source === "table").length;
@@ -329,15 +357,26 @@ const InventoryBody = ({
           <span className="tc-tile-value">{highRisk}</span>
           <span className="tc-tile-hint">Changing these needs a written reason</span>
         </div>
-        <div className="tc-tile">
+        <button
+          type="button"
+          className={excludedOps ? "tc-tile tc-tile--warn-soft" : "tc-tile"}
+          onClick={() => scrollToId(OPERATIONS_SECTION_ID)}
+          aria-label="Maintained by: jump to maintenance operations"
+        >
           <span className="tc-tile-label">Maintained by</span>
           <span className="tc-tile-value tc-tile-value--small" title={data.preset_name ?? undefined}>
             {data.preset_name ?? "No preset"}
           </span>
           <span className="tc-tile-hint">
-            {data.preset_engine ? `Engine: ${data.preset_engine}` : "Cryo overrides need a preset"}
+            {[
+              data.preset_engine ? `Engine: ${data.preset_engine}` : "Cryo overrides need a preset",
+              data.operations?.mode ? `${data.operations.mode} mode` : null,
+              excludedOps ? `${excludedOps} operation${excludedOps === 1 ? "" : "s"} excluded` : null
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </span>
-        </div>
+        </button>
       </div>
 
       <div className="tc-toolbar">
@@ -412,6 +451,8 @@ const InventoryBody = ({
         <p className="tc-empty">No setting matches these filters.</p>
       )}
 
+      {operations}
+
       {data.metadata ? (
         <section className="tc" aria-labelledby="tc-metadata-title">
           <h3 id="tc-metadata-title" className="tc-subtitle">
@@ -421,7 +462,11 @@ const InventoryBody = ({
         </section>
       ) : null}
 
-      <AllProperties properties={data.properties ?? {}} />
+      <AllProperties
+        properties={data.properties ?? {}}
+        details={data.property_details ?? []}
+        onShowSetting={showSetting}
+      />
     </>
   );
 };

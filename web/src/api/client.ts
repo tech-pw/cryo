@@ -143,9 +143,14 @@ import type {
   ConfigChangePreview,
   ConfigPreviewResponse,
   ConfigRisk,
+  MaintenanceOperationRead,
+  OperationExclusionsResponse,
+  OperationExclusionsWrite,
+  PropertyDetailRead,
   SettingGroupRead,
   TableConfigMetadataRead,
   TableConfigResponse,
+  TableOperationsRead,
   TableSettingRead
 } from "./types";
 import { serializePredicate, type Predicate } from "../lib/predicate";
@@ -189,7 +194,7 @@ const formatApiDetail = (detail: unknown): string => {
 };
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
   signal?: AbortSignal;
@@ -1906,9 +1911,14 @@ export type {
   ConfigChangePreview,
   ConfigPreviewResponse,
   ConfigRisk,
+  MaintenanceOperationRead,
+  OperationExclusionsResponse,
+  OperationExclusionsWrite,
+  PropertyDetailRead,
   SettingGroupRead,
   TableConfigMetadataRead,
   TableConfigResponse,
+  TableOperationsRead,
   TableSettingRead
 };
 
@@ -1927,6 +1937,9 @@ export const applyTableConfig = (
   body: { changes: ConfigChange[]; confirm: boolean; reason?: string | null }
 ) =>
   apiFetch<ConfigApplyResponse>(`/tables/${tableId}/config/apply`, api, { method: "POST", body });
+
+export const putOperationExclusions = (api: ApiOptions, tableId: UUID, body: OperationExclusionsWrite) =>
+  apiFetch<OperationExclusionsResponse>(`/tables/${tableId}/config/operations`, api, { method: "PUT", body });
 
 export const analyzeWairBoundaries = (api: ApiOptions, tableId: UUID, aggressiveness = 1) =>
   apiFetch<WairBoundaryReport>(

@@ -854,6 +854,15 @@ scheduler's table query, `MaintenanceRunService` (409 when nothing remains), and
 layout apply. `MaintenanceBlock.OPERATOR_EXCLUDED` surfaces it in maintenance status. Scans and
 preset assignment ignore exclusions.
 
+Per-operation exclusions are narrower. Migration `20261017_1200` adds
+`table_operation_exclusions(table_id → tables ON DELETE CASCADE, operation, reason, created_by,
+created_at)`, primary key `(table_id, operation)`. The table stays selected; `build_plan(...,
+excluded_operations=...)` drops the named operations and notes it. `optimize` is dropped before the
+`convert_deletes` and `compute_statistics` decisions. Every plan path passes them:
+`build_execution_plan` (worker, intent binder), governor native admission, and the batch
+coordinator's `build_table_work`. `MaintenanceJobRecord.excluded_operations` is loaded in
+`_job_record` at plan time.
+
 Intent idempotency covers the full non-temporal execution contract; expiry is deliberately excluded so
 retrying the same scheduled job does not silently renew authority. A new scheduled job is the renewal
 boundary. Receipt reuse verifies intent step, operation, destination, and effect strategy.
@@ -894,6 +903,8 @@ POST  /api/v1/tables/{id}/config/preview                     # risk/warnings/blo
 POST  /api/v1/tables/{id}/config/apply                       # operator (admin for min_role=admin);
         # one PyIceberg txn on the Source catalog + cryo.* overrides; audited; high risk needs
         # confirm + reason; stale expected_value rejected. See docs/TABLE_CONFIG_INVENTORY_2026-10-17.md
+PUT   /api/v1/tables/{id}/config/operations                  # operator; per-table operation exclusions
+        # (§11.3); audited; excluding a high-risk op needs confirm
 GET   /api/v1/dashboards/datalake                             # grade dist, cost, drift, totals
 GET   /api/v1/dashboards/schema-cost
 GET   /api/v1/dashboards/cost                                 # datalake current vs projected, savings

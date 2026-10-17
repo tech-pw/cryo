@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cmp_to_key
 from typing import Any
@@ -41,18 +41,23 @@ def build_plan(
     params: Mapping[str, Any] | None = None,
     *,
     protected_snapshot_ids: Sequence[int] | None = None,
+    excluded_operations: Collection[str] = (),
 ) -> MaintenancePlan:
     params = params or {}
     resolved_mode = Mode(mode)
     operations: list[Operation] = []
     notes: list[str] = []
+    excluded = {str(op) for op in excluded_operations}
+    dropped_by_table: set[str] = set()
 
     if resolved_mode is Mode.MANIFEST_ONLY:
         operations.append(Operation(OperationType.OPTIMIZE_MANIFESTS, dict(params)))
+        kept = _apply_table_exclusions(operations, excluded, dropped_by_table)
+        _note_table_exclusions(dropped_by_table, notes)
         return MaintenancePlan(
             table_ref=_table_ref(stats, params),
             mode=resolved_mode,
-            operations=_apply_skip_operations(operations, params, notes),
+            operations=_apply_skip_operations(kept, params, notes),
             notes=tuple(notes),
         )
 
@@ -73,10 +78,17 @@ def build_plan(
         operations.append(Operation(OperationType.REMOVE_ORPHAN_FILES, _orphan_params(params)))
 
     if resolved_mode in {Mode.STANDARD, Mode.DEEP}:
-        optimize_ops = list(
-            _apply_skip_operations(
-                _optimize_operations(stats, partitions, params, notes), params, notes
-            )
+        # Dropped here, not only at the end: convert_deletes sizes its own rewrite around the
+        # planned optimizes and compute_statistics only runs after one, so an excluded
+        # optimize must be gone before either decision.
+        optimize_ops = _apply_table_exclusions(
+            list(
+                _apply_skip_operations(
+                    _optimize_operations(stats, partitions, params, notes), params, notes
+                )
+            ),
+            excluded,
+            dropped_by_table,
         )
         pathological_skew = _has_pathological_delete_skew(partitions, params)
         unreachable_skew = not pathological_skew and _has_unreachable_delete_skew(
@@ -173,13 +185,32 @@ def build_plan(
     # guardrails.CORRECT_ORDER the single source of sequencing truth. The sort is stable, so
     # the per-chunk OPTIMIZE operations keep the benefit-score order _optimize_operations gave
     # them (they all share one rank).
-    operations = sort_operations_canonically(operations, key=lambda op: op.type)
+    operations = sort_operations_canonically(
+        _apply_table_exclusions(operations, excluded, dropped_by_table), key=lambda op: op.type
+    )
+    _note_table_exclusions(dropped_by_table, notes)
     return MaintenancePlan(
         table_ref=_table_ref(stats, params),
         mode=resolved_mode,
         operations=_apply_skip_operations(operations, params, notes),
         notes=tuple(notes),
     )
+
+
+def _apply_table_exclusions(
+    operations: list[Operation], excluded: set[str], dropped: set[str]
+) -> list[Operation]:
+    if not excluded:
+        return operations
+    dropped.update(op.type.value for op in operations if op.type.value in excluded)
+    return [op for op in operations if op.type.value not in excluded]
+
+
+def _note_table_exclusions(dropped: set[str], notes: list[str]) -> None:
+    if dropped:
+        notes.append(
+            f"Excluded for this table in its maintenance settings: {', '.join(sorted(dropped))}."
+        )
 
 
 def _apply_skip_operations(

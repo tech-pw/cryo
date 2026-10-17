@@ -1353,6 +1353,28 @@ class MaintenanceExclusion(Base):
     )
 
 
+class TableOperationExclusion(Base):
+    """One maintenance operation the planner must never plan for one table.
+
+    Unlike ``MaintenanceExclusion`` the table is still selected and maintained; only the
+    named operation is dropped from every plan built for it.
+    """
+
+    __tablename__ = "table_operation_exclusions"
+
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    operation: Mapped[str] = mapped_column(Text, primary_key=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 _IMMUTABLE_INTENT_FIELDS = (
     "tenant_id",
     "job_id",

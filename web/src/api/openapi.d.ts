@@ -1483,6 +1483,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tables/{table_id}/config/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Operation Exclusions
+         * @description Replace the set of maintenance operations no run may plan for this table.
+         *
+         *     Every plan path (scheduled, ad-hoc, governor admission, nightly batch) drops them.
+         *     Excluding a high-risk operation needs ``confirm``; every change is audited.
+         */
+        put: operations["put_operation_exclusions_api_v1_tables__table_id__config_operations_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/smart-maintenance/overview": {
         parameters: {
             query?: never;
@@ -8736,6 +8759,54 @@ export interface components {
              */
             updated_at: string;
         };
+        /** MaintenanceOperationRead */
+        MaintenanceOperationRead: {
+            /** Operation */
+            operation: string;
+            /** Label */
+            label: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "compaction" | "cleanup";
+            /** Summary */
+            summary: string;
+            /** When Planned */
+            when_planned: string;
+            /** Exclude Consequence */
+            exclude_consequence: string;
+            /**
+             * Exclude Risk
+             * @enum {string}
+             */
+            exclude_risk: "low" | "medium" | "high";
+            /** Reasons To Exclude */
+            reasons_to_exclude?: string[];
+            /** Companion Hint */
+            companion_hint?: string | null;
+            /** Companion Operation */
+            companion_operation?: string | null;
+            /** Engine Notes */
+            engine_notes?: components["schemas"]["EngineNoteRead"][];
+            /** Doc Url */
+            doc_url: string;
+            /** Excluded */
+            excluded: boolean;
+            /** Excluded By */
+            excluded_by?: string | null;
+            /** Excluded At */
+            excluded_at?: string | null;
+            /** Excluded Reason */
+            excluded_reason?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "excluded" | "held" | "blocked" | "not_in_mode" | "off" | "when_needed" | "runs" | "not_scheduled" | "unsupported";
+            /** Status Detail */
+            status_detail: string;
+        };
         /** MaintenancePlanRead */
         MaintenancePlanRead: {
             /** Table Ref */
@@ -9118,6 +9189,30 @@ export interface components {
             description: string;
             /** Destructive */
             destructive: boolean;
+        };
+        /** OperationExclusionsResponse */
+        OperationExclusionsResponse: {
+            /** Added */
+            added: string[];
+            /** Removed */
+            removed: string[];
+            /** Audit Log Ids */
+            audit_log_ids: number[];
+            /** Message */
+            message: string;
+            operations: components["schemas"]["TableOperationsRead"];
+        };
+        /** OperationExclusionsWrite */
+        OperationExclusionsWrite: {
+            /** Excluded */
+            excluded: string[];
+            /** Reason */
+            reason: string;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
         };
         /** OperationRead */
         OperationRead: {
@@ -9624,6 +9719,24 @@ export interface components {
             qualifies_for_canary: boolean;
             /** Reasons */
             reasons: string[];
+        };
+        /** PropertyDetailRead */
+        PropertyDetailRead: {
+            /** Key */
+            key: string;
+            /** Value */
+            value: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "setting" | "read" | "write" | "behavior" | "reserved" | "catalog" | "engine" | "custom";
+            /** Summary */
+            summary: string;
+            /** Doc Url */
+            doc_url?: string | null;
+            /** Setting Key */
+            setting_key?: string | null;
         };
         /** PropertyRecommendationRead */
         PropertyRecommendationRead: {
@@ -12209,8 +12322,11 @@ export interface components {
             properties?: {
                 [key: string]: string;
             };
+            /** Property Details */
+            property_details?: components["schemas"]["PropertyDetailRead"][];
             /** Columns */
             columns?: string[];
+            operations?: components["schemas"]["TableOperationsRead"] | null;
         };
         /** TableCostRead */
         TableCostRead: {
@@ -12468,6 +12584,20 @@ export interface components {
              * @default web-table-operation
              */
             trigger: string | null;
+        };
+        /** TableOperationsRead */
+        TableOperationsRead: {
+            /** Preset Name */
+            preset_name?: string | null;
+            /** Mode */
+            mode?: string | null;
+            /**
+             * Held
+             * @default false
+             */
+            held: boolean;
+            /** Operations */
+            operations: components["schemas"]["MaintenanceOperationRead"][];
         };
         /** TableParamOverridePatch */
         TableParamOverridePatch: {
@@ -16311,6 +16441,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigApplyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_operation_exclusions_api_v1_tables__table_id__config_operations_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationExclusionsWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationExclusionsResponse"];
                 };
             };
             /** @description Validation Error */

@@ -5,9 +5,9 @@ import { cn } from "../../../lib/cn";
 import type { WriteAccess } from "../../../lib/permissions";
 import { Button } from "../../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
-import { RiskPopover } from "./RiskPopover";
+import { InfoButton, RiskPopover, SettingConsequences } from "./RiskPopover";
 import { SettingEditor } from "./SettingEditor";
-import { formatValue, SOURCE_HINT, SOURCE_LABEL, type StagedChange } from "./tableConfig";
+import { formatValue, settingAnchor, SOURCE_HINT, SOURCE_LABEL, type StagedChange } from "./tableConfig";
 
 export interface SettingRowProps {
   setting: TableSettingRead;
@@ -44,11 +44,18 @@ export const SettingRow = ({
   return (
     <div
       className={cn("tc-row", differs && !staged && "tc-row--differs", staged && "tc-row--staged")}
+      id={settingAnchor(setting.key)}
+      tabIndex={-1}
       data-testid={`setting-${setting.key}`}
     >
       <div className="tc-row-main">
         <div className="tc-name">
-          <span className="tc-name-label">{setting.label}</span>
+          <span className="tc-name-label">
+            {setting.label}
+            <InfoButton label={setting.label}>
+              <SettingConsequences setting={setting} />
+            </InfoButton>
+          </span>
           <span className="tc-key">{setting.key}</span>
           <span className="tc-summary-text tc-clamp">{setting.summary}</span>
         </div>

@@ -2,7 +2,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ConfigPreviewResponse, TableConfigResponse, TableSettingRead } from "../../../api/types";
+import type {
+  ConfigPreviewResponse,
+  MaintenanceOperationRead,
+  TableConfigResponse,
+  TableOperationsRead,
+  TableSettingRead
+} from "../../../api/types";
 import { CryoTooltipProvider } from "../../ui/tooltip";
 import { TableConfigInventory } from "./TableConfigInventory";
 
@@ -22,7 +28,8 @@ vi.mock("../../../lib/auth", () => ({
 const client = vi.hoisted(() => ({
   getTableConfig: vi.fn(),
   previewTableConfig: vi.fn(),
-  applyTableConfig: vi.fn()
+  applyTableConfig: vi.fn(),
+  putOperationExclusions: vi.fn()
 }));
 
 vi.mock("../../../api/client", async (importOriginal) => {
@@ -110,6 +117,65 @@ const dataPath = setting({
   change_risk: "high"
 });
 
+const operation = (overrides: Partial<MaintenanceOperationRead>): MaintenanceOperationRead => ({
+  operation: "optimize",
+  label: "Compact small files",
+  phase: "compaction",
+  summary: "Rewrites small data files.",
+  when_planned: "Standard and deep modes.",
+  exclude_consequence: "Small files keep accumulating.",
+  exclude_risk: "medium",
+  reasons_to_exclude: ["The writer already compacts."],
+  companion_hint: null,
+  companion_operation: null,
+  engine_notes: [{ engine: "trino", note: "ALTER TABLE ... EXECUTE optimize." }],
+  doc_url: "https://iceberg.apache.org/docs/latest/maintenance/#compact-data-files",
+  excluded: false,
+  excluded_by: null,
+  excluded_at: null,
+  excluded_reason: null,
+  status: "when_needed",
+  status_detail: "Runs when the scan finds work for it.",
+  ...overrides
+});
+
+const operations = (ops: Partial<MaintenanceOperationRead>[] = []): TableOperationsRead => ({
+  preset_name: "standard",
+  mode: "deep",
+  held: false,
+  operations: [
+    operation({
+      operation: "convert_deletes",
+      label: "Apply delete files",
+      status: "when_needed"
+    }),
+    operation({
+      companion_hint: "Apply delete files also rewrites data files.",
+      companion_operation: "convert_deletes"
+    }),
+    operation({
+      operation: "expire_snapshots",
+      label: "Expire snapshots",
+      phase: "cleanup",
+      exclude_risk: "high",
+      exclude_consequence: "Storage grows with every commit.",
+      status: "runs",
+      status_detail: "Runs on every standard run."
+    }),
+    operation({
+      operation: "remove_orphan_files",
+      label: "Remove orphan files",
+      phase: "cleanup",
+      exclude_risk: "low",
+      excluded: true,
+      excluded_by: "ops@pw",
+      excluded_reason: "shared location",
+      status: "excluded",
+      status_detail: "Excluded for this table. No run plans it."
+    })
+  ].map((op) => ({ ...op, ...(ops.find((o) => o.operation === op.operation) ?? {}) }))
+});
+
 const response = (overrides: Partial<TableConfigResponse> = {}): TableConfigResponse => ({
   table_id: "table-1",
   read_from: "catalog",
@@ -150,7 +216,26 @@ const response = (overrides: Partial<TableConfigResponse> = {}): TableConfigResp
     partition_statistics_files: 0
   },
   properties: { "gc.enabled": "true", "write.format.default": "parquet" },
+  property_details: [
+    {
+      key: "gc.enabled",
+      value: "true",
+      kind: "setting",
+      summary: "Lets maintenance delete files.",
+      doc_url: "https://iceberg.apache.org/docs/latest/configuration/",
+      setting_key: "gc.enabled"
+    },
+    {
+      key: "write.format.default",
+      value: "parquet",
+      kind: "write",
+      summary: "File format for new data files.",
+      doc_url: "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+      setting_key: null
+    }
+  ],
   columns: ["id", "event_date"],
+  operations: operations(),
   ...overrides
 });
 
@@ -327,5 +412,101 @@ describe("TableConfigInventory", () => {
     const edit = within(row).getByRole("button", { name: "Edit Garbage collection" });
     expect(edit).toBeDisabled();
     expect(edit).toHaveAttribute("title", "Viewer access is read-only.");
+  });
+
+  it("explains every setting from an info button next to its name", async () => {
+    renderInventory();
+    const row = await screen.findByTestId("setting-write.target-file-size-bytes");
+    fireEvent.click(within(row).getByRole("button", { name: "About Target data file size" }));
+    expect(await screen.findByText("More, smaller files.")).toBeInTheDocument();
+  });
+
+  it("explains every raw property and links curated ones to their setting", async () => {
+    renderInventory();
+    fireEvent.click(await screen.findByRole("button", { name: "All table properties (2)" }));
+    expect(screen.getByText("File format for new data files.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "About write.format.default" }));
+    expect(await screen.findByRole("link", { name: /Iceberg documentation/ })).toHaveAttribute(
+      "href",
+      "https://iceberg.apache.org/docs/latest/configuration/#write-properties"
+    );
+    fireEvent.click(screen.getByRole("button", { name: "About gc.enabled" }));
+    expect(await screen.findByRole("button", { name: /Show its setting/ })).toBeInTheDocument();
+  });
+
+  it("shows what each maintenance operation does for this table", async () => {
+    renderInventory();
+    const optimize = await screen.findByTestId("operation-optimize");
+    expect(within(optimize).getByText("When needed")).toBeInTheDocument();
+    expect(within(optimize).getByRole("switch", { name: "Run Compact small files" })).toBeChecked();
+    const orphan = screen.getByTestId("operation-remove_orphan_files");
+    expect(within(orphan).getByText("Excluded")).toBeInTheDocument();
+    expect(within(orphan).getByText(/ops@pw/)).toBeInTheDocument();
+    expect(within(orphan).getByRole("switch", { name: "Run Remove orphan files" })).not.toBeChecked();
+    fireEvent.click(within(optimize).getByRole("button", { name: "About Compact small files" }));
+    expect(await screen.findByText("The writer already compacts.")).toBeInTheDocument();
+  });
+
+  it("excludes an operation with a reason and warns about its companion", async () => {
+    client.putOperationExclusions.mockResolvedValue({
+      added: ["optimize"],
+      removed: [],
+      audit_log_ids: [9],
+      message: "Excluded Compact small files.",
+      operations: operations([{ operation: "optimize", excluded: true, status: "excluded" }])
+    });
+    renderInventory();
+    const optimize = await screen.findByTestId("operation-optimize");
+    fireEvent.click(within(optimize).getByRole("switch", { name: "Run Compact small files" }));
+    expect(within(optimize).getByText("Will be excluded")).toBeInTheDocument();
+    expect(screen.getByText("Apply delete files also rewrites data files.")).toBeInTheDocument();
+
+    const bar = screen.getByRole("region", { name: "Staged operation changes" });
+    fireEvent.click(within(bar).getByRole("button", { name: "Review and save" }));
+    const save = await screen.findByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason for this change" }), {
+      target: { value: "Writer compacts on commit" }
+    });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(client.putOperationExclusions).toHaveBeenCalledTimes(1));
+    const body = client.putOperationExclusions.mock.calls[0][2];
+    expect([...body.excluded].sort()).toEqual(["optimize", "remove_orphan_files"]);
+    expect(body).toMatchObject({ reason: "Writer compacts on commit", confirm: false });
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Staged operation changes" })).not.toBeInTheDocument()
+    );
+  });
+
+  it("needs acknowledgement before excluding a high-risk operation", async () => {
+    client.putOperationExclusions.mockResolvedValue({
+      added: ["expire_snapshots"],
+      removed: [],
+      audit_log_ids: [10],
+      message: "Excluded Expire snapshots.",
+      operations: operations()
+    });
+    renderInventory();
+    const expire = await screen.findByTestId("operation-expire_snapshots");
+    fireEvent.click(within(expire).getByRole("switch", { name: "Run Expire snapshots" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Reason for this change" }), {
+      target: { value: "Legal hold on this table" }
+    });
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "I understand the consequences" }));
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(client.putOperationExclusions).toHaveBeenCalledTimes(1));
+    expect(client.putOperationExclusions.mock.calls[0][2]).toMatchObject({ confirm: true });
+  });
+
+  it("keeps operation toggles read-only for viewers", async () => {
+    access.operator = { allowed: false, hidden: false, reason: "Viewer access is read-only." };
+    renderInventory();
+    const optimize = await screen.findByTestId("operation-optimize");
+    expect(within(optimize).getByRole("switch", { name: "Run Compact small files" })).toBeDisabled();
   });
 });

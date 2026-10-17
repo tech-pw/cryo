@@ -24,7 +24,8 @@ detail **Config** tab.
 
 Every row has:
 
-- The setting's name and key, plus a one-line summary.
+- The setting's name and key, plus a one-line summary. The ⓘ next to the name opens the full
+  explanation (the same content as the risk popover).
 - The **current value**, formatted by type (MiB/GiB, days/hours, Enabled/Disabled, `v2`), with a
   **source badge**: Set on table, Iceberg default, Engine decides, Table metadata, Cryo preset, Table
   override, or Cryo default.
@@ -55,8 +56,14 @@ Also on the page:
 - A **Table metadata** card: format version, partition spec, sort order, identifier fields,
   branches and tags (refs with no max-ref-age are flagged as kept forever), snapshot and metadata-log
   counts, schema versions, statistics files, UUID, and the table and metadata locations.
-- A collapsible **All table properties** list with search, covering every raw property, including
-  ones outside the catalogue.
+- A **Maintenance operations** section (below) to choose which operations may run on this table.
+- A collapsible **All table properties** list with search. Every raw property gets a kind (Cryo
+  setting, Read, Write, Table behavior, Reserved, Catalog, Engine, Custom), a plain-language
+  explanation, and an ⓘ with its documentation link. Curated keys and per-column bloom-filter keys
+  link to their setting row ("Show its setting"). Explanations come from
+  `cryo/table_config/property_docs.py`, written against the
+  [Iceberg configuration reference](https://iceberg.apache.org/docs/latest/configuration/).
+  Unknown keys are labelled Custom ("Iceberg stores it but doesn't act on it") rather than guessed.
 - When the live catalog read fails, a banner explains that values come from the last scan. Editing
   pauses until a live read succeeds, so nothing is written blind.
 
@@ -74,6 +81,52 @@ Also on the page:
    page re-renders from that read.
 
 ![Review dialog](../site/assets/img/screens/table-config-review-light.png)
+
+![Every property explained](../site/assets/img/screens/table-config-properties-light.png)
+
+## Maintenance operations (per table)
+
+![Maintenance operations](../site/assets/img/screens/table-config-operations-light.png)
+
+Operators can exclude individual operations for one table, for example `optimize` on a table
+whose writer already compacts, or `remove_orphan_files` on a table that shares a prefix. This is
+different from a hold (Runs → Holds), which stops all maintenance on the table.
+
+Each of the seven operations, listed in `CORRECT_ORDER`, shows:
+
+- What it does, when the planner plans it, and the engine procedure it maps to, in the ⓘ popover.
+- **For this table**, a status computed from the effective preset and the table's state:
+  - Runs
+  - When needed, with the specific trigger
+  - Not in this mode (light, standard or deep)
+  - Off in preset (`compute_statistics`)
+  - Blocked, by `gc.enabled=false` or a shared S3 location
+  - Unsupported here (`rewrite_position_deletes` on a Trino preset, where the renderer refuses it)
+  - Table on hold
+  - Excluded, with who, when and why
+- **If excluded**, the risk of excluding it and what happens. Expiry is High, because storage and
+  metadata grow without bound. Compaction and delete-file application are Medium. The rest are
+  Low.
+- A toggle. Changes are staged, then saved through a review dialog that needs a reason of at least
+  8 characters. Excluding a high-risk operation also needs a checked acknowledgement; the API
+  returns 409 without `confirm`.
+- A companion warning. Excluding `optimize` alone still lets `convert_deletes` rewrite data, and on
+  Trino it renders as `EXECUTE optimize`, so the UI says to exclude both.
+
+Storage and enforcement:
+
+- Exclusions live in `table_operation_exclusions(table_id, operation, reason, created_by,
+  created_at)`, added by migration `20261017_1200` with `ON DELETE CASCADE` from `tables`.
+- Writes are audited as `operation_exclude` and `operation_include`.
+- `build_plan(..., excluded_operations=...)` drops them with the note "Excluded for this table in
+  its maintenance settings: …". `optimize` is dropped before the `convert_deletes` and
+  `compute_statistics` decisions, so an excluded compaction doesn't leave a stats pass behind.
+- Every plan path passes them in:
+  - the worker and durable-intent binder, through `MaintenanceJobRecord.excluded_operations`, which
+    `_job_record` loads at plan time, so queued jobs also pick up a change
+  - governor native admission
+  - the nightly batch coordinator, which loads them once per run
+- The stateless `POST /maintenance/preview` playground has no table identity and ignores them.
 
 ## Catalogue (34 settings, `cryo/table_config/settings.py`)
 
@@ -138,6 +191,16 @@ POST /api/v1/tables/{table_id}/config/preview         # viewer; 503 if the catal
 POST /api/v1/tables/{table_id}/config/apply           # operator; admin for min_role=admin settings
 ```
 
+```http
+PUT /api/v1/tables/{table_id}/config/operations       # operator
+```
+
+`PUT` takes `{excluded: [operation, …], reason, confirm}` and replaces the table's full exclusion
+set. It returns `{added, removed, audit_log_ids, message, operations}`. Unknown operations or a
+reason under 8 characters return 422. Newly excluding a high-risk operation without `confirm`
+returns 409. `GET …/config` also returns `operations` (per-operation status and consequences) and
+`property_details` (an explanation for every raw property).
+
 `apply` takes `{changes: [{key, value|null, expected_value, check_expected}], confirm, reason}`. A
 `null` value unsets the property, or removes the Cryo override. Responses:
 
@@ -180,8 +243,22 @@ POST /api/v1/tables/{table_id}/config/apply           # operator; admin for min_
   - `TableConfigInventory.test.tsx` covers rendering, the popover, the filter, locks and role gates,
     the stage → preview → apply flow, the high-risk acknowledgement and reason, scan fallback, the
     metadata card and raw properties.
-  - `npm run quality` passes: 801 tests.
-- Screenshots come from `e2e/docs-capture` (shots `table-config` and `table-config-review`). The
+  - `TableConfigInventory.test.tsx` also covers the setting and property ⓘ popovers, operation
+    statuses, staged exclusion with the companion warning, the high-risk acknowledgement, and
+    viewer read-only toggles.
+  - `npm run quality` passes: 807 tests.
+- `tests/test_table_operation_exclusions.py` has 16 tests. They cover:
+  - planner drops, including optimize taking `compute_statistics` with it
+  - the convert_deletes companion
+  - the manifest-only mode
+  - pass-through in `build_execution_plan`
+  - `_job_record`
+  - the nightly batch end to end
+  - API statuses, including the GC block and Trino unsupported
+  - PUT audit, re-enable, 409, 422 and 403
+  - property explanations
+- Screenshots come from `e2e/docs-capture` (shots `table-config`, `table-config-review`,
+  `table-config-operations` and `table-config-properties`). The
   fixture `demo-table-config.json` was produced by the real backend: a seeded SQLite database, a
   patched live read, then the GET and preview endpoints. The screenshots therefore show the real
   catalogue text.

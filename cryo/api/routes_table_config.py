@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from cryo.api.deps import SessionDep, require_operator, require_viewer
 from cryo.api.security import Principal, Role
 from cryo.db.models import Table
+from cryo.db.repositories.operation_exclusions import set_excluded_operations
 from cryo.db.tenant_scope import get_scoped_resource
 from cryo.table_config import service
 from cryo.table_config.live import CatalogReadError
@@ -16,8 +17,11 @@ from cryo.table_config.models import (
     ConfigApplyResponse,
     ConfigPreviewRequest,
     ConfigPreviewResponse,
+    OperationExclusionsResponse,
+    OperationExclusionsWrite,
     TableConfigResponse,
 )
+from cryo.table_config.operations import SPECS
 from cryo.table_config.risk import max_risk
 
 router = APIRouter(prefix="/api/v1", tags=["tables"])
@@ -105,4 +109,61 @@ def apply_table_config(
         config=service.build_response(
             refreshed_inputs, outcome.config, catalog_error=outcome.catalog_error
         ),
+    )
+
+
+@router.put("/tables/{table_id}/config/operations", response_model=OperationExclusionsResponse)
+def put_operation_exclusions(
+    table_id: uuid.UUID,
+    payload: OperationExclusionsWrite,
+    session: SessionDep,
+    principal: OperatorPrincipalDep,
+) -> OperationExclusionsResponse:
+    """Replace the set of maintenance operations no run may plan for this table.
+
+    Every plan path (scheduled, ad-hoc, governor admission, nightly batch) drops them.
+    Excluding a high-risk operation needs ``confirm``; every change is audited.
+    """
+    inputs = _inputs(session, table_id)
+    unknown = sorted({op for op in payload.excluded if op not in SPECS})
+    if unknown:
+        raise HTTPException(
+            status_code=422, detail=f"not a maintenance operation: {', '.join(unknown)}"
+        )
+    already = {row.operation for row in inputs.operation_exclusions}
+    risky = sorted(op for op in set(payload.excluded) - already if SPECS[op].exclude_risk == "high")
+    if risky and not payload.confirm:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "requires_confirmation": True,
+                "operations": risky,
+                "message": "Excluding these operations is high risk; resend with confirm.",
+            },
+        )
+    change = set_excluded_operations(
+        session,
+        inputs.table.id,
+        payload.excluded,
+        reason=payload.reason.strip(),
+        actor=principal.subject,
+    )
+    session.commit()
+    refreshed = _inputs(session, table_id)
+    try:
+        config = service.read_live(refreshed)
+    except CatalogReadError:
+        config = None
+    parts = []
+    if change.added:
+        parts.append(f"excluded {', '.join(SPECS[op].label for op in change.added)}")
+    if change.removed:
+        parts.append(f"re-enabled {', '.join(SPECS[op].label for op in change.removed)}")
+    message = ("; ".join(parts) or "no change").capitalize() + "."
+    return OperationExclusionsResponse(
+        added=list(change.added),
+        removed=list(change.removed),
+        audit_log_ids=list(change.audit_ids),
+        message=message,
+        operations=service.operations_read(refreshed, service.build_context(refreshed, config)),
     )

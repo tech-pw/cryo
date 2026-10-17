@@ -1,11 +1,12 @@
-import { Search } from "lucide-react";
+import { ExternalLink, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import type { TableConfigMetadataRead } from "../../../api/types";
+import type { PropertyDetailRead, TableConfigMetadataRead } from "../../../api/types";
 import { Collapsible } from "../../ui/collapsible";
 import { Input } from "../../ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
-import { formatDurationMs } from "./tableConfig";
+import { InfoButton } from "./RiskPopover";
+import { formatDurationMs, matchesProperty, PROPERTY_KIND_LABEL } from "./tableConfig";
 
 const formatTimestamp = (ms: number | null | undefined): string => {
   if (ms == null) return "Unknown";
@@ -138,27 +139,37 @@ export const TableMetadataCard = ({ metadata }: { metadata: TableConfigMetadataR
   );
 };
 
-export const AllProperties = ({ properties }: { properties: Record<string, string> }) => {
+export interface AllPropertiesProps {
+  properties: Record<string, string>;
+  details: PropertyDetailRead[];
+  onShowSetting: (settingKey: string) => void;
+}
+
+export const AllProperties = ({ properties, details, onShowSetting }: AllPropertiesProps) => {
   const [query, setQuery] = useState("");
-  const entries = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return Object.entries(properties).filter(
-      ([key, value]) => !needle || key.toLowerCase().includes(needle) || value.toLowerCase().includes(needle)
+  const rows = useMemo<PropertyDetailRead[]>(() => {
+    const described = new Map(details.map((detail) => [detail.key, detail]));
+    return Object.entries(properties).map(
+      ([key, value]) =>
+        described.get(key) ?? { key, value, kind: "custom", summary: "No description available." }
     );
-  }, [properties, query]);
-  const total = Object.keys(properties).length;
+  }, [properties, details]);
+  const entries = useMemo(() => rows.filter((row) => matchesProperty(row, query)), [rows, query]);
+  const total = rows.length;
 
   return (
     <Collapsible label={`All table properties (${total})`}>
       <div className="tc">
-        <div className="tc-search">
-          <Search aria-hidden="true" />
-          <Input
-            aria-label="Search properties"
-            placeholder="Search keys or values"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
+        <div className="tc-toolbar">
+          <div className="tc-search">
+            <Search aria-hidden="true" />
+            <Input
+              aria-label="Search properties"
+              placeholder="Search keys, values or descriptions"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
         </div>
         {entries.length ? (
           <div className="tc-props-wrap">
@@ -167,13 +178,27 @@ export const AllProperties = ({ properties }: { properties: Record<string, strin
                 <tr>
                   <th>Key</th>
                   <th>Value</th>
+                  <th>What it is</th>
                 </tr>
               </thead>
               <tbody>
-                {entries.map(([key, value]) => (
-                  <tr key={key}>
-                    <td>{key}</td>
-                    <td>{value}</td>
+                {entries.map((row) => (
+                  <tr key={row.key}>
+                    <td>
+                      <span className="tc-prop-key">
+                        {row.key}
+                        <InfoButton label={row.key}>
+                          <PropertyInfo detail={row} onShowSetting={onShowSetting} />
+                        </InfoButton>
+                      </span>
+                    </td>
+                    <td>{row.value}</td>
+                    <td>
+                      <div className="tc-prop-about">
+                        <span className={`tc-kind tc-kind--${row.kind}`}>{PROPERTY_KIND_LABEL[row.kind]}</span>
+                        <span className="tc-clamp">{row.summary}</span>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -184,5 +209,38 @@ export const AllProperties = ({ properties }: { properties: Record<string, strin
         )}
       </div>
     </Collapsible>
+  );
+};
+
+const PropertyInfo = ({
+  detail,
+  onShowSetting
+}: {
+  detail: PropertyDetailRead;
+  onShowSetting: (settingKey: string) => void;
+}) => {
+  const settingKey = detail.setting_key;
+  return (
+  <div className="tc-pop">
+    <div>
+      <h4 className="tc-mono">{detail.key}</h4>
+      <span className={`tc-kind tc-kind--${detail.kind}`}>{PROPERTY_KIND_LABEL[detail.kind]}</span>
+      <p className="tc-summary-text tc-pop-summary">{detail.summary}</p>
+    </div>
+    <dl className="tc-pop-facts">
+      <dt>Value</dt>
+      <dd className="tc-mono">{detail.value}</dd>
+    </dl>
+    {settingKey ? (
+      <button type="button" className="tc-apply-reco" onClick={() => onShowSetting(settingKey)}>
+        Show its setting, with risk and recommendation
+      </button>
+    ) : null}
+    {detail.doc_url ? (
+      <a className="tc-doc" href={detail.doc_url} target="_blank" rel="noreferrer">
+        Iceberg documentation <ExternalLink aria-hidden="true" />
+      </a>
+    ) : null}
+  </div>
   );
 };

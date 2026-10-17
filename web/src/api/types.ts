@@ -46,6 +46,11 @@ export type ConfigChangePreview = components["schemas"]["ConfigChangePreview"];
 export type ConfigPreviewResponse = components["schemas"]["ConfigPreviewResponse"];
 export type ConfigApplyResponse = components["schemas"]["ConfigApplyResponse"];
 export type ConfigRisk = TableSettingRead["change_risk"];
+export type PropertyDetailRead = components["schemas"]["PropertyDetailRead"];
+export type TableOperationsRead = components["schemas"]["TableOperationsRead"];
+export type MaintenanceOperationRead = components["schemas"]["MaintenanceOperationRead"];
+export type OperationExclusionsWrite = components["schemas"]["OperationExclusionsWrite"];
+export type OperationExclusionsResponse = components["schemas"]["OperationExclusionsResponse"];
 
 export interface SourceRead {
   id: UUID;

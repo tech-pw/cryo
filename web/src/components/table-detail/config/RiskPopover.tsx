@@ -1,4 +1,5 @@
 import { ExternalLink, Info } from "lucide-react";
+import type { ReactNode } from "react";
 
 import type { ConfigRisk, TableSettingRead } from "../../../api/types";
 import { cn } from "../../../lib/cn";
@@ -37,6 +38,19 @@ export const RiskPopover = ({ setting, risk }: { setting: TableSettingRead; risk
     </Popover>
   );
 };
+
+export const InfoButton = ({ label, children }: { label: string; children: ReactNode }) => (
+  <Popover>
+    <PopoverTrigger asChild>
+      <button type="button" className="tc-info" aria-label={`About ${label}`}>
+        <Info aria-hidden="true" />
+      </button>
+    </PopoverTrigger>
+    <PopoverContent align="start" className="w-[23rem] max-w-[calc(100vw-2rem)]">
+      {children}
+    </PopoverContent>
+  </Popover>
+);
 
 export const SettingConsequences = ({ setting }: { setting: TableSettingRead }) => (
   <div className="tc-pop">

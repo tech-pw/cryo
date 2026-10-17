@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from cryo.table_config.context import ValueSource
+from cryo.table_config.operations import OperationPhase, OperationStatus
+from cryo.table_config.property_docs import PropertyKind
 from cryo.table_config.risk import Risk
 from cryo.table_config.settings import MinRole, SettingGroup, SettingKind, ValueType
 
@@ -59,6 +62,15 @@ class TableSettingRead(BaseModel):
     min_role: MinRole
     editor: SettingEditorRead
     engine_notes: list[EngineNoteRead] = Field(default_factory=list)
+
+
+class PropertyDetailRead(BaseModel):
+    key: str
+    value: str
+    kind: PropertyKind
+    summary: str
+    doc_url: str | None = None
+    setting_key: str | None = None
 
 
 class SettingGroupRead(BaseModel):
@@ -113,6 +125,48 @@ class TableMetadataRead(BaseModel):
     partition_statistics_files: int = 0
 
 
+class MaintenanceOperationRead(BaseModel):
+    operation: str
+    label: str
+    phase: OperationPhase
+    summary: str
+    when_planned: str
+    exclude_consequence: str
+    exclude_risk: Risk
+    reasons_to_exclude: list[str] = Field(default_factory=list)
+    companion_hint: str | None = None
+    companion_operation: str | None = None
+    engine_notes: list[EngineNoteRead] = Field(default_factory=list)
+    doc_url: str
+    excluded: bool
+    excluded_by: str | None = None
+    excluded_at: datetime | None = None
+    excluded_reason: str | None = None
+    status: OperationStatus
+    status_detail: str
+
+
+class TableOperationsRead(BaseModel):
+    preset_name: str | None = None
+    mode: str | None = None
+    held: bool = False
+    operations: list[MaintenanceOperationRead]
+
+
+class OperationExclusionsWrite(BaseModel):
+    excluded: list[str] = Field(max_length=20)
+    reason: str = Field(min_length=8, max_length=500)
+    confirm: bool = False
+
+
+class OperationExclusionsResponse(BaseModel):
+    added: list[str]
+    removed: list[str]
+    audit_log_ids: list[int]
+    message: str
+    operations: TableOperationsRead
+
+
 class TableConfigResponse(BaseModel):
     table_id: uuid.UUID
     read_from: Literal["catalog", "scan"]
@@ -125,7 +179,9 @@ class TableConfigResponse(BaseModel):
     settings: list[TableSettingRead]
     metadata: TableMetadataRead | None = None
     properties: dict[str, str] = Field(default_factory=dict)
+    property_details: list[PropertyDetailRead] = Field(default_factory=list)
     columns: list[str] = Field(default_factory=list)
+    operations: TableOperationsRead | None = None
 
 
 class ConfigChange(BaseModel):

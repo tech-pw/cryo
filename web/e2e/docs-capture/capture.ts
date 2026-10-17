@@ -48,6 +48,21 @@ const stageConfigBatch = async (page: Page): Promise<void> => {
   await page.getByText("This batch contains a high-risk change", { exact: false }).waitFor();
 };
 
+const stageOperationExclusion = async (page: Page): Promise<void> => {
+  const section = page.locator("#tc-operations");
+  await section.getByRole("switch", { name: "Run Compact small files" }).click();
+  await section.getByText("Will be excluded").waitFor();
+  await section.evaluate((el) => el.scrollIntoView({ block: "start" }));
+};
+
+const openPropertyInfo = async (page: Page): Promise<void> => {
+  await page.getByRole("button", { name: /All table properties/ }).click();
+  const button = page.getByRole("button", { name: "About write.parquet.bloom-filter-enabled.column.user_id" });
+  await button.evaluate((el) => el.closest(".tc-props-wrap")?.scrollIntoView({ block: "start" }));
+  await button.click();
+  await page.getByRole("button", { name: /Show its setting/ }).waitFor();
+};
+
 const SHOTS: Array<{
   name: string;
   path: string;
@@ -70,6 +85,20 @@ const SHOTS: Array<{
     waitFor: "Differs from recommendation",
     height: 1100,
     act: stageConfigBatch
+  },
+  {
+    name: "table-config-operations",
+    path: `/tables/${DEMO_TABLES[0].id}?tab=config`,
+    waitFor: "Maintenance operations",
+    height: 1000,
+    act: stageOperationExclusion
+  },
+  {
+    name: "table-config-properties",
+    path: `/tables/${DEMO_TABLES[0].id}?tab=config`,
+    waitFor: "Differs from recommendation",
+    height: 900,
+    act: openPropertyInfo
   },
   { name: "runs", path: "/runs", waitFor: "Success rate · 7d", height: 1100 },
   { name: "runs-holds", path: "/runs?tab=holds", waitFor: "Active holds", height: 900 },
