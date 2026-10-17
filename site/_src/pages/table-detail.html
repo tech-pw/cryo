@@ -1,0 +1,188 @@
+---
+title: Table detail
+lede: One page per Iceberg table. The header says what state the table is in, and eight tabs show the evidence, the history and the controls behind it.
+description: A guided tour of Cryo's table detail page, covering the header, the actions menu and table settings, plus every section of the Overview, Schema & files, Snapshots, Maintenance, Config, Usage, Quality and Cost & Savings tabs.
+updated: 2026-10-17
+---
+<p>Open any row on the Tables page to get here. Every screenshot below is the same table from the seeded demo lake, <code>analytics.events</code>: 412.6 GB in 48,210 files, 41,930 of them small, scoring 28 (grade F). Use it to learn where each answer lives before you need it on a real table.</p>
+
+<h2 id="header">The header</h2>
+<p>The header stays in place across all eight tabs. It answers three questions without a click: what this table is, how healthy it is, and what Cryo will do to it next.</p>
+<screenshot name="table-header" url="cryo.local/tables/analytics.events" alt="Table detail header for events. Breadcrumb Tables, demo-rest-catalog, analytics, events. Badges: Iceberg, partition column event_date, Health 28/100 grade F, owner analytics-eng@acme.io. A Run maintenance button with a menu arrow. Summary tiles: table size 412.6 GB, files 48,210, compaction candidates 41,930 (87% of 48,210 files), snapshots 1,284, maintenance workflow nightly-standard (default) running on Trino. Below the tiles: last scan time, last commit and latest action. Then the tab bar." caption="The header for a grade F table. Every number comes from the last scan, and the workflow tile names the engine that will run its maintenance." />
+<div class="tbl">
+<table>
+  <thead><tr><th>Part</th><th>What it shows</th></tr></thead>
+  <tbody>
+    <tr><td>Breadcrumb</td><td>Tables, then the lakehouse (source), the namespace and the table. <b>Copy link</b> copies a link to the current tab.</td></tr>
+    <tr><td>Name and badges</td><td>Table format, the partition column (or <i>Unpartitioned</i>), the health score with its grade letter, and the owner.</td></tr>
+    <tr><td>Summary tiles</td><td><b>Table size</b>, <b>Files</b>, <b>Compaction candidates</b> (small files, also as a share of all files), <b>Snapshots</b>, and <b>Maintenance workflow</b>: the preset that maintains the table, how it was assigned, and its engine.</td></tr>
+    <tr><td>Activity line</td><td>When the scanner last read the table, the last commit, the latest maintenance action, and a <b>Storage location</b> disclosure with a copy button.</td></tr>
+    <tr><td>Run maintenance</td><td>Runs the table's workflow now, or previews it when you can't run it. The arrow opens the actions menu.</td></tr>
+    <tr><td>Table settings</td><td>The gear icon. Opens compliance, ownership and alert subscribers.</td></tr>
+  </tbody>
+</table>
+</div>
+<tabs group="table-header">
+  <tab title="Actions menu">
+    <screenshot name="table-header-menu" url="cryo.local/tables/analytics.events" alt="The Run maintenance menu, open. Items: Preview workflow plan, Run full workflow now. Under Add to run: Compact files, Rewrite manifests, Expire snapshots (marked deletes files), Remove orphan files (marked deletes files). Last item: Refresh stats." caption="Operations that delete files say so before you pick them." />
+    <p><b>Preview workflow plan</b> shows the plan Cryo would build before anything runs. <b>Add to run</b> picks single operations for an on-demand run. <b>Refresh stats</b> queues a scan of this one table, so the page reflects a commit you just made.</p>
+  </tab>
+  <tab title="Table settings">
+    <screenshot name="table-settings" url="cryo.local/tables/analytics.events" alt="The Table settings sheet. Compliance and protection: ABAC count 0, deletion delay None. Ownership: an owner email field with a Save button. Alert subscribers: no subscribers yet, with an email field and a Subscribe button." caption="Table settings holds who owns the table and who hears about it." />
+    <p><b>Compliance &amp; protection</b> shows ABAC policies on the table and any pending deletion delay. <b>Ownership</b> sets the owner email, which also receives SLA and quality-rule alerts. <b>Alert subscribers</b> adds more recipients. Excluding a snapshot from expiry is not done here; it lives on the <a href="#snapshots">Snapshots tab</a>.</p>
+  </tab>
+</tabs>
+
+<h2 id="tabs">The eight tabs</h2>
+<p>Each tab owns one question. The address bar carries the open tab as <code>?tab=</code>, so a link to <code>?tab=snapshots</code> opens that tab directly. On narrow screens the tab bar becomes a <b>Table section</b> dropdown.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Tab</th><th>The question it answers</th><th>Sections</th></tr></thead>
+  <tbody>
+    <tr><td><a href="#overview">Overview</a></td><td>Why is the score what it is, and what fixes it?</td><td>Score, File layout, History &amp; activity, Health over time, Context</td></tr>
+    <tr><td><a href="#schema-files">Schema &amp; files</a></td><td>What is the table made of?</td><td>Columns, Files, Small-file candidates over scans, Layout, Partitions, Properties</td></tr>
+    <tr><td><a href="#snapshots">Snapshots</a></td><td>What changed, and what is being kept?</td><td>Snapshot history, Commits, Excluded from Cryo expiry</td></tr>
+    <tr><td><a href="#maintenance">Maintenance</a></td><td>Will it be maintained tonight, and what happened last time?</td><td>Readiness, Choose an action, Follow the outcome, Compaction analysis</td></tr>
+    <tr><td><a href="#config">Config</a></td><td>What rules is it maintained by?</td><td>Maintenance settings, Scheduling window, Table configuration</td></tr>
+    <tr><td><a href="#usage">Usage</a></td><td>Who reads it, and which parts?</td><td>Query activity, Partition access, Archive, Table relationships, Similar schemas</td></tr>
+    <tr><td><a href="#quality">Quality</a></td><td>Is the data fresh and complete?</td><td>Freshness vs target, What changed?, Quality rules, Optimization checklist</td></tr>
+    <tr><td><a href="#cost">Cost &amp; Savings</a></td><td>What does it cost to store, and what would maintenance give back?</td><td>What this table costs, Where storage accumulates, Where maintenance could help, Storage tiering, Compaction economics</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="overview">Overview</h2>
+<p>The default tab. It leads with the score and the deductions behind it, then the evidence those deductions came from.</p>
+<screenshot name="table-tab-overview" url="cryo.local/tables/analytics.events?tab=overview" alt="Overview tab. A score card with a gauge at 28 of 100, grade F Critical, down 52 points since Aug 30. Beside it, What's pulling the score down: minus 72 points across 6 checks. Small-file fragmentation and snapshot retention buildup are critical at minus 20 each. Delete files, partition skew, metadata overhead and orphan files are warnings at minus 8 each. Each row has an action button. Below: a File layout histogram, History and activity with recent maintenance, a Health over time chart and a Context card." caption="Six findings explain the 72 lost points. Each row offers the operation that addresses it." />
+<h3 id="overview-score">Score</h3>
+<p>The gauge shows the score, its grade and the change over the recorded history, plus whether the table is eligible for nightly selection. <b>What's pulling the score down</b> lists each deduction, critical first, with the reason in plain words and the operation that addresses it. A critical finding costs 20 points and a warning 8, as <a href="@/health/#deductions">Health and cost</a> explains. <b>Preview full workflow plan</b> opens the plan, and <b>Schedule, history &amp; settings</b> jumps to the Maintenance tab.</p>
+<h3 id="overview-file-layout">File layout</h3>
+<p>A histogram of data files by size, in binary units, against the table's write target. Bars are coloured by band: tiny (up to an eighth of the target), undersized, near target, and oversized (twice the target or more). The headline counts files in undersized ranges. Below it are the average file size, partition count, partition skew and delete files, with <b>Partitions and files</b> linking to the next tab.</p>
+<h3 id="overview-history">History &amp; activity</h3>
+<p>Snapshot count, commits per day and the last commit, then <b>Recent maintenance</b>: each audited action with its result, bytes freed or files before and after, duration, engine and trigger.</p>
+<h3 id="overview-trend">Health over time</h3>
+<p>The score across the last 30 days of recorded scans, drawn over shaded grade bands. <b>View score history</b> opens the same points as a table.</p>
+<h3 id="overview-context">Context</h3>
+<p>Queries in the last 30 days, estimated storage per month, S3 requests, rows and the owner. <b>Edit owner &amp; alerts</b> opens table settings. Triggered maintenance signals, such as a high small-file ratio, appear at the bottom with a link to review them.</p>
+
+<h2 id="schema-files">Schema &amp; files</h2>
+<p>The physical table: its columns, its files and how they are laid out. The pills at the top jump between sections: Schema, Files, Layout, Partitions and Properties.</p>
+<screenshot name="table-tab-files" url="cryo.local/tables/analytics.events?tab=files" alt="Schema and files tab. A Columns table lists 8 columns with type, signals, null rate, bounds and distinct values. country and device carry a Drift signal, event_date a Partition signal and session_id a Bloom candidate signal. A Files card shows 48,210 data files, 1,940 position delete files, 96 manifests, 8.8 MiB average file size and a 128 MiB writer target. A line chart shows small-file candidates rising over scans. Layout shows partition spec event_date and a sort order. Partitions ranks the top 12 of 412 partitions by small files." caption="Missing measurements say Not measured instead of showing zero." />
+<h3 id="files-columns">Columns</h3>
+<p>Every column with its type, null rate, lower and upper bounds, distinct values and quantiles where the scan recorded them. Signals flag what deserves a look: <b>Drift</b> when the null rate moved from its baseline, <b>Partition</b> for partition sources, and <b>Bloom candidate</b> when query patterns recommend a bloom filter on the column. A recommendation doesn't change files already written.</p>
+<h3 id="files-files">Files</h3>
+<p>Data files, position and equality delete files, manifests, average file size, the writer target and small-file candidates. Small-file candidates are counted only in partitions selected for compaction, so they can be lower than the histogram on Overview. Beside it, <b>Small-file candidates over scans</b> shows whether the backlog is growing.</p>
+<h3 id="files-layout">Layout</h3>
+<p>The partition spec and sort order in words, then how well the layout fits the data: alignment and granularity, each with what the scan observed. <b>Workload-aware layout recommendations</b> opens reclustering suggestions built from query patterns.</p>
+<h3 id="files-partitions">Partitions</h3>
+<p>The partitions with the most small files, ranked. <b>Exact partition counts</b> shows the same list as a table with each partition's small-file rate.</p>
+<h3 id="files-properties">Properties</h3>
+<p>Iceberg property recommendations for this table, each with its current and recommended value and where the recommendation came from. Editing properties happens on the <a href="#config">Config tab</a>.</p>
+
+<h2 id="snapshots">Snapshots</h2>
+<p>The table's retained history, read from its metadata.</p>
+<screenshot name="table-tab-snapshots" url="cryo.local/tables/analytics.events?tab=snapshots" alt="Snapshots tab. Snapshot history: 1,284 live snapshots, 1 referenced by tags or branches, 1 excluded from Cryo expiry, latest commit 5 minutes ago, oldest retained commit Aug 21. A Commits table lists snapshots with parent, timestamp, sequence number, operation (append, overwrite, delete, replace), record count and total size. The current snapshot is marked Current. At the bottom, Excluded from Cryo expiry lists one snapshot labelled Quarter close audit, excluded by priya@acme.io, with Copy ID and Remove exclusion buttons." caption="A replace commit is a compaction. Its record count stays flat while the file count drops." />
+<h3 id="snapshots-history">Snapshot history</h3>
+<p>Live snapshots, how many are referenced by tags or branches, how many are excluded from Cryo's expiry, and the newest and oldest retained commits. <b>Expire snapshots…</b> queues snapshot expiry for this table. It doesn't list the snapshots that will be removed, so check retention on the Config tab first.</p>
+<h3 id="snapshots-commits">Commits</h3>
+<p>One row per retained snapshot: id, parent, commit time, sequence number, operation, record count and total size. Select snapshots to compare their recorded summaries. A row's actions can <b>Protect</b> the snapshot, which excludes it from Cryo's expiry, or roll the table back to it after a confirmation.</p>
+<h3 id="snapshots-excluded">Excluded from Cryo expiry</h3>
+<p>Snapshots Cryo's expiry must keep, with a label, who excluded them and when. On Spark, expiry keeps each excluded id by tagging it <code>cryo-protect-&lt;id&gt;</code>. Trino's <code>expire_snapshots</code> cannot skip a single snapshot, so read the note before relying on an exclusion with a Trino workflow.</p>
+<callout type="caution" title="Rollback is a commit">
+  <p>Rolling back makes an older snapshot current. It doesn't delete the newer ones, but the next expiry run can, once they age out of retention.</p>
+</callout>
+
+<h2 id="maintenance">Maintenance</h2>
+<p>Three numbered steps, then the evidence the planner ranks compaction with.</p>
+<screenshot name="table-tab-maintenance-plan" url="cryo.local/tables/analytics.events?tab=maintenance" alt="Maintenance tab, steps 1 and 2. Readiness: Eligible for nightly selection, evaluated Sep 28, cooldown 12 hours, stats window 2 days, next nightly Sep 29 06:30. Eligibility checklist: no blocking reasons. A Config card points to the Config tab. Choose an action, Run on demand: four cards, Compact files (41,930 small-file candidates, 36 points affected), Rewrite manifests (96 manifests, 8 points), Expire snapshots (1,284 retained, 20 points) and Remove orphan files (6.20 GB known orphan data, 8 points), each with Add to run." caption="Each card shows how many score points its findings cost, so you can see which operation matters most." />
+<h3 id="maintenance-readiness">Readiness</h3>
+<p><b>Nightly selection</b> says whether tonight's scheduled run may pick this table. A table can be eligible and still not be picked, because engine capacity and the run's budget decide. The tiles show when eligibility was last evaluated, the cooldown between maintenance runs, how fresh scan stats must be, and the next nightly run. The <b>Eligibility checklist</b> lists every blocking reason, and <b>How nightly selection works</b> explains the gates.</p>
+<h3 id="maintenance-actions">Choose an action</h3>
+<p><b>Run on demand</b> has one card per operation, each with the measurement that motivates it, the score points it affects and when it last ran. <b>Add recommended</b> adds the operations with score findings behind them, and <b>All four</b> adds every one. You review the plan before it runs. Nightly eligibility and on-demand runs have separate checks, so a table that isn't eligible tonight can still be maintained on demand.</p>
+<screenshot name="table-tab-maintenance-runs" url="cryo.local/tables/analytics.events?tab=maintenance" alt="Maintenance tab, step 3, Follow the outcome. Runs: last 2 runs on this table, 2 succeeded, with a grid of operations by run date. The selected manual run succeeded in 16 minutes. Before this run and next scan after: health score 20 to 28, data files 76,337 to 48,210, small files 70,057 to 41,930. Operations and statements lists Compact, Statistics, Manifests, Expire snapshots and Orphan files, each succeeded." caption="Before and after come from scans, so new writes during the run show up too." />
+<h3 id="maintenance-outcome">Follow the outcome</h3>
+<p><b>Runs</b> is a grid of operations by run, filterable to manual or nightly runs. Selecting a run shows its status, trigger, mode and duration; the table's stats before the run and at the next scan; and, under <b>Operations &amp; statements</b>, each operation in order with its timing and recorded statement. <b>Live log</b> streams log lines while a run is going and keeps them for 24 hours; after that, the recorded statements are the log. <b>Open full run</b> goes to the run page.</p>
+<screenshot name="table-tab-maintenance-compaction" url="cryo.local/tables/analytics.events?tab=maintenance" alt="Compaction analysis. Stored benefit-score candidates: six event_date partitions with benefit scores from 0.94 to 0.58, small files, size and Eligible status; one partition skipped because it is still being written. Horizon query-frequency candidates: five partitions with score, priority, small files, size and modelled savings. Effectiveness, Delete-file health and Maintenance trigger signals follow." caption="Two rankings, two inputs: stored benefit scores from the scan, and query frequency from the horizon model." />
+<h3 id="maintenance-compaction">Compaction analysis</h3>
+<p>Why some partitions are compacted before others. <b>Stored benefit-score candidates</b> ranks partitions by the benefit score stored with the last scan, including those below the minimum and why any were skipped. <b>Horizon query-frequency candidates</b> ranks by how often each partition is read. <b>Effectiveness</b>, <b>Delete-file health</b> and <b>Maintenance trigger signals</b> show what past compaction achieved, whether delete files need their own pass, and which signals are triggered now. <b>Refresh benefit scores</b> recomputes the ranking.</p>
+
+<h2 id="config">Config</h2>
+<p>Everything that decides how the table is maintained and written, in one place.</p>
+<screenshot name="table-tab-config-settings" url="cryo.local/tables/analytics.events?tab=config" alt="Config tab, top. Maintenance settings: effective workflow nightly-standard, preset provenance platform default, a Choose a workflow button, Parameters with 3 recorded, and Parameter overrides marked admin only. Scheduling window: 01:00 to 07:00 IST, heavy operations run only inside this window, and it applies to every table the governor admits." caption="The workflow sets the thresholds; overrides pin one parameter for this table only." />
+<h3 id="config-maintenance-settings">Maintenance settings</h3>
+<p>The workflow (preset) that maintains the table and how it was assigned. <b>Choose a workflow</b> reassigns it. <b>Parameters</b> lists the effective values, and <b>Parameter overrides</b> lets an admin pin a single parameter for this table. Overrides survive a change of workflow.</p>
+<h3 id="config-scheduling">Scheduling window</h3>
+<p>The off-peak window in which heavy operations run. It is a governor-wide setting, so it is shown here but changed in governor settings.</p>
+<h3 id="config-table-configuration">Table configuration</h3>
+<p>Every setting that shapes how the table is written, committed and cleaned up, read live from the catalog. Each row shows the current value and where it comes from, Cryo's recommendation, and the risk of changing it in that direction. The ⓘ next to a name explains the setting, and the risk badge explains the consequence.</p>
+<screenshot name="table-config" url="cryo.local/tables/analytics.events?tab=config" alt="Table configuration, read live from the catalog. Tiles: 3 differ from recommendation, 8 set explicitly, 6 high-risk settings, maintained by nightly-standard on Trino in deep mode with 1 operation excluded. Filters for all 34 settings, those that differ, or those set explicitly, a search box, and setting groups: file layout, row-level operations, commits and manifests, metadata and statistics, retention and GC, format and identity. The file layout group lists target data file size at 128 MiB set on the table, with Cryo recommending 256 MiB at medium risk, and write distribution not set, with Cryo recommending hash." caption="Rows that differ from the recommendation carry a bar on the left. Click the first tile to show only those." />
+<steps>
+  <step title="Stage">
+    <p>Edit a value with its typed editor, or stage Cryo's recommendation. Nothing is written yet, and staged rows stay highlighted.</p>
+  </step>
+  <step title="Review">
+    <p><b>Review and apply</b> previews every staged change with its risk. A reason is optional, except that a batch with a high-risk change needs both a reason and an explicit acknowledgement.</p>
+  </step>
+  <step title="Apply">
+    <p>The changes are committed to the catalog in one transaction and audited, and the page re-reads the table to show the result.</p>
+  </step>
+</steps>
+<screenshot name="table-config-review" url="cryo.local/tables/analytics.events?tab=config" alt="Review dialog for three staged changes: write.target-file-size-bytes to the recommended value, write.distribution-mode to the recommended value, and history.expire.max-snapshot-age-ms to 1 day. A warning reads that this batch contains a high-risk change, with a reason field and an acknowledgement checkbox." caption="Shortening snapshot retention is high risk: it limits time travel and rollback." />
+<p><b>Maintenance operations</b> lists the seven operations in the order Cryo runs them, grouped into compaction and cleanup. Each shows whether it runs for this table under its workflow, and why not if it doesn't. Switch one off to exclude it for this table only; the planner then drops it from every plan, nightly or on demand, and the plan says why. Saving needs a reason, and excluding a high-risk operation such as snapshot expiry needs an acknowledgement.</p>
+<screenshot name="table-config-operations" url="cryo.local/tables/analytics.events?tab=config" alt="Maintenance operations card for nightly-standard in deep mode, 1 excluded. Compaction: Apply delete files (when needed), Merge position deletes (unsupported here, because the preset runs on Trino), Compact small files (switched off, will be excluded), Column statistics (when needed). Cleanup: Rewrite manifests (runs), Expire snapshots (runs, high risk if excluded), Remove orphan files (excluded by priya@acme.io because the table shares a prefix with events_archive). Each row has an If excluded risk and a Run it switch." caption="Exclusions are per table and audited. Every other table on the workflow keeps running the operation." />
+<p><b>Table metadata</b> shows the format version, UUID, locations, schema, partition spec, sort order and refs. <b>All table properties</b> lists every property on the table with a short explanation of what it does. The ⓘ links to the matching setting row and the Iceberg documentation.</p>
+<screenshot name="table-config-properties" url="cryo.local/tables/analytics.events?tab=config" alt="All table properties list with a What it is column. An info popover for write.parquet.bloom-filter-enabled.column.user_id explains that it writes a Parquet bloom filter for the user_id column, with links Show its setting and Iceberg documentation." caption="Each property is labelled by kind: a Cryo setting, read, write, table behaviour, reserved, catalog, engine or custom." />
+<callout type="important" title="Writes go to the live table">
+  <p>Applying a configuration change commits new table properties through the catalog, the same as <code>ALTER TABLE … SET TBLPROPERTIES</code>. Write settings take effect for the next writer, not for files already written. Without edit access, rows show their values but can't be staged.</p>
+</callout>
+
+<h2 id="usage">Usage</h2>
+<p>How the table is read, from the query log and storage request logs.</p>
+<screenshot name="table-tab-usage" url="cryo.local/tables/analytics.events?tab=usage" alt="Usage tab. Query activity for the last 7 days: 18,240 logged queries, 9.8 GB average scanned, latency p50 4 seconds, p95 19 seconds, p99 41 seconds. Partition access for the last 90 days: requests per day and the six most-read partitions. Archive: policy cold-after-180d in advisory mode, a list of old partitions with age, suggestion and reason codes. Table relationships: 2 upstream, 2 downstream. Similar schemas: none found in the current sample." caption="Query counts and storage requests are separate sources and are never added together." />
+<h3 id="usage-query-activity">Query activity</h3>
+<p>Logged queries and average bytes scanned for the window shown, with median, p95 and p99 latency. <b>Inspect slowest queries</b> lists up to the 100 slowest with their SQL, user, engine and duration. Reads that bypass the query log aren't counted.</p>
+<h3 id="usage-partition-access">Partition access</h3>
+<p>Storage requests per day and the most-read partitions, from recorded request counts. This is where hot and cold partitions show up.</p>
+<h3 id="usage-archive">Archive</h3>
+<p>Advisory storage-class suggestions per partition, from the archive policy that covers the table, with the age, suggestion, reason codes and modelled saving. In advisory mode it doesn't change any storage class. <b>Preview plan</b> shows what an archive run would move and which guardrails it would check.</p>
+<h3 id="usage-relationships">Table relationships</h3>
+<p>Upstream and downstream tables from recorded lineage. Check them before changing how this table is written. <b>Explore lineage</b> expands the graph.</p>
+<h3 id="usage-similar-schemas">Similar schemas</h3>
+<p>Tables whose schemas overlap this one: candidates for reuse or consolidation, with suggested union SQL. Overlapping schemas don't prove the data is duplicated.</p>
+
+<h2 id="quality">Quality</h2>
+<p>Whether the data is fresh and complete, checked against metadata the scanner already collects.</p>
+<screenshot name="table-tab-quality" url="cryo.local/tables/analytics.events?tab=quality" alt="Quality tab. Freshness vs target: within the freshness target, reported age 6 minutes, target 6 hours. What changed: 1 recorded anomaly, schema added device. Quality rules, marked Zero scan: Fresh within 6 hours passed, event_id is never null passed, country mostly filled failed at 93.2% non-null against 98%, row count doesn't drop sharply passed. Optimization checklist: score 49 of 100, 3 need attention, 2 warnings, 1 unknown, 6 passing." caption="A failed rule names the measured value and the threshold it missed." />
+<h3 id="quality-freshness">Freshness vs target</h3>
+<p>The age of the latest data against the table's freshness target, as a bar. Age uses the latest snapshot commit, or the latest scan when the commit time wasn't recorded.</p>
+<h3 id="quality-what-changed">What changed?</h3>
+<p>Schema and arrival anomalies over the last 30 days: added or dropped columns, schema version changes, data arrival and row count. No recorded anomaly is not a guarantee that the data is correct.</p>
+<h3 id="quality-rules">Quality rules</h3>
+<p>Rules on freshness, completeness, value ranges, size and size change. They are <b>zero scan</b>: each is decided from the metadata every scan already collects, so no data is read. A rule the metadata can't decide shows Unknown and says why. On failure, a rule either raises an alert or is only shown here. <b>Add rule</b> creates one, and <b>Re-check against latest scan</b> evaluates them again.</p>
+<h3 id="quality-checklist">Optimization checklist</h3>
+<p>Twelve weighted checks of optimization readiness across Trino, S3 and Iceberg, such as file size against the target, delete-file ratio, whether the partition scheme matches query predicates, and whether compaction keeps up with write velocity. Open the list to see each check's reason and weight, attention items first.</p>
+<callout type="note" title="Two different scores">
+  <p>The checklist score is separate from the health grade. The grade is 100 minus fixed deductions; the checklist is a weighted readiness score for ranking work. A table can pass most checks and still grade F.</p>
+</callout>
+
+<h2 id="cost">Cost &amp; Savings</h2>
+<p>What the table costs to keep in object storage, and what maintenance could give back.</p>
+<screenshot name="table-tab-cost" url="cryo.local/tables/analytics.events?tab=cost" alt="Cost and savings tab. What this table costs: estimated storage 12 dollars a month at the AWS S3 Standard rate, S3 request cost not measured, modelled savings 3 dollars a month. Where storage accumulates: live data 412.6 GB, dead bytes 127.9 GB, metadata 1.8 GB, orphan 6.2 GB. Where maintenance could help: projected storage 9 dollars a month, 127.9 GB potentially reclaimable. Storage tiering: not suitable, table accessed 0 days ago. Compaction economics: 7 dollars modelled across 5 candidates." caption="Every dollar figure is an estimate and says which rate or model produced it." />
+<h3 id="cost-what-it-costs">What this table costs</h3>
+<p>Estimated storage per month at the AWS S3 Standard rate, request cost from recorded S3 activity in the last 30 days, and modelled monthly savings before execution costs. The precision badge says whether the numbers are estimated or measured, and when the cost scan ran.</p>
+<h3 id="cost-storage">Where storage accumulates</h3>
+<p>Live data, dead bytes still held by snapshots, metadata, and orphan files outside the table's metadata. The bars are byte counts, not shares of a total.</p>
+<h3 id="cost-maintenance">Where maintenance could help</h3>
+<p>Projected storage cost after maintenance and the bytes that could be reclaimed, broken down by operation when a cost scan recorded it. <b>Review maintenance</b> goes to the Maintenance tab.</p>
+<h3 id="cost-tiering">Storage tiering</h3>
+<p>Whether S3 Intelligent-Tiering would pay off for this table, based on how recently it was read. It is a separate estimate from the per-partition archive advice on the Usage tab.</p>
+<h3 id="cost-compaction">Compaction economics</h3>
+<p>Modelled savings over 30 days for up to 10 ranked partition candidates. <b>Open compaction ranking</b> shows the candidates. The model has a different scope from the storage savings above, so don't add the two together.</p>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/health/" title="Health and cost">How the score is built from deductions, with a worked example.</linkcard>
+  <linkcard href="@/maintenance/" title="Maintenance">The fixed operation order, admission and what a run records.</linkcard>
+  <linkcard href="@/engines/" title="Engines">Which engine runs which operation, and why some can't.</linkcard>
+  <linkcard href="@/onboarding/" title="Connect a lakehouse">Add a catalog so its tables show up here.</linkcard>
+</linkcards>

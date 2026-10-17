@@ -263,6 +263,30 @@ returns 409. `GET …/config` also returns `operations` (per-operation status an
   patched live read, then the GET and preview endpoints. The screenshots therefore show the real
   catalogue text.
 
+## Docs site
+
+- New page `site/_src/pages/table-detail.html` ("Table detail", Operate group in
+  `site/_src/site.json`). It tours the header (breadcrumb, badges, summary tiles, activity line,
+  the Run maintenance menu, Table settings), has a table of the eight tabs, and gives one `h2` per
+  tab with an `h3` for every on-screen section, using each section's exact UI heading.
+- 15 new shots, each in light and dark: `table-header`, `table-header-menu`, `table-settings`,
+  `table-tab-{overview,files,snapshots,usage,quality,cost}`,
+  `table-tab-maintenance-{plan,runs,compaction}` and `table-tab-config-settings`. `table-config` is
+  now a crop of the Table configuration section instead of a full-page viewport. Maintenance and
+  Config are shot in parts because a whole panel is 3,000 to 6,000 CSS pixels tall.
+- `web/e2e/docs-capture/demo-table-detail.ts` answers every tab endpoint with shapes typed against
+  `openapi.d.ts`. Its values agree with the `analytics.events` list row: six deductions totalling
+  72 points, file-size bins summing to 48,210 files, two runs whose before and after stats end at
+  the current counts, plus the backend's real checklist keys, quality-rule params and archive
+  vocabulary. Before this, every tab except Overview, Maintenance and Config crashed in the
+  capture, because unanswered GETs fall back to `[]`.
+- Fixed while capturing: `configTab.css` used `--color-surface` and `--color-text-muted`, which
+  are not defined. In dark mode the Maintenance settings and Scheduling window cards stayed white
+  with near-white headings. They now use `--color-surface-raised` and `--color-muted`.
+- Other existing shots (`health`, `tables`, `run-detail`, `connections`) were regenerated and pick
+  up the current sidebar. `table-detail` now shows the six deductions, which matches the
+  Health page's "two critical findings and four warnings".
+
 ## Known limits
 
 - The v3 upgrade has to be done in Spark or Trino. PyIceberg 0.11 upgrades only to v2.
