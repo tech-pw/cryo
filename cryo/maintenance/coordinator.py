@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from cryo.config import Settings
 from cryo.db.models import AuditLog, Destination, MaintenanceJob, MaintenanceRun, TableStats
+from cryo.db.repositories.operation_exclusions import excluded_operations_by_table
 from cryo.domain.enums import EngineType, JobStatus, OperationType
 from cryo.engines.spark.k8s import SparkK8sConfig
 from cryo.engines.spark.procedure_metrics import bytes_freed_from_procedure
@@ -401,6 +402,10 @@ class BatchMaintenance:
 
         ranked = self._select(table_ids=table_ids, limit=limit, now=started, report=report)
         report.selected = len(ranked)
+        with self._session_factory() as session:
+            excluded_ops = excluded_operations_by_table(
+                session, [item.candidate.table_id for item in ranked]
+            )
 
         work: list[tuple[RankedCandidate, TableWork]] = []
         for item in ranked:
@@ -413,6 +418,7 @@ class BatchMaintenance:
                     params=self._table_params(params, item),
                     protected_snapshot_ids=self._protected,
                     has_shared_location=lambda tid: tid in shared_ids,
+                    excluded_operations=excluded_ops.get(table_id, ()),
                 )
             except Exception as exc:
                 logger.warning("Planning failed for %s", item.candidate.display_name, exc_info=True)

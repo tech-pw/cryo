@@ -11,7 +11,7 @@ from __future__ import annotations
 import gzip
 import json
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -78,6 +78,7 @@ def build_table_work(
     params: Mapping[str, Any],
     protected_snapshot_ids: Callable[[uuid.UUID], Sequence[int]],
     has_shared_location: Callable[[uuid.UUID], bool],
+    excluded_operations: Collection[str] = (),
 ) -> TableWork | None:
     """None when the planner finds nothing worth running for this table."""
     data = load_table(table_id)
@@ -90,6 +91,7 @@ def build_table_work(
         operations=None,
         protected_snapshot_ids=protected_snapshot_ids(table_id),
         has_shared_location=has_shared_location(table_id),
+        excluded_operations=excluded_operations,
     )
     if not plan.operations:
         return None

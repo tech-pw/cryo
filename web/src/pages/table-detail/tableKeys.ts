@@ -27,6 +27,9 @@ export const tableKeys = {
   columnStats: (id: string, token?: string | null) => ["table-column-stats", id, token] as const,
   bloom: (id: string, token?: string | null) => ["table-bloom-recommendations", id, token] as const,
   properties: (id: string, token?: string | null) => ["table-property-recommendations", id, token] as const,
+  config: (id: string, token?: string | null) => ["table-config", id, token] as const,
+  configPreview: (id: string, token: string | null | undefined, changes: string) =>
+    ["table-config-preview", id, token, changes] as const,
   cost: (id: string, token?: string | null) => ["table-cost", id, token] as const,
   tiering: (id: string, token?: string | null) => ["table-s3-tiering", id, token] as const,
   sla: (id: string, token?: string | null) => ["table-sla", id, token] as const,

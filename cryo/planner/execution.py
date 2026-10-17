@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -45,6 +45,7 @@ def build_execution_plan(
     operations: tuple[OperationType, ...] | None,
     protected_snapshot_ids: Sequence[int] = (),
     has_shared_location: bool = False,
+    excluded_operations: Collection[str] = (),
 ) -> MaintenancePlan:
     plan_params = execution_plan_params(params, destination, stats)
     skip_operations = skip_operations_from_preset(operations)
@@ -63,11 +64,13 @@ def build_execution_plan(
         Mode(mode),
         plan_params,
         protected_snapshot_ids=protected_snapshot_ids,
+        excluded_operations=excluded_operations,
     )
     plan = gate_orphan_removal_on_shared_location(
         plan,
         has_shared_location=has_shared_location,
     )
+    plan = gate_gc_disabled(plan, gc_disabled=gc_disabled_in_stats(stats))
     return gate_native_optimize_manifests(
         plan,
         operations=operations,
@@ -213,6 +216,50 @@ def gate_orphan_removal_on_shared_location(
             "Skipped remove_orphan_files: this table's S3 location overlaps another table's, "
             "so unreferenced-file deletion could remove the other table's live data. Give the "
             "table a unique location, then re-enable.",
+        ),
+    )
+
+
+_GC_OPERATION_TYPES = (OperationType.EXPIRE_SNAPSHOTS, OperationType.REMOVE_ORPHAN_FILES)
+
+
+def gc_disabled_in_stats(stats: Mapping[str, Any]) -> bool:
+    """True only when the table explicitly sets ``gc.enabled`` to something other than true.
+
+    Iceberg reads the property with Java ``Boolean.parseBoolean``, so only a case-insensitive
+    ``true`` keeps GC on. The scanner's typed ``gc_enabled`` is the fallback when the raw
+    property was not captured.
+    """
+    raw = stats.get("raw")
+    raw = raw if isinstance(raw, Mapping) else {}
+    properties = raw.get("iceberg_properties")
+    if isinstance(properties, Mapping) and "gc.enabled" in properties:
+        return str(properties["gc.enabled"]).strip().lower() != "true"
+    flag = raw.get("gc_enabled", stats.get("gc_enabled"))
+    return flag is False
+
+
+def gate_gc_disabled(plan: MaintenancePlan, *, gc_disabled: bool) -> MaintenancePlan:
+    """Drop expire_snapshots and remove_orphan_files when the table sets ``gc.enabled=false``.
+
+    Owners set it when another table shares this table's files (snapshot/migrate procedures),
+    so deleting "unreferenced" files corrupts the other table. Spark and iceberg-go refuse
+    these operations; Trino only honours the property from 484, so older Trino deletes anyway.
+    """
+    if not gc_disabled:
+        return plan
+    if all(operation.type not in _GC_OPERATION_TYPES for operation in plan.operations):
+        return plan
+    return MaintenancePlan(
+        table_ref=plan.table_ref,
+        mode=plan.mode,
+        operations=tuple(
+            operation for operation in plan.operations if operation.type not in _GC_OPERATION_TYPES
+        ),
+        notes=(
+            *plan.notes,
+            "Skipped expire_snapshots and remove_orphan_files: the table sets gc.enabled=false, "
+            "which forbids deleting its files. Re-enable gc.enabled on the table to resume them.",
         ),
     )
 

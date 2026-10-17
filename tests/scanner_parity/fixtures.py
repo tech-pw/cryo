@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 from cryo.config import Settings
@@ -54,6 +55,7 @@ class ParityTable:
     columns: list[ParityColumn] = field(default_factory=list)
     partition_spec: list[ParityPartitionField] = field(default_factory=list)
     properties: dict[str, str] = field(default_factory=dict)
+    sort_field_ids: list[int] = field(default_factory=lambda: [1])
     location: str | None = None
     current_snapshot_id: int | None = None
     io: object = field(default_factory=object)
@@ -67,21 +69,28 @@ class ParityTable:
         if not self.properties:
             self.properties = {
                 "write.distribution-mode": "hash",
-                "write.sort-order": "event_date",
                 "write.target-file-size-bytes": "268435456",
                 "format-version": "2",
             }
         props = dict(self.properties)
         snaps = list(self.snapshots)
         snap_id = self.current_snapshot_id
+        sort_orders = [
+            SimpleNamespace(
+                order_id=1 if self.sort_field_ids else 0,
+                fields=[SimpleNamespace(source_id=i) for i in self.sort_field_ids],
+            )
+        ]
 
         class _Meta:
             properties = props
             snapshots = snaps
             current_snapshot_id = snap_id
             location = self.location
+            default_sort_order_id = sort_orders[0].order_id
 
         self.metadata = _Meta()
+        self.metadata.sort_orders = sort_orders
 
     def spec(self) -> FakeSpec:
         return FakeSpec(
@@ -156,7 +165,7 @@ def build_fixture_request(
     target = props.get("write.target-file-size-bytes")
     target_bytes = int(target) if target is not None and str(target).isdigit() else None
     write_mode = props.get("write.distribution-mode")
-    has_sort = bool(props.get("write.sort-order"))
+    has_sort = bool(getattr(table, "sort_field_ids", ()))
     current_id = getattr(table.metadata, "current_snapshot_id", None)
     if current_id is not None:
         current_id = int(current_id)
@@ -413,7 +422,6 @@ def deletes_and_mixed_formats_table(*, scan_at: datetime) -> ParityTable:
         columns=[ParityColumn(1, "event_date", "date")],
         properties={
             "write.distribution-mode": "hash",
-            "write.sort-order": "event_date",
             "write.target-file-size-bytes": "268435456",
             "format-version": "2",
         },

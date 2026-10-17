@@ -90,7 +90,14 @@ cd web && npx playwright test -c e2e/docs-capture/playwright.config.ts
 The capture config starts Vite on :5173 and uses the installed Chrome at 2× pixel density. Demo
 scores must stay reachable under the grading rule (100 minus 8 per warning and 20 per critical),
 because the Health page explains them. Add a screen by adding an entry to `SHOTS` in `capture.ts`;
-the run logs any API call the demo data does not answer.
+the run logs any API call the demo data does not answer. An unanswered GET falls back to `[]`, which
+crashes any panel that expects an object, so answer it in the demo data rather than ignoring the log.
+The Table detail page's per-tab responses live in `demo-table-detail.ts`, typed against
+`web/src/api/openapi.d.ts`; check it with `npx tsc --noEmit --strict --skipLibCheck --module esnext
+--moduleResolution bundler --target es2022 --resolveJsonModule --types node
+e2e/docs-capture/capture.ts`, since `web/e2e` is outside the app's typecheck. A shot with `selector`
+captures the union of the matching elements with 16 px of page around them (`maxHeight` crops it),
+which is how each table tab is shot without the app chrome; `clip` crops a viewport shot instead.
 
 ## README images
 

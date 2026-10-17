@@ -23,6 +23,7 @@ from cryo.db.models import (
     TableAssignment,
     TablePartition,
 )
+from cryo.db.repositories.operation_exclusions import excluded_operations
 from cryo.domain.enums import JobStatus, Mode, OperationType
 from cryo.observability.correlation import correlation_id_from_summary
 from cryo.worker.worker import (
@@ -473,6 +474,7 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         params=params,
         status=JobStatus(job.status),
         plan=job.plan,
+        excluded_operations=excluded_operations(session, job.table_id),
         engine_ref=job.engine_ref,
         replica=job.replica,
         admitted_at=job.admitted_at,

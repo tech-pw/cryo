@@ -319,20 +319,34 @@ type propInfo struct {
 var trackedIcebergPropertyKeys = []string{
 	"write.target-file-size-bytes",
 	"write.distribution-mode",
-	"write.sort-order",
 	"write.metadata.delete-after-commit.enabled",
 	"write.metadata.previous-versions-max",
 	"commit.retry.num-retries",
 	"commit.retry.min-wait-ms",
 	"commit.retry.max-wait-ms",
 	"write.parquet.compression-codec",
-	"write.delete-mode",
-	"write.update-mode",
-	"write.merge-mode",
+	"write.delete.mode",
+	"write.update.mode",
+	"write.merge.mode",
 	"history.expire.max-snapshot-age-ms",
 	"history.expire.min-snapshots-to-keep",
 	"gc.enabled",
 	"format-version",
+	"write.delete.target-file-size-bytes",
+	"write.format.default",
+	"write.parquet.row-group-size-bytes",
+	"write.object-storage.enabled",
+	"write.data.path",
+	"write.delete.granularity",
+	"write.upsert.enabled",
+	"commit.retry.total-timeout-ms",
+	"commit.manifest-merge.enabled",
+	"commit.manifest.target-size-bytes",
+	"commit.manifest.min-count-to-merge",
+	"write.metadata.metrics.default",
+	"write.metadata.metrics.max-inferred-column-defaults",
+	"history.expire.max-ref-age-ms",
+	"comment",
 }
 
 func tableProps(tbl *table.Table) propInfo {
@@ -351,13 +365,9 @@ func tableProps(tbl *table.Table) propInfo {
 	if v, ok := props["write.distribution-mode"]; ok && v != "" {
 		out.writeDistributionMode = &v
 	}
-	if v, ok := props["write.sort-order"]; ok && v != "" {
-		t := true
-		out.hasSortOrder = &t
-	} else {
-		t := false
-		out.hasSortOrder = &t
-	}
+	// Sort order is table metadata (sort-orders + default-sort-order-id), not a property.
+	sorted := !tbl.SortOrder().IsUnsorted()
+	out.hasSortOrder = &sorted
 	if v, ok := props["write.target-file-size-bytes"]; ok && v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			out.targetFileSizeBytes = &n

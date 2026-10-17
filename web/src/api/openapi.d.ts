@@ -84,6 +84,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/governor/offpeak-window": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Governor Offpeak Window
+         * @description Report the off-peak window the admission path gates heavy modes on.
+         *
+         *     Read-only on purpose. The window is a Governor process setting, so the
+         *     table Config tab shows it as inherited context rather than an editable
+         *     per-table field.
+         */
+        get: operations["get_governor_offpeak_window_api_v1_governor_offpeak_window_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dashboards/schema-cost": {
         parameters: {
             query?: never;
@@ -1397,6 +1421,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tables/{table_id}/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Table Config
+         * @description Every curated setting with its live value, source, recommendation and change risk.
+         *
+         *     Reads the Source catalog (metadata only, bounded). When the catalog is unreachable the
+         *     response falls back to the last scan and ``can_edit`` is false.
+         */
+        get: operations["get_table_config_api_v1_tables__table_id__config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/config/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Table Config */
+        post: operations["preview_table_config_api_v1_tables__table_id__config_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/config/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Table Config
+         * @description Apply a batch of setting changes. Properties go to the catalog in one metadata commit;
+         *     Cryo retention settings become per-table preset overrides (admin only). Every change is
+         *     audited, and high-risk batches need ``confirm`` plus a written ``reason``.
+         */
+        post: operations["apply_table_config_api_v1_tables__table_id__config_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/config/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Operation Exclusions
+         * @description Replace the set of maintenance operations no run may plan for this table.
+         *
+         *     Every plan path (scheduled, ad-hoc, governor admission, nightly batch) drops them.
+         *     Excluding a high-risk operation needs ``confirm``; every change is audited.
+         */
+        put: operations["put_operation_exclusions_api_v1_tables__table_id__config_operations_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/smart-maintenance/overview": {
         parameters: {
             query?: never;
@@ -1918,6 +2027,32 @@ export interface paths {
         post?: never;
         /** Unprotect Snapshot */
         delete: operations["unprotect_snapshot_api_v1_tables__table_id__protected_snapshots__snapshot_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/snapshots/{snapshot_id}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rollback Table Snapshot
+         * @description Move the table's current snapshot pointer back to ``snapshot_id``.
+         *
+         *     Admin-gated, unlike protect/unprotect: this changes what every reader sees as
+         *     "the table" going forward, not just what Cryo retains. Loads the table fresh
+         *     immediately before the write (not from any cached metadata) so the commit is
+         *     against the real current state -- a stale load here would otherwise look like
+         *     a successful rollback that silently reverted someone else's commit too.
+         */
+        post: operations["rollback_table_snapshot_api_v1_tables__table_id__snapshots__snapshot_id__rollback_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6417,6 +6552,99 @@ export interface components {
             /** Abac Enforcement Note */
             abac_enforcement_note?: string | null;
         };
+        /** ConfigApplyRequest */
+        ConfigApplyRequest: {
+            /** Changes */
+            changes: components["schemas"]["ConfigChange"][];
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
+        /** ConfigApplyResponse */
+        ConfigApplyResponse: {
+            /** Applied */
+            applied: components["schemas"]["ConfigChangePreview"][];
+            /** Audit Log Ids */
+            audit_log_ids: number[];
+            /** Message */
+            message: string;
+            config: components["schemas"]["TableConfigResponse"];
+        };
+        /** ConfigChange */
+        ConfigChange: {
+            /** Key */
+            key: string;
+            /** Value */
+            value?: string | null;
+            /**
+             * Expected Value
+             * @description Value the client last saw; a mismatch means someone else changed it.
+             */
+            expected_value?: string | null;
+            /**
+             * Check Expected
+             * @default false
+             */
+            check_expected: boolean;
+        };
+        /** ConfigChangePreview */
+        ConfigChangePreview: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "property" | "cryo_param" | "bloom_columns" | "format_version";
+            /** Old Value */
+            old_value?: string | null;
+            /** New Value */
+            new_value?: string | null;
+            /**
+             * Risk
+             * @enum {string}
+             */
+            risk: "low" | "medium" | "high";
+            /** Warnings */
+            warnings?: string[];
+            /** Blocked */
+            blocked?: string | null;
+            /**
+             * Min Role
+             * @enum {string}
+             */
+            min_role: "operator" | "admin";
+            /**
+             * No Op
+             * @default false
+             */
+            no_op: boolean;
+        };
+        /** ConfigPreviewRequest */
+        ConfigPreviewRequest: {
+            /** Changes */
+            changes: components["schemas"]["ConfigChange"][];
+        };
+        /** ConfigPreviewResponse */
+        ConfigPreviewResponse: {
+            /** Changes */
+            changes: components["schemas"]["ConfigChangePreview"][];
+            /**
+             * Overall Risk
+             * @enum {string}
+             */
+            overall_risk: "low" | "medium" | "high";
+            /** Requires Confirmation */
+            requires_confirmation: boolean;
+            /** Blocked */
+            blocked: boolean;
+        };
         /** ConstraintColumn */
         ConstraintColumn: {
             /** Field Id */
@@ -7640,6 +7868,16 @@ export interface components {
              */
             live_probe: string;
         };
+        /** EngineNoteRead */
+        EngineNoteRead: {
+            /**
+             * Engine
+             * @enum {string}
+             */
+            engine: "trino" | "spark" | "flink" | "native" | "cryo";
+            /** Note */
+            note: string;
+        };
         /** EngineRewriteSemanticsResponse */
         EngineRewriteSemanticsResponse: {
             /** Engine */
@@ -8521,6 +8759,54 @@ export interface components {
              */
             updated_at: string;
         };
+        /** MaintenanceOperationRead */
+        MaintenanceOperationRead: {
+            /** Operation */
+            operation: string;
+            /** Label */
+            label: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "compaction" | "cleanup";
+            /** Summary */
+            summary: string;
+            /** When Planned */
+            when_planned: string;
+            /** Exclude Consequence */
+            exclude_consequence: string;
+            /**
+             * Exclude Risk
+             * @enum {string}
+             */
+            exclude_risk: "low" | "medium" | "high";
+            /** Reasons To Exclude */
+            reasons_to_exclude?: string[];
+            /** Companion Hint */
+            companion_hint?: string | null;
+            /** Companion Operation */
+            companion_operation?: string | null;
+            /** Engine Notes */
+            engine_notes?: components["schemas"]["EngineNoteRead"][];
+            /** Doc Url */
+            doc_url: string;
+            /** Excluded */
+            excluded: boolean;
+            /** Excluded By */
+            excluded_by?: string | null;
+            /** Excluded At */
+            excluded_at?: string | null;
+            /** Excluded Reason */
+            excluded_reason?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "excluded" | "held" | "blocked" | "not_in_mode" | "off" | "when_needed" | "runs" | "not_scheduled" | "unsupported";
+            /** Status Detail */
+            status_detail: string;
+        };
         /** MaintenancePlanRead */
         MaintenancePlanRead: {
             /** Table Ref */
@@ -8815,6 +9101,23 @@ export interface components {
             /** Newest Event */
             newest_event?: string | null;
         };
+        /**
+         * OffPeakWindowResponse
+         * @description The governor-wide off-peak window heavy maintenance is restricted to.
+         *
+         *     Deliberately read-only and not table-scoped: ``offpeak_start_ist`` /
+         *     ``offpeak_end_ist`` are process settings on the Governor, so a per-table
+         *     editor here would imply an override the admission path cannot honour
+         *     (see cryo/governor/admission.py:is_offpeak).
+         */
+        OffPeakWindowResponse: {
+            /** Start Hour Ist */
+            start_hour_ist: number;
+            /** End Hour Ist */
+            end_hour_ist: number;
+            /** Enabled */
+            enabled: boolean;
+        };
         /** OidcExchangeRequest */
         OidcExchangeRequest: {
             /** Code */
@@ -8886,6 +9189,30 @@ export interface components {
             description: string;
             /** Destructive */
             destructive: boolean;
+        };
+        /** OperationExclusionsResponse */
+        OperationExclusionsResponse: {
+            /** Added */
+            added: string[];
+            /** Removed */
+            removed: string[];
+            /** Audit Log Ids */
+            audit_log_ids: number[];
+            /** Message */
+            message: string;
+            operations: components["schemas"]["TableOperationsRead"];
+        };
+        /** OperationExclusionsWrite */
+        OperationExclusionsWrite: {
+            /** Excluded */
+            excluded: string[];
+            /** Reason */
+            reason: string;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
         };
         /** OperationRead */
         OperationRead: {
@@ -9030,6 +9357,15 @@ export interface components {
             avg_selectivity?: number | null;
             /** Trigger */
             trigger?: string | null;
+        };
+        /** PartitionFieldRead */
+        PartitionFieldRead: {
+            /** Name */
+            name: string;
+            /** Source Column */
+            source_column?: string | null;
+            /** Transform */
+            transform: string;
         };
         /** PartitionPredicateRead */
         PartitionPredicateRead: {
@@ -9383,6 +9719,24 @@ export interface components {
             qualifies_for_canary: boolean;
             /** Reasons */
             reasons: string[];
+        };
+        /** PropertyDetailRead */
+        PropertyDetailRead: {
+            /** Key */
+            key: string;
+            /** Value */
+            value: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "setting" | "read" | "write" | "behavior" | "reserved" | "catalog" | "engine" | "custom";
+            /** Summary */
+            summary: string;
+            /** Doc Url */
+            doc_url?: string | null;
+            /** Setting Key */
+            setting_key?: string | null;
         };
         /** PropertyRecommendationRead */
         PropertyRecommendationRead: {
@@ -9880,6 +10234,26 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** RefRead */
+        RefRead: {
+            /** Name */
+            name: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "branch" | "tag";
+            /** Snapshot Id */
+            snapshot_id?: string | null;
+            /** Max Ref Age Ms */
+            max_ref_age_ms?: number | null;
+            /** Max Snapshot Age Ms */
+            max_snapshot_age_ms?: number | null;
+            /** Min Snapshots To Keep */
+            min_snapshots_to_keep?: number | null;
+            /** Retained Forever */
+            retained_forever: boolean;
+        };
         /** RenderedStatementRead */
         RenderedStatementRead: {
             /** Action */
@@ -10025,6 +10399,42 @@ export interface components {
             normalized_predicates_sha256: string | null;
             /** Limitations */
             limitations: string[];
+        };
+        /** RiskDirectionRead */
+        RiskDirectionRead: {
+            /** Label */
+            label: string;
+            /**
+             * Risk
+             * @enum {string}
+             */
+            risk: "low" | "medium" | "high";
+            /** Detail */
+            detail?: string | null;
+            /** Blocked */
+            blocked?: string | null;
+        };
+        /** RollbackSnapshotRequest */
+        RollbackSnapshotRequest: {
+            /** Snapshot Id */
+            snapshot_id: string;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
+        };
+        /** RollbackSnapshotResponse */
+        RollbackSnapshotResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Snapshot Id */
+            snapshot_id: string;
+            /** Previous Snapshot Id */
+            previous_snapshot_id?: string | null;
         };
         /** RoutingPreviewRequest */
         RoutingPreviewRequest: {
@@ -10773,6 +11183,39 @@ export interface components {
             query: string;
             /** Groups */
             groups: components["schemas"]["SearchGroupRead"][];
+        };
+        /** SettingEditorRead */
+        SettingEditorRead: {
+            /**
+             * Value Type
+             * @enum {string}
+             */
+            value_type: "bytes" | "int" | "bool" | "enum" | "duration_ms" | "duration_days" | "columns" | "text";
+            /** Options */
+            options?: string[];
+            /** Minimum */
+            minimum?: number | null;
+            /** Maximum */
+            maximum?: number | null;
+            /** Unit */
+            unit?: string | null;
+            /**
+             * Allow Unset
+             * @default true
+             */
+            allow_unset: boolean;
+        };
+        /** SettingGroupRead */
+        SettingGroupRead: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "file_layout" | "row_level" | "commits" | "metadata" | "retention" | "format";
+            /** Label */
+            label: string;
+            /** Description */
+            description: string;
         };
         /** SettingsBody */
         SettingsBody: {
@@ -11554,6 +11997,17 @@ export interface components {
             /** Deleted Data Files */
             deleted_data_files?: number | null;
         };
+        /** SortFieldRead */
+        SortFieldRead: {
+            /** Column */
+            column?: string | null;
+            /** Transform */
+            transform: string;
+            /** Direction */
+            direction: string;
+            /** Null Order */
+            null_order: string;
+        };
         /** SourceCreate */
         SourceCreate: {
             /** Name */
@@ -11837,6 +12291,43 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** TableConfigResponse */
+        TableConfigResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /**
+             * Read From
+             * @enum {string}
+             */
+            read_from: "catalog" | "scan";
+            /** Read At */
+            read_at: string;
+            /** Catalog Error */
+            catalog_error?: string | null;
+            /** Can Edit */
+            can_edit: boolean;
+            /** Preset Name */
+            preset_name?: string | null;
+            /** Preset Engine */
+            preset_engine?: string | null;
+            /** Groups */
+            groups: components["schemas"]["SettingGroupRead"][];
+            /** Settings */
+            settings: components["schemas"]["TableSettingRead"][];
+            metadata?: components["schemas"]["TableMetadataRead"] | null;
+            /** Properties */
+            properties?: {
+                [key: string]: string;
+            };
+            /** Property Details */
+            property_details?: components["schemas"]["PropertyDetailRead"][];
+            /** Columns */
+            columns?: string[];
+            operations?: components["schemas"]["TableOperationsRead"] | null;
+        };
         /** TableCostRead */
         TableCostRead: {
             /**
@@ -12007,6 +12498,70 @@ export interface components {
             /** Days To Critical */
             days_to_critical: number | null;
         };
+        /** TableMetadataRead */
+        TableMetadataRead: {
+            /** Format Version */
+            format_version?: number | null;
+            /** Table Uuid */
+            table_uuid?: string | null;
+            /** Location */
+            location?: string | null;
+            /** Metadata Location */
+            metadata_location?: string | null;
+            /** Last Updated Ms */
+            last_updated_ms?: number | null;
+            /** Current Snapshot Id */
+            current_snapshot_id?: string | null;
+            /**
+             * Snapshot Count
+             * @default 0
+             */
+            snapshot_count: number;
+            /**
+             * Metadata Log Count
+             * @default 0
+             */
+            metadata_log_count: number;
+            /** Schema Id */
+            schema_id?: number | null;
+            /**
+             * Schema Count
+             * @default 0
+             */
+            schema_count: number;
+            /**
+             * Column Count
+             * @default 0
+             */
+            column_count: number;
+            /** Identifier Fields */
+            identifier_fields?: string[];
+            /** Partition Fields */
+            partition_fields?: components["schemas"]["PartitionFieldRead"][];
+            /** Spec Id */
+            spec_id?: number | null;
+            /**
+             * Spec Count
+             * @default 0
+             */
+            spec_count: number;
+            /** Sort Fields */
+            sort_fields?: components["schemas"]["SortFieldRead"][];
+            /** Sort Order Id */
+            sort_order_id?: number | null;
+            /** Refs */
+            refs?: components["schemas"]["RefRead"][];
+            /**
+             * Statistics Files
+             * @default 0
+             */
+            statistics_files: number;
+            /**
+             * Partition Statistics Files
+             * @default 0
+             */
+            partition_statistics_files: number;
+        };
         /**
          * TableNameRef
          * @description A table identified by name rather than by Cryo's own id -- lets scope="tables" target a
@@ -12029,6 +12584,20 @@ export interface components {
              * @default web-table-operation
              */
             trigger: string | null;
+        };
+        /** TableOperationsRead */
+        TableOperationsRead: {
+            /** Preset Name */
+            preset_name?: string | null;
+            /** Mode */
+            mode?: string | null;
+            /**
+             * Held
+             * @default false
+             */
+            held: boolean;
+            /** Operations */
+            operations: components["schemas"]["MaintenanceOperationRead"][];
         };
         /** TableParamOverridePatch */
         TableParamOverridePatch: {
@@ -12227,6 +12796,73 @@ export interface components {
             limit: number;
             /** Offset */
             offset: number;
+        };
+        /** TableSettingRead */
+        TableSettingRead: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "file_layout" | "row_level" | "commits" | "metadata" | "retention" | "format";
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "property" | "cryo_param" | "bloom_columns" | "format_version";
+            /** Summary */
+            summary: string;
+            /** Takes Effect */
+            takes_effect: string;
+            /** Reversible */
+            reversible: string;
+            /** Doc Url */
+            doc_url: string;
+            /** Current Value */
+            current_value?: string | null;
+            /**
+             * Current Source
+             * @enum {string}
+             */
+            current_source: "table" | "iceberg_default" | "engine_default" | "metadata" | "cryo_preset" | "cryo_override" | "cryo_default";
+            /** Is Set */
+            is_set: boolean;
+            /** Default Value */
+            default_value?: string | null;
+            /** Default Label */
+            default_label?: string | null;
+            /** Recommended Value */
+            recommended_value?: string | null;
+            /** Recommendation Reason */
+            recommendation_reason?: string | null;
+            /** Note */
+            note?: string | null;
+            /** Matches Recommendation */
+            matches_recommendation?: boolean | null;
+            /**
+             * Change Risk
+             * @enum {string}
+             */
+            change_risk: "low" | "medium" | "high";
+            /** Recommendation Risk */
+            recommendation_risk?: ("low" | "medium" | "high") | null;
+            /** Risk Directions */
+            risk_directions?: components["schemas"]["RiskDirectionRead"][];
+            /** Editable */
+            editable: boolean;
+            /** Read Only Reason */
+            read_only_reason?: string | null;
+            /**
+             * Min Role
+             * @enum {string}
+             */
+            min_role: "operator" | "admin";
+            editor: components["schemas"]["SettingEditorRead"];
+            /** Engine Notes */
+            engine_notes?: components["schemas"]["EngineNoteRead"][];
         };
         /** TableSignalsResponse */
         TableSignalsResponse: {
@@ -12857,6 +13493,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_governor_offpeak_window_api_v1_governor_offpeak_window_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OffPeakWindowResponse"];
                 };
             };
         };
@@ -15695,6 +16351,144 @@ export interface operations {
             };
         };
     };
+    get_table_config_api_v1_tables__table_id__config_get: {
+        parameters: {
+            query?: {
+                refresh?: boolean;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_table_config_api_v1_tables__table_id__config_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfigPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_table_config_api_v1_tables__table_id__config_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfigApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigApplyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_operation_exclusions_api_v1_tables__table_id__config_operations_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationExclusionsWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationExclusionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     smart_maintenance_overview_api_v1_smart_maintenance_overview_get: {
         parameters: {
             query?: never;
@@ -16714,6 +17508,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UnprotectSnapshotResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rollback_table_snapshot_api_v1_tables__table_id__snapshots__snapshot_id__rollback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+                snapshot_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RollbackSnapshotRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RollbackSnapshotResponse"];
                 };
             };
             /** @description Validation Error */

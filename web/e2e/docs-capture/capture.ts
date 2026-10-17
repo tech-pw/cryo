@@ -29,16 +29,129 @@ import {
   demoTablesBody,
   demoVitalsBody
 } from "./demo-data";
+import { demoTableDetail, demoTableHistory, demoTableRuns, demoTableTabResponse } from "./demo-table-detail";
+import demoTableConfig from "./demo-table-config.json" with { type: "json" };
 
 // Writes docs-site screenshots of the real UI against synthetic demo data.
 // Run: npx playwright test -c e2e/docs-capture/playwright.config.ts
 const OUT = fileURLToPath(new URL("../../../site/assets/img/screens/", import.meta.url));
 const THEMES = ["light", "dark"] as const;
 
-const SHOTS: Array<{ name: string; path: string; waitFor?: string; height?: number }> = [
+const stageConfigBatch = async (page: Page): Promise<void> => {
+  const row = (key: string) => page.getByTestId(`setting-${key}`);
+  await row("write.target-file-size-bytes").getByRole("button", { name: /Stage recommendation/ }).click();
+  await row("write.distribution-mode").getByRole("button", { name: /Stage recommendation/ }).click();
+  const age = row("history.expire.max-snapshot-age-ms");
+  await age.getByRole("button", { name: /^Edit / }).click();
+  await age.getByRole("spinbutton").fill("1");
+  await age.getByRole("button", { name: "Stage change" }).click();
+  await page.getByRole("button", { name: "Review and apply" }).click();
+  await page.getByText("This batch contains a high-risk change", { exact: false }).waitFor();
+};
+
+const stageOperationExclusion = async (page: Page): Promise<void> => {
+  const section = page.locator("#tc-operations");
+  await section.getByRole("switch", { name: "Run Compact small files" }).click();
+  await section.getByText("Will be excluded").waitFor();
+  await section.evaluate((el) => el.scrollIntoView({ block: "start" }));
+};
+
+const openPropertyInfo = async (page: Page): Promise<void> => {
+  await page.getByRole("button", { name: /All table properties/ }).click();
+  const button = page.getByRole("button", { name: "About write.parquet.bloom-filter-enabled.column.user_id" });
+  await button.evaluate((el) => el.closest(".tc-props-wrap")?.scrollIntoView({ block: "start" }));
+  await button.click();
+  await page.getByRole("button", { name: /Show its setting/ }).waitFor();
+};
+
+const openMaintenanceMenu = async (page: Page): Promise<void> => {
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("dialog", { name: "Maintenance actions" }).waitFor();
+};
+
+const openTableSettings = async (page: Page): Promise<void> => {
+  await page.getByRole("button", { name: "Table settings" }).click();
+  await page.getByRole("dialog").getByText("Ownership", { exact: true }).first().waitFor();
+  await page.evaluate(() => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    window.getSelection()?.removeAllRanges();
+  });
+};
+
+const TABLE = `/tables/${DEMO_TABLES[0].id}`;
+const ACTIVE_PANEL = "[role='tabpanel'][data-state='active']";
+const tabShot = (tab: string, waitFor?: string, part?: { name: string; selector: string }) => ({
+  name: part ? `table-tab-${tab}-${part.name}` : `table-tab-${tab}`,
+  path: `${TABLE}?tab=${tab}`,
+  waitFor,
+  height: 1100,
+  selector: part ? `${ACTIVE_PANEL} ${part.selector}` : ACTIVE_PANEL
+});
+const MAINTENANCE = ".td-maintenance-workspace";
+
+const SHOTS: Array<{
+  name: string;
+  path: string;
+  waitFor?: string;
+  height?: number;
+  /** Screenshot only this element instead of the viewport. */
+  selector?: string;
+  /** Crop the viewport screenshot to its top N pixels. */
+  clip?: number;
+  /** Crop a `selector` shot to its top N pixels. */
+  maxHeight?: number;
+  act?: (page: Page) => Promise<void>;
+}> = [
   { name: "health", path: "/", waitFor: "Your lake at a glance", height: 1000 },
   { name: "tables", path: "/tables", height: 1320 },
-  { name: "table-detail", path: `/tables/${DEMO_TABLES[0].id}`, height: 960 },
+  { name: "table-detail", path: TABLE, height: 960 },
+  { name: "table-header", path: TABLE, waitFor: "What's pulling the score down", height: 900, selector: ".table-detail-workspace", maxHeight: 400 },
+  {
+    name: "table-header-menu",
+    path: TABLE,
+    waitFor: "What's pulling the score down",
+    height: 900,
+    selector: ".table-detail-workspace",
+    maxHeight: 400,
+    act: openMaintenanceMenu
+  },
+  { name: "table-settings", path: TABLE, waitFor: "What's pulling the score down", height: 900, act: openTableSettings },
+  tabShot("overview", "What's pulling the score down"),
+  tabShot("files", "Small-file candidates over scans"),
+  tabShot("snapshots", "Commits"),
+  tabShot("maintenance", "Stored benefit-score candidates", { name: "plan", selector: `${MAINTENANCE} > :nth-child(-n+2)` }),
+  tabShot("maintenance", "Stored benefit-score candidates", { name: "runs", selector: `${MAINTENANCE} > :nth-child(3)` }),
+  tabShot("maintenance", "Stored benefit-score candidates", { name: "compaction", selector: `${MAINTENANCE} > :nth-child(4)` }),
+  tabShot("config", "Differs from recommendation", { name: "settings", selector: ".td-config > section:nth-child(-n+2)" }),
+  tabShot("usage", "Partition access"),
+  tabShot("quality", "Optimization checklist"),
+  tabShot("cost", "Compaction economics"),
+  {
+    ...tabShot("config", "Differs from recommendation", { name: "inventory", selector: ".td-config > section:nth-child(3)" }),
+    name: "table-config",
+    maxHeight: 1150
+  },
+  {
+    name: "table-config-review",
+    path: `/tables/${DEMO_TABLES[0].id}?tab=config`,
+    waitFor: "Differs from recommendation",
+    height: 1100,
+    act: stageConfigBatch
+  },
+  {
+    name: "table-config-operations",
+    path: `/tables/${DEMO_TABLES[0].id}?tab=config`,
+    waitFor: "Maintenance operations",
+    height: 1000,
+    act: stageOperationExclusion
+  },
+  {
+    name: "table-config-properties",
+    path: `/tables/${DEMO_TABLES[0].id}?tab=config`,
+    waitFor: "Differs from recommendation",
+    height: 900,
+    act: openPropertyInfo
+  },
   { name: "runs", path: "/runs", waitFor: "Success rate · 7d", height: 1100 },
   { name: "runs-holds", path: "/runs?tab=holds", waitFor: "Active holds", height: 900 },
   { name: "run-detail", path: `/runs/${DEMO_RUN_ID}`, height: 960 },
@@ -66,6 +179,7 @@ async function installDemo(page: Page, unhandled: Set<string>): Promise<void> {
       if (route.request().method() === "OPTIONS") return route.fallback();
       if (p.endsWith("/api/v1/auth/token")) return json(route, { access_token: demoAccessToken(), token_type: "bearer", role: "operator" });
       if (p.endsWith("/api/v1/tables")) return json(route, demoTablesBody(url));
+      if (/\/api\/v1\/tables\/[^/]+\/config\/preview$/.test(p)) return json(route, demoTableConfig.preview);
       const sub = p.match(/\/api\/v1\/tables\/([^/]+)\/([a-z-]+)$/);
       if (sub) {
         const [, id, kind] = sub;
@@ -75,15 +189,30 @@ async function installDemo(page: Page, unhandled: Set<string>): Promise<void> {
         if (kind === "signals") return json(route, demoSignals(id));
         if (kind === "cost") return json(route, demoTableCost(id));
         if (kind === "compatible-presets") return json(route, demoPresets());
-        if (kind === "history" || kind === "runs") return json(route, { items: [] });
+        if (kind === "history") return json(route, demoTableHistory(id));
+        if (kind === "runs") return json(route, demoTableRuns(id));
+        if (kind === "config") return json(route, { ...demoTableConfig.config, table_id: id });
+        if (kind === "effective-params") {
+          const params = { file_size_mb: 256, retention_days: 7, min_small_files: 20 };
+          return json(route, {
+            table_id: id,
+            preset_name: "nightly-standard",
+            preset_params: params,
+            param_overrides: {},
+            effective_params: params
+          });
+        }
       }
       if (p.endsWith("/api/v1/engine-load")) return json(route, demoEngineLoad());
+      if (p.endsWith("/api/v1/governor/offpeak-window")) {
+        return json(route, { start_hour_ist: 1, end_hour_ist: 7, enabled: true });
+      }
       if (p.endsWith("/api/v1/multi-catalog")) return json(route, demoMultiCatalog());
       if (p.includes("/api/v1/advanced/silent-data-loss/")) return json(route, null);
       const one = p.match(/\/api\/v1\/tables\/([^/]+)$/);
-      if (one && one[1] !== "export.csv" && one[1] !== "group-by") {
-        return json(route, DEMO_TABLES.find((t) => t.id === one[1]) ?? DEMO_TABLES[0]);
-      }
+      if (one && one[1] !== "export.csv" && one[1] !== "group-by") return json(route, demoTableDetail(one[1]));
+      const tab = demoTableTabResponse(p, url);
+      if (tab !== undefined) return json(route, tab);
       if (p.endsWith("/api/v1/dashboards/datalake")) return json(route, demoDashboardBody());
       if (p.endsWith("/api/v1/vitals")) return json(route, demoVitalsBody());
       if (p.endsWith("/api/v1/runs")) return json(route, DEMO_RUN_HISTORY);
@@ -121,9 +250,30 @@ for (const theme of THEMES) {
       await installDemo(page, unhandled);
       await page.goto(shot.path);
       if (shot.waitFor) await page.getByText(shot.waitFor).first().waitFor({ timeout: 60_000 });
+      if (shot.act) await shot.act(page);
       await settlePage(page);
       await page.waitForTimeout(600);
-      await page.screenshot({ path: join(OUT, `${shot.name}-${theme}.png`), animations: "disabled" });
+      const path = join(OUT, `${shot.name}-${theme}.png`);
+      if (shot.selector) {
+        // The app scrolls inside its own container, so off-screen parts of a tall panel never paint.
+        const parts = page.locator(shot.selector);
+        const bottom = await parts.evaluateAll((els) => Math.max(...els.map((el) => el.getBoundingClientRect().top + el.scrollHeight)));
+        await page.setViewportSize({ width: 1440, height: Math.ceil(bottom) + 48 });
+        await settlePage(page);
+        await page.waitForTimeout(400);
+        const boxes = (await Promise.all((await parts.all()).map((part) => part.boundingBox()))).filter((b) => b != null);
+        if (!boxes.length) throw new Error(`${shot.selector} has no box`);
+        const pad = 16;
+        const x = Math.min(...boxes.map((b) => b.x)) - pad;
+        const y = Math.max(0, Math.min(...boxes.map((b) => b.y)) - pad);
+        const right = Math.max(...boxes.map((b) => b.x + b.width)) + pad;
+        const full = Math.max(...boxes.map((b) => b.y + b.height)) + pad;
+        const end = shot.maxHeight ? Math.min(full, y + shot.maxHeight) : full;
+        await page.screenshot({ path, animations: "disabled", clip: { x, y, width: right - x, height: end - y } });
+      } else {
+        const clip = shot.clip ? { x: 0, y: 0, width: 1440, height: shot.clip } : undefined;
+        await page.screenshot({ path, animations: "disabled", clip });
+      }
       if (unhandled.size) console.log(`[${shot.name}] unhandled:`, [...unhandled].join(", "));
     });
   }

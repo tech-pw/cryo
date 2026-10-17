@@ -129,10 +129,15 @@ def get_preset_or_404(session: Session, preset_id: uuid.UUID) -> Preset | None:
 
 
 def get_table_with_stats(session: Session, table_id: uuid.UUID) -> Table | None:
+    """Loads only what preset resolution reads; TableStats.raw can be megabytes per row."""
     return session.scalar(
         select(Table)
         .where(Table.id == table_id)
-        .options(selectinload(Table.stats), selectinload(Table.assignment))
+        .options(
+            selectinload(Table.stats).load_only(*STATS_LOAD_ONLY_COLUMNS),
+            selectinload(Table.cost).load_only(*COST_LOAD_ONLY_COLUMNS),
+            selectinload(Table.assignment),
+        )
     )
 
 

@@ -75,6 +75,7 @@ class MaintenanceJobRecord:
     last_maintained_at: datetime | None = None
     actor: str | None = None
     operations: tuple[OperationType, ...] | None = None
+    excluded_operations: tuple[str, ...] = ()
     force_admit: bool = False
     dispatch_id: str | None = None
     intent_id: str | None = None
@@ -548,6 +549,7 @@ class Worker:
                     operations=job.operations,
                     protected_snapshot_ids=_protected_snapshot_ids(job.table_id),
                     has_shared_location=self._has_shared_location(job.table_id),
+                    excluded_operations=job.excluded_operations,
                 )
                 self._store.save_plan(job.id, plan_to_dict(plan))
 

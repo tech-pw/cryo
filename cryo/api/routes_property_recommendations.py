@@ -112,11 +112,13 @@ def apply_table_properties_endpoint(
     if session.get(Table, table_id) is None:
         raise HTTPException(status_code=404, detail="Table not found")
 
-    risky_keys = [k for k in payload.properties if k == "format-version"]
-    if risky_keys and not payload.confirm_risky:
+    if "format-version" in payload.properties:
         raise HTTPException(
             status_code=400,
-            detail="format-version requires confirm_risky=true — verify all readers support v3",
+            detail=(
+                "format-version is reserved and cannot be set as a property; upgrade it from "
+                "the table's Config tab (POST /tables/{id}/config/apply)"
+            ),
         )
 
     try:

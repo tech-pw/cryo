@@ -972,9 +972,10 @@ class FakeCurrentSnapshot:
 class FakeMetadata:
     properties = {
         "write.distribution-mode": "hash",
-        "write.sort-order": "event_date",
         "write.target-file-size-bytes": "268435456",
     }
+    default_sort_order_id = 1
+    sort_orders = [SimpleNamespace(order_id=1, fields=[SimpleNamespace(source_id=1)])]
 
     def __init__(self, snapshots: list[FakeSnapshotMeta]) -> None:
         self.snapshots = snapshots
