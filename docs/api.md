@@ -141,6 +141,30 @@ GET /api/v1/tables/{table_id}/effective-preset
 GET /api/v1/tables/{table_id}/compatible-presets
 ```
 
+Table configuration (the table detail Config tab):
+
+```http
+GET  /api/v1/tables/{table_id}/config?refresh=false
+POST /api/v1/tables/{table_id}/config/preview
+POST /api/v1/tables/{table_id}/config/apply
+```
+
+- `GET` (viewer) returns the curated settings: current value and its source, Cryo's
+  recommendation, direction-aware risk, editor, and engine notes. It also returns table metadata
+  and every raw property.
+  - The live catalog read is bounded at 20 s and cached for 30 s; `refresh=true` bypasses the
+    cache.
+  - If the read fails, the response comes from the last scan with `read_from: "scan"` and is
+    read-only.
+- `preview` (viewer) assesses up to 50 changes against the live table.
+- `apply` (operator; admin for `min_role: "admin"` settings) writes the property changes in one
+  PyIceberg transaction on the Source catalog, saves `cryo.*` overrides, audits each change as
+  `table_config_change`, and re-reads the table.
+  - A high-risk batch needs `confirm: true` and a reason of at least 8 characters.
+  - A change whose `expected_value` no longer matches is rejected.
+
+See `docs/TABLE_CONFIG_INVENTORY_2026-10-17.md`.
+
 `compatible-presets` returns presets whose destination can maintain this table's catalog.
 Non-Trino destinations are always included. Trino destinations are included only when the
 table's `source_id` appears in that destination's `config.catalog_bindings`.

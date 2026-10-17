@@ -32,7 +32,9 @@ export type WriteAction =
   | "editCompliance"
   | "dismissDarkTable"
   | "refreshAnomalies"
-  | "runDedup";
+  | "runDedup"
+  | "editTableConfig"
+  | "editTableConfigAdmin";
 
 type MinRole = "operator" | "admin";
 
@@ -71,7 +73,10 @@ export const WRITE_MIN_ROLE: Record<WriteAction, MinRole> = {
   editCompliance: "operator",
   dismissDarkTable: "operator",
   refreshAnomalies: "operator",
-  runDedup: "operator"
+  runDedup: "operator",
+  editTableConfig: "operator",
+  // Format upgrades and Cryo retention overrides: one-way or data-deleting.
+  editTableConfigAdmin: "admin"
 };
 
 const DESTRUCTIVE_ADMIN: ReadonlySet<WriteAction> = new Set([

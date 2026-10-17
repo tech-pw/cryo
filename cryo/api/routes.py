@@ -1622,10 +1622,8 @@ def get_effective_params(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
         raise HTTPException(status_code=404, detail="Table not found")
     effective = presets.resolve_effective_preset(session, table)
     assignment = session.get(TableAssignment, table_id)
-    overrides = (
-        dict(assignment.param_overrides) if assignment and assignment.param_overrides else {}
-    )
-    preset_params = dict(effective.preset.params) if effective else {}
+    overrides = _json_object(assignment.param_overrides if assignment else None)
+    preset_params = _json_object(effective.preset.params if effective else None)
     return EffectiveParamsResponse(
         table_id=table_id,
         preset_id=uuid.UUID(effective.preset.id) if effective else None,
@@ -1634,6 +1632,11 @@ def get_effective_params(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
         param_overrides=overrides,
         effective_params={**preset_params, **overrides},
     )
+
+
+def _json_object(value: object) -> dict[str, Any]:
+    """JSONB columns can hold any JSON value; a non-object must not 500 the settings panel."""
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 @router.patch(

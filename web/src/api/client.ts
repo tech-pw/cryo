@@ -137,7 +137,16 @@ import type {
   QualityConstraintCreate,
   QualityConstraintRead,
   QualityConstraintsResponse,
-  QualityConstraintUpdate
+  QualityConstraintUpdate,
+  ConfigApplyResponse,
+  ConfigChange,
+  ConfigChangePreview,
+  ConfigPreviewResponse,
+  ConfigRisk,
+  SettingGroupRead,
+  TableConfigMetadataRead,
+  TableConfigResponse,
+  TableSettingRead
 } from "./types";
 import { serializePredicate, type Predicate } from "../lib/predicate";
 
@@ -1890,6 +1899,34 @@ export const getGovernorOffPeakWindow = (api: ApiOptions) =>
 
 export const getPropertyRecommendations = (api: ApiOptions, tableId: UUID) =>
   apiFetch<PropertyRecommendationsResponse>(`/tables/${tableId}/property-recommendations`, api);
+
+export type {
+  ConfigApplyResponse,
+  ConfigChange,
+  ConfigChangePreview,
+  ConfigPreviewResponse,
+  ConfigRisk,
+  SettingGroupRead,
+  TableConfigMetadataRead,
+  TableConfigResponse,
+  TableSettingRead
+};
+
+export const getTableConfig = (api: ApiOptions, tableId: UUID, refresh = false) =>
+  apiFetch<TableConfigResponse>(`/tables/${tableId}/config`, api, refresh ? { query: { refresh: true } } : undefined);
+
+export const previewTableConfig = (api: ApiOptions, tableId: UUID, changes: ConfigChange[]) =>
+  apiFetch<ConfigPreviewResponse>(`/tables/${tableId}/config/preview`, api, {
+    method: "POST",
+    body: { changes }
+  });
+
+export const applyTableConfig = (
+  api: ApiOptions,
+  tableId: UUID,
+  body: { changes: ConfigChange[]; confirm: boolean; reason?: string | null }
+) =>
+  apiFetch<ConfigApplyResponse>(`/tables/${tableId}/config/apply`, api, { method: "POST", body });
 
 export const analyzeWairBoundaries = (api: ApiOptions, tableId: UUID, aggressiveness = 1) =>
   apiFetch<WairBoundaryReport>(

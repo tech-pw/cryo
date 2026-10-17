@@ -877,20 +877,34 @@ def _snapshot_info(table_obj: object) -> dict[str, Any]:
 _ICEBERG_PROPERTY_KEYS = (
     "write.target-file-size-bytes",
     "write.distribution-mode",
-    "write.sort-order",
     "write.metadata.delete-after-commit.enabled",
     "write.metadata.previous-versions-max",
     "commit.retry.num-retries",
     "commit.retry.min-wait-ms",
     "commit.retry.max-wait-ms",
     "write.parquet.compression-codec",
-    "write.delete-mode",
-    "write.update-mode",
-    "write.merge-mode",
+    "write.delete.mode",
+    "write.update.mode",
+    "write.merge.mode",
     "history.expire.max-snapshot-age-ms",
     "history.expire.min-snapshots-to-keep",
     "gc.enabled",
     "format-version",
+    "write.delete.target-file-size-bytes",
+    "write.format.default",
+    "write.parquet.row-group-size-bytes",
+    "write.object-storage.enabled",
+    "write.data.path",
+    "write.delete.granularity",
+    "write.upsert.enabled",
+    "commit.retry.total-timeout-ms",
+    "commit.manifest-merge.enabled",
+    "commit.manifest.target-size-bytes",
+    "commit.manifest.min-count-to-merge",
+    "write.metadata.metrics.default",
+    "write.metadata.metrics.max-inferred-column-defaults",
+    "history.expire.max-ref-age-ms",
+    "comment",
 )
 
 
@@ -907,6 +921,34 @@ def _parse_bool_property(value: object) -> bool | None:
     return None
 
 
+def tracked_iceberg_properties(properties: Mapping[Any, Any]) -> dict[str, str]:
+    """The subset of table properties persisted into ``TableStats.raw``."""
+    tracked: dict[str, str] = {}
+    for key in _ICEBERG_PROPERTY_KEYS:
+        if key in properties:
+            tracked[key] = str(properties[key])
+    for key, value in properties.items():
+        key_str = str(key)
+        if key_str.startswith("write.parquet.bloom-filter-enabled.column."):
+            tracked[key_str] = str(value)
+    return tracked
+
+
+def _has_sort_order(table_obj: object, metadata: object) -> bool:
+    """Sort order is table metadata (sort-orders + default-sort-order-id), not a property."""
+    sort_order_fn = getattr(table_obj, "sort_order", None)
+    if callable(sort_order_fn):
+        try:
+            return bool(getattr(sort_order_fn(), "fields", None))
+        except Exception:
+            pass
+    default_id = _attr(metadata, "default_sort_order_id", None)
+    for order in _attr(metadata, "sort_orders", None) or []:
+        if _attr(order, "order_id", None) == default_id:
+            return bool(_attr(order, "fields", None))
+    return False
+
+
 def _table_properties(table_obj: object) -> dict[str, Any]:
     metadata = _attr(table_obj, "metadata", None)
     properties = _attr(table_obj, "properties", None) or _attr(metadata, "properties", None) or {}
@@ -914,18 +956,11 @@ def _table_properties(table_obj: object) -> dict[str, Any]:
         properties = properties()
     if not isinstance(properties, Mapping):
         properties = {}
-    iceberg_properties: dict[str, str] = {}
-    for key in _ICEBERG_PROPERTY_KEYS:
-        if key in properties:
-            iceberg_properties[key] = str(properties[key])
-    for key, value in properties.items():
-        key_str = str(key)
-        if key_str.startswith("write.parquet.bloom-filter-enabled.column."):
-            iceberg_properties[key_str] = str(value)
+    iceberg_properties = tracked_iceberg_properties(properties)
     target = properties.get("write.target-file-size-bytes")
     return {
         "write_distribution_mode": properties.get("write.distribution-mode"),
-        "has_sort_order": bool(properties.get("write.sort-order")),
+        "has_sort_order": _has_sort_order(table_obj, metadata),
         "target_file_size_bytes": int(target)
         if target is not None and str(target).isdigit()
         else None,

@@ -1,5 +1,15 @@
 # Cryo — TODO
 
+## Table configuration inventory — 2026-10-17
+
+See [docs/TABLE_CONFIG_INVENTORY_2026-10-17.md](docs/TABLE_CONFIG_INVENTORY_2026-10-17.md).
+
+- [x] 34-setting catalogue with source, recommendation, direction-aware risk, typed editors, engine notes.
+- [x] Live catalog read with scan fallback; staged preview → review → one-transaction apply, audited.
+- [x] Scanner key fixes (real mode keys, sort order from metadata); planner GC gate.
+- [ ] After deploy: confirm the live read stays under the 20 s bound on the largest REST/Glue tables.
+- [ ] After deploy: watch `table_config_change` audit rows and the GC-gate plan note on GC-off tables.
+
 ## Unused-cost investigation — 2026-09-29
 
 Evidence and rollout: [investigation](docs/CRYO_UNUSED_COST_DEBUG_2026-09-29.md).

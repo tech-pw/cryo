@@ -37,6 +37,15 @@ export type EffectResolutionRead = components["schemas"]["EffectResolutionRead"]
 export type EffectResolutionWrite = components["schemas"]["EffectResolutionWrite"];
 export type EffectBatchResolutionRead = components["schemas"]["EffectBatchResolutionRead"];
 export type EffectBatchResolutionWrite = components["schemas"]["EffectBatchResolutionWrite"];
+export type TableConfigResponse = components["schemas"]["TableConfigResponse"];
+export type TableSettingRead = components["schemas"]["TableSettingRead"];
+export type SettingGroupRead = components["schemas"]["SettingGroupRead"];
+export type TableConfigMetadataRead = components["schemas"]["TableMetadataRead"];
+export type ConfigChange = components["schemas"]["ConfigChange"];
+export type ConfigChangePreview = components["schemas"]["ConfigChangePreview"];
+export type ConfigPreviewResponse = components["schemas"]["ConfigPreviewResponse"];
+export type ConfigApplyResponse = components["schemas"]["ConfigApplyResponse"];
+export type ConfigRisk = TableSettingRead["change_risk"];
 
 export interface SourceRead {
   id: UUID;

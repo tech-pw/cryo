@@ -4,7 +4,7 @@ import { ArrowUpRight } from "lucide-react";
 
 import { getGovernorOffPeakWindow } from "../../api/client";
 import { EffectiveSettings } from "../../components/table-detail/maintenance/EffectiveSettings";
-import { PropertyRecommendations } from "../../components/table-detail/PropertyRecommendations";
+import { TableConfigInventory } from "../../components/table-detail/config/TableConfigInventory";
 import { useAuth } from "../../lib/auth";
 import { useTableDetailContext } from "./TableDetailContext";
 import "./configTab.css";
@@ -49,13 +49,14 @@ export const ConfigTab = () => {
 
       <section className="td-config-section" aria-labelledby="config-properties-title">
         <header className="td-config-head">
-          <h2 id="config-properties-title">Iceberg table properties</h2>
+          <h2 id="config-properties-title">Table configuration</h2>
           <p>
-            Written on the table itself, not by Cryo. Sort order, target file size and distribution mode change what a
-            compaction run produces.
+            Every setting that shapes how this table is written, committed and cleaned up, read live from the catalog.
+            Each row shows where its value comes from, what Cryo recommends, and how risky a change is. Stage edits,
+            review them together, then apply in one audited commit.
           </p>
         </header>
-        <PropertyRecommendations />
+        <TableConfigInventory tableId={tableId} />
       </section>
     </div>
   );
