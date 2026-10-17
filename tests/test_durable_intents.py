@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
@@ -225,6 +226,23 @@ def test_worker_defers_when_intent_effect_destination_is_paused() -> None:
         lambda destination: engine,
         locks,
         intent_store=intents,
+    ).process_next()
+
+    assert result is not None
+    assert result.status is JobStatus.DEFERRED
+    assert "paused" in (result.error or "")
+    assert engine.executed == []
+
+
+def test_worker_defers_legacy_job_while_maintenance_is_paused() -> None:
+    _, bound_job, _, stats = _bound_execution()
+    job = dataclasses.replace(bound_job, intent_id=None)
+    queue, locks, store = _durable_worker_fixture(job=job, stats=stats)
+    engine = FakeMaintenanceEngine()
+    paused = SimpleNamespace(is_paused=lambda **_: True)
+
+    result = Worker(
+        queue, store, lambda destination: engine, locks, intent_store=paused
     ).process_next()
 
     assert result is not None

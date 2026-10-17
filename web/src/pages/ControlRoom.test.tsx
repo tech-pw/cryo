@@ -22,6 +22,7 @@ vi.mock("../api/client", () => ({
     active_attempts: 1,
     active_pauses: 0
   }),
+  listDestinations: vi.fn().mockResolvedValue([{ id: "destination-1", name: "prod-trino" }]),
   listMaintenanceControls: vi.fn().mockResolvedValue([]),
   listMaintenanceEffects: vi.fn().mockResolvedValue([
     {
@@ -92,6 +93,8 @@ vi.mock("../api/client", () => ({
 }));
 
 import {
+  listMaintenanceEffects,
+  listMaintenanceIntents,
   pauseMaintenance,
   resolveMaintenanceEffect,
   resolveMaintenanceEffectsBatch
@@ -209,5 +212,16 @@ describe("Control Room", () => {
         }
       )
     );
+  });
+
+  it("offers every configured engine by name even with no durable intents", async () => {
+    vi.mocked(listMaintenanceEffects).mockResolvedValueOnce([]);
+    vi.mocked(listMaintenanceIntents).mockResolvedValueOnce([]);
+    renderPage();
+    const trigger = await screen.findByRole("button", { name: "Hold destination" });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    fireEvent.click(trigger);
+
+    expect(screen.getByRole("option", { name: "prod-trino" })).toHaveValue("destination-1");
   });
 });

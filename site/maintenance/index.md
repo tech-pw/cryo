@@ -2,7 +2,7 @@
 title: Maintenance
 description: Why Iceberg tables need maintenance, the seven operations Cryo runs in a fixed order, how the planner chunks work, how admission works, and the guardrails that stay on.
 canonical: https://tech-pw.github.io/cryo/maintenance/
-updated: 2026-10-06
+updated: 2026-10-16
 ---
 
 # Maintenance
@@ -145,11 +145,19 @@ Text description
 
 - Governor to Defer (no room)
 
-You can watch admission in the Runs view. Engine load shows the slots the governor is using against the cap for each destination.
+The Runs page shows what ran, what failed and what is held. It reads top to bottom:
+
+- **Pulse tiles.** Running now, failed runs in the last 24 hours, succeeded in the last 24 hours, the 7-day success rate, and the scanner. The first three tiles filter the history when clicked.
+
+- **Run timeline.** One bar per recent run, taller for longer runs and coloured by state. A running run is striped. As in Airflow's grid view, a run of failures or a slow night stands out before you read a row.
+
+- **History.** Filter chips for **All**, **Active** and **Failed · 24h**, each with a count. Each row shows state, run, start time (relative, with the exact time under it), a duration bar scaled to the slowest run on the page, bytes freed, and the trigger.
+
+- **Engine load and the last nightly funnel** sit at the bottom. Engine load shows the slots the governor is using against each destination's cap.
 
 cryo.local/runs
 
-*Runs: engine load at the top, the run history below. demo-trino is using 2 of its 6 slots, so the governor is still admitting.*
+*Seeded demo lake. The red bar is a failed nightly run, and the amber bar a partial one. The striped bar on the right is still running.*
 
 Workers are not concurrency
 
@@ -167,6 +175,60 @@ One job's failure is recorded against that table. The run continues with the nex
 Destructive operations are guarded
 
 `expire_snapshots` and `remove_orphan_files` require the relevant tier in the scanner, and forcing them is audited. Cryo never touches snapshots the retention policy would keep.
+
+## Pausing maintenance
+
+A hold stops new maintenance without cancelling anything. It is the switch for an engine upgrade, an incident, or a change freeze. Set one from **Runs → Holds**:
+
+Hold destination
+Pauses one engine. Every other engine keeps running. Operators and admins can set it, and the dialog lists each configured engine by name.
+Hold all maintenance
+Pauses every engine. Admin only.
+
+Both need a reason of at least three characters, and resuming needs a verification note. Every change is recorded with who made it and a new control generation.
+
+cryo.local/runs?tab=holds
+
+*demo-trino is held for an upgrade window. Other engines keep running, and Resume asks what was checked first.*
+
+While a hold is active:
+
+| Path | Global hold | Destination hold |
+| --- | --- | --- |
+
+| Scheduled presets | Do not fire | Fire, and their jobs wait at the worker |
+
+| Nightly batch | Recorded as a skipped run | Recorded as a skipped run if it targets the held engine |
+
+| Queued and manual jobs | Deferred, retried after resume | Deferred if they target the held engine |
+
+What a hold does not stop
+
+A statement already submitted to an engine finishes. A batch already in progress finishes the lanes it started. A preset whose cron slot passed during the hold fires once after you resume.
+
+## Excluding a schema or table
+
+An exclusion keeps Cryo's maintenance away from part of the lake, for example a schema another team compacts itself, or a table under migration. Each rule names one lakehouse and one schema, optionally narrowed to one table, and needs a reason.
+
+- An excluded table is skipped by the nightly batch, by scheduled presets, by manual runs and by smart-maintenance layout changes. A manual run where every selected table is excluded returns `409` and nothing is queued.
+
+- The table's maintenance status reports it as blocked, with the reason `operator_excluded`.
+
+- Scans still read excluded tables, so their health and cost stay visible.
+
+- Removing the rule includes the table again from the next run. Adding and removing rules are both audited.
+
+Exclusions are managed through the API for now, at `/api/v1/maintenance/exclusions`:
+
+**terminal**
+
+```
+$ curl -X POST "$CRYO/api/v1/maintenance/exclusions" \
+-H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+-d '{"source_id": "", "schema_name": "finance", "reason": "Compacted by the finance team"}'
+```
+
+Add `"table_name"` to exclude one table instead of the whole schema. `GET` lists the rules, with the number of tables each one covers, and `DELETE /api/v1/maintenance/exclusions/{id}` removes one. Viewers can list; operators can add and remove.
 
 ## Where to go next
 

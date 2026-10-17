@@ -134,6 +134,7 @@ class RunReport:
     over_budget: int = 0
     rewrite_seconds: float = 0.0
     autocomp: dict[str, Any] | None = None
+    paused: bool = False
     # Per rewrite statement (gib, cores, seconds): the duration model's training data.
     duration_samples: list[dict[str, float]] = field(default_factory=list)
 
@@ -151,6 +152,7 @@ class RunReport:
         return {
             "pipeline": "batch",
             "trigger": self.trigger,
+            "paused": self.paused,
             "selected": self.selected,
             "nothing_to_do": self.nothing_to_do,
             "planning_failed": self.planning_failed,
@@ -381,6 +383,12 @@ class BatchMaintenance:
         catalog = str(destination.config.get("catalog") or "")
         if not catalog:
             raise RuntimeError(f"Spark destination {destination.id} has no `catalog` configured")
+        if not dry_run and self._is_paused(destination.id):
+            logger.warning("Maintenance is paused; skipping batch run (trigger=%s)", trigger)
+            report.paused = True
+            report.finished_at = self._clock()
+            self._record_empty_run(report, trigger, status="skipped")
+            return report
 
         params = dict(DEFAULT_PARAMS)
         # Spark rewrites only the files the scanner counted as small (see
@@ -1032,13 +1040,20 @@ class BatchMaintenance:
             run.summary = report.to_summary()
             session.commit()
 
-    def _record_empty_run(self, report: RunReport, trigger: str) -> None:
+    def _is_paused(self, destination_id: uuid.UUID) -> bool:
+        from cryo.db.repositories.intents import IntentStore
+
+        return IntentStore(self._session_factory).is_paused(destination_id=str(destination_id))
+
+    def _record_empty_run(
+        self, report: RunReport, trigger: str, *, status: str = "succeeded"
+    ) -> None:
         with self._session_factory() as session:
             run = MaintenanceRun(
                 id=uuid.uuid4(),
                 kind=_run_kind(trigger),
                 trigger=trigger,
-                status="succeeded",
+                status=status,
                 scheduled_at=report.started_at,
                 finished_at=report.finished_at,
                 summary=report.to_summary(),

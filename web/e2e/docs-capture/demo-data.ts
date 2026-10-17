@@ -150,6 +150,70 @@ export const DEMO_RUN = {
   realized_actions_succeeded: 33
 };
 
+const HISTORY_PREFIXES = ["a92e1c40", "5d7b3f18", "e03a9b67", "1fc84d2a", "b6e5027c", "48d1a9e3", "9a3f6c05"];
+
+const HISTORY_SHAPE: Array<{ status: string; minutes: number; freedGb: number }> = [
+  { status: "succeeded", minutes: 78, freedGb: 31.2 },
+  { status: "succeeded", minutes: 91, freedGb: 44.7 },
+  { status: "failed", minutes: 23, freedGb: 0 },
+  { status: "succeeded", minutes: 69, freedGb: 27.5 },
+  { status: "partial", minutes: 104, freedGb: 18.9 },
+  { status: "succeeded", minutes: 74, freedGb: 35.1 },
+  { status: "succeeded", minutes: 88, freedGb: 40.3 }
+];
+
+export const DEMO_RUN_HISTORY = [
+  {
+    ...DEMO_RUN,
+    id: "c41d07e2-5a9b-4f13-8e2d-61b0f7a3d915",
+    status: "running",
+    preset_id: null,
+    trigger: "manual",
+    scheduled_at: ago(6),
+    created_at: ago(6),
+    finished_at: null,
+    summary: { jobs_total: 3 },
+    realized_bytes_freed: null
+  },
+  DEMO_RUN,
+  ...HISTORY_SHAPE.map((shape, i) => {
+    const started = 95 + (i + 1) * 1440;
+    return {
+      ...DEMO_RUN,
+      id: `${HISTORY_PREFIXES[i]}-4b8e-4d2a-9c1f-2e6b8d0a5c4${i}`,
+      status: shape.status,
+      scheduled_at: ago(started),
+      created_at: ago(started),
+      finished_at: ago(started - shape.minutes),
+      realized_bytes_freed: shape.status === "failed" ? null : Math.round(shape.freedGb * GB)
+    };
+  })
+];
+
+export function demoMaintenanceControls() {
+  return [
+    {
+      scope_type: "destination",
+      scope_id: VISUAL_TRINO_DESTINATION_ID,
+      paused: true,
+      generation: 3,
+      reason: "Trino upgrade window, hold rewrites until the coordinator is back",
+      changed_by: "demo",
+      updated_at: ago(40)
+    }
+  ];
+}
+
+export function demoSafetySummary() {
+  return {
+    intents_by_status: {},
+    effects_by_state: {},
+    ambiguous_effects: 0,
+    active_attempts: 0,
+    active_pauses: 1
+  };
+}
+
 export function demoJobsBody(runId: string) {
   const jobs = JOB_TABLES.map((t, i) => ({
     id: visualUuid(0x10000 + i),

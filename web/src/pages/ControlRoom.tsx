@@ -18,6 +18,7 @@ import { toast } from "sonner";
 
 import {
   getMaintenanceSafetySummary,
+  listDestinations,
   listMaintenanceControls,
   listMaintenanceEffects,
   listMaintenanceIntents,
@@ -263,23 +264,26 @@ const ResumeControl = ({
   );
 };
 
+type HoldTarget = { id: string; label: string };
+
 const TargetedHold = ({
-  destinationIds,
+  targets,
   disabled,
   pending,
   onConfirm
 }: {
-  destinationIds: string[];
+  targets: HoldTarget[];
   disabled: boolean;
   pending: boolean;
   onConfirm: (destinationId: string, reason: string) => void;
 }) => {
-  const [destinationId, setDestinationId] = useState(destinationIds[0] ?? "");
+  const [chosenId, setDestinationId] = useState("");
+  const destinationId = targets.some((target) => target.id === chosenId) ? chosenId : (targets[0]?.id ?? "");
   const [reason, setReason] = useState("");
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="secondary" disabled={disabled || destinationIds.length === 0}>
+        <Button variant="secondary" disabled={disabled || targets.length === 0}>
           <LockKeyhole className="size-4" aria-hidden />
           Hold destination
         </Button>
@@ -303,9 +307,9 @@ const TargetedHold = ({
               value={destinationId}
               onChange={(event) => setDestinationId(event.target.value)}
             >
-              {destinationIds.map((id) => (
-                <option key={id} value={id}>
-                  {id}
+              {targets.map((target) => (
+                <option key={target.id} value={target.id}>
+                  {target.label}
                 </option>
               ))}
             </select>
@@ -567,6 +571,10 @@ export const ControlRoom = () => {
     queryFn: () => listMaintenanceIntents(api, { limit: 100 }),
     refetchInterval: 10_000
   });
+  const destinations = useQuery({
+    queryKey: ["destinations", api.token],
+    queryFn: () => listDestinations(api)
+  });
 
   const refresh = () => void queryClient.invalidateQueries({ queryKey: CONTROL_ROOM_KEY });
   const pause = useMutation({
@@ -785,6 +793,11 @@ export const ControlRoom = () => {
     []
   );
 
+  const destinationNames = useMemo(
+    () => new Map((destinations.data ?? []).map((destination) => [destination.id, destination.name])),
+    [destinations.data]
+  );
+
   const pauseColumns = useMemo<ColumnDef<MaintenanceControlRead, unknown>[]>(
     () => [
       {
@@ -792,8 +805,16 @@ export const ControlRoom = () => {
         header: "Held scope",
         cell: ({ row }) => (
           <div>
-            <p className="font-medium capitalize">{row.original.scope_type}</p>
-            <p className="mt-0.5 font-mono text-xs text-muted-foreground">{row.original.scope_id}</p>
+            <p className="font-medium">
+              {row.original.scope_type === "destination"
+                ? (destinationNames.get(row.original.scope_id) ?? "Destination")
+                : row.original.scope_type === "global"
+                  ? "All maintenance"
+                  : "Tenant"}
+            </p>
+            <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+              {row.original.scope_type === "global" ? "global" : `${row.original.scope_type} · ${row.original.scope_id}`}
+            </p>
           </div>
         )
       },
@@ -829,13 +850,19 @@ export const ControlRoom = () => {
         )
       }
     ],
-    [canOperate, resume]
+    [canOperate, destinationNames, resume]
   );
 
   const activeControls = (controls.data ?? []).filter((control) => control.paused);
-  const destinationIds = Array.from(
-    new Set([...(effects.data ?? []), ...(intents.data ?? [])].map((item) => item.destination_id))
-  ).sort();
+  const holdTargets = useMemo<HoldTarget[]>(() => {
+    const ids = new Set([
+      ...destinationNames.keys(),
+      ...[...(effects.data ?? []), ...(intents.data ?? [])].map((item) => item.destination_id)
+    ]);
+    return Array.from(ids)
+      .map((id) => ({ id, label: destinationNames.get(id) ?? id }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [destinationNames, effects.data, intents.data]);
   const selectedEffects = (effects.data ?? []).filter((effect) => effectSelection[effect.id]);
   const queryError = summary.error ?? controls.error ?? effects.error ?? intents.error;
 
@@ -867,7 +894,7 @@ export const ControlRoom = () => {
             actions={
               <div className="flex flex-wrap gap-2">
                 <TargetedHold
-                  destinationIds={destinationIds}
+                  targets={holdTargets}
                   disabled={!canOperate}
                   pending={pause.isPending}
                   onConfirm={(destinationId, reason) =>

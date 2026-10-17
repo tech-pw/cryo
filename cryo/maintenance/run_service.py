@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from cryo.api.schemas import MaintenanceRunRequest, MaintenanceRunResponse
 from cryo.api.security import Principal
+from cryo.db.repositories.exclusions import excluded_table_ids
+from cryo.db.repositories.presets import SelectionResult
 from cryo.domain.enums import JobStatus
 from cryo.intents.binding import build_and_bind_job_intent
 from cryo.observability.correlation import correlation_summary
@@ -77,8 +79,22 @@ def start_maintenance_run(
             api_routes.AssignmentSelection(mode="ids", ids=payload.table_ids, filter=None),
         )
     )
+    excluded = excluded_table_ids(session, selection.table_ids)
+    if excluded:
+        kept = [table_id for table_id in selection.table_ids if table_id not in excluded]
+        if not kept:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Every selected table is excluded from maintenance. "
+                    "Include it on the Runs page first."
+                ),
+            )
+        selection = SelectionResult(kept)
 
     summary = correlation_summary({"actor": principal.subject})
+    if excluded:
+        summary["excluded_tables"] = len(excluded)
     if payload.operations is not None:
         summary["operations"] = list(requested_ops)
 

@@ -7,7 +7,10 @@ import { test, type Page, type Route } from "@playwright/test";
 import { applyTheme, installVisualMocks, settlePage } from "../visual/helpers";
 import {
   DEMO_RUN,
+  DEMO_RUN_HISTORY,
   DEMO_RUN_ID,
+  demoMaintenanceControls,
+  demoSafetySummary,
   DEMO_TABLES,
   demoAccessToken,
   demoAuditBody,
@@ -36,7 +39,8 @@ const SHOTS: Array<{ name: string; path: string; waitFor?: string; height?: numb
   { name: "health", path: "/", waitFor: "Your lake at a glance", height: 1000 },
   { name: "tables", path: "/tables", height: 1320 },
   { name: "table-detail", path: `/tables/${DEMO_TABLES[0].id}`, height: 960 },
-  { name: "runs", path: "/runs", height: 820 },
+  { name: "runs", path: "/runs", waitFor: "Success rate · 7d", height: 1100 },
+  { name: "runs-holds", path: "/runs?tab=holds", waitFor: "Active holds", height: 900 },
   { name: "run-detail", path: `/runs/${DEMO_RUN_ID}`, height: 960 },
   { name: "connections", path: "/settings/connections", waitFor: "Iceberg catalogs Cryo reads", height: 820 },
   { name: "connections-engines", path: "/settings/connections?tab=engines", waitFor: "Shipped with Cryo", height: 900 }
@@ -82,11 +86,16 @@ async function installDemo(page: Page, unhandled: Set<string>): Promise<void> {
       }
       if (p.endsWith("/api/v1/dashboards/datalake")) return json(route, demoDashboardBody());
       if (p.endsWith("/api/v1/vitals")) return json(route, demoVitalsBody());
-      if (p.endsWith("/api/v1/runs")) return json(route, [DEMO_RUN]);
+      if (p.endsWith("/api/v1/runs")) return json(route, DEMO_RUN_HISTORY);
       const jobs = p.match(/\/api\/v1\/runs\/([^/]+)\/jobs$/);
       if (jobs) return json(route, demoJobsBody(jobs[1]));
       const run = p.match(/\/api\/v1\/runs\/([^/]+)$/);
       if (run) return json(route, { ...DEMO_RUN, id: run[1] });
+      if (p.endsWith("/api/v1/maintenance/control")) return json(route, demoMaintenanceControls());
+      if (p.endsWith("/api/v1/maintenance/safety/summary")) return json(route, demoSafetySummary());
+      if (p.endsWith("/api/v1/maintenance/safety/intents") || p.endsWith("/api/v1/maintenance/safety/effects")) {
+        return json(route, []);
+      }
       if (p.endsWith("/api/v1/scanner/status")) return json(route, demoScannerStatus());
       if (p.endsWith("/api/v1/sources")) return json(route, demoSources());
       if (p.endsWith("/api/v1/destinations")) return json(route, demoDestinations());

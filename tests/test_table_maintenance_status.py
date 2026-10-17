@@ -335,6 +335,9 @@ class _FakeSession:
         self.scalar_statements.append(stmt)
         return self.finished_at
 
+    def scalars(self, stmt: Any) -> list[Any]:
+        return []
+
 
 def _table(**overrides: Any) -> SimpleNamespace:
     values: dict[str, Any] = {

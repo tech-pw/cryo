@@ -23,6 +23,7 @@ from cryo.api.deps import CurrentPrincipal, SessionDep, require_operator, requir
 from cryo.api.schemas import MaintenanceRunRequest, MaintenanceRunResponse
 from cryo.config import get_settings
 from cryo.db.models import MaintenanceJob, Source, Table, TableStats
+from cryo.db.repositories.exclusions import excluded_table_ids
 from cryo.domain.enums import Mode, OperationType
 from cryo.maintenance.selection import (
     COOLDOWN_JOB_STATUSES,
@@ -146,6 +147,7 @@ def _load_facts(session: Session, table: Table) -> MaintenanceEligibilityFacts:
         consecutive_scan_failures=table.consecutive_scan_failures or 0,
         last_scan_error_at=table.last_scan_error_at,
         scan_retry_due_at=scan_retry_due_at(table),
+        operator_excluded=bool(excluded_table_ids(session, [table.id])),
     )
 
 
