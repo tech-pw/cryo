@@ -117,8 +117,9 @@
     }
 
     function safeDocUrl(url) {
-        if (typeof url !== "string" || !/^[a-z0-9/_-]*$/.test(url)) return root || "./";
-        return root + url;
+        var cleaned = String(url || "").replace(/[^a-z0-9/_-]/g, "");
+        if (!cleaned || cleaned !== url) return root || "./";
+        return (root || "./") + cleaned;
     }
 
     function emptyResult(q) {

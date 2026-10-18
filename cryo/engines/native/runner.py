@@ -100,19 +100,31 @@ class NativeExecuteResult:
     stderr: str | None = None
 
 
+def _trusted_engine_binaries() -> set[str]:
+    """Paths this process discovered itself. Request config may only select one of these."""
+    found: set[str] = set()
+    env_binary = os.getenv("CRYO_ENGINE_BINARY", "").strip()
+    if env_binary and "\x00" not in env_binary:
+        found.add(env_binary)
+    for name in DEFAULT_BINARY_NAMES:
+        which = shutil.which(name)
+        if which:
+            found.add(which)
+    repo_root = Path(__file__).resolve().parents[3]
+    for impl in ("go", "rust"):
+        for candidate in _repo_binary_candidates(repo_root, impl):
+            if candidate.is_file():
+                found.add(str(candidate))
+    return found
+
+
 def _safe_configured_binary(configured: str) -> str | None:
     if "\x00" in configured:
         return None
-    path = Path(configured).expanduser()
-    if not path.is_absolute() or ".." in path.parts:
+    candidate = configured.strip()
+    if not candidate or candidate not in _trusted_engine_binaries():
         return None
-    try:
-        resolved = path.resolve()
-    except OSError:
-        return None
-    if not resolved.is_file() or ".." in resolved.parts:
-        return None
-    return str(resolved)
+    return candidate
 
 
 def resolve_binary_path(config: Mapping[str, Any]) -> str | None:

@@ -80,7 +80,7 @@ func PropUInt(p Properties, key string, defVal uint) uint {
 	if !ok {
 		return defVal
 	}
-	n, err := strconv.ParseUint(v, 10, strconv.IntSize)
+	n, err := strconv.ParseUint(v, 10, 63)
 	if err != nil {
 		return defVal
 	}
