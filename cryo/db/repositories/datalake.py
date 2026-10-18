@@ -55,11 +55,16 @@ def dashboard_datalake(
     *,
     top_limit: int = 10,
     drift_limit: int = 30,
+    hot_limit: int = 5,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
     settings = settings or Settings()
     freshness_as_of = now or datetime.now(UTC)
+    hot_at_risk, hot_at_risk_count = _hot_tables_at_risk(session, limit=hot_limit)
+    recently_improved, recently_improved_count = recently_improved_tables(
+        session, now=freshness_as_of, limit=hot_limit
+    )
     total_tables = int(session.scalar(select(func.count(Table.id))) or 0)
     active_row = session.execute(
         select(
@@ -177,6 +182,7 @@ def dashboard_datalake(
             "total_size_gb": float(active_row[1] or 0),
             "total_files": int(active_row[2] or 0),
             "small_files_count": int(active_row[3] or 0),
+            "running_jobs": _running_job_count(session),
             "estimated_monthly_s3_cost_usd": cast(float, cost_totals["current_monthly_cost_usd"]),
             "projected_monthly_s3_cost_usd": cast(float, cost_totals["projected_monthly_cost_usd"]),
             "projected_savings_usd_month": cast(float, cost_totals["projected_savings_usd_month"]),
@@ -188,9 +194,201 @@ def dashboard_datalake(
         "freshness_distribution": freshness_distribution,
         "freshness_as_of": freshness_as_of,
         "top_offenders": top_offenders,
+        "hot_at_risk": hot_at_risk,
+        "hot_at_risk_count": hot_at_risk_count,
+        "recently_improved": recently_improved,
+        "recently_improved_count": recently_improved_count,
         "drift": drift,
         "cost_by_schema": cost_by_schema,
     }
+
+
+_AT_RISK_GRADES = ("D", "F")
+_GRADE_RANK = {"A": 5, "B": 4, "C": 3, "D": 2, "F": 1}
+# Runs are a small table; jobs are reached through ix_jobs_run_status, never by a fleet scan.
+_IMPROVED_RUN_LOOKBACK = timedelta(hours=36)
+_IMPROVED_JOB_WINDOW = timedelta(hours=24)
+_IMPROVED_HISTORY_LOOKBACK = timedelta(days=7)
+_IMPROVED_MAX_TABLES = 2000
+
+
+def _running_job_count(session: Session) -> int:
+    return int(
+        session.scalar(
+            select(func.count(MaintenanceJob.id)).where(
+                MaintenanceJob.status.in_(("admitted", "running"))
+            )
+        )
+        or 0
+    )
+
+
+def _hot_tables_at_risk(session: Session, *, limit: int) -> tuple[list[dict[str, object]], int]:
+    """D/F tables people actually query, most-queried first.
+
+    ``TableStats.query_count_30d`` is fed from engine-agnostic ``table_query_activity``, so it
+    stays populated on sources whose query log runs in ``iceberg_table`` mode (no
+    ``query_logs`` rows). Tables with zero queries are excluded rather than ranked.
+    """
+    at_risk = and_(
+        Table.is_active.is_(True),
+        TableStats.grade.in_(_AT_RISK_GRADES),
+        TableStats.query_count_30d > 0,
+    )
+    count = int(
+        session.scalar(
+            select(func.count(Table.id)).select_from(Table).join(TableStats).where(at_risk)
+        )
+        or 0
+    )
+    rows = session.execute(
+        select(
+            Table.id,
+            Table.schema_name,
+            Table.table_name,
+            TableStats.grade,
+            TableStats.overall_score,
+            TableStats.total_size_gb,
+            TableStats.total_files,
+            TableStats.small_files_count,
+            TableStats.delete_file_pct,
+            TableStats.estimated_monthly_s3_cost_usd,
+            TableStats.query_count_30d,
+        )
+        .select_from(Table)
+        .join(TableStats)
+        .where(at_risk)
+        .order_by(
+            TableStats.query_count_30d.desc(),
+            TableStats.overall_score.asc(),
+            Table.schema_name.asc(),
+            Table.table_name.asc(),
+        )
+        .limit(limit)
+    ).all()
+    return [
+        {
+            "table_id": row.id,
+            "schema_name": row.schema_name,
+            "table_name": row.table_name,
+            "grade": row.grade,
+            "overall_score": row.overall_score,
+            "total_size_gb": float(row.total_size_gb or 0),
+            "total_files": int(row.total_files or 0),
+            "small_files_count": int(row.small_files_count or 0),
+            "delete_file_pct": row.delete_file_pct,
+            "estimated_monthly_s3_cost_usd": row.estimated_monthly_s3_cost_usd,
+            "query_count_30d": int(row.query_count_30d or 0),
+        }
+        for row in rows
+    ], count
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def recently_improved_tables(
+    session: Session, *, now: datetime, limit: int = 5
+) -> tuple[list[dict[str, object]], int]:
+    """Tables whose grade rose after a maintenance job succeeded in the last 24 hours.
+
+    Compares the last stored scan before the job started with the table's current stats, and
+    only counts a rescan taken after the job finished. A grade that rose for another reason
+    (an upstream rewrite, say) without a Cryo job in the window is not claimed.
+    """
+    run_ids = list(
+        session.scalars(
+            select(MaintenanceRun.id).where(
+                MaintenanceRun.created_at >= now - _IMPROVED_RUN_LOOKBACK,
+                MaintenanceRun.kind != "scan",
+            )
+        )
+    )
+    if not run_ids:
+        return [], 0
+    jobs: dict[uuid.UUID, tuple[datetime, datetime]] = {}
+    for table_id, started_at, finished_at in session.execute(
+        select(MaintenanceJob.table_id, MaintenanceJob.started_at, MaintenanceJob.finished_at)
+        .where(
+            MaintenanceJob.run_id.in_(run_ids),
+            MaintenanceJob.status == "succeeded",
+            MaintenanceJob.finished_at >= now - _IMPROVED_JOB_WINDOW,
+        )
+        .order_by(MaintenanceJob.finished_at.desc())
+        .limit(_IMPROVED_MAX_TABLES * 2)
+    ):
+        if table_id in jobs or finished_at is None:
+            continue
+        jobs[table_id] = (_as_utc(started_at or finished_at), _as_utc(finished_at))
+        if len(jobs) >= _IMPROVED_MAX_TABLES:
+            break
+    if not jobs:
+        return [], 0
+
+    current = {
+        row.table_id: row
+        for row in session.execute(
+            select(
+                Table.id.label("table_id"),
+                Table.schema_name,
+                Table.table_name,
+                TableStats.scan_at,
+                TableStats.grade,
+                TableStats.overall_score,
+            )
+            .select_from(Table)
+            .join(TableStats)
+            .where(Table.id.in_(list(jobs)), Table.is_active.is_(True))
+        )
+    }
+    before: dict[uuid.UUID, tuple[str | None, int | None]] = {}
+    for table_id, scan_at, grade, score in session.execute(
+        select(
+            TableStatsHistory.table_id,
+            TableStatsHistory.scan_at,
+            TableStatsHistory.grade,
+            TableStatsHistory.overall_score,
+        )
+        .where(
+            TableStatsHistory.table_id.in_(list(current)),
+            TableStatsHistory.scan_at >= now - _IMPROVED_HISTORY_LOOKBACK,
+        )
+        .order_by(TableStatsHistory.table_id, TableStatsHistory.scan_at.asc())
+    ):
+        if _as_utc(scan_at) <= jobs[table_id][0]:
+            before[table_id] = (grade, score)
+
+    improved: list[dict[str, object]] = []
+    for table_id, row in current.items():
+        prior = before.get(table_id)
+        if prior is None or row.scan_at is None:
+            continue
+        if _as_utc(row.scan_at) < jobs[table_id][1]:
+            continue
+        old_rank = _GRADE_RANK.get(prior[0] or "")
+        new_rank = _GRADE_RANK.get(row.grade or "")
+        if old_rank is None or new_rank is None or new_rank <= old_rank:
+            continue
+        improved.append(
+            {
+                "table_id": table_id,
+                "schema_name": row.schema_name,
+                "table_name": row.table_name,
+                "previous_grade": prior[0],
+                "previous_score": prior[1],
+                "grade": row.grade,
+                "overall_score": row.overall_score,
+                "improved_at": jobs[table_id][1],
+            }
+        )
+    improved.sort(
+        key=lambda item: (
+            -(cast(int, item["overall_score"] or 0) - cast(int, item["previous_score"] or 0)),
+            -cast(datetime, item["improved_at"]).timestamp(),
+        )
+    )
+    return improved[:limit], len(improved)
 
 
 def _sql_aggregate_freshness(

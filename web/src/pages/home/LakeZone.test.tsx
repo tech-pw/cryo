@@ -48,4 +48,16 @@ describe("Lake health overview", () => {
     rerender(<MemoryRouter><LakeZone {...base} loading /></MemoryRouter>);
     expect(screen.getByRole("region", { name: "Lake health" })).toHaveAttribute("aria-busy", "true");
   });
+  it("shows the D/F trend and small files as a share of all files", () => {
+    renderZone({ totalFiles: 160, dfDelta: -2, dfSeries: [18, 17, 15] });
+    expect(screen.getByText("−2 since yesterday")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /from 18 to 15/ })).toBeInTheDocument();
+    expect(screen.getByText("25% of files")).toBeInTheDocument();
+  });
+  it("says nothing about the trend when there is no change or no history", () => {
+    renderZone({ totalFiles: 0, dfDelta: null, dfSeries: [] });
+    expect(screen.queryByText(/since yesterday/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/of files/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /Tables at D or F over/ })).not.toBeInTheDocument();
+  });
 });

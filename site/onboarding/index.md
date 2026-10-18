@@ -136,7 +136,7 @@ A high failure count with a healthy **Discovered** number almost always means st
 
 - **Tables** lists every scanned table with its grade and the counts behind it.
 
-- **Home** summarises grades across the fleet.
+- **Home** shows last night's maintenance, what needs you next, and grades across the fleet.
 
 - **Runs** keeps the receipt for each scan, including what failed and why.
 

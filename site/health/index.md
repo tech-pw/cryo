@@ -26,7 +26,7 @@ Every table starts at 100 points and loses points for each problem the scan find
 
 | **F** | Below 40 |
 
-The home screen rolls those grades up across the lake, so you can see at a glance how many tables need work and how much storage maintenance could give back. The [quickstart](https://tech-pw.github.io/cryo/quickstart/#next) shows that screen after the first scan of the seeded lake.
+The home screen rolls those grades up across the lake, so you can see at a glance how many tables need work and how much storage maintenance could give back. It shows whether the count of D and F tables moved since yesterday, which D and F tables people query most, and which tables Cryo moved up a grade in the last 24 hours. A table only counts as fixed once a scan after its maintenance job shows the better grade. The [quickstart](https://tech-pw.github.io/cryo/quickstart/#next) shows that screen after the first scan of the seeded lake.
 
 ## Deductions
 

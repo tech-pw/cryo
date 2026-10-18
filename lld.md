@@ -906,6 +906,10 @@ POST  /api/v1/tables/{id}/config/apply                       # operator (admin f
 PUT   /api/v1/tables/{id}/config/operations                  # operator; per-table operation exclusions
         # (§11.3); audited; excluding a high-risk op needs confirm
 GET   /api/v1/dashboards/datalake                             # grade dist, cost, drift, totals
+        # ?hot_limit=1..20 (default 5): hot_at_risk = D/F tables by query_count_30d (fed by
+        # table_query_activity, so iceberg_table query-log sources rank too); recently_improved =
+        # grade rose after a succeeded job (runs in last 36h -> jobs finished in 24h, capped at 2000
+        # tables, rescanned after the job); totals.running_jobs = admitted + running jobs
 GET   /api/v1/dashboards/schema-cost
 GET   /api/v1/dashboards/cost                                 # datalake current vs projected, savings
         # by operation + by schema, top savings opportunities, precision coverage
@@ -953,6 +957,7 @@ POST  /api/v1/maintenance/safety/effects/{receipt_id}/resolve # audited operator
 
 # Runs & live monitoring
 GET   /api/v1/runs                  GET /api/v1/runs/{id}      GET /api/v1/runs/{id}/jobs
+        # /runs?pipeline=batch filters on summary.pipeline (Home reads the last 14 nightly runs)
                                     GET /api/v1/runs/{id}/dispatches  # native K8s Job packs
 GET   /api/v1/jobs/{id}
 POST  /api/v1/runs/{id}/cancel

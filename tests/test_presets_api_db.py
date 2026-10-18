@@ -1142,6 +1142,25 @@ def test_list_runs_filters_by_source_id(api_db: ApiDb) -> None:
     assert [item["id"] for item in response.json()] == [str(matching_run_id)]
 
 
+def test_list_runs_filters_by_pipeline(api_db: ApiDb) -> None:
+    """Home reads the nightly history with ?pipeline=batch instead of paging 200 runs."""
+    client = api_db.client
+    with api_db.session_factory() as session:
+        batch_run = MaintenanceRun(
+            id=uuid.uuid4(), kind="maintenance", status="succeeded", summary={"pipeline": "batch"}
+        )
+        manual_run = MaintenanceRun(
+            id=uuid.uuid4(), kind="maintenance", status="succeeded", summary={"jobs_total": 1}
+        )
+        session.add_all([batch_run, manual_run])
+        session.commit()
+        batch_run_id = batch_run.id
+
+    response = client.get("/api/v1/runs?pipeline=batch&limit=14", headers=VIEWER_HEADERS)
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()] == [str(batch_run_id)]
+
+
 def test_compatible_presets_and_assign_requires_catalog_binding(api_db: ApiDb) -> None:
     client = api_db.client
     source_id, destination_id = _seed_source_destination(api_db.session_factory)

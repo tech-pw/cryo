@@ -221,9 +221,14 @@ def get_datalake_dashboard(
     session: SessionDep,
     top_limit: Annotated[int, Query(ge=1, le=50)] = 10,
     drift_limit: Annotated[int, Query(ge=1, le=365)] = 30,
+    hot_limit: Annotated[int, Query(ge=1, le=20)] = 5,
 ) -> dict[str, object]:
     return datalake.dashboard_datalake(
-        session, top_limit=top_limit, drift_limit=drift_limit, settings=Settings()
+        session,
+        top_limit=top_limit,
+        drift_limit=drift_limit,
+        hot_limit=hot_limit,
+        settings=Settings(),
     )
 
 
@@ -2125,6 +2130,7 @@ def list_runs(
     kind: str | None = Query(default=None),
     source_id: uuid.UUID | None = Query(default=None),  # noqa: B008 - uuid.UUID isn't in ruff's immutable-type allowlist; default is always None
     preset_id: uuid.UUID | None = Query(default=None),  # noqa: B008
+    pipeline: str | None = Query(default=None, max_length=32),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[RunRead]:
@@ -2136,6 +2142,8 @@ def list_runs(
     )
     if kind:
         stmt = stmt.where(MaintenanceRun.kind == kind)
+    if pipeline:
+        stmt = stmt.where(MaintenanceRun.summary["pipeline"].astext == pipeline)
     if preset_id is not None:
         stmt = stmt.where(MaintenanceRun.preset_id == preset_id)
     if source_id is not None:

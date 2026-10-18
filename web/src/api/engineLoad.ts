@@ -10,5 +10,10 @@ export interface EngineLoadRow {
   live_probe: string;
 }
 
-export const getEngineLoad = (api: ApiOptions) =>
-  apiFetch<{ engines: EngineLoadRow[] }>("/engine-load", api);
+export interface EngineLoad {
+  engines: EngineLoadRow[];
+  /** Null when Redis is unreachable; never a fabricated 0. */
+  workers_online?: number | null;
+}
+
+export const getEngineLoad = (api: ApiOptions) => apiFetch<EngineLoad>("/engine-load", api);

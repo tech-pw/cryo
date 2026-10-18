@@ -16,7 +16,10 @@ import {
   demoAuditBody,
   demoEffectivePreset,
   demoEngineLoad,
+  demoFastPathFindings,
+  demoFleetTrends,
   demoHealthTrends,
+  demoPendingApprovals,
   demoMultiCatalog,
   demoSignals,
   demoTableCost,
@@ -109,7 +112,7 @@ const SHOTS: Array<{
   maxHeight?: number;
   act?: (page: Page) => Promise<void>;
 }> = [
-  { name: "health", path: "/", waitFor: "Your lake at a glance", height: 1000 },
+  { name: "health", path: "/", waitFor: "Your lake at a glance", height: 1700 },
   { name: "tables", path: "/tables", height: 1320 },
   { name: "table-detail", path: TABLE, height: 960 },
   { name: "table-header", path: TABLE, waitFor: "What's pulling the score down", height: 900, selector: ".table-detail-workspace", maxHeight: 400 },
@@ -242,11 +245,20 @@ async function installDemo(page: Page, unhandled: Set<string>): Promise<void> {
       if (p.includes("/api/v1/advanced/silent-data-loss/")) return json(route, null);
       const one = p.match(/\/api\/v1\/tables\/([^/]+)$/);
       if (one && one[1] !== "export.csv" && one[1] !== "group-by") return json(route, demoTableDetail(one[1]));
+      if (p.endsWith("/api/v1/dashboard/fleet-trends")) return json(route, demoFleetTrends());
+      if (p.endsWith("/api/v1/advanced/approvals/pending")) return json(route, demoPendingApprovals());
+      if (p.endsWith("/api/v1/advanced/fast-path-findings") && !url.searchParams.has("table_id")) {
+        return json(route, demoFastPathFindings());
+      }
       const tab = demoTableTabResponse(p, url);
       if (tab !== undefined) return json(route, tab);
       if (p.endsWith("/api/v1/dashboards/datalake")) return json(route, demoDashboardBody());
       if (p.endsWith("/api/v1/vitals")) return json(route, demoVitalsBody());
-      if (p.endsWith("/api/v1/runs")) return json(route, DEMO_RUN_HISTORY);
+      if (p.endsWith("/api/v1/runs")) {
+        const pipeline = url.searchParams.get("pipeline");
+        const runs = pipeline ? DEMO_RUN_HISTORY.filter((run) => (run.summary as Record<string, unknown>).pipeline === pipeline) : DEMO_RUN_HISTORY;
+        return json(route, runs.slice(0, Number(url.searchParams.get("limit") ?? runs.length)));
+      }
       const jobs = p.match(/\/api\/v1\/runs\/([^/]+)\/jobs$/);
       if (jobs) return json(route, demoJobsBody(jobs[1]));
       const run = p.match(/\/api\/v1\/runs\/([^/]+)$/);

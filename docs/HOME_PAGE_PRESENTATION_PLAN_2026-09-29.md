@@ -1,5 +1,7 @@
 # Home page presentation plan
 
+> **Superseded** by [`HOME_PAGE_OVERHAUL_2026-10-18.md`](./HOME_PAGE_OVERHAUL_2026-10-18.md). The overhaul keeps the grade donut and a smaller platform gauge (with an always-on reason line) instead of the linear score bar and stacked grade bar proposed here.
+
 Status: **plan only**. Scope: `web/src/pages/DatalakeHealth.tsx` (route `/`, title "Home").
 
 This supersedes the thinner draft in `docs/HOME_PAGE_REDESIGN_2026-09-29.md`. That draft treated `74 CRITICAL` as "74 sits in a 0–39 band." It does not. The score and the word are two different signals. Getting that wrong would make the page more confident and still wrong.
