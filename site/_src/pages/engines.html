@@ -2,7 +2,7 @@
 title: Engines
 lede: The planner is engine-agnostic. Trino SQL and Spark SQL are rendered apart, so the same plan produces different SQL and never different intent.
 description: Which maintenance operations Cryo renders for Trino and Spark, how plans become SQL, and where native compaction fits.
-updated: 2026-10-05
+updated: 2026-10-16
 ---
 <h2 id="rendered-operations">Rendered operations</h2>
 <p>Every operation in the canonical order has a renderer for each engine, with one exception: <code>rewrite_position_deletes</code> is Spark only today.</p>
@@ -53,6 +53,26 @@ CALL prod.system.rewrite_data_files(
 
 <h2 id="native-compaction">Native compaction</h2>
 <p>Native Go compaction is a configured engine path and is not assumed to be on. The planner does not change shape for it. It receives the same plan as Trino and Spark, and runs the rewrite itself. Flink is not on this page. Cryo can emit a Flink maintenance config and does not submit the job.</p>
+
+<h2 id="engines-tab">Cryo engines and your engines</h2>
+<p>Engines live under <strong>Settings → Connections → Engines</strong>, split into two groups by who runs them.</p>
+<screenshot name="connections-engines" url="cryo.local/settings/connections?tab=engines" alt="Settings, Connections, Engines tab. Cryo engines lists cryo-native, Native (iceberg-go), enabled, slot cap 4, off-peak any time. Your engines lists demo-trino, Trino, enabled, marked Default preset, catalog lakehouse, off-peak 01:00 to 07:00." caption="Cryo engines run inside the deployment. Your engines are clusters you connected." />
+<dl>
+  <dt>Cryo engines</dt>
+  <dd>Shipped with Cryo and run inside the deployment: the native engine (a subprocess on Cryo's workers) and Spark on Kubernetes (an engine with <code>submit_mode: k8s</code>). Migrations seed them.</dd>
+  <dt>Your engines</dt>
+  <dd>Trino, EMR Serverless or Flink clusters you added with <strong>New engine</strong>. Presets and manual runs can target any of them.</dd>
+</dl>
+<p>Cryo engines stay editable, because operators tune their slot caps and timeouts. Other work depends on them, so <strong>Edit</strong> and <strong>Disable</strong> ask for confirmation first and say what changes:</p>
+<table>
+  <thead><tr><th>Engine</th><th>What the confirmation warns about</th></tr></thead>
+  <tbody>
+    <tr><td>Native</td><td>The slot cap and timeouts bound every job routed to it. Presets that target it pick up the change on their next run.</td></tr>
+    <tr><td>Spark on Kubernetes</td><td>The nightly batch needs exactly one enabled Spark engine. Disabling this one, or enabling a second, fails the batch until that is fixed.</td></tr>
+  </tbody>
+</table>
+<p>Edits to a Cryo engine persist across upgrades. Deleting one is permanent: Cryo does not re-create it, so add it back by hand if you need it. Deleting any engine fails while a preset or run still references it. To stop using an engine without losing it, disable it.</p>
+<p>The <strong>Default preset</strong> badge marks the engine the enabled default preset targets. It can be in either group.</p>
 
 <h2 id="read-next">Where to go next</h2>
 <linkcards>

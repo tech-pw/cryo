@@ -2,6 +2,7 @@ import { type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { metric, metricTooltip, provenanceLabel, type MetricId } from "../../lib/metrics";
 import { Skeleton } from "./skeleton";
+import { TruncationTooltip } from "./tooltip";
 
 type StatBaseProps = {
   value: ReactNode;
@@ -15,6 +16,8 @@ type StatBaseProps = {
   emphasis?: boolean;
   loading?: boolean;
   className?: string;
+  onClick?: () => void;
+  pressed?: boolean;
 };
 
 export type StatProps = StatBaseProps &
@@ -36,7 +39,9 @@ export function Stat({
   sparkline,
   emphasis = false,
   loading = false,
-  className
+  className,
+  onClick,
+  pressed
 }: StatProps) {
   const entry = metricId ? metric(metricId) : undefined;
   const shownLabel = entry?.label ?? label ?? "";
@@ -52,25 +57,33 @@ export function Stat({
     );
   }
 
+  const tileClass = cn(
+    "cryo-metric-tile",
+    emphasis && "cryo-metric-tile--emphasis",
+    onClick && "cryo-metric-tile--action",
+    className
+  );
+  const Comp = onClick ? "button" : "div";
+
   return (
-    <div
-      className={cn(
-        "cryo-metric-tile",
-        emphasis && "cryo-metric-tile--emphasis",
-        className
-      )}
+    <Comp
+      type={onClick ? "button" : undefined}
+      className={tileClass}
       data-metric-id={metricId}
+      onClick={onClick}
+      aria-pressed={onClick ? Boolean(pressed) : undefined}
     >
       <div className="flex items-center gap-1.5">
-        <p
-          className={cn(
-            "text-[11px] font-semibold leading-4 tracking-[0.015em] text-muted-foreground",
-            entry && "cursor-help"
-          )}
-          title={tooltip}
-        >
-          {shownLabel}
-        </p>
+        <TruncationTooltip content={tooltip}>
+          <p
+            className={cn(
+              "text-[11px] font-semibold leading-4 tracking-[0.015em] text-muted-foreground",
+              entry && "cursor-help"
+            )}
+          >
+            {shownLabel}
+          </p>
+        </TruncationTooltip>
         {entry ? (
           <span
             data-metric-provenance={entry.provenance}
@@ -95,7 +108,7 @@ export function Stat({
         </div>
         {sparkline ? <div className="shrink-0">{sparkline}</div> : null}
       </div>
-    </div>
+    </Comp>
   );
 }
 

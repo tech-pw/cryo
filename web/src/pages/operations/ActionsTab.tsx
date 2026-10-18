@@ -6,10 +6,11 @@ import { Link, useSearchParams } from "react-router-dom";
 import { listFleetAudit, type FleetAuditItem } from "../../api/fleetAudit";
 import { StatusTag } from "../../components/status";
 import { DataTable } from "../../components/ui/data-table";
-import { Input } from "../../components/ui/input";
+import { Select } from "../../components/ui/select";
 import { useAuth } from "../../lib/auth";
 import { auditBytesLabel, auditFilesLabel } from "../../lib/auditFeed";
 import { formatDuration, formatTime } from "../../lib/format";
+import { CORRECT_ORDER } from "../../lib/operationOrder";
 
 const setParam = (prev: URLSearchParams, key: string, value: string) => {
   const next = new URLSearchParams(prev);
@@ -18,6 +19,27 @@ const setParam = (prev: URLSearchParams, key: string, value: string) => {
   else next.delete(key);
   return next;
 };
+
+const operationLabel = (value: string) => value.replaceAll("_", " ");
+
+const OPERATION_OPTIONS = CORRECT_ORDER.map((value) => ({
+  value,
+  label: operationLabel(value)
+}));
+
+const STATUS_OPTIONS = [
+  { value: "OK", label: "Succeeded" },
+  { value: "FAILED", label: "Failed" },
+  { value: "SKIPPED", label: "Skipped" },
+  { value: "SUBMITTED", label: "Submitted" }
+];
+
+const ENGINE_OPTIONS = [
+  { value: "trino", label: "Trino" },
+  { value: "spark_emr", label: "Spark EMR" },
+  { value: "native", label: "Native" },
+  { value: "flink", label: "Flink" }
+];
 
 export const ActionsTab = () => {
   const { api, token } = useAuth();
@@ -94,26 +116,33 @@ export const ActionsTab = () => {
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap gap-2">
-        <Input
+      <div className="ops-actions-filters" role="group" aria-label="Filter actions">
+        <Select
           aria-label="Operation"
-          placeholder="Operation"
+          className="ops-actions-filters__control"
+          placeholder="All operations"
+          allowClear
           value={operation}
-          onChange={(event) =>
-            setSearchParams((prev) => setParam(prev, "operation", event.target.value.trim()))
-          }
+          options={OPERATION_OPTIONS}
+          onChange={(value) => setSearchParams((prev) => setParam(prev, "operation", value ?? ""))}
         />
-        <Input
+        <Select
           aria-label="Status"
-          placeholder="Status"
+          className="ops-actions-filters__control"
+          placeholder="All statuses"
+          allowClear
           value={status}
-          onChange={(event) => setSearchParams((prev) => setParam(prev, "status", event.target.value.trim()))}
+          options={STATUS_OPTIONS}
+          onChange={(value) => setSearchParams((prev) => setParam(prev, "status", value ?? ""))}
         />
-        <Input
+        <Select
           aria-label="Engine"
-          placeholder="Engine"
+          className="ops-actions-filters__control"
+          placeholder="All engines"
+          allowClear
           value={engine}
-          onChange={(event) => setSearchParams((prev) => setParam(prev, "engine", event.target.value.trim()))}
+          options={ENGINE_OPTIONS}
+          onChange={(value) => setSearchParams((prev) => setParam(prev, "engine", value ?? ""))}
         />
       </div>
       <DataTable

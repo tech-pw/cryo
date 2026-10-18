@@ -66,8 +66,11 @@ export const FirstRunWizard = () => {
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState(readDismissed);
 
+  // Shares the ["sources"] key so connecting a lakehouse invalidates this too; under a
+  // private key the wizard kept offering to connect a catalog that already existed until
+  // the window regained focus.
   const sources = useQuery({
-    queryKey: ["first-run-sources", token],
+    queryKey: ["sources", token],
     queryFn: () => listSources(api),
     refetchOnWindowFocus: true,
     staleTime: 15_000
@@ -143,7 +146,7 @@ export const FirstRunWizard = () => {
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Welcome to Cryo</DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-foreground/80">
             Three quick steps to go from empty install to fleet health visibility.
           </DialogDescription>
         </DialogHeader>
@@ -172,7 +175,11 @@ export const FirstRunWizard = () => {
         </ol>
 
         <DialogFooter className="gap-2 sm:justify-between">
-          <Button variant="ghost" onClick={handleDismiss}>
+          <Button
+            variant="ghost"
+            className="border border-[var(--line-strong)] bg-[var(--panel-strong)] text-foreground hover:bg-[var(--color-surface-2)]"
+            onClick={handleDismiss}
+          >
             Skip for now
           </Button>
           <div className="flex flex-wrap gap-2">

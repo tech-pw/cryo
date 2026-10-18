@@ -27,6 +27,8 @@ export type CatalogCapability = components["schemas"]["CatalogCapability"];
 export type OperationCapability = components["schemas"]["OperationCapability"];
 export type CapabilityManifest = components["schemas"]["CapabilityManifest"];
 export type MaintenanceControlRead = components["schemas"]["MaintenanceControlRead"];
+export type MaintenanceExclusionRead = components["schemas"]["MaintenanceExclusionRead"];
+export type MaintenanceExclusionWrite = components["schemas"]["MaintenanceExclusionWrite"];
 export type MaintenanceControlWrite = components["schemas"]["MaintenanceControlWrite"];
 export type MaintenanceIntentRead = components["schemas"]["MaintenanceIntentRead"];
 export type MaintenanceSafetySummary = components["schemas"]["MaintenanceSafetySummary"];
@@ -35,6 +37,20 @@ export type EffectResolutionRead = components["schemas"]["EffectResolutionRead"]
 export type EffectResolutionWrite = components["schemas"]["EffectResolutionWrite"];
 export type EffectBatchResolutionRead = components["schemas"]["EffectBatchResolutionRead"];
 export type EffectBatchResolutionWrite = components["schemas"]["EffectBatchResolutionWrite"];
+export type TableConfigResponse = components["schemas"]["TableConfigResponse"];
+export type TableSettingRead = components["schemas"]["TableSettingRead"];
+export type SettingGroupRead = components["schemas"]["SettingGroupRead"];
+export type TableConfigMetadataRead = components["schemas"]["TableMetadataRead"];
+export type ConfigChange = components["schemas"]["ConfigChange"];
+export type ConfigChangePreview = components["schemas"]["ConfigChangePreview"];
+export type ConfigPreviewResponse = components["schemas"]["ConfigPreviewResponse"];
+export type ConfigApplyResponse = components["schemas"]["ConfigApplyResponse"];
+export type ConfigRisk = TableSettingRead["change_risk"];
+export type PropertyDetailRead = components["schemas"]["PropertyDetailRead"];
+export type TableOperationsRead = components["schemas"]["TableOperationsRead"];
+export type MaintenanceOperationRead = components["schemas"]["MaintenanceOperationRead"];
+export type OperationExclusionsWrite = components["schemas"]["OperationExclusionsWrite"];
+export type OperationExclusionsResponse = components["schemas"]["OperationExclusionsResponse"];
 
 export interface SourceRead {
   id: UUID;
@@ -62,6 +78,8 @@ export interface SourceTestResult {
   // response-shape compatibility; table/schema discovery happens via the async Scanner instead.
   table_count: number;
   sample_tables: string[];
+  /** Warehouse root inferred from the catalog's own database locations, when it has none set. */
+  suggested_warehouse?: string | null;
   error?: string | null;
   note?: string | null;
 }
@@ -187,7 +205,14 @@ export interface TableRead {
   owner_email?: string | null;
   stats?: TableStatsRead | null;
   effective_preset?: string | null;
+  maintenance?: TableMaintenance | null;
 }
+
+export type TableMaintenance = components["schemas"]["TableMaintenanceRead"];
+export type TableMaintenanceState = TableMaintenance["state"];
+export type TableJobRef = components["schemas"]["TableJobRef"];
+export type TablesFunnel = components["schemas"]["TablesFunnelResponse"];
+export type FunnelNode = components["schemas"]["FunnelNode"];
 
 export interface TableAlertSubscriptionRead {
   id: UUID;
@@ -257,6 +282,15 @@ export interface ExplainHealthResponse {
 
 export type SchedulingBaselineRead = components["schemas"]["SchedulingBaselineRead"];
 export type AutoCompCompareResponse = components["schemas"]["AutoCompCompareResponse"];
+export type SkipEvaluationRead = components["schemas"]["SkipEvaluationRead"];
+export type SkipEvaluationPage = components["schemas"]["SkipEvaluationPage"];
+export type MaintenanceImpactResponse = components["schemas"]["MaintenanceImpactResponse"];
+export type ImpactWindowRead = components["schemas"]["ImpactWindowRead"];
+export type TableHoldRead = components["schemas"]["TableHoldRead"];
+export type TableHoldWrite = components["schemas"]["TableHoldWrite"];
+export type ColumnUsageResponse = components["schemas"]["ColumnUsageResponse"];
+export type ColumnUsageRead = components["schemas"]["ColumnUsageRead"];
+export type TableStatsHistoryRead = components["schemas"]["TableStatsHistoryRead"];
 
 export interface CopilotQuestion {
   id: string;
@@ -812,10 +846,11 @@ export interface DatalakeDashboard {
   totals?: {
     tables?: number;
     size_gb?: number;
+    total_files?: number;
     small_files?: number;
     monthly_cost_usd?: number;
     projected_monthly_cost_usd?: number;
-  projected_savings_usd_month?: number | null;
+    projected_savings_usd_month?: number | null;
     reclaimable_bytes?: number;
     needs_compaction?: number;
     running_jobs?: number;
@@ -823,6 +858,10 @@ export interface DatalakeDashboard {
   grade_distribution?: Array<{ grade: string; count: number }>;
   freshness_distribution?: FreshnessDistributionItem[];
   freshness_as_of?: string | null;
+  hot_at_risk?: TableRead[];
+  hot_at_risk_count?: number;
+  recently_improved?: DashboardImprovedTable[];
+  recently_improved_count?: number;
   cost_by_schema?: Array<{
     schema_name: string;
     cost_usd?: number;
@@ -833,6 +872,8 @@ export interface DatalakeDashboard {
   top_offenders?: TableRead[];
   drift?: Array<HistoryPoint & { table_id?: UUID; schema_name?: string; table_name?: string }>;
 }
+
+export type DashboardImprovedTable = components["schemas"]["DashboardImprovedTable"];
 
 export type FreshnessBucketKey =
   | "within_24h"

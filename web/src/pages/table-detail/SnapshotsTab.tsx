@@ -1,8 +1,9 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Copy, Crosshair, GitBranch, Tag } from "lucide-react";
+import { Archive, Copy, Crosshair, GitBranch, History, Tag } from "lucide-react";
 import { useMemo } from "react";
 import { toast } from "sonner";
+import { ConfirmAction } from "../../components/confirm";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { tableKeys } from "./tableKeys";
 import "./snapshotsTab.css";
@@ -11,6 +12,7 @@ import {
   listProtectedSnapshots,
   listTableSnapshots,
   protectTableSnapshot,
+  rollbackTableSnapshot,
   type SnapshotRef,
   type TableSnapshot,
   type TableSnapshotsResponse
@@ -18,7 +20,7 @@ import {
 import { QueryErrorAlert } from "../../components/common";
 import { ExcludedFromExpiry } from "../../components/table-detail/ExcludedFromExpiry";
 import { useOperationLauncher } from "../../components/table-detail/operations/OperationLauncher";
-import { SnapshotSelection } from "../../components/table-detail/SnapshotSelection";
+import { SnapshotSelection, writerLabel } from "../../components/table-detail/SnapshotSelection";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
@@ -28,7 +30,6 @@ import { useWriteControl } from "../../lib/useWriteControl";
 import { formatBytesGb, formatDuration, formatNumber, formatTime } from "../../lib/format";
 
 const PAGE_SIZE = 25;
-const RESTORE_REASON = "Restore is not enabled on this install";
 
 const pageFromUrl = (raw: string | null): number => {
   const parsed = Number(raw);
@@ -110,39 +111,101 @@ const SummaryCard = ({
   );
 };
 
+const signed = (value: number, sign: "+" | "−") => `${sign}${formatNumber(value)}`;
+
+/** Rows and delete files this commit added or removed, from the writer's snapshot summary. */
+const CommitChange = ({ summary }: { summary: TableSnapshot["summary"] }) => {
+  const rows = [
+    summary.added_records ? signed(summary.added_records, "+") : null,
+    summary.deleted_records ? signed(summary.deleted_records, "−") : null
+  ].filter(Boolean);
+  const deletes = summary.added_delete_files ?? 0;
+  if (!rows.length && !deletes) {
+    const recorded = summary.added_records != null || summary.deleted_records != null;
+    return <span className="text-muted-foreground">{recorded ? "No row change" : "—"}</span>;
+  }
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1 whitespace-nowrap">
+      {rows.length ? <span>{rows.join(" ")} rows</span> : null}
+      {deletes ? (
+        <Badge variant="warning" title="Merge-on-read delete files. Readers apply them until compaction rewrites the data.">
+          +{formatNumber(deletes)} delete file{deletes === 1 ? "" : "s"}
+        </Badge>
+      ) : null}
+    </span>
+  );
+};
+
 const shortId = (id: string): string => (id.length > 10 ? `…${id.slice(-8)}` : id);
 
 const SnapshotActions = ({
   snapshotId,
+  committedAt,
   alreadyExcluded,
   isCurrent,
   protectAllowed,
   protectReason,
   pending,
-  onProtect
+  onProtect,
+  rollbackAllowed,
+  rollbackReason,
+  rollbackPending,
+  onRollback
 }: {
   snapshotId: string;
+  committedAt: string | null;
   alreadyExcluded: boolean;
   isCurrent: boolean;
   protectAllowed: boolean;
   protectReason: string | null;
   pending: boolean;
   onProtect: (snapshotId: string) => void;
+  rollbackAllowed: boolean;
+  rollbackReason: string | null;
+  rollbackPending: boolean;
+  onRollback: (snapshotId: string) => void;
 }) => {
   return (
     <Popover>
       <PopoverTrigger asChild><Button type="button" size="sm" variant="ghost">Actions</Button></PopoverTrigger>
       <PopoverContent align="end" className="w-72 p-3">
-        <div role="group" aria-label="Snapshot actions">
+        <div role="group" aria-label="Snapshot actions" className="flex flex-col gap-1">
           <Button type="button" size="sm" variant="secondary" className="w-full justify-start" disabled={!protectAllowed || pending || alreadyExcluded} title={protectReason ?? undefined} onClick={() => onProtect(snapshotId)}>
             {alreadyExcluded ? "Already excluded" : "Protect"}
           </Button>
-          <p className="mt-2 text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Records snapshot {snapshotId} so a later Spark expire keeps it. It does not follow the branch.
             {isCurrent ? " This is the current commit, not later commits." : ""} Trino expire cannot skip one id.
           </p>
-          {protectReason ? <p className="mt-2 text-xs text-muted-foreground">{protectReason}</p> : null}
-          <p className="mt-3 text-xs text-muted-foreground">{RESTORE_REASON}.</p>
+          {protectReason ? <p className="text-xs text-muted-foreground">{protectReason}</p> : null}
+          <div className="mt-2 border-t pt-2">
+            <ConfirmAction
+              title="Roll back to this snapshot?"
+              description={
+                <>
+                  Moves the table's current pointer to snapshot {snapshotId}
+                  {committedAt ? ` (committed ${formatTime(committedAt)})` : ""}. Anything committed after it stops
+                  being current for every reader, not just Cryo. Data files stay on disk until a later expire run.
+                </>
+              }
+              okText="Roll back"
+              okButtonProps={{ danger: true, loading: rollbackPending }}
+              onConfirm={() => onRollback(snapshotId)}
+              disabled={!rollbackAllowed || rollbackPending || isCurrent}
+            >
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="w-full justify-start"
+                disabled={!rollbackAllowed || rollbackPending || isCurrent}
+                title={isCurrent ? "This is already the current snapshot" : (rollbackReason ?? undefined)}
+              >
+                <History size={14} aria-hidden="true" /> {isCurrent ? "Current snapshot" : "Apply (roll back)"}
+              </Button>
+            </ConfirmAction>
+            {rollbackReason && !isCurrent ? <p className="mt-2 text-xs text-muted-foreground">{rollbackReason}</p> : null}
+          </div>
         </div>
       </PopoverContent>
     </Popover>
@@ -186,6 +249,17 @@ export const SnapshotsTab = () => {
     onError: (error: Error) => toast.error(error.message)
   });
 
+  const rollbackAccess = useWriteControl("rollbackSnapshot");
+  const rollback = useMutation({
+    mutationFn: (snapshotId: string) => rollbackTableSnapshot(api, tableId, snapshotId),
+    onSuccess: (result) => {
+      toast.success(`Table rolled back to snapshot ${result.snapshot_id}`);
+      void queryClient.invalidateQueries({ queryKey: ["table-snapshots", tableId] });
+      void queryClient.invalidateQueries({ queryKey: tableKeys.detail(tableId, token) });
+    },
+    onError: (error: Error) => toast.error(error.message)
+  });
+
   const setPage = (pageIndex: number) => {
     const next = new URLSearchParams(searchParams);
     const pageNumber = pageIndex + 1;
@@ -207,8 +281,19 @@ export const SnapshotsTab = () => {
         header: "Snapshot",
         cell: ({ row }) => (
           <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
-            <span data-snapshot-id={row.original.snapshot_id} title={row.original.snapshot_id} className="font-mono text-xs">
-              {shortId(row.original.snapshot_id)}
+            <span className="flex flex-col">
+              <span data-snapshot-id={row.original.snapshot_id} title={row.original.snapshot_id} className="font-mono text-xs">
+                {shortId(row.original.snapshot_id)}
+              </span>
+              <span
+                data-parent-snapshot-id={row.original.parent_snapshot_id ?? ""}
+                title={row.original.parent_snapshot_id ?? undefined}
+                className="font-mono text-[11px] text-muted-foreground"
+              >
+                {row.original.parent_snapshot_id
+                  ? `from ${loadedIds.has(row.original.parent_snapshot_id) ? shortId(row.original.parent_snapshot_id) : "outside this page"}`
+                  : "first snapshot"}
+              </span>
             </span>
             <Button
               type="button"
@@ -242,23 +327,6 @@ export const SnapshotsTab = () => {
         )
       },
       {
-        id: "parent_snapshot_id",
-        header: "Parent",
-        cell: ({ row }) => (
-          <span
-            data-parent-snapshot-id={row.original.parent_snapshot_id ?? ""}
-            title={row.original.parent_snapshot_id ?? undefined}
-            className="whitespace-nowrap font-mono text-xs"
-          >
-            {row.original.parent_snapshot_id
-              ? loadedIds.has(row.original.parent_snapshot_id)
-                ? shortId(row.original.parent_snapshot_id)
-                : "Outside loaded page"
-              : "—"}
-          </span>
-        )
-      },
-      {
         id: "timestamp",
         header: "Timestamp",
         cell: ({ row }) => (
@@ -267,7 +335,10 @@ export const SnapshotsTab = () => {
               className="inline-block size-1.5 rounded-full bg-[var(--color-primary)]"
               aria-hidden="true"
             />
-            <time dateTime={row.original.committed_at ?? undefined} title={formatTime(row.original.committed_at)}>
+            <time
+              dateTime={row.original.committed_at ?? undefined}
+              title={row.original.sequence_number == null ? undefined : `Sequence ${formatNumber(row.original.sequence_number)}`}
+            >
               {formatTime(row.original.committed_at)}
             </time>
             {sameSnapshotId(row.original.snapshot_id, currentSnapshotId) ? <Badge>Current</Badge> : null}
@@ -275,31 +346,55 @@ export const SnapshotsTab = () => {
         )
       },
       {
-        id: "sequence",
-        header: "Sequence",
-        cell: ({ row }) => formatNumber(row.original.sequence_number)
-      },
-      {
         id: "operation",
         header: "Operation",
         cell: ({ row }) => row.original.operation ?? "Unknown"
       },
       {
-        id: "records",
-        header: "Records",
-        cell: ({ row }) => formatNumber(row.original.summary.total_records)
+        id: "change",
+        header: "Change",
+        cell: ({ row }) => <CommitChange summary={row.original.summary} />
       },
       {
-        id: "size",
-        header: "Total size",
-        cell: ({ row }) => <span className="whitespace-nowrap">{sizeLabel(row.original.summary.total_files_size)}</span>
-      },
-      {
-        id: "refs",
-        header: "References",
+        id: "partitions",
+        header: "Partitions",
         cell: ({ row }) =>
-          row.original.refs.length === 0 ? (
-            <span className="text-muted-foreground">None</span>
+          row.original.summary.changed_partition_count == null ? (
+            <span className="text-muted-foreground" title="Not recorded by this writer">—</span>
+          ) : (
+            formatNumber(row.original.summary.changed_partition_count)
+          )
+      },
+      {
+        id: "table_after",
+        header: "Table after",
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap" title={`${formatNumber(row.original.summary.total_records)} rows`}>
+            {formatNumber(row.original.summary.total_records, true)} rows · {sizeLabel(row.original.summary.total_files_size)}
+          </span>
+        )
+      },
+      {
+        id: "writer",
+        header: "Writer",
+        cell: ({ row }) => {
+          const writer = row.original.summary.writer;
+          const label = writerLabel(writer);
+          return label ? (
+            <span className="whitespace-nowrap" title={[writer?.user, writer?.query_id ?? writer?.job_id].filter(Boolean).join(" · ") || undefined}>
+              {label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground" title="Not recorded by this writer">—</span>
+          );
+        }
+      },
+      {
+        id: "retention",
+        header: "Retention",
+        cell: ({ row }) =>
+          row.original.refs.length === 0 && !row.original.protected ? (
+            <span className="text-muted-foreground">—</span>
           ) : (
             <span className="flex flex-wrap gap-1">
               {row.original.refs.map((ref) => (
@@ -316,19 +411,12 @@ export const SnapshotsTab = () => {
                   {ref.name}
                 </span>
               ))}
+              {row.original.protected ? (
+                <Badge variant="warning" title={row.original.protected_label ?? undefined}>
+                  Excluded from Cryo expiry
+                </Badge>
+              ) : null}
             </span>
-          )
-      },
-      {
-        id: "protected",
-        header: "Protected",
-        cell: ({ row }) =>
-          row.original.protected ? (
-            <Badge variant="warning" title={row.original.protected_label ?? undefined}>
-              Excluded from Cryo expiry
-            </Badge>
-          ) : (
-            <span className="text-muted-foreground">No</span>
           )
       },
       {
@@ -337,17 +425,33 @@ export const SnapshotsTab = () => {
         cell: ({ row }) => (
           <SnapshotActions
             snapshotId={row.original.snapshot_id}
+            committedAt={row.original.committed_at}
             alreadyExcluded={row.original.protected}
             isCurrent={row.original.snapshot_id === currentSnapshotId}
             protectAllowed={protectAccess.allowed}
             protectReason={protectAccess.reason}
             pending={protect.isPending && protect.variables === row.original.snapshot_id}
             onProtect={(snapshotId) => protect.mutate(snapshotId)}
+            rollbackAllowed={rollbackAccess.allowed}
+            rollbackReason={rollbackAccess.reason}
+            rollbackPending={rollback.isPending && rollback.variables === row.original.snapshot_id}
+            onRollback={(snapshotId) => rollback.mutate(snapshotId)}
           />
         )
       }
     ],
-    [currentSnapshotId, loadedIds, protect, protectAccess.allowed, protectAccess.reason, searchParams, setSearchParams]
+    [
+      currentSnapshotId,
+      loadedIds,
+      protect,
+      protectAccess.allowed,
+      protectAccess.reason,
+      rollback,
+      rollbackAccess.allowed,
+      rollbackAccess.reason,
+      searchParams,
+      setSearchParams
+    ]
   );
 
   return (
@@ -362,6 +466,13 @@ export const SnapshotsTab = () => {
           oldest={data.oldest_committed_at}
         />
       ) : null}
+      <Card className="td-snapshots-retention">
+        <ExcludedFromExpiry tableId={tableId} />
+        <p className="text-xs text-muted-foreground">
+          Tags and branches follow Iceberg's own retention rules. An expiry job that is already planning won't see a change
+          made after it started.
+        </p>
+      </Card>
       <SnapshotSelection
         snapshots={data?.snapshots ?? []}
         selectedId={searchParams.get("snapshot")}
@@ -390,7 +501,6 @@ export const SnapshotsTab = () => {
         }
       /> : null}
       </section>
-      <Card className="td-snapshots-retention"><ExcludedFromExpiry tableId={tableId} /><p className="text-xs text-muted-foreground">Tags and branches follow Iceberg retention rules. Spark expire keeps each recorded id with a tag. Trino expire cannot skip one id. A job already planning will not see a click made after it started.</p></Card>
     </div>
   );
 };

@@ -1,15 +1,19 @@
+import { AlertTriangle } from "lucide-react";
 import { useAuth } from "../../lib/auth";
-import { Alert } from "../ui/alert";
 
 export const DevTokenProdBanner = () => {
   const { devTokenEnabledInProd } = useAuth();
   if (!devTokenEnabledInProd) return null;
   return (
-    <Alert
-      className="sticky top-12 z-20 mb-4"
-      variant="warning"
-      title="Anyone who can open this page can choose admin"
-      description="There is no in-app switch. CRYO_ALLOW_DEV_TOKEN_IN_PROD is on. Do not turn it off until organization sign-in is working, or nobody can sign in."
-    />
+    <div role="alert" className="cryo-dev-banner">
+      <AlertTriangle aria-hidden="true" />
+      <p>
+        <span className="cryo-dev-banner__title">Anyone who can open this page can choose admin.</span>{" "}
+        <span className="cryo-dev-banner__detail">
+          <code>CRYO_ALLOW_DEV_TOKEN_IN_PROD</code> is on and there is no in-app switch. Keep it on until
+          organization sign-in works, or nobody can sign in.
+        </span>
+      </p>
+    </div>
   );
 };
