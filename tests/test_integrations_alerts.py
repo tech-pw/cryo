@@ -10,7 +10,7 @@ def test_send_slack_table_breach_alert_without_ai_summary(monkeypatch):
     monkeypatch.setattr(alerts, "_post_json", lambda url, payload: captured.update(payload=payload))
 
     ok = alerts.send_slack_table_breach_alert(
-        "finance.orders", ["Freshness breached"], webhook_url="https://hooks.slack.test/x"
+        "finance.orders", ["Freshness breached"], webhook_url="https://hooks.slack.com/services/T/B/x"
     )
 
     assert ok is True
@@ -26,7 +26,7 @@ def test_send_slack_table_breach_alert_with_ai_summary_adds_extra_block(monkeypa
     ok = alerts.send_slack_table_breach_alert(
         "finance.orders",
         ["Freshness breached"],
-        webhook_url="https://hooks.slack.test/x",
+        webhook_url="https://hooks.slack.com/services/T/B/x",
         ai_summary="Writer produced many small files (evidence: ...)",
     )
 
@@ -47,7 +47,7 @@ def test_send_slack_table_breach_alert_no_reasons_skips_send(monkeypatch):
     monkeypatch.setattr(alerts, "_post_json", _fake_post)
 
     ok = alerts.send_slack_table_breach_alert(
-        "finance.orders", [], webhook_url="https://hooks.slack.test/x", ai_summary="unused"
+        "finance.orders", [], webhook_url="https://hooks.slack.com/services/T/B/x", ai_summary="unused"
     )
 
     assert ok is False
