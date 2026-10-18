@@ -82,9 +82,11 @@ export const remedyForDeduction = (label: string, tableId: string): DeductionRem
     return { kind: "operation", op: "optimize" };
   }
   if (text.includes("delete")) return { kind: "operation", op: "optimize" };
-  if (text.includes("skew")) return { kind: "operation", op: "optimize" };
+  if (text.includes("skew")) {
+    return { kind: "settings", href: `/tables/${tableId}?tab=files#files-layout`, label: "Review partitioning" };
+  }
   if (text.includes("propert")) {
-    return { kind: "settings", href: `/tables/${tableId}?tab=files#files-properties`, label: "Review properties" };
+    return { kind: "settings", href: `/tables/${tableId}?tab=config#config-properties`, label: "Review properties" };
   }
   if (text.includes("stream") || text.includes("velocity")) {
     return { kind: "none", note: "Write pattern. Frequent maintenance keeps it in check." };

@@ -1,5 +1,5 @@
 import { Cloud, FlaskConical, Link2, Plus, RefreshCw, Zap } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -115,7 +115,13 @@ const SourceCard = ({
   );
 };
 
-export const AwsIntegrationsTab = () => {
+export const AwsIntegrationsTab = ({
+  active = true,
+  onHeaderActions
+}: {
+  active?: boolean;
+  onHeaderActions?: (actions: ReactNode) => void;
+}) => {
   const { api, role } = useAuth();
   const queryClient = useQueryClient();
   const [managingSourceId, setManagingSourceId] = useState<UUID | null>(null);
@@ -265,6 +271,32 @@ export const AwsIntegrationsTab = () => {
     onError: (error) => toast.error((error as Error).message)
   });
 
+  const toolbar = (
+    <div className="flex flex-wrap gap-2">
+      <Button variant="secondary" loading={refreshing.isPending} onClick={() => refreshing.mutate()}>
+        <RefreshCw className="size-3.5" aria-hidden="true" />
+        Refresh
+      </Button>
+      <Button
+        variant="primary"
+        loading={testAll.isPending}
+        onClick={() => testAll.mutate()}
+        disabled={connectedSources.length === 0 || role === "viewer"}
+      >
+        <Zap className="size-3.5" aria-hidden="true" />
+        Test all
+      </Button>
+    </div>
+  );
+
+  useEffect(() => {
+    if (!active || !onHeaderActions) return;
+    onHeaderActions(toolbar);
+    return () => onHeaderActions(null);
+    // Toolbar identity changes with pending state; the parent only stores the node.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, connectedSources.length, onHeaderActions, refreshing.isPending, role, testAll.isPending]);
+
   const stats = [
     {
       label: "Connected lakehouses",
@@ -290,25 +322,13 @@ export const AwsIntegrationsTab = () => {
 
   return (
     <OverviewPage
-      title="AWS integrations"
-      subtitle="Connect S3 buckets to lakehouses so Cryo can show real CloudWatch storage metrics and AWS Price List rates — free tier only, no AWS charges."
-      actions={
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" loading={refreshing.isPending} onClick={() => refreshing.mutate()}>
-            <RefreshCw className="size-3.5" aria-hidden="true" />
-            Refresh
-          </Button>
-          <Button
-            variant="primary"
-            loading={testAll.isPending}
-            onClick={() => testAll.mutate()}
-            disabled={connectedSources.length === 0 || role === "viewer"}
-          >
-            <Zap className="size-3.5" aria-hidden="true" />
-            Test all
-          </Button>
-        </div>
+      title={onHeaderActions ? undefined : "AWS integrations"}
+      subtitle={
+        onHeaderActions
+          ? undefined
+          : "Connect S3 buckets to lakehouses so Cryo can show real CloudWatch storage metrics and AWS Price List rates — free tier only, no AWS charges."
       }
+      actions={onHeaderActions ? undefined : toolbar}
       loading={sources.isLoading}
       error={sources.error}
       errorTitle="Failed to load lakehouses"
@@ -328,7 +348,7 @@ export const AwsIntegrationsTab = () => {
         <Alert
           variant="info"
           title="Free-tier AWS APIs only"
-          description="Cryo only calls GetMetricStatistics (not GetMetricData), the AWS Price List API, and sts:GetCallerIdentity — all free. See cryo/integrations/aws_s3_metrics.py for the full policy."
+          description="Cryo only calls GetMetricStatistics (not GetMetricData), the AWS Price List API, and sts:GetCallerIdentity — all free-tier, no AWS charges."
         />
 
         {sources.data && sources.data.length === 0 ? (

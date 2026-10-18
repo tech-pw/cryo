@@ -53,9 +53,10 @@ describe("CompactionAnalysis", () => {
   it("keeps both rankings and defines AutoComp once", async () => {
     renderAnalysis();
     expect(await screen.findByText(STORED_SCORE_BASIS)).toBeInTheDocument();
-    expect(screen.getByText(HORIZON_SCORE_BASIS)).toBeInTheDocument();
     expect(screen.getAllByText(AUTOCOMP_DEFINITION)).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "Stored benefit-score candidates" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Query frequency · 30 d" }));
+    expect(screen.getByText(HORIZON_SCORE_BASIS)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Horizon query-frequency candidates" })).toBeInTheDocument();
     expect(document.getElementById("maintenance-compaction")).toBeTruthy();
     expect(screen.queryByText("optimize")).not.toBeInTheDocument();

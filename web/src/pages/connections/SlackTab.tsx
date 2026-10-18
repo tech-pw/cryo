@@ -1,15 +1,11 @@
-import type { ColumnDef } from "@tanstack/react-table";
-import { CheckCircle2, MessageSquare, Plus, XCircle } from "lucide-react";
-import { useMemo } from "react";
-import type { SlackConfigRead } from "../../api/client";
+import { Hash, MessageSquare, Plus, Trash2 } from "lucide-react";
 import { ConfirmAction } from "../../components/confirm";
-import { StatusTag } from "../../components/status";
 import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { DataTable } from "../../components/ui/data-table";
 import { Switch } from "../../components/ui/switch";
+import { ConnectionList, ConnectionRow, ConnectionSection, ConnectionStatus } from "./ConnectionList";
 import { useConnectionsContext } from "./ConnectionsContext";
 
 export const SlackTab = () => {
@@ -26,121 +22,117 @@ export const SlackTab = () => {
     dailyReport,
     dailyReportResult
   } = useConnectionsContext();
+  const canWrite = role !== "viewer";
 
-  const columns = useMemo<ColumnDef<SlackConfigRead, unknown>[]>(
-    () => [
-      {
-        accessorKey: "name",
-        header: "Name",
-        cell: ({ row }) => (
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{row.original.name}</span>
-            {row.original.is_default ? <Badge variant="default">Default</Badge> : null}
-          </div>
-        )
-      },
-      {
-        accessorKey: "channel",
-        header: "Channel",
-        cell: ({ getValue }) => {
-          const value = getValue() as string | null;
-          return value ? <code className="text-xs">{value}</code> : <span className="text-muted-foreground">Webhook channel</span>;
-        }
-      },
-      {
-        accessorKey: "has_webhook",
-        header: "Webhook",
-        cell: ({ getValue }) =>
-          getValue() ? (
-            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-              <CheckCircle2 className="size-3.5 text-[var(--color-status-success)]" aria-hidden="true" />
-              Configured
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-              <XCircle className="size-3.5 text-destructive" aria-hidden="true" />
-              Missing
-            </span>
-          )
-      },
-      {
-        id: "daily_report",
-        header: "Daily Report",
-        cell: ({ row }) => (
-          <div className="flex flex-col gap-0.5">
-            <StatusTag status={row.original.daily_report_enabled ? "succeeded" : "skipped"} />
-            {row.original.daily_report_enabled ? (
-              <span className="text-[11px] text-muted-foreground">
-                {row.original.daily_report_cron} {row.original.daily_report_use_ai ? "(+ AI)" : ""}
-              </span>
-            ) : null}
-          </div>
-        )
-      },
-      {
-        accessorKey: "enabled",
-        header: "Enabled",
-        cell: ({ getValue }) => <StatusTag status={getValue() ? "succeeded" : "skipped"} />
-      },
-      {
-        id: "actions",
-        header: "",
-        size: 220,
-        cell: ({ row }) => (
-          <div className="flex flex-wrap items-center gap-1">
-            <Button size="sm" variant="secondary" onClick={() => setSlackDrawer(row.original)}>
-              Edit
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={testSlackMutation.isPending}
-              disabled={!row.original.has_webhook}
-              onClick={() => testSlackMutation.mutate(row.original.id)}
-            >
-              Test
-            </Button>
-            <ConfirmAction
-              title="Delete this Slack configuration?"
-              description="Daily reports and alerts will stop posting to this webhook."
-              onConfirm={() => deleteSlackConfigMutation.mutate(row.original.id)}
-            >
-              <Button size="sm" variant="danger" loading={deleteSlackConfigMutation.isPending}>
-                Delete
-              </Button>
-            </ConfirmAction>
-          </div>
-        )
-      }
-    ],
-    [deleteSlackConfigMutation, setSlackDrawer, testSlackMutation]
-  );
+  const newButton = canWrite ? (
+    <Button variant="primary" onClick={() => setSlackDrawer("new")}>
+      <Plus aria-hidden="true" />
+      New Slack connection
+    </Button>
+  ) : undefined;
 
   return (
-    <div className="flex w-full flex-col gap-3">
-      <p className="tab-intro text-sm text-muted-foreground">
-        Connect Slack to receive daily anomaly reports with AI-generated summaries. Configure your webhook URL,
-        reporting schedule, and channel.
-      </p>
-      {role !== "viewer" ? (
+    <ConnectionSection
+      title="Slack delivery"
+      description="Send daily anomaly reports to your workspace. Add a webhook, then choose its channel and reporting schedule."
+      action={newButton}
+    >
+      <div className="flex flex-col gap-2">
+        <h3 className="text-[13px] font-semibold text-[var(--color-text-secondary)]">Slack connections</h3>
+        <ConnectionList
+          label="Slack connections"
+          loading={slackConfigs.isLoading}
+          emptyTitle="No Slack connections yet"
+          emptyDescription={
+            canWrite
+              ? "Add a Slack webhook to deliver daily anomaly reports and test the connection."
+              : "An admin can add a Slack webhook to start delivering reports."
+          }
+        >
+          {(slackConfigs.data ?? []).map((config) => (
+            <ConnectionRow
+              key={config.id ?? `slack-${config.name}-${config.channel}`}
+              icon={<Hash />}
+              name={config.name}
+              kind={config.channel ?? "Webhook channel"}
+              enabled={Boolean(config.enabled)}
+              status={<ConnectionStatus enabled={Boolean(config.enabled)} />}
+              badges={config.is_default ? <Badge variant="default">Default</Badge> : null}
+              details={[
+                { label: "Webhook", value: config.has_webhook ? "Configured" : "Missing" },
+                {
+                  label: "Daily report",
+                  value: config.daily_report_enabled
+                    ? `${config.daily_report_cron ?? ""}${config.daily_report_use_ai ? " · AI summary" : ""}`
+                    : "Off",
+                  mono: Boolean(config.daily_report_enabled)
+                }
+              ]}
+              actions={
+                <>
+                  <Button size="sm" variant="secondary" onClick={() => setSlackDrawer(config)}>
+                    Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={testSlackMutation.isPending}
+                    disabled={!config.has_webhook}
+                    onClick={() => testSlackMutation.mutate(config.id)}
+                  >
+                    Test
+                  </Button>
+                  <ConfirmAction
+                    title="Delete this Slack configuration?"
+                    description="Daily reports and alerts will stop posting to this webhook."
+                    onConfirm={() => deleteSlackConfigMutation.mutate(config.id)}
+                  >
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="connection-delete px-2"
+                      aria-label="Delete"
+                      title={`Delete ${config.name}`}
+                      loading={deleteSlackConfigMutation.isPending}
+                    >
+                      {deleteSlackConfigMutation.isPending ? null : <Trash2 aria-hidden="true" />}
+                    </Button>
+                  </ConfirmAction>
+                </>
+              }
+            />
+          ))}
+        </ConnectionList>
+      </div>
+      {canWrite ? (
         <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>Manual daily report</CardTitle>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base tracking-[-0.01em]">Manual daily report</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Generate a report now, and optionally post it through the default Slack connection.
+            </p>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-4">
-              <label className="inline-flex items-center gap-2 text-sm">
-                <Switch checked={sendReportToSlack} onCheckedChange={setSendReportToSlack} />
-                Send to Slack
-              </label>
-              <label className="inline-flex items-center gap-2 text-sm">
-                <Switch checked={reportUseAi} onCheckedChange={setReportUseAi} />
-                AI summary
-              </label>
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+                <label className="inline-flex items-center gap-2.5 text-sm">
+                  <Switch checked={sendReportToSlack} onCheckedChange={setSendReportToSlack} />
+                  Send to Slack
+                </label>
+                <label className="inline-flex items-center gap-2.5 text-sm">
+                  <Switch checked={reportUseAi} onCheckedChange={setReportUseAi} />
+                  AI summary
+                </label>
+              </div>
+              <Button
+                className="w-full sm:w-auto"
+                variant="secondary"
+                loading={dailyReport.isPending}
+                onClick={() => dailyReport.mutate()}
+              >
+                Generate report now
+              </Button>
             </div>
-            <Button variant="primary" loading={dailyReport.isPending} onClick={() => dailyReport.mutate()}>
-              Generate report now
-            </Button>
             {dailyReportResult ? (
               <Alert
                 variant="success"
@@ -157,22 +149,7 @@ export const SlackTab = () => {
           </CardContent>
         </Card>
       ) : null}
-      <div>
-        <Button variant="primary" onClick={() => setSlackDrawer("new")}>
-          <Plus className="size-4" aria-hidden="true" />
-          New Slack connection
-        </Button>
-      </div>
-      <DataTable
-        columns={columns}
-        data={slackConfigs.data ?? []}
-        density="compact"
-        loading={slackConfigs.isLoading}
-        getRowId={(row) => row.id ?? `slack-${row.name}-${row.channel}`}
-        emptyTitle="No Slack connections configured"
-        emptyDescription="Add a Slack webhook to receive daily anomaly reports with AI-generated summaries."
-      />
-    </div>
+    </ConnectionSection>
   );
 };
 

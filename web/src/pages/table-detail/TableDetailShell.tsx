@@ -1,5 +1,5 @@
-import { GitBranch, Wrench } from "lucide-react";
-import { lazy, Suspense } from "react";
+import { ChevronDown, GitBranch, SlidersHorizontal, Wrench } from "lucide-react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { PlanPreview } from "../../components/PlanPreview";
 import { ConfirmAction } from "../../components/confirm";
@@ -18,6 +18,13 @@ import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { EmptyState } from "../../components/ui/empty-state";
 import { PageHeader } from "../../components/ui/page-header";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger
+} from "../../components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { formatTime } from "../../lib/format";
 import { useWriteControl } from "../../lib/useWriteControl";
@@ -46,6 +53,7 @@ const SnapshotsTabPanel = lazy(() =>
 const MaintenanceTabPanel = lazy(() =>
   import("./MaintenanceTab").then((m) => ({ default: m.MaintenanceTab }))
 );
+const ConfigTabPanel = lazy(() => import("./ConfigTab").then((m) => ({ default: m.ConfigTab })));
 
 const TabFallback = () => (
   <AsyncBoundary isLoading skeleton={null}>
@@ -78,6 +86,30 @@ const MaintenanceTabLabel = () => (
     Maintenance
   </span>
 );
+
+const ConfigTabLabel = () => (
+  <span>
+    <SlidersHorizontal className="mr-1 inline size-3.5" />
+    Config
+  </span>
+);
+
+const TABLE_SECTION_TABS = [
+  { value: "overview", Label: OverviewTabLabel },
+  { value: "files", Label: StructureTabLabel },
+  { value: "snapshots", Label: SnapshotsTabLabel },
+  { value: "maintenance", Label: MaintenanceTabLabel },
+  { value: "config", Label: ConfigTabLabel },
+  { value: "usage", Label: LineageTabLabel },
+  { value: "quality", Label: HealthQualityTabLabel },
+  { value: "cost", Label: CostTabLabel }
+] as const;
+
+const tableSectionLabel = (tab: string): ReactNode => {
+  const match = TABLE_SECTION_TABS.find((item) => item.value === tab);
+  const Label = match?.Label ?? OverviewTabLabel;
+  return <Label />;
+};
 
 export const TableDetailShell = () => {
   const ctx = useTableDetail();
@@ -161,22 +193,30 @@ export const TableDetailShell = () => {
           ) : null}
 
           <Tabs value={activeTab} onValueChange={handleTabChange} className="td-main-tabs">
-            <label className="mb-3 block md:hidden">
-              <span className="sr-only">Table section</span>
-              <select
-                className="h-[var(--control-height)] w-full rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
-                value={activeTab}
-                onChange={(event) => handleTabChange(event.target.value)}
-              >
-                <option value="overview">Overview</option>
-                <option value="files">Schema & files</option>
-                <option value="snapshots">Snapshots</option>
-                <option value="maintenance">Maintenance</option>
-                <option value="usage">Usage</option>
-                <option value="quality">Quality</option>
-                <option value="cost">Cost & savings</option>
-              </select>
-            </label>
+            <div className="mb-3 md:hidden">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-[var(--control-height)] w-full justify-between px-3"
+                    aria-label="Table section"
+                  >
+                    <span className="min-w-0 truncate">{tableSectionLabel(activeTab)}</span>
+                    <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-[12rem]">
+                  <DropdownMenuRadioGroup value={activeTab} onValueChange={handleTabChange}>
+                    {TABLE_SECTION_TABS.map((item) => (
+                      <DropdownMenuRadioItem key={item.value} value={item.value}>
+                        <item.Label />
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
             <TabsList aria-label="Table sections" className="td-section-navigation mb-5 hidden h-auto w-full justify-start rounded-none border-b border-[var(--line,#e1e6ed)] bg-transparent p-0 md:flex">
               <TabsTrigger value="overview" className={tabTriggerClass}>
                 <OverviewTabLabel />
@@ -189,6 +229,9 @@ export const TableDetailShell = () => {
               </TabsTrigger>
               <TabsTrigger value="maintenance" className={tabTriggerClass}>
                 <MaintenanceTabLabel />
+              </TabsTrigger>
+              <TabsTrigger value="config" className={tabTriggerClass}>
+                <ConfigTabLabel />
               </TabsTrigger>
               <TabsTrigger value="usage" className={tabTriggerClass}>
                 <LineageTabLabel />
@@ -211,6 +254,9 @@ export const TableDetailShell = () => {
             </TabsContent>
             <TabsContent value="maintenance" className="td-tab-content mt-0">
               {lazyPanel(MaintenanceTabPanel)}
+            </TabsContent>
+            <TabsContent value="config" className="td-tab-content mt-0">
+              {lazyPanel(ConfigTabPanel)}
             </TabsContent>
             <TabsContent value="usage" className="td-tab-content mt-0">
               <Suspense fallback={<TabFallback />}>

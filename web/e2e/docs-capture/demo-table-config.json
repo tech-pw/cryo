@@ -1,0 +1,2339 @@
+{
+ "config": {
+  "table_id": "181aef5f-9dd3-45ed-a7e0-decb910c3b5e",
+  "read_from": "catalog",
+  "read_at": "2026-10-17T08:08:31.846639+00:00",
+  "catalog_error": null,
+  "can_edit": true,
+  "preset_name": "nightly-standard",
+  "preset_engine": "trino",
+  "groups": [
+   {
+    "id": "file_layout",
+    "label": "File layout",
+    "description": "How big new files are, how rows are spread across them, and how they are encoded."
+   },
+   {
+    "id": "row_level",
+    "label": "Row-level operations",
+    "description": "How DELETE, UPDATE and MERGE change data: rewrite files or write delete files."
+   },
+   {
+    "id": "commits",
+    "label": "Commits and manifests",
+    "description": "Retry behaviour under concurrent writers and how manifests are merged on commit."
+   },
+   {
+    "id": "metadata",
+    "label": "Metadata and statistics",
+    "description": "metadata.json retention and the column statistics that drive file pruning."
+   },
+   {
+    "id": "retention",
+    "label": "Retention and GC",
+    "description": "What snapshot expiry and orphan-file removal keep, and whether they may delete at all."
+   },
+   {
+    "id": "format",
+    "label": "Format and identity",
+    "description": "Table format version and descriptive metadata."
+   }
+  ],
+  "settings": [
+   {
+    "key": "write.target-file-size-bytes",
+    "label": "Target data file size",
+    "group": "file_layout",
+    "kind": "property",
+    "summary": "The size writers aim for when they roll over to a new data file. The main lever against small files.",
+    "takes_effect": "Future writes only. Existing files change only when they are next compacted.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "134217728",
+    "current_source": "table",
+    "is_set": true,
+    "default_value": "536870912",
+    "default_label": null,
+    "recommended_value": "268435456",
+    "recommendation_reason": "Matches the 256 MiB Cryo compacts toward under preset nightly-standard. A smaller write target leaves new files below that size, so every run compacts them again.",
+    "note": null,
+    "matches_recommendation": false,
+    "change_risk": "medium",
+    "recommendation_risk": "low",
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "medium",
+      "detail": "New files would be smaller than the 256 MiB Cryo compacts toward under preset nightly-standard, so they count as small and get compacted again.",
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Reset to default",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "bytes",
+     "options": [],
+     "minimum": 16777216,
+     "maximum": 4294967296,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "Honoured from Trino 482 (table property target_max_file_size). Before 482 Trino ignores it and uses the catalog's iceberg.target-max-file-size (default 1 GB)."
+     },
+     {
+      "engine": "spark",
+      "note": "Default target for rewrite_data_files. Spark writes cannot exceed one task's output, so AQE advisory partition size must be at least this large."
+     },
+     {
+      "engine": "flink",
+      "note": "Default rolling-file target unless the job overrides it."
+     },
+     {
+      "engine": "cryo",
+      "note": "Cryo's Spark and native compactions set this to the preset target after every optimize, so a different value is reset on the next run."
+     }
+    ]
+   },
+   {
+    "key": "write.delete.target-file-size-bytes",
+    "label": "Target delete file size",
+    "group": "file_layout",
+    "kind": "property",
+    "summary": "Target size for position and equality delete files written by merge-on-read.",
+    "takes_effect": "Future writes and compactions only. Existing files keep their old layout.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "67108864",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "67108864",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "bytes",
+     "options": [],
+     "minimum": 8388608,
+     "maximum": 1073741824,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "spark",
+      "note": "Default target for rewrite_position_delete_files."
+     },
+     {
+      "engine": "trino",
+      "note": "Not read by Trino."
+     }
+    ]
+   },
+   {
+    "key": "write.distribution-mode",
+    "label": "Write distribution",
+    "group": "file_layout",
+    "kind": "property",
+    "summary": "How rows are shuffled before writing. hash groups rows by partition so each partition gets few, large files; range also orders by the sort key; none writes whatever each task holds.",
+    "takes_effect": "Future writes and compactions only. Existing files keep their old layout.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/spark-writes/#writing-distribution-modes",
+    "current_value": null,
+    "current_source": "engine_default",
+    "is_set": false,
+    "default_value": null,
+    "default_label": "Not set: engine decides",
+    "recommended_value": "hash",
+    "recommendation_reason": "Partitioned table without an explicit shuffle. hash groups each partition's rows into one writer, so every engine (Flink included) writes fewer, larger files.",
+    "note": null,
+    "matches_recommendation": false,
+    "change_risk": "medium",
+    "recommendation_risk": "low",
+    "risk_directions": [
+     {
+      "label": "Set to none",
+      "risk": "medium",
+      "detail": "Without a shuffle, every writer task opens a file per partition it touches, which multiplies small files on a partitioned table.",
+      "blocked": null
+     },
+     {
+      "label": "Set to hash",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Set to range",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "enum",
+     "options": [
+      "none",
+      "hash",
+      "range"
+     ],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "spark",
+      "note": "When unset, Spark requests hash since Iceberg 1.2, or range if the table has a sort order."
+     },
+     {
+      "engine": "flink",
+      "note": "When unset, Flink does not shuffle (none)."
+     },
+     {
+      "engine": "trino",
+      "note": "Not read by Trino; Trino has its own writer scaling."
+     },
+     {
+      "engine": "cryo",
+      "note": "Cryo's Spark and native compactions set this to hash after every optimize."
+     }
+    ]
+   },
+   {
+    "key": "write.format.default",
+    "label": "Data file format",
+    "group": "file_layout",
+    "kind": "property",
+    "summary": "File format for new data files.",
+    "takes_effect": "Future writes only. Existing files stay in their format until compacted, so the table holds mixed formats for a while.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "parquet",
+    "current_source": "table",
+    "is_set": true,
+    "default_value": "parquet",
+    "default_label": null,
+    "recommended_value": "parquet",
+    "recommendation_reason": "Cryo's bloom-filter, row-group and column-statistics analysis only reads Parquet.",
+    "note": null,
+    "matches_recommendation": true,
+    "change_risk": "medium",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Set to orc",
+      "risk": "medium",
+      "detail": "The table will hold mixed formats until compacted, and Cryo's bloom-filter and row-group analysis only reads Parquet.",
+      "blocked": null
+     },
+     {
+      "label": "Set to avro",
+      "risk": "medium",
+      "detail": "The table will hold mixed formats until compacted, and Cryo's bloom-filter and row-group analysis only reads Parquet.",
+      "blocked": null
+     },
+     {
+      "label": "Reset to default",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "enum",
+     "options": [
+      "parquet",
+      "orc",
+      "avro"
+     ],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "Trino table property format."
+     },
+     {
+      "engine": "cryo",
+      "note": "Cryo's bloom-filter, row-group and column-statistics analysis reads Parquet."
+     }
+    ]
+   },
+   {
+    "key": "write.parquet.compression-codec",
+    "label": "Parquet compression",
+    "group": "file_layout",
+    "kind": "property",
+    "summary": "Compression codec for new Parquet data files.",
+    "takes_effect": "Future writes only. Existing files change only when they are next compacted.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "zstd",
+    "current_source": "table",
+    "is_set": true,
+    "default_value": "zstd",
+    "default_label": "zstd for tables created by Iceberg 1.4+; older tables fall back to gzip",
+    "recommended_value": "zstd",
+    "recommendation_reason": "Set explicitly, so every engine writes the same codec.",
+    "note": null,
+    "matches_recommendation": true,
+    "change_risk": "medium",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Set to snappy",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Set to gzip",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Set to lz4",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Set to brotli",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Set to uncompressed",
+      "risk": "medium",
+      "detail": "Uncompressed Parquet typically takes several times the storage.",
+      "blocked": null
+     },
+     {
+      "label": "Reset to default",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "enum",
+     "options": [
+      "zstd",
+      "snappy",
+      "gzip",
+      "lz4",
+      "brotli",
+      "uncompressed"
+     ],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "Trino table property compression_codec (477+); new Trino tables get the catalog's iceberg.compression-codec."
+     }
+    ]
+   },
+   {
+    "key": "write.parquet.row-group-size-bytes",
+    "label": "Parquet row group size",
+    "group": "file_layout",
+    "kind": "property",
+    "summary": "Target size of a Parquet row group, the unit readers skip using min/max statistics.",
+    "takes_effect": "Future writes only. Existing files change only when they are next compacted.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "134217728",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "134217728",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "bytes",
+     "options": [],
+     "minimum": 8388608,
+     "maximum": 1073741824,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "Honoured from Trino 482 (parquet_writer_row_group_size); earlier versions use the catalog's parquet.writer.row-group-size."
+     }
+    ]
+   },
+   {
+    "key": "write.parquet.bloom-filter-columns",
+    "label": "Parquet bloom filter columns",
+    "group": "file_layout",
+    "kind": "bloom_columns",
+    "summary": "Columns that get a Parquet bloom filter, so equality lookups on high-cardinality values skip row groups. Stored as one write.parquet.bloom-filter-enabled.column.<c> property per column.",
+    "takes_effect": "Future writes only. Existing files change only when they are next compacted.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "user_id",
+    "current_source": "table",
+    "is_set": true,
+    "default_value": "",
+    "default_label": "None",
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "columns",
+     "options": [],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "Trino table property parquet_bloom_filter_columns (469+)."
+     },
+     {
+      "engine": "spark",
+      "note": "Written by Spark Parquet writers; each filter adds up to 1 MB per row group."
+     }
+    ]
+   },
+   {
+    "key": "write.object-storage.enabled",
+    "label": "Object-storage file layout",
+    "group": "file_layout",
+    "kind": "property",
+    "summary": "Adds a hash component to new data file paths so writes spread across S3 key prefixes instead of throttling on one.",
+    "takes_effect": "New files only. Existing file paths never change.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "false",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "false",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Turn on",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "bool",
+     "options": [],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "Trino table property object_store_layout_enabled."
+     }
+    ]
+   },
+   {
+    "key": "write.data.path",
+    "label": "Data file location",
+    "group": "file_layout",
+    "kind": "property",
+    "summary": "Base location for new data files. Defaults to the table location plus /data.",
+    "takes_effect": "New files only. Existing files are not moved.",
+    "reversible": "Only for new files; files already written there stay there.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": null,
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": null,
+    "default_label": "<table location>/data",
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "high",
+    "recommendation_risk": null,
+    "risk_directions": [],
+    "editable": false,
+    "read_only_reason": "Orphan-file removal lists files under the table location. Moving new data elsewhere changes what that scan sees, so change it deliberately with engine DDL.",
+    "min_role": "operator",
+    "editor": {
+     "value_type": "text",
+     "options": [],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": []
+   },
+   {
+    "key": "write.delete.mode",
+    "label": "DELETE mode",
+    "group": "row_level",
+    "kind": "property",
+    "summary": "copy-on-write rewrites every data file a DELETE touches; merge-on-read writes small delete files that readers apply and compaction later folds in.",
+    "takes_effect": "The next DELETE statement.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "merge-on-read",
+    "current_source": "table",
+    "is_set": true,
+    "default_value": "copy-on-write",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": "No recommendation: merge-on-read suits frequent small updates, copy-on-write suits read-heavy tables that change rarely.",
+    "matches_recommendation": null,
+    "change_risk": "medium",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Set to copy-on-write",
+      "risk": "medium",
+      "detail": "Each row-level commit rewrites every data file it touches. Frequent small updates become expensive and slow.",
+      "blocked": null
+     },
+     {
+      "label": "Reset to default",
+      "risk": "medium",
+      "detail": "Each row-level commit rewrites every data file it touches. Frequent small updates become expensive and slow.",
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "enum",
+     "options": [
+      "copy-on-write",
+      "merge-on-read"
+     ],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "spark",
+      "note": "Read by Spark DELETE."
+     },
+     {
+      "engine": "trino",
+      "note": "Trino always writes position deletes (deletion vectors on v3) regardless."
+     }
+    ]
+   },
+   {
+    "key": "write.update.mode",
+    "label": "UPDATE mode",
+    "group": "row_level",
+    "kind": "property",
+    "summary": "copy-on-write rewrites every data file an UPDATE touches; merge-on-read writes delete files plus new rows.",
+    "takes_effect": "The next UPDATE statement.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "merge-on-read",
+    "current_source": "table",
+    "is_set": true,
+    "default_value": "copy-on-write",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": "No recommendation: merge-on-read suits frequent small updates, copy-on-write suits read-heavy tables that change rarely.",
+    "matches_recommendation": null,
+    "change_risk": "medium",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Set to copy-on-write",
+      "risk": "medium",
+      "detail": "Each row-level commit rewrites every data file it touches. Frequent small updates become expensive and slow.",
+      "blocked": null
+     },
+     {
+      "label": "Reset to default",
+      "risk": "medium",
+      "detail": "Each row-level commit rewrites every data file it touches. Frequent small updates become expensive and slow.",
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "enum",
+     "options": [
+      "copy-on-write",
+      "merge-on-read"
+     ],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "spark",
+      "note": "Read by Spark UPDATE."
+     },
+     {
+      "engine": "trino",
+      "note": "Not read; Trino uses merge-on-read semantics."
+     }
+    ]
+   },
+   {
+    "key": "write.merge.mode",
+    "label": "MERGE mode",
+    "group": "row_level",
+    "kind": "property",
+    "summary": "copy-on-write rewrites every data file a MERGE touches; merge-on-read writes delete files plus new rows.",
+    "takes_effect": "The next MERGE statement.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "copy-on-write",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "copy-on-write",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": "No recommendation: merge-on-read suits frequent small updates, copy-on-write suits read-heavy tables that change rarely.",
+    "matches_recommendation": null,
+    "change_risk": "medium",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Set to merge-on-read",
+      "risk": "medium",
+      "detail": "Each row-level commit adds delete files that every read must apply until rewrite_position_deletes or convert_deletes folds them in. Make sure the preset runs delete compaction.",
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "enum",
+     "options": [
+      "copy-on-write",
+      "merge-on-read"
+     ],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "spark",
+      "note": "Read by Spark MERGE INTO."
+     },
+     {
+      "engine": "trino",
+      "note": "Not read; Trino uses merge-on-read semantics."
+     }
+    ]
+   },
+   {
+    "key": "write.delete.granularity",
+    "label": "Position delete granularity",
+    "group": "row_level",
+    "kind": "property",
+    "summary": "Whether a merge-on-read commit writes one position-delete file per partition or per data file. file-scoped deletes are read only with their data file and are dropped when that file is compacted.",
+    "takes_effect": "The next merge-on-read commit.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "partition",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "partition",
+    "default_label": null,
+    "recommended_value": "file",
+    "recommendation_reason": "This table writes merge-on-read deletes. File-scoped deletes are read only with their data file and disappear when that file is compacted.",
+    "note": null,
+    "matches_recommendation": false,
+    "change_risk": "low",
+    "recommendation_risk": "low",
+    "risk_directions": [
+     {
+      "label": "Set to file",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "enum",
+     "options": [
+      "partition",
+      "file"
+     ],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "spark",
+      "note": "Spark's delete-granularity write option defaults to file and overrides this."
+     },
+     {
+      "engine": "trino",
+      "note": "Format v3 tables use deletion vectors, which are always per data file."
+     }
+    ]
+   },
+   {
+    "key": "write.upsert.enabled",
+    "label": "Upsert writes",
+    "group": "row_level",
+    "kind": "property",
+    "summary": "Makes every write an upsert keyed on the identifier fields: the old row is removed with an equality delete and the new row appended.",
+    "takes_effect": "The next write from an engine that honours it.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/flink-writes/#upsert",
+    "current_value": "false",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "false",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "medium",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Turn on",
+      "risk": "medium",
+      "detail": "Every write produces equality deletes, which slow reads until compacted.",
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "bool",
+     "options": [],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "flink",
+      "note": "Read by Flink for batch and streaming writes. Requires format v2+ and identifier fields."
+     },
+     {
+      "engine": "spark",
+      "note": "Not read by Spark."
+     },
+     {
+      "engine": "trino",
+      "note": "Not read by Trino."
+     }
+    ]
+   },
+   {
+    "key": "commit.retry.num-retries",
+    "label": "Commit retries",
+    "group": "commits",
+    "kind": "property",
+    "summary": "How many times a writer retries a commit that lost an optimistic-concurrency race before failing.",
+    "takes_effect": "The next commit from any writer.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#table-behavior-properties",
+    "current_value": "4",
+    "current_source": "table",
+    "is_set": true,
+    "default_value": "4",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "medium",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "medium",
+      "detail": "Any concurrent commit, including Cryo's compaction, fails the write outright.",
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Reset to default",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "int",
+     "options": [],
+     "minimum": 0,
+     "maximum": 100,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "Trino table property max_commit_retry (470+)."
+     }
+    ]
+   },
+   {
+    "key": "commit.retry.min-wait-ms",
+    "label": "Commit retry minimum wait",
+    "group": "commits",
+    "kind": "property",
+    "summary": "Initial backoff before the first commit retry.",
+    "takes_effect": "The next commit from any writer.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#table-behavior-properties",
+    "current_value": "100",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "100",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "int",
+     "options": [],
+     "minimum": 0,
+     "maximum": 600000,
+     "unit": "ms",
+     "allow_unset": true
+    },
+    "engine_notes": []
+   },
+   {
+    "key": "commit.retry.max-wait-ms",
+    "label": "Commit retry maximum wait",
+    "group": "commits",
+    "kind": "property",
+    "summary": "Upper bound on the exponential backoff between commit retries.",
+    "takes_effect": "The next commit from any writer.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#table-behavior-properties",
+    "current_value": "60000",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "60000",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "int",
+     "options": [],
+     "minimum": 0,
+     "maximum": 3600000,
+     "unit": "ms",
+     "allow_unset": true
+    },
+    "engine_notes": []
+   },
+   {
+    "key": "commit.retry.total-timeout-ms",
+    "label": "Commit retry total timeout",
+    "group": "commits",
+    "kind": "property",
+    "summary": "Total time a writer keeps retrying a commit before giving up.",
+    "takes_effect": "The next commit from any writer.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#table-behavior-properties",
+    "current_value": "1800000",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "1800000",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "int",
+     "options": [],
+     "minimum": 1000,
+     "maximum": 86400000,
+     "unit": "ms",
+     "allow_unset": true
+    },
+    "engine_notes": []
+   },
+   {
+    "key": "commit.manifest-merge.enabled",
+    "label": "Merge manifests on commit",
+    "group": "commits",
+    "kind": "property",
+    "summary": "Lets merge-append commits fold small manifests together. Off means every append adds a manifest, which slows query planning until manifests are rewritten.",
+    "takes_effect": "The next append commit.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#table-behavior-properties",
+    "current_value": "true",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "true",
+    "default_label": null,
+    "recommended_value": "true",
+    "recommendation_reason": "With merging off, every append adds a manifest and query planning slows down.",
+    "note": null,
+    "matches_recommendation": true,
+    "change_risk": "medium",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Turn off",
+      "risk": "medium",
+      "detail": "Every append adds a manifest; planning slows until optimize_manifests runs.",
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "bool",
+     "options": [],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "spark",
+      "note": "Spark streaming uses fast appends, which never merge, unless use-merge-append-for-streaming is set."
+     }
+    ]
+   },
+   {
+    "key": "commit.manifest.target-size-bytes",
+    "label": "Target manifest size",
+    "group": "commits",
+    "kind": "property",
+    "summary": "Target size of manifest files produced by commits and manifest rewrites.",
+    "takes_effect": "The next commit and the next manifest rewrite.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#table-behavior-properties",
+    "current_value": "8388608",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "8388608",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "bytes",
+     "options": [],
+     "minimum": 1048576,
+     "maximum": 268435456,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "Controls the output of optimize_manifests."
+     },
+     {
+      "engine": "spark",
+      "note": "Controls the output of rewrite_manifests."
+     }
+    ]
+   },
+   {
+    "key": "commit.manifest.min-count-to-merge",
+    "label": "Manifests before merge",
+    "group": "commits",
+    "kind": "property",
+    "summary": "Minimum number of manifests to accumulate before a merge-append merges them.",
+    "takes_effect": "The next append commit.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#table-behavior-properties",
+    "current_value": "100",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "100",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "int",
+     "options": [],
+     "minimum": 1,
+     "maximum": 10000,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": []
+   },
+   {
+    "key": "write.metadata.delete-after-commit.enabled",
+    "label": "Delete old metadata files",
+    "group": "metadata",
+    "kind": "property",
+    "summary": "After each commit, delete the oldest tracked metadata.json beyond the previous-versions limit. Without it, metadata files accumulate on storage.",
+    "takes_effect": "The next commit. Files that already fell off the metadata log are not touched; only orphan-file removal reclaims those.",
+    "reversible": "The setting is reversible; metadata files deleted while it was on are gone.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/maintenance/#remove-old-metadata-files",
+    "current_value": "false",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "false",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "medium",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Turn on",
+      "risk": "medium",
+      "detail": "Writers start deleting metadata.json files beyond the newest 100. Those files cannot be restored.",
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "bool",
+     "options": [],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "Trino table property delete_after_commit_enabled (480+)."
+     }
+    ]
+   },
+   {
+    "key": "write.metadata.previous-versions-max",
+    "label": "Metadata versions kept",
+    "group": "metadata",
+    "kind": "property",
+    "summary": "How many previous metadata.json files the metadata log tracks. With delete-after-commit on, older ones are deleted.",
+    "takes_effect": "The next commit.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/maintenance/#remove-old-metadata-files",
+    "current_value": "100",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "100",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "int",
+     "options": [],
+     "minimum": 1,
+     "maximum": 1000,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "Trino table property max_previous_versions (480+)."
+     }
+    ]
+   },
+   {
+    "key": "write.metadata.metrics.default",
+    "label": "Column metrics",
+    "group": "metadata",
+    "kind": "property",
+    "summary": "Which per-column statistics go into manifests. truncate(N) and full keep min/max bounds that let engines skip files; counts and none do not.",
+    "takes_effect": "Files written from now on. Existing files keep their stored metrics.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "truncate(16)",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "truncate(16)",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "medium",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Set to none",
+      "risk": "medium",
+      "detail": "New files lose min/max bounds, so engines can no longer skip them by filter.",
+      "blocked": null
+     },
+     {
+      "label": "Set to counts",
+      "risk": "medium",
+      "detail": "New files lose min/max bounds, so engines can no longer skip them by filter.",
+      "blocked": null
+     },
+     {
+      "label": "Set to truncate(8)",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Set to truncate(32)",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Set to truncate(64)",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     },
+     {
+      "label": "Set to full",
+      "risk": "low",
+      "detail": "Full bounds on long strings make manifests larger.",
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "enum",
+     "options": [
+      "none",
+      "counts",
+      "truncate(8)",
+      "truncate(16)",
+      "truncate(32)",
+      "truncate(64)",
+      "full"
+     ],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": []
+   },
+   {
+    "key": "write.metadata.metrics.max-inferred-column-defaults",
+    "label": "Columns with default metrics",
+    "group": "metadata",
+    "kind": "property",
+    "summary": "Only the first N columns get the default metrics mode. Filters on later columns cannot prune files by min/max.",
+    "takes_effect": "Files written from now on.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "current_value": "100",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "100",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "medium",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "medium",
+      "detail": "Columns after the first 1 of 14 get no min/max statistics.",
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "int",
+     "options": [],
+     "minimum": 1,
+     "maximum": 10000,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": []
+   },
+   {
+    "key": "gc.enabled",
+    "label": "Garbage collection",
+    "group": "retention",
+    "kind": "property",
+    "summary": "Whether snapshot expiry and orphan-file removal may delete this table's files. Owners turn it off when another table shares these files.",
+    "takes_effect": "The next expiry or orphan-removal run.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#table-behavior-properties",
+    "current_value": "true",
+    "current_source": "table",
+    "is_set": true,
+    "default_value": "true",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "medium",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Turn off",
+      "risk": "medium",
+      "detail": "Cryo stops expiring snapshots and removing orphan files here, so storage only grows. Trino before 484 ignores this flag if someone runs those procedures directly.",
+      "blocked": null
+     },
+     {
+      "label": "Reset to default",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "bool",
+     "options": [],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "Enforced from Trino 484 (gc_enabled). Earlier Trino deletes files regardless."
+     },
+     {
+      "engine": "spark",
+      "note": "expire_snapshots and remove_orphan_files refuse to run."
+     },
+     {
+      "engine": "native",
+      "note": "iceberg-go expiry refuses to run."
+     },
+     {
+      "engine": "cryo",
+      "note": "Cryo skips expire_snapshots and remove_orphan_files while this is false."
+     }
+    ]
+   },
+   {
+    "key": "history.expire.max-snapshot-age-ms",
+    "label": "Snapshot age limit (table)",
+    "group": "retention",
+    "kind": "property",
+    "summary": "Default age after which snapshots may be expired, for the table and every branch without its own limit.",
+    "takes_effect": "The next snapshot expiry that does not pass an explicit age.",
+    "reversible": "The setting is reversible; snapshots expired under it are gone.",
+    "doc_url": "https://iceberg.apache.org/spec/#snapshot-retention-policy",
+    "current_value": "432000000",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "432000000",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": "Cryo passes its own retention to every engine; this applies to expiry run elsewhere.",
+    "matches_recommendation": null,
+    "change_risk": "high",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "high",
+      "detail": "Lowering snapshot age limit (table) lets the next run delete history that is kept today. Deleted snapshots and files cannot be recovered.",
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "duration_ms",
+     "options": [],
+     "minimum": 3600000,
+     "maximum": 315360000000,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "cryo",
+      "note": "Cryo passes its own retention to every engine, so this only affects expiry run outside Cryo."
+     },
+     {
+      "engine": "spark",
+      "note": "Default older_than for expire_snapshots."
+     },
+     {
+      "engine": "trino",
+      "note": "Ignored; Trino's retention_threshold defaults to 7 days."
+     },
+     {
+      "engine": "native",
+      "note": "Default for iceberg-go expiry."
+     }
+    ]
+   },
+   {
+    "key": "history.expire.min-snapshots-to-keep",
+    "label": "Snapshots always kept (table)",
+    "group": "retention",
+    "kind": "property",
+    "summary": "Expiry never removes the most recent N ancestors of each branch.",
+    "takes_effect": "The next snapshot expiry that does not pass an explicit count.",
+    "reversible": "The setting is reversible; snapshots expired under it are gone.",
+    "doc_url": "https://iceberg.apache.org/spec/#snapshot-retention-policy",
+    "current_value": "1",
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": "1",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": "Cryo passes its own retention to every engine; this applies to expiry run elsewhere.",
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "int",
+     "options": [],
+     "minimum": 1,
+     "maximum": 1000,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "cryo",
+      "note": "Cryo passes retain_last explicitly, so this only affects expiry run outside Cryo."
+     },
+     {
+      "engine": "spark",
+      "note": "Default retain_last for expire_snapshots."
+     }
+    ]
+   },
+   {
+    "key": "history.expire.max-ref-age-ms",
+    "label": "Branch and tag age limit",
+    "group": "retention",
+    "kind": "property",
+    "summary": "Age after which non-main branches and tags are removed by expiry. Unset means they live forever and keep every snapshot they point to.",
+    "takes_effect": "The next snapshot expiry.",
+    "reversible": "The setting is reversible; branches and tags removed under it are gone.",
+    "doc_url": "https://iceberg.apache.org/spec/#snapshot-retention-policy",
+    "current_value": null,
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": null,
+    "default_label": "Forever",
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": "1 branch(es)/tag(s) (q3-close) never expire and keep their snapshots' files alive.",
+    "matches_recommendation": null,
+    "change_risk": "high",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Set a limit",
+      "risk": "high",
+      "detail": "Branches and tags without their own limit are removed once older than this, and the snapshots only they kept are expired. Affects: q3-close.",
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "duration_ms",
+     "options": [],
+     "minimum": 86400000,
+     "maximum": 3153600000000,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": []
+   },
+   {
+    "key": "cryo.retention_days",
+    "label": "Cryo snapshot retention",
+    "group": "retention",
+    "kind": "cryo_param",
+    "summary": "Snapshots older than this are expired when Cryo runs expire_snapshots.",
+    "takes_effect": "Cryo's next expire_snapshots run on this table.",
+    "reversible": "The override is reversible; snapshots expired under it are gone.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/maintenance/#expire-snapshots",
+    "current_value": "7",
+    "current_source": "cryo_preset",
+    "is_set": true,
+    "default_value": "7",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "high",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "high",
+      "detail": "Lowering cryo snapshot retention lets the next run delete history that is kept today. Deleted snapshots and files cannot be recovered.",
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "admin",
+    "editor": {
+     "value_type": "duration_days",
+     "options": [],
+     "minimum": 1,
+     "maximum": 3650,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "cryo",
+      "note": "The planner shortens this to 1 to 3 days for streaming or snapshot-backlogged tables."
+     },
+     {
+      "engine": "trino",
+      "note": "Trino rejects values below iceberg.expire-snapshots.min-retention (7d default)."
+     }
+    ]
+   },
+   {
+    "key": "cryo.retain_last",
+    "label": "Cryo snapshots always kept",
+    "group": "retention",
+    "kind": "cryo_param",
+    "summary": "Cryo's expire_snapshots always keeps at least this many recent snapshots.",
+    "takes_effect": "Cryo's next expire_snapshots run on this table.",
+    "reversible": "The override is reversible; snapshots expired under it are gone.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/maintenance/#expire-snapshots",
+    "current_value": "1",
+    "current_source": "cryo_default",
+    "is_set": false,
+    "default_value": "1",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "admin",
+    "editor": {
+     "value_type": "int",
+     "options": [],
+     "minimum": 1,
+     "maximum": 1000,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": []
+   },
+   {
+    "key": "cryo.orphan_retention_days",
+    "label": "Cryo orphan-file age",
+    "group": "retention",
+    "kind": "cryo_param",
+    "summary": "remove_orphan_files only deletes unreferenced files older than this. It must exceed the longest write, or in-flight files are deleted.",
+    "takes_effect": "Cryo's next remove_orphan_files run on this table.",
+    "reversible": "The override is reversible; files deleted under it are gone.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/maintenance/#delete-orphan-files",
+    "current_value": "7",
+    "current_source": "cryo_default",
+    "is_set": false,
+    "default_value": null,
+    "default_label": "Same as snapshot retention",
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "high",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Lower",
+      "risk": "high",
+      "detail": "Lowering cryo orphan-file age lets the next run delete history that is kept today. Deleted snapshots and files cannot be recovered.",
+      "blocked": null
+     },
+     {
+      "label": "Raise",
+      "risk": "low",
+      "detail": null,
+      "blocked": null
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "admin",
+    "editor": {
+     "value_type": "duration_days",
+     "options": [],
+     "minimum": 1,
+     "maximum": 3650,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "Trino rejects values below iceberg.remove-orphan-files.min-retention (7d default)."
+     },
+     {
+      "engine": "spark",
+      "note": "Spark's own default is 3 days."
+     },
+     {
+      "engine": "native",
+      "note": "iceberg-go's own default is 72 hours."
+     }
+    ]
+   },
+   {
+    "key": "format-version",
+    "label": "Format version",
+    "group": "format",
+    "kind": "format_version",
+    "summary": "Iceberg table format. v2 adds row-level deletes; v3 adds deletion vectors, row lineage, default values and new types.",
+    "takes_effect": "Immediately for every reader and writer.",
+    "reversible": "No. Format upgrades are one-way; there is no downgrade.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#reserved-table-properties",
+    "current_value": "2",
+    "current_source": "metadata",
+    "is_set": true,
+    "default_value": "2",
+    "default_label": null,
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": "v3 adds deletion vectors and row lineage; Trino's v3 support is still experimental.",
+    "matches_recommendation": null,
+    "change_risk": "high",
+    "recommendation_risk": null,
+    "risk_directions": [
+     {
+      "label": "Upgrade to v3",
+      "risk": "high",
+      "detail": "Upgrading to v3 is permanent. Every engine that reads or writes this table must support v3 first.",
+      "blocked": "Cryo writes table metadata with PyIceberg, which upgrades only to v2. Upgrade to v3 with Spark (ALTER TABLE \u2026 SET TBLPROPERTIES ('format-version'='3')) or Trino (ALTER TABLE \u2026 SET PROPERTIES format_version = 3)."
+     }
+    ],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "admin",
+    "editor": {
+     "value_type": "enum",
+     "options": [
+      "1",
+      "2",
+      "3"
+     ],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": false
+    },
+    "engine_notes": [
+     {
+      "engine": "trino",
+      "note": "v3 support is experimental; add_files is not supported on v3."
+     },
+     {
+      "engine": "spark",
+      "note": "Every reader and writer needs Iceberg 1.8+ (1.9+ for row lineage)."
+     }
+    ]
+   },
+   {
+    "key": "comment",
+    "label": "Table description",
+    "group": "format",
+    "kind": "property",
+    "summary": "Free-text description shown by engines and catalogs.",
+    "takes_effect": "Immediately.",
+    "reversible": "Yes. A metadata-only commit; set it back at any time.",
+    "doc_url": "https://trino.io/docs/current/connector/iceberg.html",
+    "current_value": null,
+    "current_source": "iceberg_default",
+    "is_set": false,
+    "default_value": null,
+    "default_label": "Not set",
+    "recommended_value": null,
+    "recommendation_reason": null,
+    "note": null,
+    "matches_recommendation": null,
+    "change_risk": "low",
+    "recommendation_risk": null,
+    "risk_directions": [],
+    "editable": true,
+    "read_only_reason": null,
+    "min_role": "operator",
+    "editor": {
+     "value_type": "text",
+     "options": [],
+     "minimum": null,
+     "maximum": null,
+     "unit": null,
+     "allow_unset": true
+    },
+    "engine_notes": []
+   }
+  ],
+  "metadata": {
+   "format_version": 2,
+   "table_uuid": "5c1e7a42-93d0-4b8e-a1f4-0d6e2b9c7f31",
+   "location": "s3://acme-lake/analytics/events",
+   "metadata_location": "s3://acme-lake/analytics/events/metadata/00412-9f2c.metadata.json",
+   "last_updated_ms": 1760680800000,
+   "current_snapshot_id": "8812334102",
+   "snapshot_count": 186,
+   "metadata_log_count": 94,
+   "schema_id": 3,
+   "schema_count": 4,
+   "column_count": 14,
+   "identifier_fields": [
+    "event_id"
+   ],
+   "partition_fields": [
+    {
+     "name": "event_date_day",
+     "source_column": "event_date",
+     "transform": "day"
+    }
+   ],
+   "spec_id": null,
+   "spec_count": 1,
+   "sort_fields": [
+    {
+     "column": "user_id",
+     "transform": "identity",
+     "direction": "asc",
+     "null_order": "nulls-first"
+    }
+   ],
+   "sort_order_id": 1,
+   "refs": [
+    {
+     "name": "main",
+     "type": "branch",
+     "snapshot_id": "9",
+     "max_ref_age_ms": null,
+     "max_snapshot_age_ms": null,
+     "min_snapshots_to_keep": null,
+     "retained_forever": false
+    },
+    {
+     "name": "q3-close",
+     "type": "tag",
+     "snapshot_id": "4",
+     "max_ref_age_ms": null,
+     "max_snapshot_age_ms": null,
+     "min_snapshots_to_keep": null,
+     "retained_forever": true
+    }
+   ],
+   "statistics_files": 0,
+   "partition_statistics_files": 0
+  },
+  "properties": {
+   "commit.retry.num-retries": "4",
+   "gc.enabled": "true",
+   "owner": "analytics-eng",
+   "read.split.target-size": "134217728",
+   "team.cost-center": "growth-42",
+   "write.delete.mode": "merge-on-read",
+   "write.format.default": "parquet",
+   "write.metadata.metrics.column.payload": "none",
+   "write.parquet.bloom-filter-enabled.column.user_id": "true",
+   "write.parquet.compression-codec": "zstd",
+   "write.target-file-size-bytes": "134217728",
+   "write.update.mode": "merge-on-read"
+  },
+  "property_details": [
+   {
+    "key": "commit.retry.num-retries",
+    "value": "4",
+    "kind": "setting",
+    "summary": "How many times a writer retries a commit that lost an optimistic-concurrency race before failing.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#table-behavior-properties",
+    "setting_key": "commit.retry.num-retries"
+   },
+   {
+    "key": "gc.enabled",
+    "value": "true",
+    "kind": "setting",
+    "summary": "Whether snapshot expiry and orphan-file removal may delete this table's files. Owners turn it off when another table shares these files.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#table-behavior-properties",
+    "setting_key": "gc.enabled"
+   },
+   {
+    "key": "owner",
+    "value": "analytics-eng",
+    "kind": "engine",
+    "summary": "Owner recorded by the engine that created the table.",
+    "doc_url": null,
+    "setting_key": null
+   },
+   {
+    "key": "read.split.target-size",
+    "value": "134217728",
+    "kind": "read",
+    "summary": "Target size of each read split when combining files into tasks (default 128 MiB).",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#read-properties",
+    "setting_key": null
+   },
+   {
+    "key": "team.cost-center",
+    "value": "growth-42",
+    "kind": "custom",
+    "summary": "Not an Iceberg property. A writer, tool or person added it; Iceberg stores it but doesn't act on it.",
+    "doc_url": null,
+    "setting_key": null
+   },
+   {
+    "key": "write.delete.mode",
+    "value": "merge-on-read",
+    "kind": "setting",
+    "summary": "copy-on-write rewrites every data file a DELETE touches; merge-on-read writes small delete files that readers apply and compaction later folds in.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "setting_key": "write.delete.mode"
+   },
+   {
+    "key": "write.format.default",
+    "value": "parquet",
+    "kind": "setting",
+    "summary": "File format for new data files.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "setting_key": "write.format.default"
+   },
+   {
+    "key": "write.metadata.metrics.column.payload",
+    "value": "none",
+    "kind": "write",
+    "summary": "Metrics mode for this column (none, counts, truncate(N) or full), overriding write.metadata.metrics.default.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "setting_key": null
+   },
+   {
+    "key": "write.parquet.bloom-filter-enabled.column.user_id",
+    "value": "true",
+    "kind": "write",
+    "summary": "Turns on a Parquet bloom filter for this column, so point lookups can skip row groups that cannot contain the value.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "setting_key": "write.parquet.bloom-filter-columns"
+   },
+   {
+    "key": "write.parquet.compression-codec",
+    "value": "zstd",
+    "kind": "setting",
+    "summary": "Compression codec for new Parquet data files.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "setting_key": "write.parquet.compression-codec"
+   },
+   {
+    "key": "write.target-file-size-bytes",
+    "value": "134217728",
+    "kind": "setting",
+    "summary": "The size writers aim for when they roll over to a new data file. The main lever against small files.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "setting_key": "write.target-file-size-bytes"
+   },
+   {
+    "key": "write.update.mode",
+    "value": "merge-on-read",
+    "kind": "setting",
+    "summary": "copy-on-write rewrites every data file an UPDATE touches; merge-on-read writes delete files plus new rows.",
+    "doc_url": "https://iceberg.apache.org/docs/latest/configuration/#write-properties",
+    "setting_key": "write.update.mode"
+   }
+  ],
+  "columns": [
+   "user_id",
+   "event_id",
+   "event_date",
+   "country",
+   "device",
+   "session_id"
+  ],
+  "operations": {
+   "preset_name": "nightly-standard",
+   "mode": "deep",
+   "held": false,
+   "operations": [
+    {
+     "operation": "convert_deletes",
+     "label": "Apply delete files",
+     "phase": "compaction",
+     "summary": "Rewrites data files that carry merge-on-read delete files, folding the deletes into new data files so readers stop merging them at query time.",
+     "when_planned": "Standard and deep modes, when the table has delete files and their share passes convert_deletes_threshold_pct (default 5%), and no optimize already rewrites the same data.",
+     "exclude_consequence": "Delete files keep piling up and every read pays to merge them, so queries on tables with frequent updates or deletes get slower over time.",
+     "exclude_risk": "medium",
+     "reasons_to_exclude": [
+      "The writer (for example a Flink or Spark job) already compacts its own deletes.",
+      "Data rewrites on this table must happen only in an owner-controlled window."
+     ],
+     "companion_hint": null,
+     "companion_operation": null,
+     "engine_notes": [
+      {
+       "engine": "spark",
+       "note": "rewrite_data_files with a delete-file threshold."
+      },
+      {
+       "engine": "trino",
+       "note": "Runs as ALTER TABLE ... EXECUTE optimize, which rewrites data files."
+      }
+     ],
+     "doc_url": "https://iceberg.apache.org/docs/latest/spark-procedures/#rewrite_data_files",
+     "excluded": false,
+     "excluded_by": null,
+     "excluded_at": null,
+     "excluded_reason": null,
+     "status": "when_needed",
+     "status_detail": "Runs when delete files pass the threshold and no optimize already rewrites them."
+    },
+    {
+     "operation": "rewrite_position_deletes",
+     "label": "Merge position deletes",
+     "phase": "compaction",
+     "summary": "Merges many small position-delete files into fewer ones without rewriting the data files. Cheaper than a full rewrite.",
+     "when_planned": "Standard and deep modes, when position-delete files pile up but are below the threshold for a full data rewrite.",
+     "exclude_consequence": "Small position-delete files accumulate; readers open more files per scan until the next full rewrite folds them in.",
+     "exclude_risk": "low",
+     "reasons_to_exclude": [
+      "The table runs on a Trino destination, which cannot run this procedure.",
+      "Another job already maintains this table's delete files."
+     ],
+     "companion_hint": null,
+     "companion_operation": null,
+     "engine_notes": [
+      {
+       "engine": "spark",
+       "note": "CALL system.rewrite_position_delete_files."
+      },
+      {
+       "engine": "trino",
+       "note": "Not supported; Cryo fails the operation instead of running a rewrite."
+      }
+     ],
+     "doc_url": "https://iceberg.apache.org/docs/latest/spark-procedures/#rewrite_position_delete_files",
+     "excluded": false,
+     "excluded_by": null,
+     "excluded_at": null,
+     "excluded_reason": null,
+     "status": "unsupported",
+     "status_detail": "Preset nightly-standard runs on Trino, which has no procedure for this. When planned, the operation fails. Exclude it or route the table to Spark."
+    },
+    {
+     "operation": "optimize",
+     "label": "Compact small files",
+     "phase": "compaction",
+     "summary": "Rewrites small data files into files near the target size, partition by partition, within Cryo's GB budget per run.",
+     "when_planned": "Standard and deep modes, when the last scan found partitions with enough small files (min_small_files). Large tables are compacted in budgeted chunks.",
+     "exclude_consequence": "Small files keep accumulating, so query planning and scans get slower and S3 request costs rise. Streaming and frequently appended tables degrade fastest.",
+     "exclude_risk": "medium",
+     "reasons_to_exclude": [
+      "The table is fully rewritten by its own pipeline on every load.",
+      "The writer already produces well-sized files or runs its own compaction.",
+      "Data rewrites on this table must happen only in an owner-controlled window."
+     ],
+     "companion_hint": "Apply delete files also rewrites data files, and on Trino it runs as an OPTIMIZE. Exclude it too to stop every data rewrite on this table.",
+     "companion_operation": "convert_deletes",
+     "engine_notes": [
+      {
+       "engine": "trino",
+       "note": "ALTER TABLE ... EXECUTE optimize(file_size_threshold => ...)."
+      },
+      {
+       "engine": "spark",
+       "note": "CALL system.rewrite_data_files (bin-pack or sort)."
+      },
+      {
+       "engine": "native",
+       "note": "Cryo's Go compaction engine."
+      }
+     ],
+     "doc_url": "https://iceberg.apache.org/docs/latest/maintenance/#compact-data-files",
+     "excluded": false,
+     "excluded_by": null,
+     "excluded_at": null,
+     "excluded_reason": null,
+     "status": "when_needed",
+     "status_detail": "Runs when the last scan finds partitions with enough small files."
+    },
+    {
+     "operation": "compute_statistics",
+     "label": "Column statistics",
+     "phase": "compaction",
+     "summary": "Computes column NDV statistics into a Puffin file so cost-based optimizers can pick better join orders.",
+     "when_planned": "Only right after an optimize in the same run, and only when the preset enables compute_statistics with NDV or bloom-filter columns.",
+     "exclude_consequence": "Statistics go stale as data changes, so engines plan joins on old estimates. Data and storage are unaffected.",
+     "exclude_risk": "low",
+     "reasons_to_exclude": [
+      "The table is never joined, so the full-column scan is wasted work.",
+      "Another job already runs ANALYZE on this table."
+     ],
+     "companion_hint": null,
+     "companion_operation": null,
+     "engine_notes": [
+      {
+       "engine": "trino",
+       "note": "ANALYZE, a full scan of the analysed columns."
+      },
+      {
+       "engine": "spark",
+       "note": "CALL system.compute_table_stats."
+      }
+     ],
+     "doc_url": "https://iceberg.apache.org/docs/latest/spark-procedures/#compute_table_stats",
+     "excluded": false,
+     "excluded_by": null,
+     "excluded_at": null,
+     "excluded_reason": null,
+     "status": "when_needed",
+     "status_detail": "Runs right after an optimize in the same run."
+    },
+    {
+     "operation": "optimize_manifests",
+     "label": "Rewrite manifests",
+     "phase": "cleanup",
+     "summary": "Rewrites the table's manifest files so they line up with partitions, which makes query planning read fewer manifests.",
+     "when_planned": "Deep and manifest-only modes, on every run.",
+     "exclude_consequence": "Manifests stay fragmented, so planning gets slower on tables with many commits. Data is unaffected.",
+     "exclude_risk": "low",
+     "reasons_to_exclude": [
+      "The writer already merges manifests on commit (commit.manifest-merge.enabled)."
+     ],
+     "companion_hint": null,
+     "companion_operation": null,
+     "engine_notes": [
+      {
+       "engine": "trino",
+       "note": "ALTER TABLE ... EXECUTE optimize_manifests."
+      },
+      {
+       "engine": "spark",
+       "note": "CALL system.rewrite_manifests."
+      }
+     ],
+     "doc_url": "https://iceberg.apache.org/docs/latest/maintenance/#rewrite-manifests",
+     "excluded": false,
+     "excluded_by": null,
+     "excluded_at": null,
+     "excluded_reason": null,
+     "status": "runs",
+     "status_detail": "Runs on every nightly-standard run."
+    },
+    {
+     "operation": "expire_snapshots",
+     "label": "Expire snapshots",
+     "phase": "cleanup",
+     "summary": "Removes snapshots older than the retention window and deletes the data and metadata files only they referenced. Snapshots you protect in Cryo are kept.",
+     "when_planned": "Light, standard and deep modes, on every run.",
+     "exclude_consequence": "Snapshots and their files are never removed, so storage grows with every commit, compaction stops freeing space, and metadata keeps growing. Deleted rows stay recoverable through time travel, which may conflict with data-retention rules.",
+     "exclude_risk": "high",
+     "reasons_to_exclude": [
+      "Consumers need time travel beyond any retention you can configure.",
+      "A legal or audit hold requires keeping every snapshot."
+     ],
+     "companion_hint": null,
+     "companion_operation": null,
+     "engine_notes": [
+      {
+       "engine": "trino",
+       "note": "ALTER TABLE ... EXECUTE expire_snapshots(retention_threshold => ...)."
+      },
+      {
+       "engine": "spark",
+       "note": "CALL system.expire_snapshots."
+      }
+     ],
+     "doc_url": "https://iceberg.apache.org/docs/latest/maintenance/#expire-snapshots",
+     "excluded": false,
+     "excluded_by": null,
+     "excluded_at": null,
+     "excluded_reason": null,
+     "status": "runs",
+     "status_detail": "Runs on every nightly-standard run."
+    },
+    {
+     "operation": "remove_orphan_files",
+     "label": "Remove orphan files",
+     "phase": "cleanup",
+     "summary": "Lists the table location and deletes files no snapshot references, such as leftovers from failed writes, once they are older than the retention threshold.",
+     "when_planned": "Deep mode, on every run.",
+     "exclude_consequence": "Files from failed or aborted writes stay in S3 and keep costing storage. Queries are unaffected.",
+     "exclude_risk": "low",
+     "reasons_to_exclude": [
+      "Another table or tool writes under this table's location.",
+      "Writers run jobs longer than the orphan retention threshold."
+     ],
+     "companion_hint": null,
+     "companion_operation": null,
+     "engine_notes": [
+      {
+       "engine": "trino",
+       "note": "ALTER TABLE ... EXECUTE remove_orphan_files(retention_threshold => ...)."
+      },
+      {
+       "engine": "spark",
+       "note": "CALL system.remove_orphan_files."
+      }
+     ],
+     "doc_url": "https://iceberg.apache.org/docs/latest/maintenance/#delete-orphan-files",
+     "excluded": true,
+     "excluded_by": "priya@acme.io",
+     "excluded_at": "2026-10-17T08:08:31",
+     "excluded_reason": "Shares a prefix with events_archive",
+     "status": "excluded",
+     "status_detail": "Excluded for this table. No run plans it."
+    }
+   ]
+  }
+ },
+ "preview": {
+  "changes": [
+   {
+    "key": "write.target-file-size-bytes",
+    "label": "Target data file size",
+    "kind": "property",
+    "old_value": "134217728",
+    "new_value": "268435456",
+    "risk": "low",
+    "warnings": [],
+    "blocked": null,
+    "min_role": "operator",
+    "no_op": false
+   },
+   {
+    "key": "write.distribution-mode",
+    "label": "Write distribution",
+    "kind": "property",
+    "old_value": null,
+    "new_value": "hash",
+    "risk": "low",
+    "warnings": [],
+    "blocked": null,
+    "min_role": "operator",
+    "no_op": false
+   },
+   {
+    "key": "history.expire.max-snapshot-age-ms",
+    "label": "Snapshot age limit (table)",
+    "kind": "property",
+    "old_value": "432000000",
+    "new_value": "86400000",
+    "risk": "high",
+    "warnings": [
+     "Lowering snapshot age limit (table) lets the next run delete history that is kept today. Deleted snapshots and files cannot be recovered."
+    ],
+    "blocked": null,
+    "min_role": "operator",
+    "no_op": false
+   }
+  ],
+  "overall_risk": "high",
+  "requires_confirmation": true,
+  "blocked": false
+ }
+}
