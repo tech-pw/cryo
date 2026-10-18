@@ -73,6 +73,18 @@ def detect_streaming_from_history(
     return is_streaming, round(commits_per_day, 2)
 
 
+def manifest_stats(
+    manifest_count: int, manifest_total_bytes: int, total_files: int
+) -> dict[str, Any]:
+    """Current-snapshot manifest shape, identical for the Python and Go scan paths."""
+    return {
+        "manifest_count": manifest_count,
+        "avg_files_per_manifest": round(total_files / max(manifest_count, 1), 2),
+        "manifest_total_bytes": manifest_total_bytes,
+        "avg_manifest_bytes": int(manifest_total_bytes / manifest_count) if manifest_count else 0,
+    }
+
+
 def enrich_stats_signals(
     stats: dict[str, Any],
     *,
