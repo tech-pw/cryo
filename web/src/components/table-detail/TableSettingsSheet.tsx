@@ -7,6 +7,7 @@ import { AsyncBoundary } from "../AsyncBoundary";
 import { formatNumber, formatTime } from "../../lib/format";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { MaintenanceHoldSection } from "./MaintenanceHoldSection";
 import {
   Sheet,
   SheetContent,
@@ -148,7 +149,9 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
       <SheetContent className="w-full overflow-y-auto sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Table settings</SheetTitle>
-          <SheetDescription>Who owns this table, who hears about it, and what is holding deleted data.</SheetDescription>
+          <SheetDescription>
+            Who owns this table, who hears about it, what is holding deleted data, and whether maintenance is paused.
+          </SheetDescription>
         </SheetHeader>
 
         <div className="mt-6 space-y-6">
@@ -173,6 +176,8 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
               />
             </AsyncBoundary>
           </section>
+
+          <MaintenanceHoldSection tableId={tableId} schemaName={row?.schema_name ?? "this"} />
 
           <section className="space-y-3 border-t border-border pt-6">
             <h4 className="text-sm font-semibold">Ownership</h4>

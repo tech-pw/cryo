@@ -51,11 +51,33 @@ def _run_catalog_call_bounded[R](fn: Callable[[], R], *, description: str) -> R:
         ) from exc
 
 
+class SnapshotWriterRead(BaseModel):
+    engine: str | None = None
+    engine_version: str | None = None
+    user: str | None = None
+    query_id: str | None = None
+    job_id: str | None = None
+
+
 class SnapshotSummaryRead(BaseModel):
     total_records: int | None = None
     total_files_size: int | None = None
     added_data_files: int | None = None
     deleted_data_files: int | None = None
+    added_records: int | None = None
+    deleted_records: int | None = None
+    added_files_size: int | None = None
+    removed_files_size: int | None = None
+    added_delete_files: int | None = None
+    removed_delete_files: int | None = None
+    added_position_delete_files: int | None = None
+    added_equality_delete_files: int | None = None
+    added_dvs: int | None = None
+    total_delete_files: int | None = None
+    total_position_deletes: int | None = None
+    total_equality_deletes: int | None = None
+    changed_partition_count: int | None = None
+    writer: SnapshotWriterRead | None = None
 
 
 class SnapshotRefRead(BaseModel):
@@ -163,6 +185,76 @@ def _summary_int(summary: Any, key: str) -> int | None:
     return _optional_int(_summary_raw(summary, key))
 
 
+def _summary_text(summary: Any, *keys: str) -> str | None:
+    for key in keys:
+        raw = _summary_raw(summary, key)
+        if raw is None:
+            continue
+        text = str(getattr(raw, "value", raw)).strip()
+        if text:
+            return text[:200]
+    return None
+
+
+# Summary keys are optional ("should" in the spec), so each engine is recognised by the keys it
+# is known to write; anything else stays unattributed rather than guessed.
+_ENGINE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("trino", ("trino_query_id", "trino_user")),
+    ("spark", ("spark.app.id",)),
+    ("flink", ("flink.job-id",)),
+    ("kafka-connect", ("kafka.connect.commit-id",)),
+)
+
+
+def _writer(summary: Any) -> SnapshotWriterRead | None:
+    engine = _summary_text(summary, "engine-name")
+    if engine is None:
+        engine = next(
+            (
+                name
+                for name, keys in _ENGINE_MARKERS
+                if any(_summary_raw(summary, key) is not None for key in keys)
+            ),
+            None,
+        )
+    writer = SnapshotWriterRead(
+        engine=engine.lower() if engine else None,
+        engine_version=_summary_text(summary, "engine-version"),
+        user=_summary_text(summary, "trino_user"),
+        query_id=_summary_text(summary, "trino_query_id"),
+        job_id=_summary_text(
+            summary, "spark.app.id", "flink.job-id", "kafka.connect.commit-id", "app-id"
+        ),
+    )
+    return writer if any(writer.model_dump().values()) else None
+
+
+def _summary_read(summary: Any) -> SnapshotSummaryRead:
+    def value(key: str) -> int | None:
+        return _summary_int(summary, key)
+
+    return SnapshotSummaryRead(
+        total_records=value("total-records"),
+        total_files_size=value("total-files-size"),
+        added_data_files=value("added-data-files"),
+        deleted_data_files=value("deleted-data-files"),
+        added_records=value("added-records"),
+        deleted_records=value("deleted-records"),
+        added_files_size=value("added-files-size"),
+        removed_files_size=value("removed-files-size"),
+        added_delete_files=value("added-delete-files"),
+        removed_delete_files=value("removed-delete-files"),
+        added_position_delete_files=value("added-position-delete-files"),
+        added_equality_delete_files=value("added-equality-delete-files"),
+        added_dvs=value("added-dvs"),
+        total_delete_files=value("total-delete-files"),
+        total_position_deletes=value("total-position-deletes"),
+        total_equality_deletes=value("total-equality-deletes"),
+        changed_partition_count=value("changed-partition-count"),
+        writer=_writer(summary),
+    )
+
+
 def _ref_type(ref: Any) -> Literal["branch", "tag"] | None:
     raw = ref.get("type") if isinstance(ref, Mapping) else getattr(ref, "snapshot_ref_type", None)
     if raw is None and isinstance(ref, Mapping):
@@ -242,12 +334,7 @@ def _snapshot_row(snapshot: Any, refs: list[SnapshotRefRead]) -> SnapshotRead:
         committed_at=_committed_at(timestamp_ms),
         sequence_number=_attr_int(snapshot, "sequence_number"),
         operation=_operation(summary),
-        summary=SnapshotSummaryRead(
-            total_records=_summary_int(summary, "total-records"),
-            total_files_size=_summary_int(summary, "total-files-size"),
-            added_data_files=_summary_int(summary, "added-data-files"),
-            deleted_data_files=_summary_int(summary, "deleted-data-files"),
-        ),
+        summary=_summary_read(summary),
         is_current=False,
         refs=refs,
         protected=False,

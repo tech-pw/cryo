@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 REASON_COOLDOWN = "cooldown"
 REASON_STALE_STATS = "stale_stats"
 REASON_EXCLUDED = "excluded"
+REASON_HELD = "held"
 REASON_BUDGET_CAP = "budget_cap"
 REASON_BACKOFF = "backoff"
 REASON_NO_WORK = "no_work"

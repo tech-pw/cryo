@@ -229,7 +229,7 @@ export function useTableDetail() {
     retry: false
   });
   const partitionEvolution = useQuery({
-    queryKey: ["table-partition-evolution", tableId, token],
+    queryKey: tableKeys.partitionEvolution(tableId, token),
     queryFn: () => getPartitionEvolutionRecommendation(api, tableId),
     enabled: onTab("files"),
     retry: false

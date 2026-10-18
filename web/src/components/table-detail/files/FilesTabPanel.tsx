@@ -7,11 +7,12 @@ import {
   getColumnStats,
   getDataQualityProfile,
   getTable,
+  getTableColumnUsage,
   getTableHistory,
   getTablePartitions,
   getTablePiiClassification
 } from "../../../api/client";
-import type { ColumnSketchRead } from "../../../api/types";
+import type { ColumnSketchRead, ColumnUsageRead, ColumnUsageResponse } from "../../../api/types";
 import { MissingPattern } from "../../charts/MissingPattern";
 import { RankedBars } from "../../charts/RankedBars";
 import { TimeSeries } from "../../charts/TimeSeries";
@@ -23,6 +24,8 @@ import { SectionNav } from "../SectionNav";
 import { DataTable } from "../../ui/data-table";
 import "./files.css";
 import { WairRecluster } from "../WairRecluster";
+import { DELETE_THRESHOLDS, deleteDebt, deleteSeries } from "./deleteDebt";
+import { PartitionEvolutionCard } from "./PartitionEvolutionCard";
 import {
   compareSchemaColumns,
   fileMeasures,
@@ -80,15 +83,41 @@ const NullRateCell = ({ rate }: { rate: number | null }) =>
 const hasSketches = (rows: SchemaColumnRow[]): boolean =>
   rows.some((row) => row.ndv != null || row.p50 != null || row.p95 != null);
 
+const UsageCell = ({ use, max }: { use: ColumnUsageRead | undefined; max: number }) => {
+  if (!use || (!use.filter_count && !use.join_count)) return <span className="text-muted-foreground">—</span>;
+  const title = [
+    `${formatCount(use.filter_count)} filters (${formatCount(use.equality_filter_count)} equality, ${formatCount(use.range_filter_count)} range)`,
+    `${formatCount(use.join_count)} joins`,
+    use.avg_selectivity != null ? `average selectivity ${(use.avg_selectivity * 100).toFixed(1)}%` : null
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <span className="td-usage" title={title}>
+      <span className="td-usage-bar" data-kind="filter" style={{ width: `${(use.filter_count / max) * 100}%` }} />
+      <span className="td-usage-bar" data-kind="join" style={{ width: `${(use.join_count / max) * 100}%` }} />
+      <span className="td-usage-text">
+        {formatCount(use.filter_count)} filter · {formatCount(use.join_count)} join
+      </span>
+    </span>
+  );
+};
+
 const SchemaTable = ({
   rows,
   highlight,
-  columnStatsError
+  columnStatsError,
+  usage
 }: {
   rows: SchemaColumnRow[];
   highlight: string | null;
   columnStatsError?: string | null;
+  usage?: Map<string, ColumnUsageRead>;
 }) => {
+  const maxUse = useMemo(
+    () => Math.max(1, ...[...(usage?.values() ?? [])].map((use) => Math.max(use.filter_count, use.join_count))),
+    [usage]
+  );
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const filtered = useMemo(() => {
@@ -120,6 +149,10 @@ const SchemaTable = ({
     { id: "name", header: "Name", cell: ({ row }) => <span id={row.original.name.toLowerCase() === highlight ? "files-schema-highlight" : undefined} data-testid="schema-column-name" className="font-mono text-xs">{row.original.name}</span> },
     { id: "type", header: "Type", cell: ({ row }) => row.original.type },
     { id: "badges", header: "Signals", cell: ({ row }) => <SchemaBadges row={row.original} /> },
+    ...(usage?.size ? [
+      { id: "usage", header: "Query use · 30 days", cell: ({ row }: { row: { original: SchemaColumnRow } }) =>
+        <UsageCell use={usage.get(row.original.name.toLowerCase())} max={maxUse} /> }
+    ] : []),
     { id: "null", header: "Null rate", cell: ({ row }) => <NullRateCell rate={row.original.nullRate} /> },
     ...(rows.some((row) => row.lowerBound != null || row.upperBound != null) ? [
       { id: "range", header: "Range", cell: ({ row }: { row: { original: SchemaColumnRow } }) =>
@@ -134,7 +167,7 @@ const SchemaTable = ({
       { id: "p50", header: "Median (p50)", cell: ({ row }: { row: { original: SchemaColumnRow } }) => countOrMissing(row.original.p50) },
       { id: "p95", header: "p95", cell: ({ row }: { row: { original: SchemaColumnRow } }) => countOrMissing(row.original.p95) }
     ] : [])
-  ], [highlight, rows]);
+  ], [highlight, maxUse, rows, usage]);
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
@@ -167,6 +200,66 @@ const seriesAnswer = (series: { scanAt: string; smallFiles: number | null }[]): 
   if (last.smallFiles === first.smallFiles) return `${formatCount(last.smallFiles)} now, unchanged since ${since}`;
   return `${formatCount(last.smallFiles)} now, ${(last.smallFiles ?? 0) > (first.smallFiles ?? 0) ? "up" : "down"} from ${formatCount(first.smallFiles)} on ${since}`;
 };
+
+const DEBT_BADGE = { healthy: "success", minor: "warning", major: "danger" } as const;
+
+const DeleteDebtSection = ({
+  history,
+  loading,
+  pct,
+  files
+}: {
+  history: Array<Record<string, unknown>> | undefined;
+  loading: boolean;
+  pct: number | null;
+  files: number | null;
+}) => {
+  const series = useMemo(() => deleteSeries(history), [history]);
+  const debt = deleteDebt(pct, files);
+  const recorded = series.filter((point) => point.deleteFiles != null);
+  if (!debt && !recorded.length) return null;
+  return (
+    <section className="td-files-section" aria-labelledby="files-deletes-title" data-series="delete files">
+      <div className="td-files-delete-head">
+        <h2 id="files-deletes-title" className="text-sm font-semibold">Delete files</h2>
+        {debt ? <Badge variant={DEBT_BADGE[debt.level]}>{debt.title}</Badge> : null}
+      </div>
+      <p className="td-files-caption">
+        {pct != null ? `${pct.toFixed(1)}% of files are delete files` : "Share of delete files not recorded"}
+        {files != null ? ` (${formatCount(files)})` : ""}. Every reader merges them into the data until compaction rewrites it.
+        Warning at {DELETE_THRESHOLDS.pctWarn}% or {formatCount(DELETE_THRESHOLDS.countWarn)} files, critical at{" "}
+        {DELETE_THRESHOLDS.pctCrit}% or {formatCount(DELETE_THRESHOLDS.countCrit)}, the same cut-offs as the health score.
+      </p>
+      {debt && debt.level !== "healthy" ? <p className="td-files-delete-action">{debt.action}</p> : null}
+      {recorded.length > 1 ? (
+        <TimeSeries
+          title="Delete files over scans"
+          unit="delete files"
+          points={series.map((point) => ({ at: point.scanAt, value: point.deleteFiles }))}
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {loading ? "Loading" : "A trend appears once two scans have recorded delete files."}
+        </p>
+      )}
+    </section>
+  );
+};
+
+const UsageCaption = ({ usage }: { usage: ColumnUsageResponse }) =>
+  usage.columns.length ? (
+    <p className="td-files-caption">
+      <span className="td-usage-key" data-kind="filter" aria-hidden="true" /> Filters{" "}
+      <span className="td-usage-key" data-kind="join" aria-hidden="true" /> Joins, from{" "}
+      {usage.queries != null ? `${formatCount(usage.queries)} queries` : "query logs"} in the last {usage.window_days} days.
+      Columns filtered often are partition, sort or bloom-filter candidates.
+    </p>
+  ) : (
+    <p className="td-files-caption">
+      No column-level query use recorded. Cryo reads it from per-query logs; a source that only records table-level
+      query counts can't show which columns queries filter or join on.
+    </p>
+  );
 
 const queryError = (error: unknown): string => (error instanceof Error ? error.message : "Request failed");
 
@@ -213,6 +306,12 @@ export const FilesTabPanel = () => {
     enabled,
     retry: false
   });
+  const columnUsage = useQuery({
+    queryKey: tableKeys.columnUsage(tableId, token),
+    queryFn: () => getTableColumnUsage(api, tableId),
+    enabled,
+    retry: false
+  });
   const bloom = useQuery({
     queryKey: tableKeys.bloom(tableId, token),
     queryFn: () => getBloomFilterRecommendations(api, tableId),
@@ -232,6 +331,10 @@ export const FilesTabPanel = () => {
         bloomColumns: (bloom.data?.recommendations ?? []).map((item) => item.column)
       }),
     [bloom.data?.recommendations, dataQuality.data, pii.data?.matches, sketches, stats]
+  );
+  const usage = useMemo(
+    () => new Map((columnUsage.data?.columns ?? []).map((use) => [use.column.toLowerCase(), use])),
+    [columnUsage.data]
   );
   const granularity = layoutChecks(stats).find((check) => check.name === "Granularity" && check.observed !== NOT_MEASURED);
   const measures = fileMeasures(stats);
@@ -272,8 +375,10 @@ export const FilesTabPanel = () => {
             rows={columns}
             highlight={highlight}
             columnStatsError={columnStats.isError ? queryError(columnStats.error) : null}
+            usage={usage}
           />
         ) : null}
+        {columnUsage.data ? <UsageCaption usage={columnUsage.data} /> : null}
       </section>
 
       <section id="files-files" className="td-files-section" aria-labelledby="files-files-title">
@@ -304,6 +409,12 @@ export const FilesTabPanel = () => {
           />
         )}
       </section>
+      <DeleteDebtSection
+        history={history.data}
+        loading={history.isLoading}
+        pct={stats?.delete_file_pct ?? null}
+        files={stats?.total_delete_files ?? null}
+      />
       <section id="files-layout" className="td-files-section" aria-labelledby="files-layout-title">
         <h2 id="files-layout-title" className="text-sm font-semibold">
           Layout
@@ -372,6 +483,7 @@ export const FilesTabPanel = () => {
             </table></div></details>
           </>
         )}
+        <PartitionEvolutionCard tableId={tableId} />
       </section>
 
     </div>

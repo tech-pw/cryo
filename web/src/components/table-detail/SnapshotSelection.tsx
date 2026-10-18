@@ -17,6 +17,57 @@ const deltaLabel = (value: number | null, bytes = false): string => {
   return `${value > 0 ? "+" : value < 0 ? "−" : ""}${bytes ? formatBytesGb(Math.abs(value)) : formatNumber(Math.abs(value))}`;
 };
 
+const NOT_RECORDED = "Not recorded by this writer";
+
+const count = (value: number | null | undefined) => (value == null ? NOT_RECORDED : formatNumber(value));
+const bytes = (value: number | null | undefined) => (value == null ? NOT_RECORDED : formatBytesGb(value));
+
+const addedRemoved = (
+  added: number | null | undefined,
+  removed: number | null | undefined,
+  format: (value: number) => string = formatNumber
+): string => {
+  if (added == null && removed == null) return NOT_RECORDED;
+  return `+${added == null ? "?" : format(added)} / −${removed == null ? "?" : format(removed)}`;
+};
+
+const deleteFilesAdded = (summary: TableSnapshot["summary"]): string => {
+  const parts = [
+    summary.added_position_delete_files ? `${formatNumber(summary.added_position_delete_files)} position` : null,
+    summary.added_equality_delete_files ? `${formatNumber(summary.added_equality_delete_files)} equality` : null,
+    summary.added_dvs ? `${formatNumber(summary.added_dvs)} deletion vectors` : null
+  ].filter(Boolean);
+  if (parts.length) return parts.join(", ");
+  return summary.added_delete_files == null ? "None reported" : formatNumber(summary.added_delete_files);
+};
+
+export const writerLabel = (writer: TableSnapshot["summary"]["writer"]): string | null => {
+  if (!writer?.engine) return null;
+  return writer.engine_version ? `${writer.engine} ${writer.engine_version}` : writer.engine;
+};
+
+/** Everything the writer put in this commit's Iceberg summary. Absent keys stay absent, never zero. */
+const CommitSummary = ({ snapshot }: { snapshot: TableSnapshot }) => {
+  const { summary } = snapshot;
+  const writer = summary.writer;
+  return (
+    <dl className="td-snapshot-deltas td-snapshot-commit">
+      <div><dt>Rows</dt><dd>{addedRemoved(summary.added_records, summary.deleted_records)}</dd></div>
+      <div><dt>Data files</dt><dd>{addedRemoved(summary.added_data_files, summary.deleted_data_files)}</dd></div>
+      <div><dt>Bytes written / removed</dt><dd>{addedRemoved(summary.added_files_size, summary.removed_files_size, formatBytesGb)}</dd></div>
+      <div><dt>Delete files added</dt><dd>{deleteFilesAdded(summary)}</dd></div>
+      <div><dt>Partitions changed</dt><dd>{count(summary.changed_partition_count)}</dd></div>
+      <div><dt>Delete files in table</dt><dd>{count(summary.total_delete_files)}</dd></div>
+      <div><dt>Rows in table</dt><dd>{count(summary.total_records)}</dd></div>
+      <div><dt>Table size</dt><dd>{bytes(summary.total_files_size)}</dd></div>
+      <div><dt>Writer</dt><dd>{writerLabel(writer) ?? NOT_RECORDED}</dd></div>
+      {writer?.user ? <div><dt>Committed by</dt><dd className="break-all">{writer.user}</dd></div> : null}
+      {writer?.query_id ? <div><dt>Query id</dt><dd className="break-all font-mono text-xs">{writer.query_id}</dd></div> : null}
+      {writer?.job_id ? <div><dt>Job id</dt><dd className="break-all font-mono text-xs">{writer.job_id}</dd></div> : null}
+    </dl>
+  );
+};
+
 export const SnapshotSelection = ({
   snapshots, selectedId, compareRaw
 }: {
@@ -38,7 +89,8 @@ export const SnapshotSelection = ({
           <h3 className="text-sm font-semibold">Selected snapshot</h3>
           {selected ? (
             <>
-              <p className="mt-2 text-sm"><span className="break-all font-mono">{selected.snapshot_id}</span> · {selected.operation ?? "Operation not recorded"} · {formatTime(selected.committed_at)}</p>
+              <p className="mt-2 text-sm"><span className="break-all font-mono">{selected.snapshot_id}</span> · {selected.operation ?? "Operation not recorded"} · {formatTime(selected.committed_at)}{selected.sequence_number == null ? null : ` · sequence ${formatNumber(selected.sequence_number)}`}</p>
+              <CommitSummary snapshot={selected} />
               <label className="mt-3 flex flex-wrap items-center gap-2 text-xs">
                 Compare against
                 <select className="max-w-full rounded border border-border bg-card px-2 py-1.5" value={compare?.[0] === selectedId ? compare[1] : ""} onChange={(event) => {

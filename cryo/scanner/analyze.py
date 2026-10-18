@@ -27,7 +27,7 @@ from cryo.scanner.cost import (
 from cryo.scanner.health import compute_health_score
 from cryo.scanner.orphans import table_location
 from cryo.scanner.quality import ColumnQualityAccumulator, summarize_column_quality
-from cryo.scanner.signals import detect_format_version, enrich_stats_signals
+from cryo.scanner.signals import detect_format_version, enrich_stats_signals, manifest_stats
 
 logger = logging.getLogger(__name__)
 
@@ -346,12 +346,13 @@ def analyze_table(
     avg_file_size_mb = (total_size_bytes / max(total_files, 1)) / MB if total_files else 0.0
     snapshot_info = _snapshot_info(table_obj)
     format_version = detect_format_version(table_obj)
+    manifest_total_bytes = sum(
+        int(_attr(manifest, "manifest_length", 0) or 0) for manifest in manifests
+    )
     cost = estimate_storage_cost(
         total_size_bytes=total_size_bytes,
         total_delete_bytes=delete_bytes,
-        manifest_total_bytes=sum(
-            int(_attr(manifest, "manifest_length", 0) or 0) for manifest in manifests
-        ),
+        manifest_total_bytes=manifest_total_bytes,
         total_snapshots=snapshot_info["total_snapshots"],
     )
     stats_for_health = {
@@ -518,10 +519,7 @@ def analyze_table(
         "delete": delete_size_bins,
         "unknown": unknown_file_sizes,
     }
-    raw["manifest_stats"] = {
-        "manifest_count": len(manifests),
-        "avg_files_per_manifest": round(total_files / max(len(manifests), 1), 2),
-    }
+    raw["manifest_stats"] = manifest_stats(len(manifests), manifest_total_bytes, total_files)
     if cost_analysis is not None:
         raw["cost"] = cost_analysis.raw
     common = {

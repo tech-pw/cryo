@@ -18,7 +18,8 @@ const mocks = vi.hoisted(() => ({
   listPresets: vi.fn(),
   getEffectiveParams: vi.fn(),
   runTableOperations: vi.fn(),
-  getTableChecklist: vi.fn()
+  getTableChecklist: vi.fn(),
+  getTableMaintenanceImpact: vi.fn()
 }));
 
 vi.mock("../../../api/client", () => ({
@@ -33,7 +34,8 @@ vi.mock("../../../api/client", () => ({
   listPresets: mocks.listPresets,
   getEffectiveParams: mocks.getEffectiveParams,
   runTableOperations: mocks.runTableOperations,
-  getTableChecklist: mocks.getTableChecklist
+  getTableChecklist: mocks.getTableChecklist,
+  getTableMaintenanceImpact: mocks.getTableMaintenanceImpact
 }));
 
 vi.mock("../../../api/maintenanceStatus", () => ({
@@ -77,6 +79,18 @@ const scanned = (stats?: Record<string, unknown>) => ({
   }
 });
 
+const emptyWindow = (days: number | null) => ({
+  days,
+  since: null,
+  ops: 0,
+  ops_with_bytes: 0,
+  ops_with_files: 0,
+  bytes_freed: 0,
+  files_in: 0,
+  files_out: 0,
+  by_operation: []
+});
+
 const renderPanel = (props?: { onScan?: () => void; onPreview?: () => void; onEdit?: () => void }) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -100,6 +114,11 @@ const renderPanel = (props?: { onScan?: () => void; onPreview?: () => void; onEd
 describe("OverviewPanel", () => {
   beforeEach(() => {
     mocks.getTable.mockReset().mockResolvedValue(unscanned());
+    mocks.getTableMaintenanceImpact.mockReset().mockResolvedValue({
+      table_id: "table-1",
+      recent: emptyWindow(30),
+      lifetime: emptyWindow(null)
+    });
     mocks.getTableChecklist.mockReset().mockResolvedValue({
       table_id: "table-1",
       checked_at: "2026-09-28T09:10:00Z",
@@ -281,5 +300,34 @@ describe("OverviewPanel", () => {
     await waitFor(() => {
       expect(mocks.getTableAudit).toHaveBeenCalledWith(api, "table-1", { limit: 40 });
     });
+  });
+
+  it("totals only what engines reported and counts silent operations as unmeasured", async () => {
+    mocks.getTable.mockResolvedValue(scanned());
+    mocks.getTableAudit.mockResolvedValue([]);
+    const optimize = { operation: "optimize", ops: 2, ops_with_bytes: 0, ops_with_files: 2, bytes_freed: 0, files_in: 400, files_out: 20 };
+    const expire = { operation: "expire_snapshots", ops: 1, ops_with_bytes: 1, ops_with_files: 0, bytes_freed: 3 * 1024 ** 3, files_in: 0, files_out: 0 };
+    const orphans = { operation: "remove_orphan_files", ops: 1, ops_with_bytes: 0, ops_with_files: 0, bytes_freed: 0, files_in: 0, files_out: 0 };
+    mocks.getTableMaintenanceImpact.mockResolvedValue({
+      table_id: "table-1",
+      recent: { ...emptyWindow(30), ops: 2, ops_with_files: 2, files_in: 400, files_out: 20, by_operation: [optimize] },
+      lifetime: {
+        ...emptyWindow(null),
+        since: "2026-08-01T00:00:00Z",
+        ops: 4,
+        ops_with_bytes: 1,
+        ops_with_files: 2,
+        bytes_freed: 3 * 1024 ** 3,
+        files_in: 400,
+        files_out: 20,
+        by_operation: [optimize, expire, orphans]
+      }
+    });
+    renderPanel();
+
+    expect(await screen.findByText("What maintenance achieved")).toBeInTheDocument();
+    expect(screen.getByText(/2 of 4 reported their effect/)).toBeInTheDocument();
+    expect(screen.getByText("400 → 20 files")).toBeInTheDocument();
+    expect(screen.queryByText("Orphan files")).not.toBeInTheDocument();
   });
 });

@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from cryo.api.deps import SessionDep, require_operator, require_viewer
 from cryo.api.schemas import JsonDict
+from cryo.db.models import Table
+from cryo.db.tenant_scope import get_scoped_resource
+from cryo.maintenance.impact import ImpactWindow, table_maintenance_impact
 
 # No prefix here: this router is included into extensions.py's `router`, which already has
 # prefix="/api/v1" -- a second prefix here double-prefixed every path in this file
@@ -34,6 +38,68 @@ class EffectivenessStatsResponse(BaseModel):
     effectiveness: str
     avg_duration_ms: int
     recommendation: str
+
+
+class OperationImpactRead(BaseModel):
+    operation: str
+    ops: int
+    ops_with_bytes: int
+    ops_with_files: int
+    bytes_freed: int
+    files_in: int
+    files_out: int
+
+
+class ImpactWindowRead(BaseModel):
+    days: int | None
+    since: datetime | None
+    ops: int
+    ops_with_bytes: int
+    ops_with_files: int
+    bytes_freed: int
+    files_in: int
+    files_out: int
+    by_operation: list[OperationImpactRead]
+
+
+class MaintenanceImpactResponse(BaseModel):
+    table_id: uuid.UUID
+    recent: ImpactWindowRead
+    lifetime: ImpactWindowRead
+
+
+def _window_read(window: ImpactWindow) -> ImpactWindowRead:
+    return ImpactWindowRead(
+        days=window.days,
+        since=window.since,
+        ops=window.ops,
+        ops_with_bytes=window.ops_with_bytes,
+        ops_with_files=window.ops_with_files,
+        bytes_freed=window.bytes_freed,
+        files_in=window.files_in,
+        files_out=window.files_out,
+        by_operation=[OperationImpactRead(**vars(item)) for item in window.by_operation],
+    )
+
+
+@router.get(
+    "/tables/{table_id}/maintenance-impact",
+    response_model=MaintenanceImpactResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def get_table_maintenance_impact(
+    table_id: uuid.UUID,
+    session: SessionDep,
+    window_days: int = Query(default=30, ge=1, le=365),
+) -> MaintenanceImpactResponse:
+    """Bytes freed and files reduced, as reported by engines on successful operations."""
+    get_scoped_resource(session, Table, table_id, resource_type="table")
+    recent, lifetime = table_maintenance_impact(
+        session, table_id, now=datetime.now(UTC), window_days=window_days
+    )
+    return MaintenanceImpactResponse(
+        table_id=table_id, recent=_window_read(recent), lifetime=_window_read(lifetime)
+    )
 
 
 @router.get(

@@ -131,7 +131,7 @@ const SHOTS: Array<{
   tabShot("maintenance", "Stored benefit-score candidates", { name: "compaction", selector: `${MAINTENANCE} > :nth-child(4)` }),
   tabShot("config", "Differs from recommendation", { name: "settings", selector: ".td-config > section:nth-child(-n+2)" }),
   tabShot("usage", "Partition access"),
-  tabShot("overview", "Layout checks", { name: "checks", selector: "#overview-checks" }),
+  tabShot("overview", "Layout checks", { name: "checks", selector: "[aria-labelledby='overview-checks']" }),
   tabShot("quality", "Freshness vs target"),
   tabShot("cost", "Ways to save"),
   tabShot("cost", "Ways to save", { name: "archive", selector: "#archive" }),
@@ -161,6 +161,26 @@ const SHOTS: Array<{
     waitFor: "Differs from recommendation",
     height: 900,
     act: openPropertyInfo
+  },
+  tabShot("overview", "What maintenance achieved", { name: "history", selector: "[aria-labelledby='overview-history']" }),
+  tabShot("files", "Query use · 30 days", { name: "schema", selector: "#files-schema" }),
+  tabShot("files", "Delete files over scans", { name: "deletes", selector: "[data-series='delete files']" }),
+  tabShot("files", "Suggested partition change", { name: "partitions", selector: "#files-partitions" }),
+  {
+    name: "table-tab-snapshots-selected",
+    path: `${TABLE}?tab=snapshots&snapshot=8812286588`,
+    waitFor: "Selected snapshot",
+    height: 1100,
+    selector: `${ACTIVE_PANEL} .td-snapshots-selection`
+  },
+  tabShot("config", "More suggestions from the last scan", { name: "suggestions", selector: ".tc-suggestions" }),
+  {
+    name: "table-settings-hold",
+    path: TABLE,
+    waitFor: "What's pulling the score down",
+    height: 1100,
+    act: openTableSettings,
+    selector: "[role='dialog'] [aria-labelledby='settings-hold']"
   },
   { name: "runs", path: "/runs", waitFor: "Success rate · 7d", height: 1100 },
   { name: "runs-holds", path: "/runs?tab=holds", waitFor: "Active holds", height: 900 },

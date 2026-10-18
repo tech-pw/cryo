@@ -131,7 +131,7 @@ describe("SnapshotsTab", () => {
     renderTab();
 
     expect(await screen.findByText("Current")).toBeInTheDocument();
-    expect(screen.getAllByText("Unknown").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Unknown/).length).toBeGreaterThan(0);
     expect(screen.queryByText("0 GB")).not.toBeInTheDocument();
     expect(screen.getAllByText("Excluded from Cryo expiry").length).toBeGreaterThan(0);
 
@@ -238,5 +238,40 @@ describe("SnapshotsTab", () => {
 
     fireEvent.click(within(current.closest("tr") as HTMLElement).getByRole("button", { name: "Actions" }));
     expect(screen.getByRole("button", { name: "Protect" })).toBeEnabled();
+  });
+
+  it("shows the writer, row and delete-file change, and partitions per commit", async () => {
+    const base = payload();
+    listTableSnapshots.mockResolvedValue({
+      ...base,
+      snapshots: [
+        {
+          ...base.snapshots[0],
+          operation: "overwrite",
+          summary: {
+            ...base.snapshots[0].summary,
+            added_records: 120,
+            deleted_records: 40,
+            added_delete_files: 3,
+            added_position_delete_files: 3,
+            changed_partition_count: 2,
+            writer: { engine: "trino", engine_version: "480", user: "etl", query_id: "20261018_q1", job_id: null }
+          }
+        },
+        base.snapshots[1]
+      ]
+    });
+    renderTab("/tables/table-1?tab=snapshots&snapshot=42");
+
+    const row = (await screen.findByText("Current")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("+120 −40 rows")).toBeInTheDocument();
+    expect(within(row).getByText("+3 delete files")).toBeInTheDocument();
+    expect(within(row).getByText("2")).toBeInTheDocument();
+    expect(within(row).getAllByText("trino 480").length).toBeGreaterThan(0);
+
+    const panel = screen.getByRole("region", { name: "Selected snapshot" });
+    expect(within(panel).getByText("3 position")).toBeInTheDocument();
+    expect(within(panel).getByText("20261018_q1")).toBeInTheDocument();
+    expect(within(panel).getAllByText("Not recorded by this writer").length).toBeGreaterThan(0);
   });
 });

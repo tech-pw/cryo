@@ -6,6 +6,13 @@ export const tableKeys = {
     ["table-audit", id, token, limit ?? null, offset ?? null] as const,
   runs: (id: string, token?: string | null, limit?: number, offset?: number) =>
     ["table-runs", id, token, limit ?? null, offset ?? null] as const,
+  skipEvaluations: (id: string, token?: string | null, limit?: number) =>
+    ["table-skip-evaluations", id, token, limit ?? null] as const,
+  effectiveness: (id: string, token?: string | null, days = 30) => ["table-effectiveness", id, token, days] as const,
+  maintenanceImpact: (id: string, token?: string | null, days = 30) =>
+    ["table-maintenance-impact", id, token, days] as const,
+  hold: (id: string, token?: string | null) => ["table-maintenance-hold", id, token] as const,
+  columnUsage: (id: string, token?: string | null) => ["table-column-usage", id, token] as const,
   signals: (id: string, token?: string | null) => ["table-signals", id, token] as const,
   healthTrends: (id: string, token?: string | null, days = 30) =>
     ["table-health-trends", id, token, days] as const,
@@ -20,6 +27,7 @@ export const tableKeys = {
   fastPath: (id: string, token?: string | null) => ["fast-path-findings", id, token] as const,
   compliance: (id: string, token?: string | null) => ["table-compliance", id, token] as const,
   partitions: (id: string, token?: string | null) => ["table-partitions", id, token] as const,
+  partitionEvolution: (id: string, token?: string | null) => ["table-partition-evolution", id, token] as const,
   partitionAccess: (id: string, token?: string | null) => ["table-partition-access", id, token] as const,
   history: (id: string, token?: string | null) => ["table-history", id, token] as const,
   pii: (id: string, token?: string | null) => ["table-pii", id, token] as const,

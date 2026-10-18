@@ -1,5 +1,10 @@
 import type {
   AuditEntry,
+  ColumnUsageResponse,
+  MaintenanceImpactResponse,
+  SkipEvaluationPage,
+  TableHoldRead,
+  TableHoldWrite,
   CapabilityManifest,
   CostDashboard,
   DatalakeDashboard,
@@ -354,6 +359,17 @@ export const getTableHistory = (api: ApiOptions, id: UUID) =>
   apiFetch<{ items: Array<Record<string, unknown>> }>(`/tables/${id}/history`, api).then((payload) => payload.items);
 export const getTableRuns = (api: ApiOptions, id: UUID, query?: { limit?: number; offset?: number }) =>
   apiFetch<{ items: TableRunRead[] }>(`/tables/${id}/runs`, api, { query }).then((payload) => payload.items);
+export const getTableSkipEvaluations = (api: ApiOptions, id: UUID, query?: { limit?: number; offset?: number }) =>
+  apiFetch<SkipEvaluationPage>(`/tables/${id}/skip-evaluations`, api, { query });
+export const getTableMaintenanceImpact = (api: ApiOptions, id: UUID, windowDays = 30) =>
+  apiFetch<MaintenanceImpactResponse>(`/tables/${id}/maintenance-impact`, api, { query: { window_days: windowDays } });
+export const getTableHold = (api: ApiOptions, id: UUID) => apiFetch<TableHoldRead>(`/tables/${id}/maintenance-hold`, api);
+export const setTableHold = (api: ApiOptions, id: UUID, body: TableHoldWrite) =>
+  apiFetch<TableHoldRead>(`/tables/${id}/maintenance-hold`, api, { method: "PUT", body });
+export const releaseTableHold = (api: ApiOptions, id: UUID) =>
+  apiFetch<TableHoldRead>(`/tables/${id}/maintenance-hold`, api, { method: "DELETE" });
+export const getTableColumnUsage = (api: ApiOptions, id: UUID) =>
+  apiFetch<ColumnUsageResponse>(`/tables/${id}/column-usage`, api);
 
 export interface HealthTrendPoint {
   timestamp: string;

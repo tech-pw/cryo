@@ -32,7 +32,7 @@ cryo.local/tables/analytics.events
 
 | Run maintenance | Runs the table's workflow now, or previews it when you can't run it. The arrow opens the actions menu. |
 
-| Table settings | The gear icon. Opens compliance, ownership and alert subscribers. |
+| Table settings | The gear icon. Opens compliance, the maintenance hold, ownership and alert subscribers. |
 
 cryo.local/tables/analytics.events
 
@@ -46,6 +46,12 @@ cryo.local/tables/analytics.events
 
 **Compliance & protection** answers three questions. **Deleted rows still readable**: rows deleted from the table that older snapshots still hold, and when expiry will remove them, if the date was recorded. **Snapshots protected from expiry**: how many snapshots Cryo's expiry must keep, which can hold deleted rows longer; manage them on the [Snapshots tab](#snapshots). **Access policies**: row filters and column masks recorded for the table. Cryo records them but does not enforce them; your catalog or engine does.
 
+**Maintenance hold** pauses compaction and cleanup for this table, for a backfill, a migration or an incident. Give a reason and pick how long, from a day up to 90 days. Scheduled and on-demand maintenance both skip the table until the hold ends or someone releases it, and scans keep running so the grade still shows the cost. Holds need the operator role and are audited. A hold set for the whole schema shows here too, but is released from the schema, not one table.
+
+cryo.local/tables/analytics.events
+
+*A hold always has a reason and an end date, so it can't be forgotten.*
+
 **Ownership** sets the owner email, which also receives SLA and quality-rule alerts. **Alert subscribers** adds more recipients.
 
 ## The eight tabs
@@ -57,7 +63,7 @@ Each tab owns one question. The address bar carries the open tab as `?tab=`, so 
 
 | [Overview](#overview) | Why is the score what it is, and what fixes it? | Score, Layout checks, File layout, History & activity, Health over time, Context |
 
-| [Schema & files](#schema-files) | What is the table made of? | Columns, Files, Small-file candidates over scans, Layout, Partitions |
+| [Schema & files](#schema-files) | What is the table made of? | Columns, Files, Small-file candidates over scans, Delete files, Layout, Partitions |
 
 | [Snapshots](#snapshots) | What changed, and what is being kept? | Snapshot history, Commits, Excluded from Cryo expiry |
 
@@ -87,6 +93,8 @@ The gauge shows the score, its grade and the change over the recorded history, p
 
 Twelve weighted checks of how well the table is set up for its engine, storage and workload: file size against the target, delete-file ratio, whether the partition scheme matches query predicates, whether compaction keeps up with write velocity, sort order, distribution mode, manifests, statistics, retention, orphan cleanup, schema width and storage class. Only the checks to act on are shown as cards, marked **Fix** or **Improve**, each with a link to where you change it: a setting on Config, an operation on Maintenance, or archiving on Cost & Savings. Passing and unknown checks are collapsed underneath.
 
+Under the checks, **Manifests & metadata** shows the manifest count, the average manifest size against Iceberg's 8 MiB target, files per manifest, and whether old `metadata.json` files get deleted after each commit. With `write.metadata.delete-after-commit.enabled` off, which is Iceberg's default, every commit leaves one behind until orphan cleanup. Manifests the scan couldn't read are counted here too.
+
 cryo.local/tables/analytics.events?tab=overview
 
 *The checks explain the deductions above them. Each card links to the place that fixes it.*
@@ -101,7 +109,11 @@ A histogram of data files by size, in binary units, against the table's write ta
 
 ### History & activity
 
-Snapshot count, commits per day and the last commit, then **Recent maintenance**: each audited action with its result, bytes freed or files before and after, duration, engine and trigger.
+Snapshot count, commits per day and the last commit. **What maintenance achieved** totals what successful operations reported, for the last 30 days and since the first one: storage freed and files removed by compaction, then a line per operation. Only numbers the engine reported count. An operation that didn't say what it freed is counted as unmeasured, not as zero, so the card says how many of them reported. Then **Recent maintenance**: each audited action with its result, bytes freed or files before and after, duration, engine and trigger.
+
+cryo.local/tables/analytics.events?tab=overview
+
+*Statistics and manifest rewrites report nothing to measure, so they count as unmeasured rather than zero.*
 
 ### Health over time
 
@@ -123,9 +135,21 @@ cryo.local/tables/analytics.events?tab=files
 
 Every column with its type, null rate, value range and distinct values. Range, distinct-value and percentile columns appear only when the scan recorded them for at least one column, and a dash marks a single missing value. Signals flag what deserves a look: **Drift** when the null rate moved from its baseline, **Partition** for partition sources, and **Bloom candidate** when query patterns recommend a bloom filter on the column. A recommendation doesn't change files already written.
 
+**Query use · 30 days** shades each column by how many logged queries filtered on it and joined on it; hover for equality versus range filters and selectivity. Columns that are filtered often are candidates for partitioning, sort order or a bloom filter. Column use comes from per-query logs. A source that records only table-level query counts can't say which columns were used, and the page says so instead of drawing an empty column.
+
+cryo.local/tables/analytics.events?tab=files
+
+*user_id is filtered by equality in most queries, which is why it shows up again as a partition suggestion.*
+
 ### Files
 
 Data files, position and equality delete files, manifests, average file size, the writer target and small-file candidates. Small-file candidates are counted only in partitions selected for compaction, so they can be lower than the histogram on Overview. Beside it, **Small-file candidates over scans** shows whether the backlog is growing.
+
+**Delete files** shows the share of files that are delete files, their trend over scans and a verdict. The verdict uses the same cut-offs as the health score: a warning at 5% or 100 delete files, critical at 20% or 1,000. **Minor delete compaction recommended** means the delete files can be merged without touching data, which Spark's rewrite position deletes does; Trino has no such procedure, so on Trino convert deletes rewrites the affected data files instead. **Major rewrite recommended** means convert deletes, which works on both engines.
+
+cryo.local/tables/analytics.events?tab=files
+
+*640 delete files are past the 100-file warning, even though they are only 3.9% of files.*
 
 ### Layout
 
@@ -134,6 +158,12 @@ The partition spec and sort order in words, then the granularity the scan observ
 ### Partitions
 
 The partitions with the most small files, ranked. **Exact partition counts** shows the same list as a table with each partition's small-file rate.
+
+When query patterns point to a better partition spec, **Suggested partition change** shows the current and suggested specs, why, the confidence, how many queries were analysed and an estimated pruning gain. Partition evolution only changes metadata: new writes use the new spec, existing files keep the old one until compaction rewrites them, and queries still prune both. Cryo doesn't run this change; apply it with your engine's `ALTER TABLE` once the table owner agrees.
+
+cryo.local/tables/analytics.events?tab=files
+
+*The pruning gain is an estimate from query patterns, not a measurement.*
 
 ## Snapshots
 
@@ -153,7 +183,11 @@ Right under the summary: snapshots Cryo's expiry must keep, with a label, who ex
 
 ### Commits
 
-One row per retained snapshot: id, parent, commit time, sequence number, operation, record count and total size. Select snapshots to compare their recorded summaries. A row's actions can **Protect** the snapshot, which excludes it from Cryo's expiry, or roll the table back to it after a confirmation.
+One row per retained snapshot: id with its parent underneath, commit time (hover for the sequence number), operation, the change it made, partitions changed, the table's rows and size after it, the writer, and retention: tags, branches and whether it's excluded from Cryo's expiry. **Change** shows rows added and removed, and a badge when the commit added delete files. **Writer** names the engine and version from the commit's summary, such as Trino, Spark or Flink; hover for the user and query or job id. Selecting a snapshot opens its full summary: rows, data files and bytes added and removed, delete files by kind, partitions changed, and who committed it. Anything the writer didn't record says so, rather than showing zero. Select snapshots to compare their recorded summaries. A row's actions can **Protect** the snapshot, which excludes it from Cryo's expiry, or roll the table back to it after a confirmation.
+
+cryo.local/tables/analytics.events?tab=snapshots&snapshot=8812286588
+
+*A compaction commit: 15,882 files became 165 across 31 partitions, written by Cryo on Trino.*
 
 Rollback is a commit
 
@@ -182,6 +216,8 @@ cryo.local/tables/analytics.events?tab=maintenance
 ### Follow the outcome
 
 **Runs** is a grid of operations by run, filterable to manual or nightly runs. Selecting a run shows its status, trigger, mode and duration; the table's stats before the run and at the next scan; and, under **Operations & statements**, each operation in order with its timing and recorded statement. **Live log** streams log lines while a run is going and keeps them for 24 hours; after that, the recorded statements are the log. **Open full run** goes to the run page.
+
+The grid also shows the nights the scheduled run looked at this table and didn't pick it, merged when consecutive nights had the same reason. Each one says why: cooling down, scan too old, excluded, on hold, retry backoff, nothing to do, or over the night's table cap. A stripe marks nights when the table needed work but wasn't picked. Select one to see the nights it covers and what to do about it. Each step in a run's detail also shows what the engine reported it did, such as files in and out or bytes freed, or says it didn't report.
 
 cryo.local/tables/analytics.events?tab=maintenance
 
@@ -214,6 +250,12 @@ Every setting that shapes how the table is written, committed and cleaned up, re
 cryo.local/tables/analytics.events?tab=config
 
 *Rows that differ from the recommendation carry a bar on the left. Click the first tile to show only those.*
+
+Below the inventory, **More suggestions from the last scan** lists what the scan's property checks suggest where no row already makes a recommendation, so a property never gets two answers. **Stage** adds the suggestion to the same review as a row edit.
+
+cryo.local/tables/analytics.events?tab=config
+
+*Suggestions go through the same review and audited apply as any other change.*
 
 ### Stage
 

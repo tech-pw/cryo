@@ -37,6 +37,7 @@ import {
 } from "../operations/operationCatalog";
 import { useOperationLauncher } from "../operations/OperationLauncher";
 import { FileLayoutCard } from "./FileLayoutCard";
+import { MaintenanceImpact } from "./MaintenanceImpact";
 import { gradeLetter, healthTrendPoints, integerScore, isTableScanned, readDeductions, scoreTrendAnswer, topBySeverity } from "./gradeReasons";
 import { OptimizationChecks } from "./OptimizationChecks";
 import { OverviewCard } from "./OverviewCard";
@@ -125,7 +126,7 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
         onPreview={preset.data?.preset_id ? onPreview : undefined}
       />
 
-      <OptimizationChecks tableId={tableId} />
+      <OptimizationChecks tableId={tableId} stats={stats} />
 
       <div className="td-ov-evidence">
         <div className="td-ov-stack">
@@ -448,6 +449,7 @@ function HistoryCard({
           <dd>{lastCommit ? relativeTime(lastCommit) : "—"}</dd>
         </div>
       </dl>
+      <MaintenanceImpact tableId={tableId} />
       <h3 className="td-history-subhead">Recent maintenance</h3>
       <QueryErrorAlert error={error} title="Couldn't load recent maintenance" />
       {loading ? (

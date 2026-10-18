@@ -8,6 +8,8 @@ import { QueryErrorAlert } from "../../common";
 import { Badge, type BadgeProps } from "../../ui/badge";
 import { Collapsible } from "../../ui/collapsible";
 import { Skeleton } from "../../ui/skeleton";
+import type { TableStatsRead } from "../../../api/types";
+import { ManifestHealth } from "./ManifestHealth";
 import { OverviewCard } from "./OverviewCard";
 
 const VERDICT: Record<ChecklistItemRead["status"], { label: string; variant: BadgeProps["variant"] }> = {
@@ -48,7 +50,7 @@ const CheckRow = ({ item, tableId }: { item: ChecklistItemRead; tableId: string 
 };
 
 /** Layout checks shown as reasons and fixes, without their own weighted score beside the grade. */
-export const OptimizationChecks = ({ tableId }: { tableId: string }) => {
+export const OptimizationChecks = ({ tableId, stats }: { tableId: string; stats?: TableStatsRead | null }) => {
   const { api, token } = useAuth();
   const checklist = useQuery({
     queryKey: ["table-checklist", token, tableId],
@@ -97,6 +99,7 @@ export const OptimizationChecks = ({ tableId }: { tableId: string }) => {
           </ul>
         </Collapsible>
       ) : null}
+      <ManifestHealth stats={stats} />
       {checklist.data ? <p className="td-overview-caption">Checked {formatTime(checklist.data.checked_at)}.</p> : null}
     </OverviewCard>
   );

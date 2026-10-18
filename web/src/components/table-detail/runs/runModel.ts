@@ -1,4 +1,4 @@
-import type { AuditEntry, TableRunRead } from "../../../api/types";
+import type { AuditEntry, SkipEvaluationRead, TableRunRead } from "../../../api/types";
 
 export type CellTone = "success" | "failed" | "attention" | "running" | "queued" | "skipped" | "none";
 
@@ -50,9 +50,14 @@ export interface OpCell {
   /** The statement or message the engine recorded (audit detail). */
   detail: string | null;
   engine: string | null;
+  /** What the engine reported it did; null when it didn't report. */
+  bytesFreed: number | null;
+  filesIn: number | null;
+  filesOut: number | null;
 }
 
 export interface RunColumn {
+  kind: "run";
   key: string;
   run: TableRunRead;
   tone: CellTone;
@@ -108,7 +113,10 @@ export const buildRunColumns = (runs: TableRunRead[], audit: AuditEntry[]): RunC
           finishedAt: step.finished_at ?? null,
           durationMs: ms(step.started_at, step.finished_at),
           detail: null,
-          engine: null
+          engine: null,
+          bytesFreed: null,
+          filesIn: null,
+          filesOut: null
         });
       }
       for (const receipt of receipts) {
@@ -123,11 +131,15 @@ export const buildRunColumns = (runs: TableRunRead[], audit: AuditEntry[]): RunC
           finishedAt: existing?.finishedAt ?? receipt.ts ?? receipt.created_at ?? null,
           durationMs: existing?.durationMs ?? (typeof receipt.duration_ms === "number" ? receipt.duration_ms : null),
           detail: detailText(receipt.detail),
-          engine: receipt.engine ?? null
+          engine: receipt.engine ?? null,
+          bytesFreed: receipt.actual_bytes_freed ?? null,
+          filesIn: receipt.input_files_count ?? null,
+          filesOut: receipt.output_files_count ?? null
         });
       }
       const tone = toneFor(run.status);
       return {
+        kind: "run" as const,
         key: run.job_id,
         run,
         tone,
@@ -143,9 +155,119 @@ export const buildRunColumns = (runs: TableRunRead[], audit: AuditEntry[]): RunC
     });
 };
 
+/** Consecutive nightly selections that passed this table over for the same reason. */
+export interface SkipColumn {
+  kind: "skip";
+  key: string;
+  reason: string | null;
+  /** The table needed work that night but wasn't picked. */
+  hadWork: boolean;
+  firstAt: string;
+  lastAt: string;
+  count: number;
+  /** Positioned where the latest skipped night falls. */
+  startedAt: string;
+}
+
+export type GridColumn = RunColumn | SkipColumn;
+
+const WORK_STAGES = new Set(["needs_work", "eligible"]);
+
+export const SKIP_REASON: Record<string, { title: string; detail: string }> = {
+  cooldown: {
+    title: "Cooling down",
+    detail: "Cryo maintained this table recently, and the cooldown before the next run hadn't passed."
+  },
+  stale_stats: {
+    title: "Scan too old",
+    detail: "The last scan was too old to plan from. The table is picked again after it's rescanned."
+  },
+  excluded: {
+    title: "Excluded",
+    detail:
+      "The table was inactive, its source was disabled, its last scan failed, or its schema isn't in the maintenance allow-list."
+  },
+  held: {
+    title: "On hold",
+    detail: "An operator put maintenance on hold for this table or its schema."
+  },
+  backoff: {
+    title: "Retry backoff",
+    detail: "A recent run failed, so Cryo waits before trying this table again."
+  },
+  no_work: {
+    title: "Nothing to do",
+    detail: "The last scan found nothing that needed maintenance."
+  },
+  budget_cap: {
+    title: "Over the night's cap",
+    detail: "The table needed work, but the night's table cap was reached and higher-priority tables went first."
+  }
+};
+
+export const skipReasonText = (reason: string | null) =>
+  (reason && SKIP_REASON[reason]) || { title: "Not selected", detail: "The nightly selection passed this table over without recording why." };
+
+/**
+ * Merge nightly selections that passed this table over into the run timeline. Only nights inside
+ * the shown runs' time span are kept (or the latest ones when there are no runs), and a streak of
+ * nights with the same reason and no run between them becomes one column.
+ */
+export const mergeSkipColumns = (runs: RunColumn[], evaluations: SkipEvaluationRead[], maxSkipColumns = 12): GridColumn[] => {
+  const oldestRun = runs.length ? Date.parse(runs[0].startedAt ?? "") : Number.NaN;
+  const skipped = evaluations
+    .filter((row) => row.stage !== "selected")
+    .filter((row) => !Number.isFinite(oldestRun) || Date.parse(row.evaluated_at) >= oldestRun)
+    .sort((a, b) => Date.parse(a.evaluated_at) - Date.parse(b.evaluated_at));
+  const timeline: Array<{ at: number; run?: RunColumn; skip?: SkipEvaluationRead }> = [
+    ...runs.map((run) => ({ at: Date.parse(run.startedAt ?? ""), run })),
+    ...skipped.map((skip) => ({ at: Date.parse(skip.evaluated_at), skip }))
+  ].sort((a, b) => (a.at || 0) - (b.at || 0));
+
+  const merged: GridColumn[] = [];
+  for (const item of timeline) {
+    if (item.run) {
+      merged.push(item.run);
+      continue;
+    }
+    const skip = item.skip as SkipEvaluationRead;
+    const hadWork = WORK_STAGES.has(skip.stage);
+    const last = merged[merged.length - 1];
+    if (last?.kind === "skip" && last.reason === skip.reason && last.hadWork === hadWork) {
+      last.count += 1;
+      last.lastAt = skip.evaluated_at;
+      last.startedAt = skip.evaluated_at;
+      continue;
+    }
+    merged.push({
+      kind: "skip",
+      key: `skip-${skip.id}`,
+      reason: skip.reason,
+      hadWork,
+      firstAt: skip.evaluated_at,
+      lastAt: skip.evaluated_at,
+      count: 1,
+      startedAt: skip.evaluated_at
+    });
+  }
+  let skipBudget = maxSkipColumns;
+  const kept: GridColumn[] = [];
+  for (let index = merged.length - 1; index >= 0; index -= 1) {
+    const column = merged[index];
+    if (column.kind === "skip") {
+      if (skipBudget === 0) continue;
+      skipBudget -= 1;
+    }
+    kept.unshift(column);
+  }
+  return kept;
+};
+
 /** Grid rows: the four core operations always, extras only if some shown run used them. */
-export const gridRows = (columns: RunColumn[]): string[] =>
-  GRID_OPERATIONS.filter((op) => CORE_GRID_OPERATIONS.has(op) || columns.some((column) => column.cells.has(op)));
+export const gridRows = (columns: GridColumn[]): string[] =>
+  GRID_OPERATIONS.filter(
+    (op) => CORE_GRID_OPERATIONS.has(op) || columns.some((column) => column.kind === "run" && column.cells.has(op))
+  );
 
 export interface StatChange {
   label: string;

@@ -106,9 +106,9 @@ def account_metadata_cost(
     )
 
     referenced_files: dict[str, dict[str, Any]] = {}
-    manifest_paths_seen: set[str] = set()
-    manifest_bytes_total = 0
-    manifest_count = 0
+    # Unchanged manifests are carried into every later snapshot's manifest list, so a
+    # manifest's files belong to every snapshot that lists it, not only the first one seen.
+    manifests_by_path: dict[str, tuple[object, set[int]]] = {}
     bounded_out: str | None = None
 
     io = _attr(table_obj, "io", None)
@@ -122,15 +122,22 @@ def account_metadata_cost(
             manifests = []
         for manifest in manifests:
             manifest_path = _manifest_path(manifest)
-            if manifest_path in manifest_paths_seen:
+            known = manifests_by_path.get(manifest_path)
+            if known is not None:
+                known[1].add(snapshot_id)
                 continue
-            if len(manifest_paths_seen) >= settings.cost_scan_max_manifests:
+            if len(manifests_by_path) >= settings.cost_scan_max_manifests:
                 bounded_out = "manifests"
                 break
-            manifest_paths_seen.add(manifest_path)
-            manifest_count += 1
-            manifest_bytes_total += int(_attr(manifest, "manifest_length", 0) or 0)
+            manifests_by_path[manifest_path] = (manifest, {snapshot_id})
+        if bounded_out:
+            break
 
+    manifest_count = len(manifests_by_path)
+    manifest_bytes_total = 0
+    if not bounded_out:
+        for manifest, manifest_snapshot_ids in manifests_by_path.values():
+            manifest_bytes_total += int(_attr(manifest, "manifest_length", 0) or 0)
             for entry in _call_manifest_entries(manifest, io):
                 if _entry_status_deleted(entry):
                     continue
@@ -149,10 +156,8 @@ def account_metadata_cost(
                         "snapshot_ids": set(),
                     },
                 )
-                record["snapshot_ids"].add(snapshot_id)
+                record["snapshot_ids"].update(manifest_snapshot_ids)
                 record["size_bytes"] = max(record["size_bytes"], size)
-        if bounded_out:
-            break
 
     if bounded_out:
         return _heuristic_fallback(

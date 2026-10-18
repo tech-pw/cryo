@@ -1,11 +1,8 @@
 import { apiFetch, type ApiOptions } from "./client";
+import type { components } from "./openapi";
 
-export interface SnapshotSummary {
-  total_records: number | null;
-  total_files_size: number | null;
-  added_data_files: number | null;
-  deleted_data_files: number | null;
-}
+export type SnapshotSummary = components["schemas"]["SnapshotSummaryRead"];
+export type SnapshotWriter = components["schemas"]["SnapshotWriterRead"];
 
 export interface SnapshotRef {
   name: string;

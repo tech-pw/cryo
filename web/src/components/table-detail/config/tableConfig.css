@@ -1032,3 +1032,41 @@ button.tc-tile { cursor: pointer; }
   .tc-row-main,
   .tc-ops-row { grid-template-columns: 1fr; }
 }
+
+.tc-suggestions {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-default);
+}
+
+.tc-suggestions header h3 { font-size: 0.875rem; font-weight: 600; color: var(--color-text-primary); }
+.tc-suggestions header p { margin-top: 0.125rem; font-size: 0.75rem; color: var(--color-text-secondary); }
+
+.tc-suggestions ul { margin-top: 0.75rem; }
+
+.tc-suggestions li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.625rem 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.tc-suggestion-text { min-width: 0; }
+.tc-suggestion-text p:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.tc-suggestion-text code { font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-text-primary); }
+.tc-suggestion-values { margin-top: 0.125rem; font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-text-secondary); }
+.tc-suggestion-reason { margin-top: 0.125rem; font-size: 0.75rem; line-height: 1.45; color: var(--color-text-secondary); }
+.tc-suggestion-action { flex-shrink: 0; }
+.tc-suggestion-link { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.8125rem; color: var(--color-primary); }
+
+.tc-suggestion-alert {
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--color-status-danger) 40%, var(--color-border));
+  border-radius: var(--radius-default);
+  background: var(--color-surface-sunken);
+  font-size: 0.8125rem;
+}

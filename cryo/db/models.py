@@ -1351,6 +1351,8 @@ class MaintenanceExclusion(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
+    # NULL = open-ended (schema/table opt-outs from Control Room); set = a time-boxed hold.
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
 
 class TableOperationExclusion(Base):

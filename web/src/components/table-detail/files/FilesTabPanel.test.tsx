@@ -28,6 +28,8 @@ const getDataQualityProfile = vi.fn();
 const getColumnStats = vi.fn();
 const getBloomFilterRecommendations = vi.fn();
 const getPropertyRecommendations = vi.fn();
+const getTableColumnUsage = vi.fn();
+const getPartitionEvolutionRecommendation = vi.fn();
 
 vi.mock("../../../api/client", () => ({
   getTable: (...args: unknown[]) => getTable(...args),
@@ -37,7 +39,9 @@ vi.mock("../../../api/client", () => ({
   getDataQualityProfile: (...args: unknown[]) => getDataQualityProfile(...args),
   getColumnStats: (...args: unknown[]) => getColumnStats(...args),
   getBloomFilterRecommendations: (...args: unknown[]) => getBloomFilterRecommendations(...args),
-  getPropertyRecommendations: (...args: unknown[]) => getPropertyRecommendations(...args)
+  getPropertyRecommendations: (...args: unknown[]) => getPropertyRecommendations(...args),
+  getTableColumnUsage: (...args: unknown[]) => getTableColumnUsage(...args),
+  getPartitionEvolutionRecommendation: (...args: unknown[]) => getPartitionEvolutionRecommendation(...args)
 }));
 
 const tableShell = (stats: Record<string, unknown>) => ({
@@ -75,6 +79,14 @@ describe("FilesTabPanel", () => {
     getColumnStats.mockReset();
     getBloomFilterRecommendations.mockReset();
     getPropertyRecommendations.mockReset();
+    getTableColumnUsage.mockReset().mockResolvedValue({
+      table_id: "table-1",
+      window_days: 30,
+      queries: null,
+      aggregated_at: null,
+      columns: []
+    });
+    getPartitionEvolutionRecommendation.mockReset().mockResolvedValue(null);
     getTablePartitions.mockResolvedValue([]);
     getTableHistory.mockResolvedValue([]);
     getTablePiiClassification.mockResolvedValue({ table_id: "table-1", matches: [] });
@@ -194,5 +206,81 @@ describe("FilesTabPanel", () => {
     expect(within(series).getByTestId("timeseries-gap")).toBeInTheDocument();
     expect(within(series).queryByText(/99\.5/)).not.toBeInTheDocument();
     expect(screen.queryByText("Size (GB)")).not.toBeInTheDocument();
+  });
+
+  it("shades each column by how often queries filter and join on it", async () => {
+    getTable.mockResolvedValue(
+      tableShell({
+        partition_col: "event_ts",
+        raw: {
+          column_quality: [
+            { column_name: "user_id", column_type: "bigint", null_rate: 0 },
+            { column_name: "payload", column_type: "string", null_rate: 0 }
+          ]
+        }
+      })
+    );
+    getTableColumnUsage.mockResolvedValue({
+      table_id: "table-1",
+      window_days: 30,
+      queries: 500,
+      aggregated_at: "2026-10-18T00:00:00Z",
+      columns: [
+        {
+          column: "user_id",
+          filter_count: 120,
+          equality_filter_count: 120,
+          range_filter_count: 0,
+          join_count: 40,
+          projection_count: 300,
+          avg_selectivity: 0.01
+        }
+      ]
+    });
+
+    renderPanel();
+
+    expect(await screen.findByRole("columnheader", { name: "Query use · 30 days" })).toBeInTheDocument();
+    expect(screen.getByText("120 filter · 40 join")).toBeInTheDocument();
+    expect(screen.getByText(/from 500 queries in the last 30 days/)).toBeInTheDocument();
+  });
+
+  it("explains why there is no column use instead of drawing an empty heatmap", async () => {
+    getTable.mockResolvedValue(tableShell({ partition_col: "event_ts", raw: { column_quality: [] } }));
+
+    renderPanel();
+
+    expect(await screen.findByText(/No column-level query use recorded/)).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Query use · 30 days" })).not.toBeInTheDocument();
+  });
+
+  it("flags delete-file debt with the health check's cut-offs and shows a suggested partition change", async () => {
+    getTable.mockResolvedValue(
+      tableShell({ partition_col: "event_ts", delete_file_pct: 24, total_delete_files: 300, raw: { column_quality: [] } })
+    );
+    getTableHistory.mockResolvedValue([
+      { scan_at: "2026-10-01T00:00:00Z", total_delete_files: 120, delete_file_pct: 10 },
+      { scan_at: "2026-10-02T00:00:00Z", total_delete_files: 300, delete_file_pct: 24 }
+    ]);
+    getPartitionEvolutionRecommendation.mockResolvedValue({
+      table_id: "table-1",
+      table_name: "events",
+      current_partition_spec: "month(event_ts)",
+      recommended_partition_spec: "day(event_ts)",
+      reason: "Most queries filter a single day.",
+      confidence: 0.85,
+      estimated_pruning_improvement_pct: 60,
+      query_patterns_analyzed: 900,
+      cardinality_estimate: "low",
+      warnings: [],
+      trigger: "granularity"
+    });
+
+    renderPanel();
+
+    expect(await screen.findByText("Major rewrite recommended")).toBeInTheDocument();
+    expect(await screen.findByText("Suggested partition change")).toBeInTheDocument();
+    expect(screen.getByText("day(event_ts)")).toBeInTheDocument();
+    expect(screen.getByText("85% confidence")).toBeInTheDocument();
   });
 });
