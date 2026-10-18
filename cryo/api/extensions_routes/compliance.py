@@ -7,10 +7,10 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from cryo.api.deps import SessionDep, require_operator, require_viewer
+from cryo.api.deps import SessionDep, require_admin, require_operator, require_viewer
 from cryo.api.extensions_helpers import build_mcp_server, table_stats_dict
 from cryo.api.security import Principal, Role
 from cryo.api.snapshot_presence import (
@@ -19,7 +19,8 @@ from cryo.api.snapshot_presence import (
     parse_snapshot_id,
 )
 from cryo.compliance.governance import track_pending_deletions
-from cryo.db.models import AuditLog, Source, Table, TableStats
+from cryo.db.models import AuditLog, ProtectedSnapshot, Source, Table, TableStats
+from cryo.db.repositories.deletion_tracking import DeletionTrackingRepository
 from cryo.db.repositories.protected_snapshots import ProtectedSnapshotRepository
 from cryo.sources.latency import get_catalog_latency_monitor
 
@@ -33,6 +34,8 @@ class ComplianceStatusResponse(BaseModel):
     pending_deletion: dict[str, Any] | None = None
     abac_policy_count: int = 0
     abac_enforcement_note: str | None = None
+    abac_enforced: bool = False
+    protected_snapshot_count: int = 0
 
 
 class ProtectSnapshotRequest(BaseModel):
@@ -70,6 +73,28 @@ class UnprotectSnapshotResponse(BaseModel):
     table_id: uuid.UUID
     snapshot_id: str
     removed: bool
+
+
+class RollbackSnapshotRequest(BaseModel):
+    snapshot_id: str
+    # Required, not just a UI confirm dialog: rollback moves the table's current pointer
+    # backwards, which is the one write in this file that loses data other writers may
+    # already depend on (anything committed after the target snapshot stops being "current").
+    confirm: bool = False
+
+    @field_validator("snapshot_id", mode="before")
+    @classmethod
+    def decimal_snapshot_id(cls, value: object) -> str:
+        parsed = parse_snapshot_id(value)
+        if parsed is None:
+            raise ValueError("snapshot_id must be a non-negative decimal string")
+        return str(parsed)
+
+
+class RollbackSnapshotResponse(BaseModel):
+    table_id: uuid.UUID
+    snapshot_id: str
+    previous_snapshot_id: str | None = None
 
 
 class CatalogLatencyResponse(BaseModel):
@@ -204,36 +229,52 @@ def get_compliance_status(table_id: uuid.UUID, session: SessionDep) -> Complianc
     table = session.get(Table, table_id)
     if table is None:
         raise HTTPException(status_code=404, detail="Table not found")
-    stats = session.scalar(select(TableStats).where(TableStats.table_id == table_id))
-    stats_dict = table_stats_dict(table, stats)
-    pending = track_pending_deletions(
-        f"iceberg.{table.schema_name}.{table.table_name}",
-        stats_dict,
-    )
+    tracked = DeletionTrackingRepository(session).pending_for_table(table_id)
+    pending_deletion: dict[str, Any] | None = None
+    if tracked:
+        pending_deletion = {
+            "pending_rows": sum(row.pending_rows for row in tracked),
+            "blocked_until": max(row.blocked_until for row in tracked).isoformat(),
+            "reason": tracked[0].reason,
+        }
+    else:
+        stats = session.scalar(select(TableStats).where(TableStats.table_id == table_id))
+        pending = track_pending_deletions(
+            f"iceberg.{table.schema_name}.{table.table_name}",
+            table_stats_dict(table, stats),
+        )
+        if pending is not None:
+            # Stats only carry a count, not when the rows were deleted, so the date is unknown.
+            pending_deletion = {
+                "pending_rows": pending.pending_rows,
+                "blocked_until": None,
+                "reason": pending.reason,
+            }
     abac_count = len(
         session.scalars(select(ABACPolicy).where(ABACPolicy.table_id == table_id)).all()
     )
     abac_note = (
-        "ABAC maintenance enforcement active; scan-time row/column filters require catalog proxy."
+        "Recorded only. Cryo does not enforce these yet: engines read the catalog directly, "
+        "so row filters and column masks apply nowhere."
         if abac_count
         else None
+    )
+    protected = int(
+        session.scalar(
+            select(func.count())
+            .select_from(ProtectedSnapshot)
+            .where(ProtectedSnapshot.table_id == table_id)
+        )
+        or 0
     )
     return ComplianceStatusResponse(
         table_id=table_id,
         table_ref=f"iceberg.{table.schema_name}.{table.table_name}",
-        pending_deletion=(
-            {
-                "pending_rows": pending.pending_rows,
-                "blocked_until": pending.blocked_until.isoformat()
-                if pending.blocked_until
-                else None,
-                "reason": pending.reason,
-            }
-            if pending
-            else None
-        ),
+        pending_deletion=pending_deletion,
         abac_policy_count=abac_count,
         abac_enforcement_note=abac_note,
+        abac_enforced=False,
+        protected_snapshot_count=protected,
     )
 
 
@@ -376,6 +417,83 @@ def unprotect_snapshot(
         table_id=table_id,
         snapshot_id=str(parsed),
         removed=True,
+    )
+
+
+@router.post(
+    "/tables/{table_id}/snapshots/{snapshot_id}/rollback",
+    response_model=RollbackSnapshotResponse,
+    dependencies=[Depends(require_admin)],
+)
+def rollback_table_snapshot(
+    table_id: uuid.UUID,
+    snapshot_id: str,
+    payload: RollbackSnapshotRequest,
+    session: SessionDep,
+    principal: Annotated[Principal, Depends(require_admin)],
+) -> RollbackSnapshotResponse:
+    """Move the table's current snapshot pointer back to ``snapshot_id``.
+
+    Admin-gated, unlike protect/unprotect: this changes what every reader sees as
+    "the table" going forward, not just what Cryo retains. Loads the table fresh
+    immediately before the write (not from any cached metadata) so the commit is
+    against the real current state -- a stale load here would otherwise look like
+    a successful rollback that silently reverted someone else's commit too.
+    """
+    parsed = parse_snapshot_id(payload.snapshot_id)
+    if parsed is None or str(parsed) != snapshot_id:
+        raise HTTPException(
+            status_code=400, detail="snapshot_id must be a non-negative decimal string"
+        )
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="confirm must be true to roll back a table")
+
+    table = session.get(Table, table_id)
+    if table is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+    source = session.get(Source, table.source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    try:
+        present = load_current_snapshot_ids(
+            _source_view(source), table.schema_name, table.table_name
+        )
+    except CatalogMetadataError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Catalog metadata read failed: {exc}"[:500]
+        ) from exc
+    if parsed not in present:
+        raise HTTPException(status_code=404, detail="Snapshot not found in current table metadata")
+
+    try:
+        from cryo.sources.factory import source_catalog_for
+
+        catalog = source_catalog_for(_source_view(source))
+        iceberg_table = catalog.load_table(table.schema_name, table.table_name)
+        previous_snapshot_id = iceberg_table.metadata.current_snapshot_id
+        iceberg_table.manage_snapshots().rollback_to_snapshot(parsed).commit()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Rollback commit failed: {type(exc).__name__}: {exc}"[:500]
+        ) from exc
+
+    session.add(
+        AuditLog(
+            table_id=table_id,
+            action="snapshot.rollback",
+            status="OK",
+            detail=f"snapshot_id={parsed} previous_snapshot_id={previous_snapshot_id}",
+            actor=principal.subject,
+        )
+    )
+    session.commit()
+    return RollbackSnapshotResponse(
+        table_id=table_id,
+        snapshot_id=str(parsed),
+        previous_snapshot_id=(
+            str(previous_snapshot_id) if previous_snapshot_id is not None else None
+        ),
     )
 
 

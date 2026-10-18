@@ -8,6 +8,22 @@
 .td-files-intro p, .td-files-caption { margin: 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.6; }
 .td-files-section { display: flex; min-width: 0; flex-direction: column; gap: 14px; padding: 20px; border: 1px solid var(--color-border); border-radius: var(--radius-default); background: var(--color-surface-raised); scroll-margin-top: 24px; }
 .td-files-section > h2 { font-size: 15px; }
+.td-files-delete-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.td-files-delete-head h2 { font-size: 15px; }
+.td-files-delete-action { margin: 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--color-status-warning) 40%, var(--color-border)); border-radius: var(--radius-default); background: var(--color-surface-sunken); font-size: 13px; line-height: 1.55; }
+.td-usage { display: inline-grid; min-width: 140px; gap: 2px; }
+.td-usage-bar { display: block; min-width: 2px; height: 5px; border-radius: 3px; }
+.td-usage-bar[data-kind="filter"], .td-usage-key[data-kind="filter"] { background: var(--color-chart-primary, var(--color-primary)); }
+.td-usage-bar[data-kind="join"], .td-usage-key[data-kind="join"] { background: var(--color-status-warning); }
+.td-usage-text { color: var(--color-text-secondary); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.td-usage-key { display: inline-block; width: 10px; height: 6px; margin: 0 2px 1px 6px; border-radius: 2px; vertical-align: middle; }
+.td-files-evolution { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--color-primary) 35%, var(--color-border)); border-radius: var(--radius-default); }
+.td-files-evolution-spec { margin: 0; font-size: 13px; }
+.td-files-evolution-spec code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12.5px; }
+.td-files-evolution-facts { display: flex; flex-wrap: wrap; gap: 8px 24px; }
+.td-files-evolution-facts dt { color: var(--color-text-secondary); font-size: 12px; }
+.td-files-evolution-facts dd { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.td-files-evolution-warnings { margin: 0; padding-left: 18px; list-style: disc; color: var(--color-status-warning-fg); font-size: 12.5px; }
 .td-files-measures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 16px; }
 .td-files-measures dt { margin-bottom: 5px; color: var(--color-text-secondary); font-size: 12px; }
 .td-files-measures dd { overflow-wrap: anywhere; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
