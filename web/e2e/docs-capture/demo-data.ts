@@ -70,6 +70,27 @@ const byWorst = [...DEMO_TABLES].sort((a, b) => a.stats.overall_score - b.stats.
 const totalGb = SPECS.reduce((n, s) => n + s.sizeGb, 0);
 const totalSmall = SPECS.reduce((n, s) => n + s.small, 0);
 const s3Cost = totalGb * 0.023;
+const totalFiles = SPECS.reduce((n, s) => n + s.files, 0);
+
+const QUERY_COUNTS: Record<string, number> = { events: 18_420, page_views: 9_310, metrics: 2_115, inventory_snapshots: 640 };
+const HOT_AT_RISK = DEMO_TABLES.filter((t) => t.stats.grade === "D" || t.stats.grade === "F").sort(
+  (a, b) => (QUERY_COUNTS[b.table_name] ?? 0) - (QUERY_COUNTS[a.table_name] ?? 0)
+);
+const improved = (index: number, from: [string, number], to: [string, number], minutes: number) => ({
+  table_id: DEMO_TABLES[index].id,
+  schema_name: DEMO_TABLES[index].schema_name,
+  table_name: DEMO_TABLES[index].table_name,
+  previous_grade: from[0],
+  previous_score: from[1],
+  grade: to[0],
+  overall_score: to[1],
+  improved_at: ago(minutes)
+});
+const RECENTLY_IMPROVED = [
+  improved(9, ["D", 52], ["B", 76], 18),
+  improved(3, ["C", 64], ["B", 80], 31),
+  improved(5, ["C", 68], ["B", 84], 47)
+];
 
 export function demoTablesBody(url: URL) {
   const limit = Number(url.searchParams.get("limit") ?? 50) || 50;
@@ -86,7 +107,9 @@ export function demoDashboardBody() {
     totals: {
       total_tables: SPECS.length,
       total_size_gb: totalGb,
+      total_files: totalFiles,
       small_files_count: totalSmall,
+      running_jobs: 3,
       estimated_monthly_s3_cost_usd: s3Cost,
       projected_monthly_s3_cost_usd: s3Cost * 0.78,
       projected_savings_usd_month: s3Cost * 0.22,
@@ -94,8 +117,28 @@ export function demoDashboardBody() {
       needs_compaction_count: SPECS.filter((s) => ["C", "D", "F"].includes(s.grade)).length
     },
     grade_distribution: ["A", "B", "C", "D", "F"].map((grade) => ({ grade, count: count(grade) })).concat([{ grade: "Not graded", count: 0 }]),
-    freshness_distribution: [],
+    freshness_distribution: [
+      ["within_24h", "Updated in last 24 hours", 6], ["1_3d", "Not updated 1-3 days", 3],
+      ["3_7d", "Not updated 3-7 days", 2], ["7_15d", "Not updated 7-15 days", 1],
+      ["15_30d", "Not updated 15-30 days", 0], ["1_3m", "Not updated 1-3 months", 1],
+      ["3_6m", "Not updated 3-6 months", 0], ["6_12m", "Not updated 6-12 months", 0],
+      ["over_1y", "Not updated over 1 year", 1], ["unknown", "No snapshot timestamp", 0], ["failed", "Failed / corrupt tables", 0]
+    ].map(([key, label, count]) => ({ key, label, count })),
     freshness_as_of: VISUAL_NOW_ISO,
+    hot_at_risk: HOT_AT_RISK.map((t) => ({
+      table_id: t.id,
+      schema_name: t.schema_name,
+      table_name: t.table_name,
+      grade: t.stats.grade,
+      overall_score: t.stats.overall_score,
+      total_size_gb: t.stats.total_size_gb,
+      total_files: t.stats.total_files,
+      small_files_count: t.stats.small_files_count,
+      estimated_monthly_s3_cost_usd: t.stats.total_size_gb * 0.023,
+      query_count_30d: QUERY_COUNTS[t.table_name] ?? 0
+    })),
+    hot_at_risk_count: HOT_AT_RISK.length,
+    recently_improved: RECENTLY_IMPROVED,
     top_offenders: byWorst.slice(0, 6).map((t) => ({
       table_id: t.id,
       schema_name: t.schema_name,
@@ -123,8 +166,13 @@ export function demoVitalsBody() {
     score: 71,
     status: "DEGRADED",
     headline: "Two tables need compaction before the next peak window",
-    deductions: [],
-    impact: { direction: "improving", measurement_state: "complete", gb_freed_yesterday: 38.4, measured: 9, succeeded: 9 },
+    deductions: [
+      { reason: "jobs: 1 table failed in the latest nightly run.", points: 8 },
+      { reason: "scanner: 2 tables have not been scanned in 36 hours.", points: 8 },
+      { reason: "health: 2 tables are at grade F.", points: 8 },
+      { reason: "dispatch: Admission waited 4 minutes for a Trino slot.", points: 5 }
+    ],
+    impact: { direction: "improving", measurement_state: "complete", gb_freed_yesterday: 38.4, wow_pct: 12.4, measured: 9, succeeded: 9 },
     stale: false
   };
 }
@@ -133,6 +181,19 @@ const OPS = ["optimize", "expire_snapshots", "remove_orphan_files", "optimize_ma
 const JOB_TABLES = byWorst.slice(0, 9);
 
 export const DEMO_RUN_ID = "7f3c9a21-4b8e-4d2a-9c1f-2e6b8d0a5c43";
+
+function batchSummary(selected: number, failed: number, partial: number, skipped: number) {
+  return {
+    pipeline: "batch",
+    selected,
+    succeeded: selected - failed - partial - skipped,
+    failed,
+    partial,
+    skipped,
+    planning_failed: 0,
+    nothing_to_do: 0
+  };
+}
 
 export const DEMO_RUN = {
   id: DEMO_RUN_ID,
@@ -144,22 +205,37 @@ export const DEMO_RUN = {
   scheduled_at: ago(95),
   created_at: ago(95),
   finished_at: ago(12),
-  summary: { jobs_total: JOB_TABLES.length, measurement_state: "complete", measured_actions: 34, succeeded_actions: 33 },
+  summary: {
+    jobs_total: JOB_TABLES.length,
+    measurement_state: "complete",
+    measured_actions: 34,
+    succeeded_actions: 33,
+    ...batchSummary(JOB_TABLES.length, 1, 0, 1)
+  },
   realized_bytes_freed: Math.round(38.4 * GB),
   realized_actions_measured: 34,
   realized_actions_succeeded: 33
 };
 
-const HISTORY_PREFIXES = ["a92e1c40", "5d7b3f18", "e03a9b67", "1fc84d2a", "b6e5027c", "48d1a9e3", "9a3f6c05"];
+const HISTORY_PREFIXES = [
+  "a92e1c40", "5d7b3f18", "e03a9b67", "1fc84d2a", "b6e5027c", "48d1a9e3", "9a3f6c05",
+  "3c7e91ab", "d2f4086e", "7b19c3d5", "f08a2e64", "26d5b7c9", "8e3a10f2"
+];
 
-const HISTORY_SHAPE: Array<{ status: string; minutes: number; freedGb: number }> = [
-  { status: "succeeded", minutes: 78, freedGb: 31.2 },
-  { status: "succeeded", minutes: 91, freedGb: 44.7 },
-  { status: "failed", minutes: 23, freedGb: 0 },
-  { status: "succeeded", minutes: 69, freedGb: 27.5 },
-  { status: "partial", minutes: 104, freedGb: 18.9 },
-  { status: "succeeded", minutes: 74, freedGb: 35.1 },
-  { status: "succeeded", minutes: 88, freedGb: 40.3 }
+const HISTORY_SHAPE: Array<{ status: string; minutes: number; freedGb: number; failed: number; partial: number }> = [
+  { status: "succeeded", minutes: 78, freedGb: 31.2, failed: 0, partial: 0 },
+  { status: "succeeded", minutes: 91, freedGb: 44.7, failed: 0, partial: 0 },
+  { status: "failed", minutes: 23, freedGb: 0, failed: 9, partial: 0 },
+  { status: "succeeded", minutes: 69, freedGb: 27.5, failed: 0, partial: 0 },
+  { status: "partial", minutes: 104, freedGb: 18.9, failed: 0, partial: 2 },
+  { status: "succeeded", minutes: 74, freedGb: 35.1, failed: 0, partial: 0 },
+  { status: "succeeded", minutes: 88, freedGb: 40.3, failed: 0, partial: 0 },
+  { status: "succeeded", minutes: 81, freedGb: 29.8, failed: 0, partial: 0 },
+  { status: "partial", minutes: 97, freedGb: 22.4, failed: 1, partial: 1 },
+  { status: "succeeded", minutes: 72, freedGb: 33.0, failed: 0, partial: 0 },
+  { status: "succeeded", minutes: 76, freedGb: 30.6, failed: 0, partial: 0 },
+  { status: "succeeded", minutes: 84, freedGb: 37.9, failed: 0, partial: 0 },
+  { status: "succeeded", minutes: 79, freedGb: 34.2, failed: 0, partial: 0 }
 ];
 
 export const DEMO_RUN_HISTORY = [
@@ -185,6 +261,7 @@ export const DEMO_RUN_HISTORY = [
       scheduled_at: ago(started),
       created_at: ago(started),
       finished_at: ago(started - shape.minutes),
+      summary: { ...DEMO_RUN.summary, ...batchSummary(JOB_TABLES.length, shape.failed, shape.partial, 0) },
       realized_bytes_freed: shape.status === "failed" ? null : Math.round(shape.freedGb * GB)
     };
   })
@@ -453,8 +530,37 @@ export function demoTableCost(tableId: string) {
 export function demoEngineLoad() {
   return {
     engines: [
-      { destination_id: VISUAL_TRINO_DESTINATION_ID, name: "demo-trino", engine: "trino", slots_used: 2, slots_limit: 6, admission: "admitting", live_probe: "4 running queries, 0 queued" }
-    ]
+      { destination_id: VISUAL_TRINO_DESTINATION_ID, name: "demo-trino", engine: "trino", slots_used: 2, slots_limit: 6, admission: "open", live_probe: "4 running queries, 0 queued" },
+      { destination_id: "00000000-0000-4000-8000-0000000000e2", name: "cryo-native", engine: "native", slots_used: 1, slots_limit: 4, admission: "open", live_probe: "not recorded" }
+    ],
+    workers_online: 4
+  };
+}
+
+export function demoPendingApprovals() {
+  return [{ id: visualUuid(0xb1), table_id: DEMO_TABLES[12].id, operation: "remove_orphan_files", requested_at: ago(55) }];
+}
+
+export function demoFastPathFindings() {
+  return [
+    { table_id: DEMO_TABLES[13].id, table_name: "marketing.campaign_touches", severity: "warning", finding_type: "small_files", reason: "3,015 of 5,010 data files are under the target size.", detected_at: ago(140) },
+    { table_id: DEMO_TABLES[7].id, table_name: "ops.audit_log", severity: "info", finding_type: "missing_target_file_size", reason: "write.target-file-size-bytes is not set; Trino writes 128 MB files.", detected_at: ago(310) }
+  ];
+}
+
+export function demoFleetTrends() {
+  const dfByDay = [7, 7, 6, 6, 6, 5, 6, 5, 5, 5, 5, 4, 6, 4];
+  const day = (offset: number) => new Date(NOW - offset * 86_400_000).toISOString().slice(0, 10);
+  return {
+    days: 14,
+    health_trend: dfByDay.map((df, i) => ({
+      day: day(dfByDay.length - 1 - i),
+      avg_health_score: 60 + i,
+      tables_at_grade_df: df,
+      is_partial: i === dfByDay.length - 1,
+      tables_counted: SPECS.length
+    })),
+    cost_trend: []
   };
 }
 

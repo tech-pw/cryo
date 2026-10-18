@@ -7,6 +7,7 @@ import type {
   TableHoldWrite,
   CapabilityManifest,
   CostDashboard,
+  DashboardImprovedTable,
   DatalakeDashboard,
   FleetTrendsResponse,
   DestinationRead,
@@ -715,13 +716,14 @@ export const runTableOperations = (
 
 export const listRuns = (
   api: ApiOptions,
-  args: { kind?: string; source_id?: UUID; preset_id?: UUID; limit?: number; offset?: number } = {}
+  args: { kind?: string; source_id?: UUID; preset_id?: UUID; pipeline?: string; limit?: number; offset?: number } = {}
 ) =>
   apiFetch<RunRead[]>("/runs", api, {
     query: {
       kind: args.kind,
       source_id: args.source_id,
       preset_id: args.preset_id,
+      pipeline: args.pipeline,
       limit: args.limit,
       offset: args.offset
     }
@@ -751,10 +753,10 @@ export const forceAdmitJob = (api: ApiOptions, id: UUID) =>
 
 export const getDatalakeDashboard = (
   api: ApiOptions,
-  args: { top_limit?: number; drift_limit?: number } = {}
+  args: { top_limit?: number; drift_limit?: number; hot_limit?: number } = {}
 ) =>
   apiFetch<RawDatalakeDashboard>("/dashboards/datalake", api, {
-    query: { top_limit: args.top_limit, drift_limit: args.drift_limit }
+    query: { top_limit: args.top_limit, drift_limit: args.drift_limit, hot_limit: args.hot_limit }
   }).then(normalizeDashboard);
 export const getFleetTrends = (api: ApiOptions, args: { days?: number } = {}) =>
   apiFetch<FleetTrendsResponse>("/dashboard/fleet-trends", api, {
@@ -828,27 +830,23 @@ interface RawDatalakeDashboard {
   totals: {
     total_tables: number;
     total_size_gb: number;
+    total_files?: number;
     small_files_count: number;
     estimated_monthly_s3_cost_usd: number;
     projected_monthly_s3_cost_usd?: number;
     projected_savings_usd_month?: number;
     reclaimable_bytes?: number;
     needs_compaction_count: number;
+    running_jobs?: number;
   };
   grade_distribution: Array<{ grade: string; count: number }>;
   freshness_distribution?: DatalakeDashboard["freshness_distribution"];
   freshness_as_of?: string | null;
-  top_offenders: Array<{
-    table_id: UUID;
-    schema_name: string;
-    table_name: string;
-    grade?: string | null;
-    overall_score?: number | null;
-    total_size_gb?: number;
-    total_files?: number;
-    small_files_count?: number;
-    estimated_monthly_s3_cost_usd?: number | null;
-  }>;
+  top_offenders: RawDashboardTable[];
+  hot_at_risk?: RawDashboardTable[];
+  hot_at_risk_count?: number;
+  recently_improved?: DashboardImprovedTable[];
+  recently_improved_count?: number;
   drift: Array<Record<string, unknown>>;
   cost_by_schema?: Array<{
     schema_name: string;
@@ -857,6 +855,37 @@ interface RawDatalakeDashboard {
     savings_usd: number;
   }>;
 }
+
+interface RawDashboardTable {
+  table_id: UUID;
+  schema_name: string;
+  table_name: string;
+  grade?: string | null;
+  overall_score?: number | null;
+  total_size_gb?: number;
+  total_files?: number;
+  small_files_count?: number;
+  estimated_monthly_s3_cost_usd?: number | null;
+  query_count_30d?: number;
+}
+
+const dashboardTableRead = (item: RawDashboardTable): TableRead => ({
+  id: item.table_id,
+  source_id: "",
+  schema_name: item.schema_name,
+  table_name: item.table_name,
+  first_seen_at: "",
+  is_active: true,
+  stats: {
+    grade: item.grade ?? undefined,
+    overall_score: item.overall_score ?? undefined,
+    total_size_gb: item.total_size_gb,
+    total_files: item.total_files,
+    small_files_count: item.small_files_count,
+    query_count_30d: item.query_count_30d,
+    estimated_monthly_s3_cost_usd: item.estimated_monthly_s3_cost_usd ?? undefined
+  }
+});
 
 interface RawSchemaCost {
   items: Array<{
@@ -870,32 +899,23 @@ const normalizeDashboard = (payload: RawDatalakeDashboard): DatalakeDashboard =>
   totals: {
     tables: payload.totals.total_tables,
     size_gb: payload.totals.total_size_gb,
+    total_files: payload.totals.total_files,
     small_files: payload.totals.small_files_count,
     monthly_cost_usd: payload.totals.estimated_monthly_s3_cost_usd,
     projected_monthly_cost_usd: payload.totals.projected_monthly_s3_cost_usd,
     projected_savings_usd_month: payload.totals.projected_savings_usd_month,
     reclaimable_bytes: payload.totals.reclaimable_bytes,
-    needs_compaction: payload.totals.needs_compaction_count
+    needs_compaction: payload.totals.needs_compaction_count,
+    running_jobs: payload.totals.running_jobs
   },
   grade_distribution: payload.grade_distribution,
   freshness_distribution: payload.freshness_distribution,
   freshness_as_of: payload.freshness_as_of,
-  top_offenders: payload.top_offenders.map((item) => ({
-    id: item.table_id,
-    source_id: "",
-    schema_name: item.schema_name,
-    table_name: item.table_name,
-    first_seen_at: "",
-    is_active: true,
-    stats: {
-      grade: item.grade ?? undefined,
-      overall_score: item.overall_score ?? undefined,
-      total_size_gb: item.total_size_gb,
-      total_files: item.total_files,
-      small_files_count: item.small_files_count,
-      estimated_monthly_s3_cost_usd: item.estimated_monthly_s3_cost_usd ?? undefined
-    }
-  })),
+  top_offenders: payload.top_offenders.map(dashboardTableRead),
+  hot_at_risk: payload.hot_at_risk?.map(dashboardTableRead),
+  hot_at_risk_count: payload.hot_at_risk_count,
+  recently_improved: payload.recently_improved,
+  recently_improved_count: payload.recently_improved_count,
   drift: payload.drift,
   cost_by_schema: payload.cost_by_schema?.map((item) => ({
     schema_name: item.schema_name,

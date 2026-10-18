@@ -7516,6 +7516,31 @@ export interface components {
             /** Avg Overall Score */
             avg_overall_score?: number | null;
         };
+        /** DashboardImprovedTable */
+        DashboardImprovedTable: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Schema Name */
+            schema_name: string;
+            /** Table Name */
+            table_name: string;
+            /** Previous Grade */
+            previous_grade?: string | null;
+            /** Previous Score */
+            previous_score?: number | null;
+            /** Grade */
+            grade?: string | null;
+            /** Overall Score */
+            overall_score?: number | null;
+            /**
+             * Improved At
+             * Format: date-time
+             */
+            improved_at: string;
+        };
         /** DashboardTopOffender */
         DashboardTopOffender: {
             /**
@@ -7593,6 +7618,20 @@ export interface components {
             freshness_as_of?: string | null;
             /** Top Offenders */
             top_offenders: components["schemas"]["DashboardTopOffender"][];
+            /** Hot At Risk */
+            hot_at_risk?: components["schemas"]["DashboardTopOffender"][];
+            /**
+             * Hot At Risk Count
+             * @default 0
+             */
+            hot_at_risk_count: number;
+            /** Recently Improved */
+            recently_improved?: components["schemas"]["DashboardImprovedTable"][];
+            /**
+             * Recently Improved Count
+             * @default 0
+             */
+            recently_improved_count: number;
             /** Drift */
             drift: components["schemas"]["DashboardDriftPoint"][];
             /** Cost By Schema */
@@ -7628,6 +7667,11 @@ export interface components {
             reclaimable_bytes?: number | null;
             /** Query Count 30D */
             query_count_30d: number;
+            /**
+             * Running Jobs
+             * @default 0
+             */
+            running_jobs: number;
         };
         /** DecisionFunnelResponse */
         DecisionFunnelResponse: {
@@ -8158,6 +8202,8 @@ export interface components {
         EngineLoadResponse: {
             /** Engines */
             engines: components["schemas"]["EngineLoadRow"][];
+            /** Workers Online */
+            workers_online?: number | null;
         };
         /** EngineLoadRow */
         EngineLoadRow: {
@@ -13921,6 +13967,7 @@ export interface operations {
             query?: {
                 top_limit?: number;
                 drift_limit?: number;
+                hot_limit?: number;
             };
             header?: never;
             path?: never;
@@ -15727,6 +15774,7 @@ export interface operations {
                 kind?: string | null;
                 source_id?: string | null;
                 preset_id?: string | null;
+                pipeline?: string | null;
                 limit?: number;
                 offset?: number;
             };
