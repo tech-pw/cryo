@@ -188,7 +188,8 @@ export const predicateSummary = (
   return filters.activeOnly === false ? "All tables" : "Active tables";
 };
 
-const escapeGlob = (value: string): string => value.replace(/([?*])/g, "\\$1");
+const escapeGlob = (value: string): string =>
+  value.replace(/\\/g, "\\\\").replace(/[?*[\]]/g, "\\$&");
 
 const nameSearchPredicate = (raw: string | undefined): Predicate | null => {
   const trimmed = raw?.trim();

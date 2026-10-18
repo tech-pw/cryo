@@ -693,13 +693,7 @@ class SparkK8sClient:
         except Exception as exc:  # noqa: BLE001 - best-effort cleanup only
             if _is_not_found(exc):
                 return
-            logger.warning(
-                "Failed to clean up credentials Secret %s for job %s: %s",
-                secret_name,
-                job_id,
-                exc,
-                exc_info=True,
-            )
+            logger.warning("Failed to clean up credentials Secret for job %s", job_id)
 
     def cleanup_after_run(self, job_id: str) -> None:
         """Reclaim driver pod + credentials Secret after a terminal (or cancelled) run."""
@@ -934,13 +928,8 @@ def _adopt_credentials_secret(
                 }
             },
         )
-    except Exception as exc:  # noqa: BLE001 - best-effort; cleanup_after_run still deletes
-        logger.warning(
-            "Failed to attach credentials Secret %s to Job %s: %s",
-            secret_name,
-            job_name,
-            exc,
-        )
+    except Exception:  # noqa: BLE001 - best-effort; cleanup_after_run still deletes
+        logger.warning("Failed to attach credentials Secret to Job %s", job_name)
 
 
 def _read_pod_log_tail(

@@ -100,12 +100,27 @@ class NativeExecuteResult:
     stderr: str | None = None
 
 
+def _safe_configured_binary(configured: str) -> str | None:
+    if "\x00" in configured:
+        return None
+    path = Path(configured).expanduser()
+    if not path.is_absolute() or ".." in path.parts:
+        return None
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    if not resolved.is_file() or ".." in resolved.parts:
+        return None
+    return str(resolved)
+
+
 def resolve_binary_path(config: Mapping[str, Any]) -> str | None:
     configured = config.get("binary_path")
     if isinstance(configured, str) and configured.strip():
-        path = Path(configured).expanduser()
-        if path.is_file():
-            return str(path)
+        path = _safe_configured_binary(configured)
+        if path is not None:
+            return path
 
     impl = _resolve_engine_impl(config)
     names = _binary_names_for_impl(impl)

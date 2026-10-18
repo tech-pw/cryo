@@ -710,13 +710,8 @@ def _adopt_payload_secret(
                 }
             },
         )
-    except Exception as exc:
-        logger.warning(
-            "Failed to attach payload Secret %s to Job %s: %s",
-            secret_name,
-            job_name,
-            exc,
-        )
+    except Exception:
+        logger.warning("Failed to attach payload Secret to Job %s", job_name)
 
 
 def _get_job_pods(
