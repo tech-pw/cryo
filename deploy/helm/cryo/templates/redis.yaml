@@ -46,17 +46,17 @@ spec:
             - {{ .Values.redis.save | quote }}
           ports:
             - name: redis
-              containerPort: 6379
+              containerPort: {{ .Values.redis.port }}
           resources:
             {{- toYaml .Values.redis.resources | nindent 12 }}
           readinessProbe:
             tcpSocket:
               port: redis
-            initialDelaySeconds: 5
+            initialDelaySeconds: {{ .Values.redis.probe.readinessInitialDelaySeconds }}
           livenessProbe:
             tcpSocket:
               port: redis
-            initialDelaySeconds: 10
+            initialDelaySeconds: {{ .Values.redis.probe.livenessInitialDelaySeconds }}
 ---
 apiVersion: v1
 kind: Service
@@ -72,6 +72,6 @@ spec:
     app.kubernetes.io/component: redis
   ports:
     - name: redis
-      port: 6379
+      port: {{ .Values.redis.port }}
       targetPort: redis
 {{- end }}

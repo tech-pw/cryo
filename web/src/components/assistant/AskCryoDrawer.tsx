@@ -233,42 +233,41 @@ export const AskCryoDrawer = () => {
 
   const onResizeDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
+    const handle = event.currentTarget;
+    const pointerId = event.pointerId;
     const startX = event.clientX;
     const startWidth = width;
+    handle.setPointerCapture(pointerId);
     const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
       const next = Math.min(960, Math.max(360, startWidth + (startX - ev.clientX)));
       setWidth(next);
       setExpanded(false);
     };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+    const up = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+      if (handle.hasPointerCapture(pointerId)) {
+        handle.releasePointerCapture(pointerId);
+      }
       setWidth((current) => {
         writeWidth(current);
         return current;
       });
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
   };
 
   return (
-    <>
-    {!open ? (
-      <button
-        type="button"
-        className="fixed bottom-5 right-5 z-40 flex h-12 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground shadow-lg"
-        aria-label="Ask Cryo"
-        onClick={() => openAssistant()}
-      >
-        Ask Cryo
-      </button>
-    ) : null}
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="right"
         className={cn(
-          "flex h-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none",
+          "flex h-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none [&>button]:top-2 [&>button]:right-3",
           reduced && "animate-none duration-0"
         )}
         style={{ width, maxWidth: width, animation: reduced ? "none" : undefined }}
@@ -280,16 +279,47 @@ export const AskCryoDrawer = () => {
           className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize"
           onPointerDown={onResizeDown}
         />
-        <div className="flex gap-2 border-b px-4 py-2">
-          <button type="button" className="text-sm" aria-pressed={panel === "batch"} onClick={() => setPanel("batch")}>
-            Batch
-          </button>
-          <button type="button" className="text-sm" aria-pressed={panel === "ask"} onClick={() => setPanel("ask")}>
-            Ask Cryo
-          </button>
+        <div
+          role="tablist"
+          aria-label="Sidebar"
+          className="flex items-end gap-1 border-b border-[color-mix(in_srgb,var(--color-border)_70%,transparent)] bg-[color-mix(in_srgb,var(--color-background)_78%,transparent)] pl-3 pr-12 pt-1.5 backdrop-blur-xl supports-[backdrop-filter]:bg-[color-mix(in_srgb,var(--color-background)_64%,transparent)]"
+        >
+          {(
+            [
+              ["batch", "Batch"],
+              ["ask", "Ask Cryo"]
+            ] as const
+          ).map(([id, label]) => {
+            const selected = panel === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                aria-pressed={selected}
+                className={cn(
+                  "relative px-3 pb-2.5 pt-1.5 text-[13px] font-medium tracking-[-0.01em] transition-colors duration-[var(--motion-fast)]",
+                  "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-ring",
+                  "active:scale-[0.97] motion-reduce:transition-none motion-reduce:active:scale-100",
+                  selected ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                )}
+                onClick={() => setPanel(id)}
+              >
+                {label}
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-primary transition-opacity duration-[var(--motion-fast)] motion-reduce:transition-none",
+                    selected ? "opacity-100" : "opacity-0"
+                  )}
+                />
+              </button>
+            );
+          })}
         </div>
         {panel === "batch" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="flex min-h-0 flex-1 flex-col">
             <BatchPanel
               identity={{
                 installationId: "local",
@@ -366,6 +396,5 @@ export const AskCryoDrawer = () => {
         )}
       </SheetContent>
     </Sheet>
-    </>
   );
 };

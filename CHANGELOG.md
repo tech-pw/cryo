@@ -16,6 +16,18 @@ All notable changes to Cryo will be documented in this file. The format is based
 - Initial `CHANGELOG.md`.
 
 ### Changed
+- Docs site homepage: "Compact first, then clean up" is replaced by a scroll-driven story of one
+  1 TB table. It decays for 30 days, then goes through each operation in order while a pinned
+  S3 bill shows what each step costs or saves ($110.72 to $23.53 a month in the example). Prices
+  are S3 Standard us-east-1, and the expiry and orphan windows match the planner's defaults.
+  The table is drawn as the brand's ice core sample and changes with each step: grains packing
+  into blocks, old layers lifted into a tray, orphans swept into a pile. Cryo's mark narrates and
+  fuses its cubes on `optimize`. Each chapter adds a plain-language analogy and a sourced cost
+  that isn't on the bill (S3 503 throttling, request latency, Trino join order, GDPR deletes).
+  It ends on a printed receipt and a "tables like this in your lake" estimator. A mood layer
+  makes cost felt: the bill, its face, Cryo's mascot, the meters and the timeline rail go from
+  green and smiling to red and crying as the bill climbs, and each step opens with a
+  before-and-after scorecard.
 - `LICENSE` and `deploy/helm/cryo/LICENSE` are now the verbatim Apache License 2.0 text. The
   previous copies had reworded clauses, so GitHub could not identify the license.
 - The GitHub mirror sync now also rewrites file contents and commit messages through

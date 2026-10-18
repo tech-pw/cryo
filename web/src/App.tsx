@@ -20,6 +20,7 @@ import {
   SettingsConnectionsHome,
   SettingsNotificationsHome
 } from "./pages/settings/homes";
+import { SettingsLayout } from "./pages/settings/SettingsLayout";
 import { Skeleton } from "./components/ui/skeleton";
 import { Toaster } from "./components/ui/sonner";
 import { AuthProvider, useAuth } from "./lib/auth";
@@ -122,7 +123,7 @@ const AuthenticatedRoutes = () => (
           <Route path="/settings" element={<LegacyRedirect />} />
           <Route path="/settings/connections" element={<SettingsConnectionsHome />} />
           <Route path="/settings/ai" element={<SettingsAiHome />} />
-          <Route path="/settings/ai/models" element={<AiModelsSettings />} />
+          <Route path="/settings/ai/models" element={<SettingsLayout><AiModelsSettings /></SettingsLayout>} />
           <Route path="/assistant/approve/:proposalId" element={<AssistantApprove />} />
           <Route path="/settings/access" element={<SettingsAccessHome />} />
           <Route path="/settings/admin" element={<SettingsAdminHome />} />

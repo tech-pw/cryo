@@ -17,7 +17,7 @@ describe("operationCatalog", () => {
     expect(remedyForDeduction("Small-file fragmentation", "t")).toEqual({ kind: "operation", op: "optimize" });
     expect(remedyForDeduction("Snapshot retention buildup", "t")).toEqual({ kind: "operation", op: "expire_snapshots" });
     expect(remedyForDeduction("Metadata ratio overhead", "t")).toEqual({ kind: "operation", op: "optimize_manifests" });
-    expect(remedyForDeduction("Partition volume skew", "t")).toEqual({ kind: "operation", op: "optimize" });
+    expect(remedyForDeduction("Partition volume skew", "t")).toMatchObject({ kind: "settings", href: "/tables/t?tab=files#files-layout" });
     expect(remedyForDeduction("Suboptimal properties", "t")).toMatchObject({ kind: "settings" });
     expect(remedyForDeduction("High velocity streaming", "t")).toMatchObject({ kind: "none" });
   });
@@ -34,7 +34,7 @@ describe("operationCatalog", () => {
     });
     expect(deductions.map((item) => item.deduction)).toEqual([20, 8, 8]);
     const points = pointsByOperation(deductions, "t");
-    expect(points.get("optimize")).toBe(16);
+    expect(points.get("optimize")).toBe(8);
     expect(points.get("expire_snapshots")).toBe(20);
     expect(points.has("remove_orphan_files")).toBe(false);
   });

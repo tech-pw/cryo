@@ -1,0 +1,264 @@
+.run-tone--succeeded { --tone: var(--color-status-success); }
+.run-tone--running { --tone: var(--color-primary); }
+.run-tone--queued { --tone: var(--color-muted-subtle); }
+.run-tone--failed { --tone: var(--color-status-danger); }
+.run-tone--partial { --tone: var(--color-status-warning); }
+.run-tone--cancelled,
+.run-tone--other { --tone: var(--color-border-strong); }
+
+.run-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--tone);
+}
+
+.run-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* State counts: Airflow DAG-list circles, ring in the state colour. */
+.run-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-counts__item {
+  display: inline-flex;
+  min-width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border: 2px solid var(--tone);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tone) 10%, var(--color-surface-raised));
+  color: var(--color-ink);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Running and queued runs have no final duration, so they hatch instead of filling. */
+.run-tone--running.run-bars__bar,
+.run-tone--running.run-timeline__bar,
+.run-tone--queued.run-bars__bar,
+.run-tone--queued.run-timeline__bar {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--tone) 0 3px,
+    color-mix(in srgb, var(--tone) 45%, transparent) 3px 6px
+  );
+}
+
+.run-bars {
+  display: flex;
+  height: 28px;
+  align-items: flex-end;
+  gap: 2px;
+  margin: 0;
+  padding: 0 0 2px;
+  border-bottom: 1px solid var(--color-border);
+  list-style: none;
+}
+
+.run-bars__slot {
+  display: flex;
+  width: 7px;
+  height: 100%;
+  align-items: flex-end;
+}
+
+.run-bars__slot--empty::after {
+  content: "";
+  width: 100%;
+  height: 3px;
+  border-radius: 1px;
+  background: var(--color-surface-sunken);
+}
+
+.run-bars__bar {
+  display: block;
+  width: 100%;
+  border-radius: 2px 2px 1px 1px;
+  background: var(--tone);
+  transition: opacity var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
+}
+
+.run-bars:hover .run-bars__bar { opacity: 0.55; }
+.run-bars .run-bars__bar:hover,
+.run-bars .run-bars__bar:focus-visible { opacity: 1; transform: scaleX(1.25); }
+
+.run-bars__bar:focus-visible,
+.run-timeline__bar:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.run-timeline {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-card);
+}
+
+.run-timeline__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.run-timeline__title {
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.run-timeline__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.run-timeline__legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.run-timeline__legend-count {
+  color: var(--color-ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-timeline__plot {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  height: 112px;
+}
+
+.run-timeline__axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  color: var(--color-muted-subtle);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.run-timeline__bars {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: repeating-linear-gradient(
+    to top,
+    transparent 0 27px,
+    color-mix(in srgb, var(--color-border) 60%, transparent) 27px 28px
+  );
+  list-style: none;
+}
+
+.run-timeline__slot {
+  display: flex;
+  min-width: 3px;
+  max-width: 18px;
+  height: 100%;
+  flex: 1 1 0;
+  align-items: flex-end;
+}
+
+.run-timeline__bar {
+  display: block;
+  width: 100%;
+  border-radius: 3px 3px 1px 1px;
+  background: var(--tone);
+  transform-origin: bottom;
+  transition: filter var(--motion-fast) var(--ease-out);
+  animation: run-bar-rise var(--motion-slow) var(--ease-out) both;
+}
+
+.run-timeline__bar:hover { filter: brightness(1.12) saturate(1.1); }
+
+.run-timeline__dates {
+  display: flex;
+  justify-content: space-between;
+  padding-left: 46px;
+  color: var(--color-muted-subtle);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-timeline__tip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+@keyframes run-bar-rise {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+.run-duration {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-duration__value {
+  min-width: 52px;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-duration__track {
+  width: 64px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-surface-sunken);
+}
+
+.run-duration__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--tone);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-timeline__bar { animation: none; }
+  .run-bars__bar { transition: none; }
+}

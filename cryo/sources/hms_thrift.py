@@ -6,6 +6,7 @@ catalog or load ``metadata.json``.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
@@ -15,7 +16,11 @@ from hive_metastore import ThriftHiveMetastore
 from thrift.protocol import TBinaryProtocol
 from thrift.transport import TSocket, TTransport
 
-from cryo.sources.locations import CatalogTableLocation, list_hive_table_locations
+from cryo.sources.locations import (
+    CatalogTableLocation,
+    call_hms,
+    list_hive_table_locations,
+)
 
 DEFAULT_HMS_PORT = 9083
 _HMS_URI_SCHEMES = {"thrift", "hive", "tcp"}
@@ -76,3 +81,55 @@ def list_hive_table_locations_from_uri(uri: str) -> list[CatalogTableLocation]:
     """List HMS ``sd.location`` for every table via a direct Thrift session."""
     with open_hms_thrift_client(uri) as client:
         return list_hive_table_locations(client)
+
+
+def list_hive_databases_from_uri(uri: str) -> list[str]:
+    """Every database name in the metastore -- one cheap call, no table enumeration."""
+    with open_hms_thrift_client(uri) as client:
+        return [str(name) for name in call_hms(client, "get_all_databases")]
+
+
+def list_hive_table_locations_for_databases(
+    uri: str, databases: list[str]
+) -> list[CatalogTableLocation]:
+    """``sd.location`` for the tables in just these databases.
+
+    Lets a caller walk a large metastore in slices so partial results can be shown while
+    the rest is still going, rather than holding everything back until the full 14k-table
+    sweep completes.
+    """
+    with open_hms_thrift_client(uri) as client:
+        return list_hive_table_locations(client, databases=databases)
+
+
+def derive_hive_warehouse_root(uri: str, *, sample: int = 60) -> str | None:
+    """Best-guess warehouse root from where the metastore's databases actually live.
+
+    Hive records a ``locationUri`` per database (``<root>/<db>.db``), so stripping the
+    trailing segment and taking the most common parent recovers the root the catalog was
+    provisioned with. Sampled rather than exhaustive: this runs inside the connection test,
+    and the modal root is stable well before the full database list is read.
+
+    Returns None when nothing wins -- a catalog whose databases are genuinely scattered has
+    no single root, and guessing one would be worse than asking the operator.
+    """
+    counts: Counter[str] = Counter()
+    with open_hms_thrift_client(uri) as client:
+        databases = [str(name) for name in call_hms(client, "get_all_databases")][:sample]
+        for name in databases:
+            try:
+                database = call_hms(client, "get_database", name)
+            except Exception:
+                continue
+            location = getattr(database, "locationUri", None)
+            if not location:
+                continue
+            parent = "/".join(str(location).rstrip("/").split("/")[:-1])
+            if parent:
+                counts[parent] += 1
+    if not counts:
+        return None
+    root, hits = counts.most_common(1)[0]
+    # Require a real plurality: a root backing one database out of sixty is a coincidence,
+    # not the warehouse.
+    return root if hits >= 2 else None
