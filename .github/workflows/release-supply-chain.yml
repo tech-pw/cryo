@@ -22,7 +22,7 @@ jobs:
     env:
       PYTHONPATH: ${{ github.workspace }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install locked migration runtime
         run: python -m pip install --require-hashes --requirement requirements.lock
@@ -98,7 +98,7 @@ jobs:
             image-suffix: "-spark"
             vuln-type: os
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Normalize image name
         run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}${{ matrix.image-suffix }}" >> "$GITHUB_ENV"
