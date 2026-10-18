@@ -548,6 +548,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tables/maintenance-funnel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Tables Maintenance Funnel */
+        get: operations["get_tables_maintenance_funnel_api_v1_tables_maintenance_funnel_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/group-by": {
         parameters: {
             query?: never;
@@ -8536,6 +8553,26 @@ export interface components {
             /** Count */
             count: number;
         };
+        /** FunnelLink */
+        FunnelLink: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Value */
+            value: number;
+        };
+        /** FunnelNode */
+        FunnelNode: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Count */
+            count: number;
+            /** View */
+            view?: string | null;
+        };
         /** FunnelStage */
         FunnelStage: {
             /** Stage */
@@ -12987,6 +13024,49 @@ export interface components {
              */
             expires_at: string;
         };
+        /** TableJobRef */
+        TableJobRef: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Status */
+            status: string;
+            /** Trigger */
+            trigger?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+        };
+        /** TableMaintenanceRead */
+        TableMaintenanceRead: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "queued" | "failed" | "held" | "excluded" | "scan_failing" | "not_scanned" | "skipped" | "needs_work" | "healthy" | "inactive";
+            /** Reason */
+            reason?: string | null;
+            /** Workflow Name */
+            workflow_name?: string | null;
+            /**
+             * Workflow Pinned
+             * @default false
+             */
+            workflow_pinned: boolean;
+            active_run?: components["schemas"]["TableJobRef"] | null;
+            last_run?: components["schemas"]["TableJobRef"] | null;
+            last_selection?: components["schemas"]["TableSelectionRef"] | null;
+            /** Score Delta 7D */
+            score_delta_7d?: number | null;
+        };
         /** TableMetadataRead */
         TableMetadataRead: {
             /** Format Version */
@@ -13236,6 +13316,7 @@ export interface components {
             /** Owner Email */
             owner_email?: string | null;
             stats?: components["schemas"]["TableStatsRead"] | null;
+            maintenance?: components["schemas"]["TableMaintenanceRead"] | null;
         };
         /** TableRunRead */
         TableRunRead: {
@@ -13285,6 +13366,21 @@ export interface components {
             limit: number;
             /** Offset */
             offset: number;
+        };
+        /**
+         * TableSelectionRef
+         * @description The table's outcome in the latest nightly selection (skip_evaluations).
+         */
+        TableSelectionRef: {
+            /** Stage */
+            stage: string;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Evaluated At
+             * Format: date-time
+             */
+            evaluated_at: string;
         };
         /** TableSettingRead */
         TableSettingRead: {
@@ -13522,6 +13618,26 @@ export interface components {
             total_delete_files?: number | null;
             /** Delete File Pct */
             delete_file_pct?: number | null;
+        };
+        /**
+         * TablesFunnelResponse
+         * @description Where every active table landed in the latest nightly batch, from scan to outcome.
+         */
+        TablesFunnelResponse: {
+            /** Run Id */
+            run_id?: string | null;
+            /** Run Status */
+            run_status?: string | null;
+            /** Run Started At */
+            run_started_at?: string | null;
+            /** Run Finished At */
+            run_finished_at?: string | null;
+            /** Total Active */
+            total_active: number;
+            /** Nodes */
+            nodes: components["schemas"]["FunnelNode"][];
+            /** Links */
+            links: components["schemas"]["FunnelLink"][];
         };
         /** TierCandidateRead */
         TierCandidateRead: {
@@ -15002,6 +15118,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_tables_maintenance_funnel_api_v1_tables_maintenance_funnel_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TablesFunnelResponse"];
                 };
             };
         };

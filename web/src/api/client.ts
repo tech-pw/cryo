@@ -36,6 +36,7 @@ import type {
   PartitionRead,
   TableGroupByField,
   TableGroupByResponse,
+  TablesFunnel,
   PresetRead,
   PresetRuleRead,
   PresetSimulationResponse,
@@ -296,6 +297,9 @@ export const exportTablesCsv = (
     },
     signal: args.signal
   });
+
+export const getTablesMaintenanceFunnel = (api: ApiOptions, signal?: AbortSignal) =>
+  apiFetch<TablesFunnel>("/tables/maintenance-funnel", api, { signal });
 
 export const groupTables = (
   api: ApiOptions,

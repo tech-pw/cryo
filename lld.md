@@ -891,7 +891,8 @@ POST                   /api/v1/destinations/{id}/test         # health check / p
 GET                    /api/v1/capabilities                   # canonical support contract
 
 # Datalake & health
-GET   /api/v1/tables                                          # ?filter=<predicate>&sort=&page=
+GET   /api/v1/tables                                          # ?filter=<predicate>&sort=&page=; rows carry a `maintenance` block
+GET   /api/v1/tables/maintenance-funnel                       # latest nightly batch as Sankey nodes/links (per table)
 GET   /api/v1/tables/{id}                                     # detail: stats, partitions, audit, cost
 GET   /api/v1/tables/{id}/partitions
 GET   /api/v1/tables/{id}/audit

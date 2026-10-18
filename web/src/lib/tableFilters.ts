@@ -5,6 +5,7 @@ import {
 } from "./freshness";
 import {
   all,
+  any,
   leaf,
   tableFiltersToPredicate,
   type Predicate,
@@ -15,15 +16,21 @@ export const EMPTY_TABLES_TITLE = "No tables match these filters";
 export const DEFAULT_TABLE_SORT = "-small_files_count";
 
 export const HIDEABLE_COLUMN_IDS = [
+  "health",
+  "maintenance",
+  "last_run",
+  "workflow",
+  "small_files",
+  "total_size_gb",
+  "reads_30d",
+  "projected_savings_usd_month",
+  "last_scan",
   "catalog",
+  "owner",
   "grade",
   "compaction_priority",
   "needs",
-  "small_files",
   "total_files",
-  "total_size_gb",
-  "last_scan",
-  "projected_savings_usd_month",
   "reclaimable_bytes",
   "cost_precision",
   "partition",
@@ -32,21 +39,33 @@ export const HIDEABLE_COLUMN_IDS = [
   "first_seen_at"
 ] as const;
 
-/** First screen answers "what needs work, how big is it, and what is it worth." */
+export type HideableColumnId = (typeof HIDEABLE_COLUMN_IDS)[number];
+
+/** First screen answers "is it healthy, is maintenance keeping up, and what is it worth." */
 export const OPERATOR_COLUMN_IDS = [
-  "grade",
-  "compaction_priority",
-  "needs",
+  "health",
+  "maintenance",
+  "last_run",
   "small_files",
-  "total_files",
   "total_size_gb",
-  "last_scan",
+  "reads_30d",
+  "projected_savings_usd_month"
+] as const;
+
+/** The savings view pins its own columns, in this order, after the table name. */
+export const SAVINGS_COLUMN_IDS = [
   "projected_savings_usd_month",
   "reclaimable_bytes",
   "cost_precision",
-  "partition",
-  "freshness"
+  "small_files",
+  "total_size_gb",
+  "health"
 ] as const;
+
+export const savingsColumnVisibility = (): VisibilityState => {
+  const visible = new Set<string>(SAVINGS_COLUMN_IDS);
+  return Object.fromEntries(HIDEABLE_COLUMN_IDS.map((id) => [id, visible.has(id)]));
+};
 
 export const operatorColumnVisibility = (): VisibilityState => {
   const visible = new Set<string>(OPERATOR_COLUMN_IDS);
@@ -298,6 +317,71 @@ export const unusedCoverageCopy = (
   return `Telemetry covers the ${windowLabel} window.`;
 };
 
+export const SCAN_STALE_HOURS = 48;
+export const GRADE_DROP_POINTS = 10;
+
+const HOUR_MS = 3_600_000;
+
+/** Rounded to the hour so query keys built from it stay stable between renders. */
+export const scanStaleCutoff = (now: number = Date.now()): string =>
+  new Date(Math.floor(now / HOUR_MS) * HOUR_MS - SCAN_STALE_HOURS * HOUR_MS).toISOString();
+
+export const TRIAGE_VIEW_IDS = [
+  "needs-work",
+  "failed",
+  "in-progress",
+  "skipped",
+  "grade-dropped",
+  "scan-issues",
+  "savings"
+] as const;
+
+export type TriageViewId = (typeof TRIAGE_VIEW_IDS)[number];
+
+export const isTriageView = (view: string | null | undefined): view is TriageViewId =>
+  (TRIAGE_VIEW_IDS as readonly string[]).includes(view ?? "");
+
+// Mirrors REASON_COOLDOWN/REASON_BACKOFF/REASON_BUDGET_CAP/REASON_STALE_STATS/REASON_EXCLUDED
+// in cryo/maintenance/skip_history.py -- not REASON_NO_WORK, which only ever pairs with
+// STAGE_EVALUATED (no-work tables), never STAGE_NEEDS_WORK/STAGE_ELIGIBLE, so it can't appear
+// here anyway. These aren't exposed as a typed enum from the backend; if that reason list
+// changes, update this array to match.
+const SKIP_REASONS = ["cooldown", "backoff", "budget_cap", "stale_stats", "excluded"];
+
+/** Server-side predicate for each quick view. Counts and table rows both use this, so they agree. */
+export const triageViewPredicate = (
+  view: string | null | undefined,
+  cutoff: string = scanStaleCutoff()
+): Predicate | null => {
+  switch (view) {
+    case "needs-work":
+      return leaf("needs_compaction", "=", true);
+    case "failed":
+      return leaf("last_job_status", "in", ["failed", "partial"]);
+    case "in-progress":
+      return leaf("last_job_status", "in", ["queued", "admitted", "running", "deferred"]);
+    case "skipped":
+      return all([
+        leaf("needs_compaction", "=", true),
+        leaf("last_selection_stage", "in", ["needs_work", "eligible"]),
+        leaf("last_selection_reason", "in", SKIP_REASONS)
+      ]);
+    case "grade-dropped":
+      return leaf("score_delta_7d", "<=", -GRADE_DROP_POINTS);
+    case "scan-issues":
+      return any([
+        leaf("consecutive_scan_failures", ">", 0),
+        leaf("last_scan_error_kind", "!=", null),
+        leaf("scan_at", "=", null),
+        leaf("scan_at", "<", cutoff)
+      ]);
+    case "savings":
+      return leaf("projected_savings_usd_month", ">", 0);
+    default:
+      return null;
+  }
+};
+
 export const explorerPredicate = (
   filters: TableFilterState,
   extras: { schema?: string; view?: string | null } = {}
@@ -309,7 +393,8 @@ export const explorerPredicate = (
       : null,
     extras.view === "scan-failed" && filters.freshnessBucket !== "failed"
       ? leaf("consecutive_scan_failures", ">=", BROKEN_TABLE_FAILURE_THRESHOLD)
-      : null
+      : null,
+    triageViewPredicate(extras.view)
   ]);
 
 export interface SavedViewUrlInput {

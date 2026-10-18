@@ -114,11 +114,13 @@ from cryo.api.schemas import (
     TablePreviewRead,
     TableRead,
     TableRunsResponse,
+    TablesFunnelResponse,
     TableStatsHistoryResponse,
     validate_destination_config,
 )
 from cryo.api.security import Principal, Role, principal_from_token
 from cryo.api.serializers import table_to_read
+from cryo.api.table_maintenance import maintenance_summaries, score_delta_expr, tables_funnel
 from cryo.api.table_view_filters import build_table_view_filter
 from cryo.api.validators import validate_cron_field
 from cryo.config import Settings, get_settings
@@ -208,7 +210,11 @@ SORT_FIELDS = {
     "projected_monthly_s3_cost_usd": TableStats.projected_monthly_s3_cost_usd,
     "reclaimable_bytes": TableStats.reclaimable_bytes,
     "estimated_monthly_s3_cost_usd": TableStats.estimated_monthly_s3_cost_usd,
+    "query_count_30d": TableStats.query_count_30d,
+    "scan_at": TableStats.scan_at,
 }
+
+COMPUTED_SORT_FIELDS = {"score_delta_7d": score_delta_expr}
 
 
 @router.get(
@@ -1165,8 +1171,14 @@ def list_tables(
         ).encode()
 
     view_fields = view.response_fields(view_metrics)
+    maintenance = maintenance_summaries(session, items)
     return PaginatedTables(
-        items=[table_to_read(item, include_raw=False) for item in items],
+        items=[
+            table_to_read(item, include_raw=False).model_copy(
+                update={"maintenance": maintenance.get(item.id)}
+            )
+            for item in items
+        ],
         total=total,
         limit=limit,
         offset=actual_offset,
@@ -1311,6 +1323,16 @@ _GROUP_BY_FIELDS = {
     "needs_compaction": TableStats.needs_compaction,
     "size_bucket": _SIZE_BUCKET_EXPR,
 }
+
+
+@router.get(
+    "/tables/maintenance-funnel",
+    response_model=TablesFunnelResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["tables"],
+)
+def get_tables_maintenance_funnel(session: SessionDep) -> TablesFunnelResponse:
+    return tables_funnel(session, tenant_id=require_tenant(session))
 
 
 @router.get(
@@ -2606,7 +2628,8 @@ def _sort_clauses(sort: str | None) -> tuple[Any, ...]:
             continue
         descending = field.startswith("-")
         field_name = field[1:] if descending else field
-        column = SORT_FIELDS.get(field_name)
+        computed = COMPUTED_SORT_FIELDS.get(field_name)
+        column = computed() if computed is not None else SORT_FIELDS.get(field_name)
         if column is None:
             raise HTTPException(status_code=400, detail=f"Unsupported sort field: {field_name}")
         if descending:

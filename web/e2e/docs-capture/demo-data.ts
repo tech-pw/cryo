@@ -41,6 +41,37 @@ const SPECS: DemoSpec[] = [
   { schema: "marketing", table: "campaign_touches", grade: "C", score: 60, sizeGb: 47.9, files: 5_010, small: 3_015, snapshots: 266 }
 ];
 
+type DemoState = "running" | "queued" | "failed" | "skipped" | "needs_work" | "healthy" | "scan_failing" | "held";
+
+const NIGHTLY_RUN_ID = visualUuid(0x90);
+
+// One row per spec, chosen so every triage view and funnel branch has at least one table.
+const MAINTENANCE: { state: DemoState; reason?: string; delta?: number; reads: number; savings?: number }[] = [
+  { state: "failed", reason: "Engine timeout during OPTIMIZE", delta: -14, reads: 18_420, savings: 214 },
+  { state: "skipped", reason: "Cooldown after a recent run", delta: -6, reads: 9_310, savings: 96 },
+  { state: "needs_work", reason: "Waiting for the next nightly run", delta: 2, reads: 2_140, savings: 12 },
+  { state: "healthy", delta: 0, reads: 7_802 },
+  { state: "healthy", delta: 1, reads: 31_004 },
+  { state: "healthy", delta: 0, reads: 4_117 },
+  { state: "running", delta: -11, reads: 1_208, savings: 61 },
+  { state: "skipped", reason: "Over the nightly budget", delta: -3, reads: 640, savings: 23 },
+  { state: "queued", reason: "Waiting for engine capacity", delta: 0, reads: 12_560, savings: 41 },
+  { state: "healthy", delta: 4, reads: 3_051, savings: 0.4 },
+  { state: "healthy", delta: 0, reads: 210 },
+  { state: "healthy", delta: 0, reads: 88 },
+  { state: "scan_failing", reason: "Last scan failing", reads: 0, savings: 188 },
+  { state: "held", reason: "Metadata missing in storage; retry after Oct 19 02:00 UTC", delta: -2, reads: 455, savings: 18 }
+];
+
+const jobRef = (status: string, minutesAgo: number, trigger = "schedule") => ({
+  run_id: NIGHTLY_RUN_ID,
+  job_id: visualUuid(0x91),
+  status,
+  trigger,
+  started_at: ago(minutesAgo + 12),
+  finished_at: ["queued", "running"].includes(status) ? null : ago(minutesAgo)
+});
+
 export const DEMO_TABLES = SPECS.map((s, i) => ({
   id: visualUuid(0x10 + i),
   source_id: VISUAL_SOURCE_ID,
@@ -62,9 +93,87 @@ export const DEMO_TABLES = SPECS.map((s, i) => ({
     total_size_bytes: Math.round(s.sizeGb * GB),
     total_snapshots: s.snapshots,
     last_snapshot_committed_at: ago(5 + i * 7),
-    needs_compaction: s.grade === "D" || s.grade === "F" || s.grade === "C"
+    needs_compaction: s.grade === "D" || s.grade === "F" || s.grade === "C",
+    query_count_30d: MAINTENANCE[i].reads,
+    projected_savings_usd_month: MAINTENANCE[i].savings ?? null
+  },
+  consecutive_scan_failures: MAINTENANCE[i].state === "scan_failing" ? 3 : 0,
+  owner_email: `${s.schema}-team@example.com`,
+  maintenance: {
+    state: MAINTENANCE[i].state,
+    reason: MAINTENANCE[i].reason ?? null,
+    workflow_name: i % 3 === 0 ? "nightly-standard" : null,
+    workflow_pinned: i % 3 === 0,
+    score_delta_7d: MAINTENANCE[i].delta ?? null,
+    active_run: ["running", "queued"].includes(MAINTENANCE[i].state) ? jobRef(MAINTENANCE[i].state, 4, "web") : null,
+    last_run:
+      MAINTENANCE[i].state === "failed"
+        ? jobRef("failed", 380)
+        : MAINTENANCE[i].state === "scan_failing" || MAINTENANCE[i].state === "needs_work"
+          ? null
+          : jobRef("succeeded", 380 + i * 90, i % 4 === 0 ? "web" : "schedule"),
+    last_selection: null
   }
 }));
+
+type DemoTable = (typeof DEMO_TABLES)[number];
+
+const matchesFilter = (table: DemoTable, filter: string): boolean => {
+  const state = table.maintenance.state;
+  if (filter.includes('"last_job_status"') && filter.includes('"failed"')) return state === "failed";
+  if (filter.includes('"last_job_status"')) return state === "running" || state === "queued";
+  if (filter.includes('"last_selection_reason"')) return state === "skipped";
+  if (filter.includes('"score_delta_7d"')) return (table.maintenance.score_delta_7d ?? 0) <= -10;
+  if (filter.includes('"scan_at","op":"="')) return state === "scan_failing";
+  if (filter.includes('"scan_at","op":"<"')) return false;
+  if (filter.includes('"projected_savings_usd_month","op":">"')) return (table.stats.projected_savings_usd_month ?? 0) > 0;
+  if (filter.includes('"needs_compaction","op":"=","value":true')) return table.stats.needs_compaction;
+  return true;
+};
+
+export function demoTablesFunnel() {
+  const nodes = [
+    ["active", "Active tables", 14],
+    ["scan_failing", "Scan failing", 1],
+    ["scanned", "Scanned", 13],
+    ["no_work", "No work needed", 6],
+    ["needs_work", "Needs work", 7],
+    ["skip_cooldown", "Cooldown", 1, "skipped"],
+    ["skip_budget_cap", "Over budget", 1, "skipped"],
+    ["skip_excluded", "Not eligible", 1, "skipped"],
+    ["selected", "Selected", 4],
+    ["succeeded", "Succeeded", 2],
+    ["failed", "Failed", 1, "failed"],
+    ["in_progress", "In progress", 1, "in-progress"]
+  ] as const;
+  const link = (source: string, target: string, value: number) => ({ source, target, value });
+  return {
+    run_id: NIGHTLY_RUN_ID,
+    run_status: "partial",
+    run_started_at: ago(400),
+    run_finished_at: ago(360),
+    total_active: 14,
+    nodes: nodes.map(([id, label, count, view]) => ({
+      id,
+      label,
+      count,
+      view: view ?? (id === "scan_failing" ? "scan-issues" : id === "needs_work" ? "needs-work" : null)
+    })),
+    links: [
+      link("active", "scan_failing", 1),
+      link("active", "scanned", 13),
+      link("scanned", "no_work", 6),
+      link("scanned", "needs_work", 7),
+      link("needs_work", "skip_cooldown", 1),
+      link("needs_work", "skip_budget_cap", 1),
+      link("needs_work", "skip_excluded", 1),
+      link("needs_work", "selected", 4),
+      link("selected", "succeeded", 2),
+      link("selected", "failed", 1),
+      link("selected", "in_progress", 1)
+    ]
+  };
+}
 
 const byWorst = [...DEMO_TABLES].sort((a, b) => a.stats.overall_score - b.stats.overall_score);
 const totalGb = SPECS.reduce((n, s) => n + s.sizeGb, 0);
@@ -96,7 +205,9 @@ export function demoTablesBody(url: URL) {
   const limit = Number(url.searchParams.get("limit") ?? 50) || 50;
   const offset = Number(url.searchParams.get("offset") ?? 0) || 0;
   const sort = url.searchParams.get("sort") ?? url.searchParams.get("order_by") ?? "";
-  const rows = sort.includes("score") || sort.includes("grade") ? byWorst : DEMO_TABLES;
+  const filter = url.searchParams.get("filter") ?? "";
+  const ordered = sort.includes("score") || sort.includes("grade") ? byWorst : DEMO_TABLES;
+  const rows = ordered.filter((table) => matchesFilter(table, filter));
   const items = rows.slice(offset, offset + limit);
   return { items, total: rows.length, limit, offset, cursor: null, has_more: offset + items.length < rows.length };
 }
@@ -358,7 +469,7 @@ export function demoDestinations() {
       id: VISUAL_TRINO_DESTINATION_ID,
       name: "demo-trino",
       engine: "trino",
-      config: { host: "trino", port: 8080, catalog: "lakehouse" },
+      config: { host: "trino", port: 8080, catalog: "lakehouse", catalog_bindings: [{ source_id: VISUAL_SOURCE_ID }] },
       secret_ref: null,
       offpeak_start: 1,
       offpeak_end: 7,

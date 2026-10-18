@@ -51,6 +51,10 @@
           "label": "Health and cost"
         },
         {
+          "slug": "tables",
+          "label": "Tables"
+        },
+        {
           "slug": "table-detail",
           "label": "Table detail"
         },

@@ -28,10 +28,11 @@ const destination: DestinationRead = {
   updated_at: ""
 };
 
+const openRunDialog = () => fireEvent.click(screen.getByRole("button", { name: /Run maintenance/ }));
+
 describe("BulkAssignBar", () => {
-  it("disables Run until a preset is explicitly selected, then runs with the chosen preset", async () => {
+  it("explains why Run is disabled until a workflow is chosen, then queues the chosen workflow", () => {
     const onRun = vi.fn();
-    const onAssign = vi.fn();
     const filter = leaf("grade", "in", ["D", "F"]);
     render(
       <BulkAssignBar
@@ -39,7 +40,7 @@ describe("BulkAssignBar", () => {
         presets={[preset]}
         destinations={[destination]}
         onClear={vi.fn()}
-        onAssign={onAssign}
+        onAssign={vi.fn()}
         onPreview={vi.fn()}
         onRun={onRun}
       />
@@ -48,30 +49,26 @@ describe("BulkAssignBar", () => {
     expect(screen.getByText("Filter selection")).toBeInTheDocument();
     expect(screen.getByText("All 42 matching tables selected")).toBeInTheDocument();
 
-    const runButton = screen.getByText("Run now").closest("button")!;
-    expect(runButton.disabled).toBe(true);
+    openRunDialog();
+    expect(screen.getByText("Run maintenance on all 42 matching tables")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Queue run" })).toBeDisabled();
+    expect(screen.getByText("Choose the workflow to run.")).toBeInTheDocument();
 
-    const presetSelect = screen.getByRole("combobox", { name: "Assign preset" });
-    fireEvent.change(presetSelect, { target: { value: "preset-1" } });
-
-    expect(onAssign).toHaveBeenCalledWith("preset-1");
-
-    const enabledRunButton = screen.getByText("Run now").closest("button")!;
-    expect(enabledRunButton.disabled).toBe(false);
-    fireEvent.click(screen.getByText("Run now"));
-    expect(onRun).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Run workflow" }), { target: { value: "preset-1" } });
+    expect(screen.getByRole("button", { name: "Queue run" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Queue run" }));
     expect(onRun).toHaveBeenCalledWith({ destinationId: "dest-1", presetId: "preset-1", mode: "standard" });
   });
 
-  it("labels preset and engine options with useful context", () => {
+  it("assigns a workflow straight from the bar and pre-fills it for the next run", () => {
+    const onAssign = vi.fn();
     render(
       <BulkAssignBar
         selection={{ mode: "ids", ids: ["table-1"], totalSelected: 1 }}
         presets={[{ ...preset, description: "Default local Trino maintenance profile" }]}
         destinations={[destination]}
         onClear={vi.fn()}
-        onAssign={vi.fn()}
+        onAssign={onAssign}
         onPreview={vi.fn()}
         onRun={vi.fn()}
       />
@@ -83,22 +80,24 @@ describe("BulkAssignBar", () => {
         option.text.includes("trino-standard · Default local Trino maintenance profile")
       )
     ).toBe(true);
+    fireEvent.change(presetSelect, { target: { value: "preset-1" } });
+    expect(onAssign).toHaveBeenCalledWith("preset-1");
+
+    openRunDialog();
+    expect((screen.getByRole("combobox", { name: "Run workflow" }) as HTMLSelectElement).value).toBe("preset-1");
     expect(screen.getByText("trino-main · Trino")).toBeInTheDocument();
   });
 
-  it("labels native engine destinations clearly", () => {
-    const nativeDestination: DestinationRead = {
-      ...destination,
-      id: "dest-native",
-      name: "native-datafusion",
-      engine: "native",
-      config: { engine_impl: "go" }
-    };
+  it("offers select-all-matching and warns about rows a run would likely skip", () => {
+    const onSelectAllMatching = vi.fn();
     render(
       <BulkAssignBar
-        selection={{ mode: "ids", ids: ["table-1"], totalSelected: 1 }}
-        presets={[{ ...preset, destination_id: "dest-native" }]}
-        destinations={[nativeDestination]}
+        selection={{ mode: "ids", ids: ["table-1", "table-2"], totalSelected: 2 }}
+        presets={[preset]}
+        destinations={[destination]}
+        matchingTotal={120}
+        onSelectAllMatching={onSelectAllMatching}
+        likelySkipped={1}
         onClear={vi.fn()}
         onAssign={vi.fn()}
         onPreview={vi.fn()}
@@ -106,10 +105,13 @@ describe("BulkAssignBar", () => {
       />
     );
 
-    expect(screen.getByText("native-datafusion · Native (iceberg-go)")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Select all 120 matching"));
+    expect(onSelectAllMatching).toHaveBeenCalledTimes(1);
+    openRunDialog();
+    expect(screen.getByText(/1 of the selected tables is already running/)).toBeInTheDocument();
   });
 
-  it("disables manifest rewrite for native destinations", () => {
+  it("labels native engine destinations and blocks manifest-only runs on them", () => {
     const nativeDestination: DestinationRead = {
       ...destination,
       id: "dest-native",
@@ -117,6 +119,7 @@ describe("BulkAssignBar", () => {
       engine: "native",
       config: { engine_impl: "go" }
     };
+    const onManifestRewrite = vi.fn();
     render(
       <BulkAssignBar
         selection={{ mode: "ids", ids: ["table-1"], totalSelected: 1 }}
@@ -126,13 +129,14 @@ describe("BulkAssignBar", () => {
         onAssign={vi.fn()}
         onPreview={vi.fn()}
         onRun={vi.fn()}
-        onManifestRewrite={vi.fn()}
+        onManifestRewrite={onManifestRewrite}
       />
     );
 
-    const presetSelect = screen.getByRole("combobox", { name: "Assign preset" });
-    fireEvent.change(presetSelect, { target: { value: "preset-1" } });
-
-    expect(screen.getByText("Manifest rewrite").closest("button")?.disabled).toBe(true);
+    openRunDialog();
+    fireEvent.change(screen.getByRole("combobox", { name: "Run workflow" }), { target: { value: "preset-1" } });
+    expect(screen.getByText("native-datafusion · Native (iceberg-go)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manifests only" }));
+    expect(screen.getByRole("button", { name: "Queue run" })).toBeDisabled();
   });
 });

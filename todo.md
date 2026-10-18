@@ -759,6 +759,9 @@ until real evidence exists.
       dangerous ops, job-owner Redis leases, Trino/Spark engine probes, governor reaper skips leased/
       started/active jobs. See `docs/WORKER_STEP_LEDGER.md`. Migration `20260727_0033`.
 - [x] Bundle IBM Plex fonts through `@fontsource` instead of a Google Fonts CDN.
+- [x] Tables page redesign: triage cards, nightly maintenance Sankey, per-row maintenance block,
+      triage views, facet filters, grouped column menu, bulk run dialog. See
+      `docs/TABLES_PAGE_REDESIGN_2026-10-18.md`. Migration `20261018_1200`.
 - [ ] Chart `aria-label` summaries for all Recharts instances (accessibility backlog).
 - [ ] Query-pattern-aware optimization at scale — blocked on query-history ingestion maturity.
 - [ ] Native engine production hardening — see `architecture.md` §1.5.

@@ -170,6 +170,8 @@ function DensityToggle({
 export interface ColumnVisibilityOption {
   id: string;
   label: string;
+  /** Options sharing a group render under one heading, in first-seen order. */
+  group?: string;
 }
 
 /**
@@ -183,52 +185,99 @@ export function ColumnVisibilityMenu({
   visibility,
   onChange,
   onReset,
-  label = "Columns"
+  onShowAll,
+  label = "Columns",
+  disabledReason
 }: {
   options: ColumnVisibilityOption[];
   visibility: Record<string, boolean>;
   onChange: (next: Record<string, boolean>) => void;
+  /** Restores the page's default column set. */
   onReset?: () => void;
+  onShowAll?: () => void;
   label?: string;
+  /** When set, the menu explains why columns are fixed instead of offering toggles. */
+  disabledReason?: string;
 }) {
-  const hiddenCount = options.filter((option) => visibility[option.id] === false).length;
+  const shownCount = options.filter((option) => visibility[option.id] !== false).length;
+  const groups = options.reduce<Map<string, ColumnVisibilityOption[]>>((acc, option) => {
+    const key = option.group ?? "";
+    acc.set(key, [...(acc.get(key) ?? []), option]);
+    return acc;
+  }, new Map());
+  const grouped = groups.size > 1;
 
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button type="button" size="sm" variant="secondary" className="h-7 gap-1.5 px-2">
+        <Button type="button" size="sm" variant="secondary" className="gap-1.5 px-2.5">
           <Columns3 className="h-3.5 w-3.5" aria-hidden="true" />
           {label}
-          {hiddenCount > 0 ? <span className="[font-variant-numeric:tabular-nums]">({hiddenCount} hidden)</span> : null}
+          <span className="text-muted-foreground [font-variant-numeric:tabular-nums]">
+            {shownCount}/{options.length}
+          </span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-56 p-2">
-        <p className="mb-1.5 px-1 text-xs font-medium text-muted-foreground">Show columns</p>
-        <ul className="flex max-h-64 flex-col gap-0.5 overflow-y-auto">
-          {options.map((option) => {
-            const checked = visibility[option.id] !== false;
-            return (
-              <li key={option.id}>
-                <label className="flex cursor-pointer items-center gap-2 rounded-[var(--radius-sm)] px-1.5 py-1 text-sm hover:bg-[var(--color-surface-sunken)]">
-                  <Checkbox
-                    checked={checked}
-                    onCheckedChange={(value) => onChange({ ...visibility, [option.id]: value === true })}
-                  />
-                  {option.label}
-                </label>
-              </li>
-            );
-          })}
-        </ul>
-        {onReset ? (
-          <div className="mt-1.5 border-t border-border pt-1.5">
-            <button
-              type="button"
-              className="w-full rounded-[var(--radius-sm)] px-1.5 py-1 text-left text-sm text-muted-foreground hover:bg-[var(--color-surface-sunken)] hover:text-foreground"
-              onClick={onReset}
-            >
-              All columns
-            </button>
+      <PopoverContent align="end" className={cn("p-0", grouped ? "w-[26rem]" : "w-56")}>
+        <div className="flex items-baseline justify-between border-b border-border px-3 py-2">
+          <p className="text-xs font-medium text-foreground">Columns</p>
+          <p className="text-xs text-muted-foreground [font-variant-numeric:tabular-nums]">
+            {shownCount} of {options.length} shown
+          </p>
+        </div>
+        {disabledReason ? (
+          <p className="px-3 py-3 text-sm text-muted-foreground">{disabledReason}</p>
+        ) : (
+          <div className={cn("gap-x-4 gap-y-3 p-3", grouped ? "grid grid-cols-2" : "flex flex-col")}>
+            {[...groups.entries()].map(([group, items]) => (
+              <fieldset key={group || "columns"} className="min-w-0">
+                {grouped ? (
+                  <legend className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
+                    {group}
+                  </legend>
+                ) : null}
+                <ul className="flex flex-col gap-0.5">
+                  {items.map((option) => {
+                    const checked = visibility[option.id] !== false;
+                    return (
+                      <li key={option.id}>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-[var(--radius-sm)] px-1.5 py-1 text-sm hover:bg-[var(--color-surface-sunken)]">
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(value) => onChange({ ...visibility, [option.id]: value === true })}
+                          />
+                          <span className={cn("truncate", !checked && "text-muted-foreground")}>{option.label}</span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </fieldset>
+            ))}
+          </div>
+        )}
+        {!disabledReason && (onReset || onShowAll) ? (
+          <div className="flex items-center justify-between gap-2 border-t border-border px-2 py-1.5">
+            {onReset ? (
+              <button
+                type="button"
+                className="cursor-pointer rounded-[var(--radius-sm)] px-1.5 py-1 text-xs text-muted-foreground hover:bg-[var(--color-surface-sunken)] hover:text-foreground"
+                onClick={onReset}
+              >
+                Reset to default
+              </button>
+            ) : (
+              <span />
+            )}
+            {onShowAll ? (
+              <button
+                type="button"
+                className="cursor-pointer rounded-[var(--radius-sm)] px-1.5 py-1 text-xs text-muted-foreground hover:bg-[var(--color-surface-sunken)] hover:text-foreground"
+                onClick={onShowAll}
+              >
+                Show all
+              </button>
+            ) : null}
           </div>
         ) : null}
       </PopoverContent>

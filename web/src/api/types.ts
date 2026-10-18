@@ -205,7 +205,14 @@ export interface TableRead {
   owner_email?: string | null;
   stats?: TableStatsRead | null;
   effective_preset?: string | null;
+  maintenance?: TableMaintenance | null;
 }
+
+export type TableMaintenance = components["schemas"]["TableMaintenanceRead"];
+export type TableMaintenanceState = TableMaintenance["state"];
+export type TableJobRef = components["schemas"]["TableJobRef"];
+export type TablesFunnel = components["schemas"]["TablesFunnelResponse"];
+export type FunnelNode = components["schemas"]["FunnelNode"];
 
 export interface TableAlertSubscriptionRead {
   id: UUID;

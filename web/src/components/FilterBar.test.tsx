@@ -34,9 +34,8 @@ describe("FilterBar", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
-    expect(screen.getByLabelText("Filter by catalog")).toBeInTheDocument();
-    expect(screen.getByText("Catalog: Prod")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Filter by catalog" })).toHaveTextContent("Catalog: Prod");
+    expect(screen.getByRole("searchbox", { name: "Schema or table search" })).toBeInTheDocument();
     expect(screen.getByText("13 tables match")).toBeInTheDocument();
     expect(screen.getByText("Filtered view")).toBeInTheDocument();
   });

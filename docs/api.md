@@ -139,7 +139,22 @@ GET /api/v1/tables/{table_id}/audit
 GET /api/v1/tables/{table_id}/history
 GET /api/v1/tables/{table_id}/effective-preset
 GET /api/v1/tables/{table_id}/compatible-presets
+GET /api/v1/tables/maintenance-funnel
 ```
+
+Each `GET /tables` row includes a `maintenance` block: derived `state` (running, queued, failed,
+skipped, needs_work, healthy, held, excluded, scan_failing, not_scanned, inactive), a short
+`reason`, the assigned workflow, the active and last finished job, the latest nightly selection
+outcome, and `score_delta_7d`. The explorer filter grammar also accepts the computed fields
+`last_job_status`, `last_selection_stage`, `last_selection_reason`, `score_delta_7d` and `scan_at`
+(ISO timestamp). These are explorer-only and are not valid in preset rules. Sort also accepts
+`query_count_30d`, `scan_at` and `score_delta_7d`.
+
+`GET /tables/maintenance-funnel` returns the latest nightly batch as Sankey `nodes` and `links`:
+active, then scanned / scan failing / not scanned, then needs work / no work, then the skip
+reasons or selected, then succeeded / failed / in progress. It counts tables, not operations.
+Each node includes a `view` that names the explorer triage view listing those tables.
+See `docs/TABLES_PAGE_REDESIGN_2026-10-18.md`.
 
 Table configuration (the table detail Config tab):
 

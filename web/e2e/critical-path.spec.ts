@@ -108,7 +108,7 @@ test.describe("Cryo critical-path", () => {
 
     await page.getByRole("link", { name: "Tables", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: /Catalogs/ }).first(),
+      page.getByRole("heading", { name: "Tables", exact: true }).first(),
     ).toBeVisible();
 
     const previewButton = page

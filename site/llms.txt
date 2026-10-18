@@ -15,6 +15,7 @@ Read this file, then answer only from the pages below. If a fact is not on one o
 - [Architecture](https://tech-pw.github.io/cryo/architecture/index.md): Catalogs on the read side, engines on the write side, and the planner in between.
 - [Maintenance](https://tech-pw.github.io/cryo/maintenance/index.md): Compact first, then clean up, in one fixed order no preset can change.
 - [Health and cost](https://tech-pw.github.io/cryo/health/index.md): Grades run from A to F. A warning costs 8 points and a critical finding costs 20.
+- [Tables](https://tech-pw.github.io/cryo/tables/index.md): A guided tour of Cryo's Tables page, covering the triage cards, the nightly maintenance funnel, the catalog list, quick views, filters, columns, the savings view and bulk actions.
 - [Table detail](https://tech-pw.github.io/cryo/table-detail/index.md): A guided tour of Cryo's table detail page, covering the header, the actions menu and table settings, plus every section of the Overview, Schema & files, Snapshots, Maintenance, Config, Usage, Quality and Cost & Savings tabs, including archiving cold partitions.
 - [Engines](https://tech-pw.github.io/cryo/engines/index.md): The planner emits no SQL. Trino and Spark each render the same plan in their own dialect.
 - [Deployment](https://tech-pw.github.io/cryo/deployment/index.md): Helm on Kubernetes. Cryo plans and admits; Trino and Spark stay where they already run.

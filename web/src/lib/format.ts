@@ -39,6 +39,13 @@ export const formatCurrency = (value?: number | null): string => {
   return currency.format(value);
 };
 
+/** Savings estimates: "-" when there is none, "<$1" so sub-dollar rows don't read as zero. */
+export const formatSavings = (value?: number | null): string => {
+  if (value === null || value === undefined || Number.isNaN(value) || value <= 0) return "-";
+  if (value < 1) return "<$1";
+  return currency.format(value);
+};
+
 export const formatDuration = (ms?: number | null): string => {
   if (ms === null || ms === undefined || Number.isNaN(ms)) return "-";
   if (ms < 1000) return `${Math.round(ms)} ms`;

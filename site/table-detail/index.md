@@ -9,7 +9,7 @@ updated: 2026-10-18
 
 One page per Iceberg table. The header says what state the table is in, and eight tabs show the evidence, the history and the controls behind it.
 
-Open any row on the Tables page to get here. Every screenshot below is the same table from the seeded demo lake, `analytics.events`: 412.6 GB in 48,210 files, 41,930 of them small, scoring 28 (grade F). Use it to learn where each answer lives before you need it on a real table.
+Open any row on the [Tables page](https://tech-pw.github.io/cryo/tables/) to get here. Every screenshot below is the same table from the seeded demo lake, `analytics.events`: 412.6 GB in 48,210 files, 41,930 of them small, scoring 28 (grade F). Use it to learn where each answer lives before you need it on a real table.
 
 ## The header
 

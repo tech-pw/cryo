@@ -1,0 +1,91 @@
+---
+title: Tables
+lede: Every Iceberg table Cryo has scanned, ordered by what needs you. The top of the page says what last night's maintenance did; the list below says what state each table is in now.
+description: A guided tour of Cryo's Tables page, covering the triage cards, the nightly maintenance funnel, the catalog list, quick views, filters, columns, the savings view and bulk actions.
+updated: 2026-10-18
+---
+<p>Tables is where you start most days. It answers two questions in order: what did the nightly run do, and which tables need a person? Every screenshot below comes from the seeded demo lake: one REST catalog with 14 active tables, after a nightly run that finished <b>Partial</b>.</p>
+<screenshot name="tables" url="cryo.local/tables" alt="Tables page. Last nightly run partial. Triage cards: 1 failed last run, 2 queued or running, 2 skipped with work, 2 health dropped, 1 scan issue. A Sankey shows 14 active tables, 13 scanned, 7 needing work and 4 selected, of which 2 succeeded, 1 failed and 1 is in progress. Below, the table list sorted by small files: analytics.events at grade F, score 28, down 14 in 7 days, last run failed, 87% of 48.2K files small." caption="The whole page. Triage on top, every table below it." />
+
+<h2 id="header">The header</h2>
+<p>The pill on the right shows the last nightly run's status and how long ago it started. It links to that run, where every job and its audit rows live. If the scanner has fallen behind, so that at least 10% of active tables were last scanned more than 48 hours ago, a banner appears under the header. Health and maintenance decisions for those tables are working from old stats.</p>
+
+<h2 id="triage">Triage cards and the nightly funnel</h2>
+<screenshot name="tables-triage" url="cryo.local/tables" alt="Five triage cards: Failed last run 1, Queued or running 2, Skipped with work 2, Health dropped 2, Scan issues 1. Below, a Sankey of the last nightly run: 14 active tables, 13 scanned and 1 scan failing; 7 needed work and 6 needed none; of the 7, 1 was in cooldown, 1 over budget, 1 not eligible and 4 selected; of the 4, 2 succeeded, 1 failed and 1 is in progress. On the right, the catalog card: demo-rest-catalog, 14 tables, 1.7 TB, 39 dollars a month, saves 9 dollars a month, score 67." caption="Every number on a card is a link to the tables behind it." />
+<h3 id="triage-cards">Triage cards</h3>
+<p>Each card counts tables in one state that usually needs a person. Click a card to list those tables below. Click it again to clear the filter.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Card</th><th>Counts tables where</th></tr></thead>
+  <tbody>
+    <tr><td>Failed last run</td><td>The latest maintenance job failed or partly failed.</td></tr>
+    <tr><td>Queued or running</td><td>A job is waiting for engine capacity or running now.</td></tr>
+    <tr><td>Skipped with work</td><td>The table needed maintenance, but the nightly run held it back (cooldown, budget, eligibility).</td></tr>
+    <tr><td>Health dropped</td><td>The health score fell 10 or more points in 7 days.</td></tr>
+    <tr><td>Scan issues</td><td>The scanner is failing on the table, has never scanned it, or last scanned it more than 48 hours ago.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="funnel">Last nightly run</h3>
+<p>The Sankey follows every active table through the latest nightly batch: scanned or not, needed work or not, skipped (with the reason) or selected, then how the job ended. It counts <b>tables, not operations</b>, so a table with five operations counts once and every column adds up to the active total. In the demo, 13 of 14 tables were scanned; 7 needed work; 3 of those were held back by cooldown, budget and eligibility; and the 4 selected tables split into 2 succeeded, 1 failed and 1 still running.</p>
+<p>Click a stage to list its tables. The list shows those tables as they are <b>now</b>, so a table rescanned since last night can have moved on.</p>
+<callout type="note" title="Why only the last run">
+  <p>An all-time funnel only grows. Scoping it to one batch keeps it a report you can act on: what happened last night, and what is left.</p>
+</callout>
+<h3 id="catalogs">Catalogs</h3>
+<p>One row per connected catalog: its whole-number health score, table count, size, modelled storage cost a month and modelled monthly savings. Click a row to filter the list to that catalog. <b>Cost</b> opens the cost page. Every dollar figure is a model, as <a href="@/health/">Health and cost</a> explains.</p>
+
+<h2 id="explorer">The table list</h2>
+<screenshot name="tables-explorer" url="cryo.local/tables" alt="Table list with quick views (All tables, Needs work 8, Failed last run 1, Queued or running 2, Skipped with work 2, Health dropped 2, Scan issues 1, Savings 9), a search box, Workflow, Grade and Priority filters, More filters, Active only, Ask in plain English, grouping, Columns 7 of 21, Saved views, Export and refresh. Rows show table, health grade and score with 7-day change, maintenance status with reason, last run, small-file ratio, size, reads in 30 days and savings a month." caption="Each row says how healthy the table is, what maintenance is doing about it, and what it would save." />
+<h3 id="quick-views">Quick views</h3>
+<p>The chips above the filters are the triage cards as views, plus <b>Needs work</b> and <b>Savings</b>. Each shows its count. The address bar carries the view as <code>?view=</code>, along with the catalog, sort and page, so a link opens the same list.</p>
+<h3 id="filters">Search and filters</h3>
+<p>The search box matches schema or table names. <b>Workflow</b>, <b>Grade</b> and <b>Priority</b> are multi-select filters; <b>Catalog</b> appears too once more than one catalog is connected. <b>Active only</b> hides tables the catalog no longer lists. <b>Ask in plain English</b> turns a sentence such as "grade F tables over 100 GB" into filters you can review before applying them. <b>Clear all</b> resets everything.</p>
+<screenshot name="tables-filters" url="cryo.local/tables" alt="The More filters popover, open. Show tables with at least: size in GB, small files, savings in dollars a month, reclaimable GB, and a savings basis select set to Any basis." caption="Threshold filters live behind More filters, each with its unit." />
+<h3 id="columns">Columns</h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Column</th><th>What it shows</th></tr></thead>
+  <tbody>
+    <tr><td>Health</td><td>Grade, score, and the change over 7 days (▼ red for a drop, ▲ green for a gain).</td></tr>
+    <tr><td>Maintenance</td><td>What Cryo is doing about the table now: Running, Queued, Failed, Skipped, Needs work, Up to date, Held, Excluded, Scan failing or Not scanned, with the reason underneath.</td></tr>
+    <tr><td>Last run</td><td>When the last job finished, how it ended, and whether it was nightly or manual.</td></tr>
+    <tr><td>Small files</td><td>Small files as a share of all files, with both counts and a bar.</td></tr>
+    <tr><td>Size, Reads 30d</td><td>Table size and the number of queries that read it in 30 days.</td></tr>
+    <tr><td>Savings/mo</td><td>Modelled monthly saving from maintenance. <code>-</code> means none, <code>&lt;$1</code> means under a dollar.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Hover a row for <b>Scan now</b> and a shortcut to the table's Maintenance tab.</p>
+<screenshot name="tables-columns" url="cryo.local/tables" alt="The Columns menu, open, 7 of 21 shown, in four groups. Health: Health, Grade only, Priority, Needs compaction, Scan failures. Maintenance: Maintenance status, Last run, Workflow. Storage and cost: Small files, Size, Savings/mo, Total files, Reclaimable, Savings basis. Usage and metadata: Reads 30d, Last scan, Catalog, Owner, Partition, Last commit, First seen. Reset to default and Show all at the bottom." caption="Columns are grouped by the question they answer. Choices and widths are saved per browser." />
+<h3 id="saved-views">Saved views and export</h3>
+<p><b>Saved views</b> stores the current filters, columns and sort under a name, and can make one your default. Built-in views include <b>Health triage</b> (grades D and F), <b>Biggest tables that need work</b>, <b>Most-read tables</b> and <b>Top savings opportunities</b>. <b>Export</b> downloads the filtered list as CSV.</p>
+
+<h2 id="savings">The savings view</h2>
+<screenshot name="tables-savings" url="cryo.local/tables?view=savings" alt="The Savings view: 9 tables with an estimated monthly saving, sorted by savings. Columns: table, savings a month, reclaimable, savings basis, small files, size, health. analytics.events saves 214 dollars a month, product.inventory_snapshots 188, analytics.page_views 96." caption="Savings first, then the evidence for it." />
+<p>The <b>Savings</b> quick view lists only tables with a modelled monthly saving, sorted highest first, and puts the money columns first. While it is open, the Columns menu is locked to that layout and says why.</p>
+
+<h2 id="bulk">Acting on many tables</h2>
+<p>Tick rows to open the selection bar. <b>Select all N matching</b> extends the selection to every table the filters match, not just this page. Cryo sends the filter, not a list of IDs, so tables that start matching later are included.</p>
+<screenshot name="tables-bulk" url="cryo.local/tables" alt="Selection bar with 2 tables selected and a Select all 14 matching link, an Assign workflow select, Preview plan, Scan, a Run maintenance button, a more menu and Clear." caption="One row of actions. Anything destructive sits behind the ⋯ menu." />
+<div class="tbl">
+<table>
+  <thead><tr><th>Action</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Assign workflow</td><td>Pins the chosen workflow (preset) to the selected tables. Only workflows whose engine can reach those tables' catalog are offered.</td></tr>
+    <tr><td>Preview plan</td><td>Shows the plan Cryo would build, without running anything.</td></tr>
+    <tr><td>Scan</td><td>Queues a fresh scan of the selected tables.</td></tr>
+    <tr><td>Run maintenance…</td><td>Opens the run dialog below.</td></tr>
+    <tr><td>⋯ → Remove workflow pins</td><td>Returns the tables to rule-based assignment, after a confirmation.</td></tr>
+  </tbody>
+</table>
+</div>
+<screenshot name="tables-run-dialog" url="cryo.local/tables" alt="Run maintenance on 2 selected tables. Workflow nightly-standard. Operations: Full workflow or Manifests only, Full workflow selected. Engine demo-trino, Trino. A note: 1 of the selected tables is already running, queued, held or excluded and will likely be skipped. Cancel and Queue run buttons." caption="The run dialog warns about tables that will probably be skipped before you queue anything." />
+<p>The run dialog picks the workflow, the operations (the whole workflow in the <a href="@/maintenance/">standard order</a>, or manifests only) and the engine. Queued jobs still go through the governor, which paces them against live engine load, so a large selection does not hit the engine all at once. If the button is disabled, the line beside it says why.</p>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/table-detail/" title="Table detail">Open a row to see the evidence behind its grade and status.</linkcard>
+  <linkcard href="@/health/" title="Health and cost">How the score and the cost model work.</linkcard>
+  <linkcard href="@/maintenance/" title="Maintenance">Operation order, admission, cooldown and budgets.</linkcard>
+</linkcards>

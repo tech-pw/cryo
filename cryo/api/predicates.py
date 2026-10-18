@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy import ColumnElement, and_, false, func, not_, or_, select, true
 
+from cryo.api.table_maintenance import COMPUTED_FIELDS
 from cryo.db.models import Source, Table, TableAssignment, TableCost, TableStats
 from cryo.domain.predicates import (
     LEAF_OPERATORS,
@@ -45,7 +46,13 @@ FIELD_MAP = {
     "estimated_monthly_s3_cost_usd": TableStats.estimated_monthly_s3_cost_usd,
     "cost_precision": TableCost.precision,
     "assigned_preset_id": TableAssignment.preset_id,
+    "scan_at": TableStats.scan_at,
 }
+
+# Explorer-only fields: not in SUPPORTED_FIELDS, so preset rules (evaluated in Python against
+# candidate rows that carry none of these) can't reference them.
+_TIMESTAMP_FIELDS = frozenset({"last_snapshot_committed_at", "scan_at"})
+EXPLORER_FIELDS = frozenset({"scan_at", *COMPUTED_FIELDS})
 
 
 def compile_predicate(predicate: Mapping[str, Any] | None) -> ColumnElement[bool] | None:
@@ -73,12 +80,13 @@ def _compile_leaf(predicate: Mapping[str, Any]) -> ColumnElement[bool]:
     field_name = _field(predicate)
     op = _operator(predicate)
     value = predicate.get("value")
-    if field_name == "last_snapshot_committed_at" and isinstance(value, str):
+    if field_name in _TIMESTAMP_FIELDS and isinstance(value, str):
         try:
             value = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError as exc:
-            raise ValueError("last_snapshot_committed_at must be an ISO-8601 timestamp") from exc
-    column = FIELD_MAP.get(field_name)
+            raise ValueError(f"{field_name} must be an ISO-8601 timestamp") from exc
+    computed = COMPUTED_FIELDS.get(field_name)
+    column = computed() if computed is not None else FIELD_MAP.get(field_name)
     if column is None:
         raise ValueError(f"Unsupported filter field: {field_name}")
 
@@ -135,7 +143,7 @@ def _field(predicate: Mapping[str, Any]) -> str:
     field_name = predicate.get("field")
     if not isinstance(field_name, str):
         raise ValueError("leaf predicate must include a string field")
-    if field_name not in SUPPORTED_FIELDS:
+    if field_name not in SUPPORTED_FIELDS and field_name not in EXPLORER_FIELDS:
         raise ValueError(f"Unsupported filter field: {field_name}")
     return field_name
 
