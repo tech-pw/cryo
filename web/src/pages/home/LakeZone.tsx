@@ -12,7 +12,27 @@ export interface LakeZoneProps {
   error: boolean;
   sizeGb: number | null;
   smallFiles: number | null;
+  totalFiles?: number | null;
+  dfDelta?: number | null;
+  dfSeries?: readonly number[];
 }
+
+const Sparkline = ({ values }: { values: readonly number[] }) => {
+  const width = 96;
+  const height = 24;
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const span = max - min || 1;
+  const points = values.map((value, index) => `${(index / (values.length - 1)) * width},${height - 2 - ((value - min) / span) * (height - 4)}`);
+  const last = points[points.length - 1].split(",");
+  return (
+    <svg className="home-sparkline" viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img"
+      aria-label={`Tables at D or F over the last ${values.length} days: from ${values[0]} to ${values[values.length - 1]}.`}>
+      <polyline points={points.join(" ")} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={last[0]} cy={last[1]} r="2.5" fill="currentColor" />
+    </svg>
+  );
+};
 
 const GRADES = ["A", "B", "C", "D", "F"] as const;
 const DESCRIPTIONS = { A: "Excellent", B: "Good", C: "Fair", D: "Poor", F: "Critical" };
@@ -35,7 +55,8 @@ export const gradeBreakdown = (distribution: GradeCount[] | null, tracked: numbe
   return { rows, graded, ungraded, total: graded + ungraded };
 };
 
-export const LakeZone = ({ tracked, distribution, loading, error, sizeGb, smallFiles }: LakeZoneProps) => {
+export const LakeZone = ({ tracked, distribution, loading, error, sizeGb, smallFiles, totalFiles = null, dfDelta = null, dfSeries = [] }: LakeZoneProps) => {
+  const smallShare = valid(smallFiles) && valid(totalFiles) && totalFiles > 0 ? smallFiles / totalFiles * 100 : null;
   const breakdown = gradeBreakdown(distribution, tracked);
   const atRisk = breakdown ? breakdown.rows.filter((row) => row.grade === "D" || row.grade === "F").reduce((sum, row) => sum + row.count, 0) : null;
   const chartRows = breakdown ? [...breakdown.rows, { grade: "Not graded", count: breakdown.ungraded, label: "Not graded", color: "var(--color-muted-subtle)" }].filter((row) => row.count > 0) : [];
@@ -71,12 +92,16 @@ export const LakeZone = ({ tracked, distribution, loading, error, sizeGb, smallF
             </div>
           </div>
           {breakdown && breakdown.total > 0 ? <div className={`home-health-note ${atRisk ? "home-health-note-warning" : ""}`}>
-            <Link to="/tables?grade=D,F"><strong>{formatNumber(atRisk)}</strong> of {formatNumber(breakdown.total)} tables at D or F</Link>
-            <span>{atRisk ? "Prioritize these for maintenance." : breakdown.ungraded ? "Ungraded tables still need a scan." : "No tables in the two lowest grades."}</span>
+            <div className="home-health-note-text">
+              <Link to="/tables?grade=D,F"><strong>{formatNumber(atRisk)}</strong> of {formatNumber(breakdown.total)} tables at D or F</Link>
+              {dfDelta ? <span className={`home-delta ${dfDelta > 0 ? "home-delta-worse" : "home-delta-better"}`}>{dfDelta > 0 ? "+" : "−"}{formatNumber(Math.abs(dfDelta))} since yesterday</span> : null}
+              <span>{atRisk ? "Prioritize these for maintenance." : breakdown.ungraded ? "Ungraded tables still need a scan." : "No tables in the two lowest grades."}</span>
+            </div>
+            {dfSeries.length > 1 ? <Sparkline values={dfSeries} /> : null}
           </div> : null}
           <dl className="home-inventory">
             <div><dt>Data size</dt><dd>{valid(sizeGb) ? formatGb(sizeGb) : "Not measured"}</dd></div>
-            <div><dt>Small files</dt><dd>{valid(smallFiles) ? formatNumber(smallFiles, true) : "Not measured"}</dd></div>
+            <div><dt>Small files</dt><dd>{valid(smallFiles) ? formatNumber(smallFiles, true) : "Not measured"}{smallShare != null ? <span className="home-inventory-share">{smallShare.toFixed(0)}% of files</span> : null}</dd></div>
           </dl>
         </>
       )}

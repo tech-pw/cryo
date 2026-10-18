@@ -19,6 +19,8 @@ from cryo.db.models import (
     Table,
     TableAssignment,
 )
+from cryo.db.repositories.exclusions import table_is_excluded
+from cryo.db.repositories.intents import IntentStore
 from cryo.db.repositories.presets import (
     COST_LOAD_ONLY_COLUMNS,
     STATS_LOAD_ONLY_COLUMNS,
@@ -51,6 +53,8 @@ class SQLSchedulerStore:
 
     def list_due_presets(self, now: datetime) -> list[tuple[PresetConfig, datetime | None]]:
         del now
+        if IntentStore(self._session_factory).is_paused():
+            return []
         with self._session_factory() as session:
             presets = session.scalars(select(Preset).where(Preset.enabled.is_(True)))
             due: list[tuple[PresetConfig, datetime | None]] = []
@@ -81,7 +85,7 @@ class SQLSchedulerStore:
                     selectinload(Table.cost).load_only(*COST_LOAD_ONLY_COLUMNS),
                     selectinload(Table.source),
                 )
-                .where(Table.is_active.is_(True))
+                .where(Table.is_active.is_(True), ~table_is_excluded())
             )
             # Real fix, 2026-09-10: TableCandidate.last_maintained_at used to stay None for
             # every candidate here -- table_to_candidate never populated it, so

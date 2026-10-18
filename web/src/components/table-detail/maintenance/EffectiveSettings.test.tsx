@@ -62,11 +62,11 @@ describe("EffectiveSettings", () => {
     client.listCompatiblePresets.mockClear();
   });
 
-  it("labels every param source as not recorded and shows preset provenance", async () => {
+  it("shows where each param comes from and how the preset was chosen", async () => {
     renderSettings();
     expect(await screen.findByText("retain_last")).toBeInTheDocument();
-    expect(screen.getByText("Source not recorded")).toBeInTheDocument();
-    expect(screen.getByText(/Preset provenance manually assigned/)).toBeInTheDocument();
+    expect(screen.getByText("Preset")).toBeInTheDocument();
+    expect(screen.getByText("Assigned to this table by an operator.")).toBeInTheDocument();
     expect(screen.queryByText("engine default")).not.toBeInTheDocument();
     expect(document.getElementById("maintenance-settings")).toBeTruthy();
   });
@@ -78,12 +78,12 @@ describe("EffectiveSettings", () => {
     client.listDestinations.mockResolvedValue([{ id: "dest-1", name: "Trino", engine: "trino" }]);
     renderSettings();
 
-    expect(await screen.findByRole("button", { name: "Choose a workflow" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Change workflow" })).toBeEnabled();
     expect(client.listPresets).not.toHaveBeenCalled();
     expect(client.listDestinations).not.toHaveBeenCalled();
     expect(client.listCompatiblePresets).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Choose a workflow" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change workflow" }));
     await waitFor(() => {
       expect(client.listPresets).toHaveBeenCalled();
       expect(client.listDestinations).toHaveBeenCalled();
