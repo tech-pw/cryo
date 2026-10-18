@@ -27,6 +27,8 @@ _TOKEN_URL = re.compile(
     r"(https?://[^\s]*?(?:token|sig|signature|key|password)=)[^&\s]+",
     re.IGNORECASE,
 )
+
+
 def _mask_sql_literals(value: str) -> str:
     """Replace quoted SQL literals without a backtracking regex."""
     parts: list[str] = []

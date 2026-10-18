@@ -125,9 +125,7 @@ class SlackClient:
             payload["thread_ts"] = thread_ts
 
         try:
-            webhook_url = validated_https_url(
-                self.webhook_url, allowed_hosts=SLACK_WEBHOOK_HOSTS
-            )
+            webhook_url = validated_https_url(self.webhook_url, allowed_hosts=SLACK_WEBHOOK_HOSTS)
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(webhook_url, json=payload)
                 if response.status_code == 200:
