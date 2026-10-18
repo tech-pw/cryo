@@ -188,7 +188,7 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/python-deps
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: engine-go/go.mod
           cache-dependency-path: engine-go/go.sum
@@ -250,7 +250,7 @@ jobs:
         working-directory: engine-go
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: engine-go/go.mod
           cache-dependency-path: engine-go/go.sum
@@ -338,7 +338,7 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: engine-go/go.mod
           cache-dependency-path: engine-go/go.sum
@@ -383,7 +383,7 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: engine-go/go.mod
           cache-dependency-path: engine-go/go.sum

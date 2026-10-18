@@ -46,7 +46,7 @@ bytes = "1"
 
 [dev-dependencies]
 tempfile = "3"
-criterion = { version = "0.5", features = ["async_tokio"] }
+criterion = { version = "0.8", features = ["async_tokio"] }
 
 [profile.release]
 lto = true
