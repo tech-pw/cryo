@@ -115,7 +115,7 @@ def test_compute_property_recommendations_tier1_keys(api_db: ApiDb) -> None:
     assert "write.distribution-mode" in keys
     assert "write.metadata.delete-after-commit.enabled" in keys
     assert "commit.retry.num-retries" in keys
-    assert "write.merge-mode" in keys
+    assert "write.merge-mode" not in keys
     assert "write.sort-order" in keys
 
 
@@ -191,33 +191,25 @@ def test_apply_rejects_unlisted_property(api_db: ApiDb) -> None:
     assert response.status_code == 400
 
 
-def test_apply_format_version_requires_confirmation(api_db: ApiDb) -> None:
+def test_apply_format_version_is_rejected_as_a_property(api_db: ApiDb) -> None:
+    """set_properties would store format-version as a plain property without upgrading."""
     session = api_db.session_factory()
     table_id = _seed_table(session)
     session.close()
 
-    response = api_db.client.post(
-        f"/api/v1/tables/{table_id}/properties/apply",
-        headers=OPERATOR_HEADERS,
-        json={"properties": {"format-version": "3"}},
-    )
-    assert response.status_code == 400
-
-    mock_table = MagicMock()
-    mock_txn = MagicMock()
-    mock_table.transaction.return_value.__enter__ = MagicMock(return_value=mock_txn)
-    mock_table.transaction.return_value.__exit__ = MagicMock(return_value=False)
-
-    with patch(
-        "cryo.sources.pyiceberg_catalog.PyIcebergSourceCatalog",
-    ) as catalog_cls:
-        catalog_cls.return_value.load_table.return_value = mock_table
-        response = api_db.client.post(
-            f"/api/v1/tables/{table_id}/properties/apply",
-            headers=OPERATOR_HEADERS,
-            json={"properties": {"format-version": "3"}, "confirm_risky": True},
-        )
-    assert response.status_code == 200
+    with patch("cryo.sources.pyiceberg_catalog.PyIcebergSourceCatalog") as catalog_cls:
+        for body in (
+            {"properties": {"format-version": "3"}},
+            {"properties": {"format-version": "3"}, "confirm_risky": True},
+        ):
+            response = api_db.client.post(
+                f"/api/v1/tables/{table_id}/properties/apply",
+                headers=OPERATOR_HEADERS,
+                json=body,
+            )
+            assert response.status_code == 400
+            assert "Config tab" in response.json()["detail"]
+        catalog_cls.assert_not_called()
 
 
 def test_property_recommendations_404(api_db: ApiDb) -> None:

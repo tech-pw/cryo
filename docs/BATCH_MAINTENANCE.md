@@ -24,7 +24,7 @@ pods could not fix that. The dispatch model itself was the waste.
 | Step | Code | What happens |
 |------|------|--------------|
 | Orphan gate | `coordinator._shared_location_ids` | Refreshes the shared-S3-path snapshot. If the refresh fails *and* the last snapshot is older than `maintenance_shared_snapshot_max_age_hours` (72), `remove_orphan_files` is dropped for **every** table in the run. |
-| Select | `selection.py` | Only stored scan stats are used. Tables are excluded if inactive, on a disabled source, unreadable at last scan, in a maintenance back-off window, not scanned within 3 days, or maintained successfully within `maintenance_cooldown_hours` (72 h in prod since 2026-09-26, so nights rotate through the fleet). The source's schema allow-list applies. Eligible tables either need compaction or have ≥1% delete files. They are ranked by 0.45 × heat (Trino queries over 30 days) + 0.35 × need (small-file and delete ratios) + 0.20 × ROI (small files per rewrite GB, plus projected savings). Heat and ROI are rank-normalized. The top `maintenance_top_n` are kept (prod: 1,500 on 12 lanes since 2026-09-26, up from 500 on 4; the run is bound by its GB·hr budget, not the count, so lanes are the real scope lever). |
+| Select | `selection.py` | Only stored scan stats are used. Tables are excluded if inactive, covered by an operator exclusion rule (`maintenance_exclusions`, see below), on a disabled source, unreadable at last scan, in a maintenance back-off window, not scanned within 3 days, or maintained successfully within `maintenance_cooldown_hours` (72 h in prod since 2026-09-26, so nights rotate through the fleet). The source's schema allow-list applies. Eligible tables either need compaction or have ≥1% delete files. They are ranked by 0.45 × heat (Trino queries over 30 days) + 0.35 × need (small-file and delete ratios) + 0.20 × ROI (small files per rewrite GB, plus projected savings). Heat and ROI are rank-normalized. The top `maintenance_top_n` are kept (prod: 1,500 on 12 lanes since 2026-09-26, up from 500 on 4; the run is bound by its GB·hr budget, not the count, so lanes are the real scope lever). |
 | Plan | `manifest.py` | `build_execution_plan` in deep mode, then the Spark renderer. That covers partition-aware chunking, protected snapshots, the shared-location gate and `CORRECT_ORDER`. The planner decides the operations; nothing in the batch path adds or removes any. The run pins Spark's `min-file-size-bytes` to the scanner's small-file threshold (`scan_small_file_mb`, 89.6 MB), so optimize rewrites only the files the table was picked for, and sets `max-file-size-bytes` to 10 × target (`max_file_size_ratio`), so large files aren't rewritten just to be split. `DEFAULT_PARAMS` keep `stats_compute_ndv: False`, so no `compute_table_stats` (a full-table NDV scan) is planned, and turn on `remove_dangling_deletes`, so convert_deletes also drops the delete files its rewrite leaves dangling. |
 | Lock | `coordinator._execute` | Redis per-table lock. A table locked by anything else is recorded as `skipped` and never sent to Spark. The coordinator also holds an owner lease on each of its jobs, so neither orphan recovery nor the stale-running reaper touches them. |
 | Lanes | `lanes.py` | Lane count is ceil(total rewrite GB, plus 0.5 GB overhead per table, ÷ 200), capped at 4 and at the table count. Tables are dealt in rank order to the least-loaded lane. Each lane is sized by its largest table: <5 GB → 1 vCPU / 4 GiB, <200 GB → 2 / 8 GiB, otherwise 4 / 16 GiB, never above the configured ceiling. |
@@ -85,6 +85,18 @@ kubectl get pods -n cryo -l app.kubernetes.io/component=maintenance-lane
 # Pause the nightly schedule
 kubectl patch cronjob -n cryo cryo-maintenance -p '{"spec":{"suspend":true}}'
 ```
+
+### Holds and exclusions
+
+A maintenance hold (Runs → Holds, or `POST /api/v1/maintenance/control/pause`) is checked
+when the coordinator starts, after it resolves the Spark destination. If the global scope or that destination is
+paused, the run is recorded as `skipped` with `summary.paused = true`, and no lane is
+created. Because the check happens only at start, a run already in flight finishes the lanes it started. Use
+the cronjob suspend above when the CronJob itself should not start.
+
+Exclusion rules (`/api/v1/maintenance/exclusions`) remove a schema, or one table, from
+selection. That includes `--table-ids` runs: an excluded table is never planned. Scans
+are unaffected.
 
 A full run outside the schedule: `kubectl create job -n cryo --from=cronjob/cryo-maintenance
 cryo-maintenance-manual-$(date +%s)`.

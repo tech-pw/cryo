@@ -18,7 +18,7 @@ updated: 2026-10-06
   </tbody>
 </table>
 </div>
-<p>The home screen rolls those grades up across the lake, so you can see at a glance how many tables need work and how much storage maintenance could give back. The <a href="@/quickstart/#next">quickstart</a> shows that screen after the first scan of the seeded lake.</p>
+<p>The home screen rolls those grades up across the lake, so you can see at a glance how many tables need work and how much storage maintenance could give back. It shows whether the count of D and F tables moved since yesterday, which D and F tables people query most, and which tables Cryo moved up a grade in the last 24 hours. A table only counts as fixed once a scan after its maintenance job shows the better grade. The <a href="@/quickstart/#next">quickstart</a> shows that screen after the first scan of the seeded lake.</p>
 
 <h2 id="deductions">Deductions</h2>
 <p>There are two deduction sizes and no others: a warning costs 8 points and a critical finding costs 20. Two warnings and one critical is 100 − 8 − 8 − 20 = 64, grade C. The <a href="@/maintenance/#canonical-order">seeded demo run</a> is the same lake, not a production fleet.</p>
@@ -35,16 +35,16 @@ updated: 2026-10-06
   <tfoot><tr><td>Final score and grade</td><td class="num"></td><td class="num"><span class="grade grade-c"><b>C</b>&nbsp;64</span></td></tr></tfoot>
 </table>
 </div>
-<p>In the table list, every row carries its grade and the evidence behind it: small files out of total files, size, and when the scanner last looked. Sorting by grade puts the tables that need work first.</p>
-<screenshot name="tables" url="cryo.local/tables" alt="Catalogs and tables page. One REST catalog with 14 tables and 8 needing compaction. The list shows analytics.events at grade F with 41,930 of 48,210 files small, and analytics.page_views at grade D." caption="The table explorer. A grade is never shown without the counts that produced it." />
+<p>On the <a href="@/tables/">Tables page</a>, every row carries its grade, its score change over 7 days and the evidence behind it: small files out of total files, size and reads. The <b>Health triage</b> view lists grade D and F tables first.</p>
+<screenshot name="tables" url="cryo.local/tables" alt="Tables page. Last nightly run partial. Triage cards: 1 failed last run, 2 queued or running, 2 skipped with work, 2 health dropped, 1 scan issue. A Sankey shows 14 active tables, 13 scanned, 7 needing work and 4 selected, of which 2 succeeded, 1 failed and 1 is in progress. Below, the table list sorted by small files: analytics.events at grade F, score 28, down 14 in 7 days, last run failed, 87% of 48.2K files small." caption="The Tables page. A grade is never shown without the counts that produced it, and every row says what maintenance last did." />
 <p>Open a table to see its score and how it got there. This one scores 28: it has lost 72 points to two critical findings and four warnings.</p>
 <screenshot name="table-detail" url="cryo.local/tables/analytics.events" alt="Table detail for analytics.events: 412.6 GB, 48,210 files, 41,930 compaction candidates, 1,284 snapshots, health score 28 of 100, grade F, Critical." caption="A grade F table. The score gauge, the compaction candidates and the snapshot count all come from the last scan." />
 
 <h2 id="projection">Projection: from scan to stored cost</h2>
 <p>The cost estimator turns the scanner's stored statistics into a projected byte count for each operation and stores it. Nothing is read from object storage to produce it. Orphan-file precision is an opt-in scanner tier. Without it, the number is flagged as last-known.</p>
 <diagram name="projection" caption="Object storage is not an input to the projection." />
-<callout type="note" title="Bytes, not money">
-  <p>A modelled saving is not shown as money anywhere in Cryo or on this site. Projections are byte classes: live data, expirable, manifests and metadata, and orphan candidates.</p>
+<callout type="note" title="Bytes first, then a rate">
+  <p>Projections are byte classes: live data, expirable, manifests and metadata, and orphan candidates. The bytes are what Cryo measures. The <a href="@/table-detail/#cost">Cost &amp; Savings tab</a> multiplies them by the AWS S3 Standard rate to show a monthly figure, labelled as modelled. For a table outside S3 it shows bytes only, because the rate wouldn't apply.</p>
 </callout>
 
 <h2 id="operations">What each operation projects</h2>

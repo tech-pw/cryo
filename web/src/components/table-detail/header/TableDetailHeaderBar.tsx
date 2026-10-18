@@ -81,7 +81,7 @@ export const TableDetailHeaderBar = () => {
       onRefreshStats={() => ctx.scan.mutate()}
       onChooseWorkflow={() => {
         const next = new URLSearchParams(ctx.searchParams);
-        next.set("tab", "maintenance");
+        next.set("tab", "config");
         ctx.navigate({ search: `?${next.toString()}`, hash: "#maintenance-settings" });
       }}
       onPreview={() => ctx.setPreviewOpen(true)}
