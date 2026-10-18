@@ -453,46 +453,36 @@ def test_worker_does_not_deactivate_table_on_unrelated_failure() -> None:
     assert store.deactivated_tables == {}
 
 
-def test_skip_operations_from_preset_derives_the_complement() -> None:
+def test_skip_operations_from_preset_never_skips_anything() -> None:
+    """2026-10-13: Preset.operations no longer force-skips operations the planner itself
+    would otherwise include. build_plan() already decides per-table what's needed (size
+    thresholds, delete ratios, mode gating) and logs a reason for every real skip -- a
+    preset's operations list used to be a second, blunter gate on top of that, silently
+    dropping e.g. expire_snapshots/remove_orphan_files/optimize_manifests on any table
+    assigned a preset scoped to just ["optimize"], regardless of whether that table
+    actually needed them. See skip_operations_from_preset's docstring for the full
+    history (this mechanism itself was a deliberate 2026-08-03 fix for Preset.operations
+    not being honored at all -- this change removes it as a gate again, deliberately)."""
     from cryo.worker.worker import _skip_operations_from_preset
 
-    skipped = _skip_operations_from_preset(
-        (OperationType.OPTIMIZE, OperationType.OPTIMIZE_MANIFESTS)
+    assert (
+        _skip_operations_from_preset((OperationType.OPTIMIZE, OperationType.OPTIMIZE_MANIFESTS))
+        == []
     )
-    assert set(skipped) == {"expire_snapshots", "remove_orphan_files"}
-
-
-def test_skip_operations_without_optimize_also_skips_the_compaction_family() -> None:
-    """An orphan-only run must not carry a delete-file rewrite or stats pass along with it."""
-    from cryo.worker.worker import _skip_operations_from_preset
-
-    skipped = _skip_operations_from_preset((OperationType.REMOVE_ORPHAN_FILES,))
-    assert set(skipped) == {
-        "expire_snapshots",
-        "optimize",
-        "optimize_manifests",
-        "convert_deletes",
-        "rewrite_position_deletes",
-        "compute_statistics",
-    }
-    with_optimize = _skip_operations_from_preset((OperationType.OPTIMIZE,))
-    assert "convert_deletes" not in with_optimize
-    assert "compute_statistics" not in with_optimize
-
-
-def test_skip_operations_from_preset_empty_when_no_preset_operations_configured() -> None:
-    """None/() means the preset never explicitly set operations -- must not skip anything,
-    preserving the pre-existing default behavior for every preset that doesn't use this."""
-    from cryo.worker.worker import _skip_operations_from_preset
-
+    assert _skip_operations_from_preset((OperationType.REMOVE_ORPHAN_FILES,)) == []
+    assert _skip_operations_from_preset((OperationType.OPTIMIZE,)) == []
     assert _skip_operations_from_preset(None) == []
     assert _skip_operations_from_preset(()) == []
 
 
-def test_worker_derives_skip_operations_from_job_operations_end_to_end() -> None:
-    """A preset that only lists optimize/optimize_manifests must actually produce a plan
-    without expire_snapshots/remove_orphan_files -- not just pass ABAC/PII validation with
-    the field, then silently ignore it at plan-build time."""
+def test_worker_no_longer_lets_job_operations_force_skip_a_planned_operation() -> None:
+    """2026-10-13: a preset's operations list (here job.operations, derived from
+    Preset.operations) must NOT force-skip anything build_plan() would otherwise include.
+    Confirmed live: a table on a preset scoped to ["optimize"] only ever got optimize on
+    a deep-mode run, with expire_snapshots/remove_orphan_files dropped every time by this
+    allowlist -- not because the table didn't need them. The preset listing just
+    optimize/optimize_manifests here must not suppress expire_snapshots/remove_orphan_files
+    that a deep-mode run would otherwise plan."""
     queue, locks, store = _worker_fixture()
     store.jobs["job-1"].operations = (OperationType.OPTIMIZE, OperationType.OPTIMIZE_MANIFESTS)
     store.jobs["job-1"].mode = Mode.DEEP
@@ -503,8 +493,8 @@ def test_worker_derives_skip_operations_from_job_operations_end_to_end() -> None
     assert result is not None
     assert result.plan is not None
     op_types = [op["type"] for op in result.plan["operations"]]
-    assert "expire_snapshots" not in op_types
-    assert "remove_orphan_files" not in op_types
+    assert "expire_snapshots" in op_types
+    assert "remove_orphan_files" in op_types
 
 
 def test_worker_calls_with_table_stats_for_non_native_engines_too() -> None:

@@ -1,7 +1,13 @@
 import type {
   AuditEntry,
+  ColumnUsageResponse,
+  MaintenanceImpactResponse,
+  SkipEvaluationPage,
+  TableHoldRead,
+  TableHoldWrite,
   CapabilityManifest,
   CostDashboard,
+  DashboardImprovedTable,
   DatalakeDashboard,
   FleetTrendsResponse,
   DestinationRead,
@@ -18,6 +24,8 @@ import type {
   JsonObject,
   MaintenanceControlRead,
   MaintenanceControlWrite,
+  MaintenanceExclusionRead,
+  MaintenanceExclusionWrite,
   MaintenanceIntentRead,
   MaintenancePreviewResponse,
   MaintenanceRunResponse,
@@ -28,6 +36,7 @@ import type {
   PartitionRead,
   TableGroupByField,
   TableGroupByResponse,
+  TablesFunnel,
   PresetRead,
   PresetRuleRead,
   PresetSimulationResponse,
@@ -135,7 +144,21 @@ import type {
   QualityConstraintCreate,
   QualityConstraintRead,
   QualityConstraintsResponse,
-  QualityConstraintUpdate
+  QualityConstraintUpdate,
+  ConfigApplyResponse,
+  ConfigChange,
+  ConfigChangePreview,
+  ConfigPreviewResponse,
+  ConfigRisk,
+  MaintenanceOperationRead,
+  OperationExclusionsResponse,
+  OperationExclusionsWrite,
+  PropertyDetailRead,
+  SettingGroupRead,
+  TableConfigMetadataRead,
+  TableConfigResponse,
+  TableOperationsRead,
+  TableSettingRead
 } from "./types";
 import { serializePredicate, type Predicate } from "../lib/predicate";
 
@@ -178,7 +201,7 @@ const formatApiDetail = (detail: unknown): string => {
 };
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
   signal?: AbortSignal;
@@ -275,6 +298,9 @@ export const exportTablesCsv = (
     signal: args.signal
   });
 
+export const getTablesMaintenanceFunnel = (api: ApiOptions, signal?: AbortSignal) =>
+  apiFetch<TablesFunnel>("/tables/maintenance-funnel", api, { signal });
+
 export const groupTables = (
   api: ApiOptions,
   args: { field: TableGroupByField; predicate?: Predicate | null; signal?: AbortSignal }
@@ -338,6 +364,17 @@ export const getTableHistory = (api: ApiOptions, id: UUID) =>
   apiFetch<{ items: Array<Record<string, unknown>> }>(`/tables/${id}/history`, api).then((payload) => payload.items);
 export const getTableRuns = (api: ApiOptions, id: UUID, query?: { limit?: number; offset?: number }) =>
   apiFetch<{ items: TableRunRead[] }>(`/tables/${id}/runs`, api, { query }).then((payload) => payload.items);
+export const getTableSkipEvaluations = (api: ApiOptions, id: UUID, query?: { limit?: number; offset?: number }) =>
+  apiFetch<SkipEvaluationPage>(`/tables/${id}/skip-evaluations`, api, { query });
+export const getTableMaintenanceImpact = (api: ApiOptions, id: UUID, windowDays = 30) =>
+  apiFetch<MaintenanceImpactResponse>(`/tables/${id}/maintenance-impact`, api, { query: { window_days: windowDays } });
+export const getTableHold = (api: ApiOptions, id: UUID) => apiFetch<TableHoldRead>(`/tables/${id}/maintenance-hold`, api);
+export const setTableHold = (api: ApiOptions, id: UUID, body: TableHoldWrite) =>
+  apiFetch<TableHoldRead>(`/tables/${id}/maintenance-hold`, api, { method: "PUT", body });
+export const releaseTableHold = (api: ApiOptions, id: UUID) =>
+  apiFetch<TableHoldRead>(`/tables/${id}/maintenance-hold`, api, { method: "DELETE" });
+export const getTableColumnUsage = (api: ApiOptions, id: UUID) =>
+  apiFetch<ColumnUsageResponse>(`/tables/${id}/column-usage`, api);
 
 export interface HealthTrendPoint {
   timestamp: string;
@@ -430,6 +467,12 @@ export const resumeMaintenance = (api: ApiOptions, body: MaintenanceControlWrite
     method: "POST",
     body
   });
+export const listMaintenanceExclusions = (api: ApiOptions) =>
+  apiFetch<MaintenanceExclusionRead[]>("/maintenance/exclusions", api);
+export const createMaintenanceExclusion = (api: ApiOptions, body: MaintenanceExclusionWrite) =>
+  apiFetch<MaintenanceExclusionRead>("/maintenance/exclusions", api, { method: "POST", body });
+export const deleteMaintenanceExclusion = (api: ApiOptions, id: UUID) =>
+  apiFetch<void>(`/maintenance/exclusions/${id}`, api, { method: "DELETE" });
 export const createSource = (api: ApiOptions, body: SourceWrite) =>
   apiFetch<SourceRead>("/sources", api, { method: "POST", body });
 export const patchSource = (api: ApiOptions, id: UUID, body: Partial<SourceWrite>) =>
@@ -438,6 +481,45 @@ export const testSource = (
   api: ApiOptions,
   body: { type: string; config: Record<string, unknown>; source_id?: UUID }
 ) => apiFetch<SourceTestResult>("/sources/test", api, { method: "POST", body });
+
+export type BucketAccess = "readable" | "denied" | "missing" | "unknown";
+
+export interface DiscoveredBucket {
+  name: string;
+  tables: number;
+  schemas: number;
+  access: BucketAccess;
+  access_detail?: string | null;
+}
+
+export interface SourceStorageDiscoveryResult {
+  ok: boolean;
+  buckets: DiscoveredBucket[];
+  scanned: number;
+  total: number;
+  error?: string | null;
+}
+
+/**
+ * One slice of a bucket-discovery walk. Reads TABLE locations (a database's own location
+ * is just a default most tables don't follow), which is slow enough on a real metastore
+ * that callers page through with `offset`/`limit` and show buckets as they accumulate
+ * rather than waiting for the whole sweep.
+ */
+export const discoverSourceStorage = (
+  api: ApiOptions,
+  body: {
+    type: string;
+    config: Record<string, unknown>;
+    source_id?: UUID;
+    offset?: number;
+    limit?: number;
+  }
+) =>
+  apiFetch<SourceStorageDiscoveryResult>("/sources/discover-storage", api, {
+    method: "POST",
+    body
+  });
 
 export interface SourceNamespacesResult {
   ok: boolean;
@@ -638,13 +720,14 @@ export const runTableOperations = (
 
 export const listRuns = (
   api: ApiOptions,
-  args: { kind?: string; source_id?: UUID; preset_id?: UUID; limit?: number; offset?: number } = {}
+  args: { kind?: string; source_id?: UUID; preset_id?: UUID; pipeline?: string; limit?: number; offset?: number } = {}
 ) =>
   apiFetch<RunRead[]>("/runs", api, {
     query: {
       kind: args.kind,
       source_id: args.source_id,
       preset_id: args.preset_id,
+      pipeline: args.pipeline,
       limit: args.limit,
       offset: args.offset
     }
@@ -674,10 +757,10 @@ export const forceAdmitJob = (api: ApiOptions, id: UUID) =>
 
 export const getDatalakeDashboard = (
   api: ApiOptions,
-  args: { top_limit?: number; drift_limit?: number } = {}
+  args: { top_limit?: number; drift_limit?: number; hot_limit?: number } = {}
 ) =>
   apiFetch<RawDatalakeDashboard>("/dashboards/datalake", api, {
-    query: { top_limit: args.top_limit, drift_limit: args.drift_limit }
+    query: { top_limit: args.top_limit, drift_limit: args.drift_limit, hot_limit: args.hot_limit }
   }).then(normalizeDashboard);
 export const getFleetTrends = (api: ApiOptions, args: { days?: number } = {}) =>
   apiFetch<FleetTrendsResponse>("/dashboard/fleet-trends", api, {
@@ -751,27 +834,23 @@ interface RawDatalakeDashboard {
   totals: {
     total_tables: number;
     total_size_gb: number;
+    total_files?: number;
     small_files_count: number;
     estimated_monthly_s3_cost_usd: number;
     projected_monthly_s3_cost_usd?: number;
     projected_savings_usd_month?: number;
     reclaimable_bytes?: number;
     needs_compaction_count: number;
+    running_jobs?: number;
   };
   grade_distribution: Array<{ grade: string; count: number }>;
   freshness_distribution?: DatalakeDashboard["freshness_distribution"];
   freshness_as_of?: string | null;
-  top_offenders: Array<{
-    table_id: UUID;
-    schema_name: string;
-    table_name: string;
-    grade?: string | null;
-    overall_score?: number | null;
-    total_size_gb?: number;
-    total_files?: number;
-    small_files_count?: number;
-    estimated_monthly_s3_cost_usd?: number | null;
-  }>;
+  top_offenders: RawDashboardTable[];
+  hot_at_risk?: RawDashboardTable[];
+  hot_at_risk_count?: number;
+  recently_improved?: DashboardImprovedTable[];
+  recently_improved_count?: number;
   drift: Array<Record<string, unknown>>;
   cost_by_schema?: Array<{
     schema_name: string;
@@ -780,6 +859,37 @@ interface RawDatalakeDashboard {
     savings_usd: number;
   }>;
 }
+
+interface RawDashboardTable {
+  table_id: UUID;
+  schema_name: string;
+  table_name: string;
+  grade?: string | null;
+  overall_score?: number | null;
+  total_size_gb?: number;
+  total_files?: number;
+  small_files_count?: number;
+  estimated_monthly_s3_cost_usd?: number | null;
+  query_count_30d?: number;
+}
+
+const dashboardTableRead = (item: RawDashboardTable): TableRead => ({
+  id: item.table_id,
+  source_id: "",
+  schema_name: item.schema_name,
+  table_name: item.table_name,
+  first_seen_at: "",
+  is_active: true,
+  stats: {
+    grade: item.grade ?? undefined,
+    overall_score: item.overall_score ?? undefined,
+    total_size_gb: item.total_size_gb,
+    total_files: item.total_files,
+    small_files_count: item.small_files_count,
+    query_count_30d: item.query_count_30d,
+    estimated_monthly_s3_cost_usd: item.estimated_monthly_s3_cost_usd ?? undefined
+  }
+});
 
 interface RawSchemaCost {
   items: Array<{
@@ -793,32 +903,23 @@ const normalizeDashboard = (payload: RawDatalakeDashboard): DatalakeDashboard =>
   totals: {
     tables: payload.totals.total_tables,
     size_gb: payload.totals.total_size_gb,
+    total_files: payload.totals.total_files,
     small_files: payload.totals.small_files_count,
     monthly_cost_usd: payload.totals.estimated_monthly_s3_cost_usd,
     projected_monthly_cost_usd: payload.totals.projected_monthly_s3_cost_usd,
     projected_savings_usd_month: payload.totals.projected_savings_usd_month,
     reclaimable_bytes: payload.totals.reclaimable_bytes,
-    needs_compaction: payload.totals.needs_compaction_count
+    needs_compaction: payload.totals.needs_compaction_count,
+    running_jobs: payload.totals.running_jobs
   },
   grade_distribution: payload.grade_distribution,
   freshness_distribution: payload.freshness_distribution,
   freshness_as_of: payload.freshness_as_of,
-  top_offenders: payload.top_offenders.map((item) => ({
-    id: item.table_id,
-    source_id: "",
-    schema_name: item.schema_name,
-    table_name: item.table_name,
-    first_seen_at: "",
-    is_active: true,
-    stats: {
-      grade: item.grade ?? undefined,
-      overall_score: item.overall_score ?? undefined,
-      total_size_gb: item.total_size_gb,
-      total_files: item.total_files,
-      small_files_count: item.small_files_count,
-      estimated_monthly_s3_cost_usd: item.estimated_monthly_s3_cost_usd ?? undefined
-    }
-  })),
+  top_offenders: payload.top_offenders.map(dashboardTableRead),
+  hot_at_risk: payload.hot_at_risk?.map(dashboardTableRead),
+  hot_at_risk_count: payload.hot_at_risk_count,
+  recently_improved: payload.recently_improved,
+  recently_improved_count: payload.recently_improved_count,
   drift: payload.drift,
   cost_by_schema: payload.cost_by_schema?.map((item) => ({
     schema_name: item.schema_name,
@@ -1789,6 +1890,8 @@ export interface ComplianceStatusRead {
   } | null;
   abac_policy_count: number;
   abac_enforcement_note: string | null;
+  abac_enforced?: boolean;
+  protected_snapshot_count?: number;
 }
 
 export const getComplianceStatus = (api: ApiOptions, tableId: UUID) =>
@@ -1830,8 +1933,55 @@ export interface ApplyTablePropertiesResponse {
   message: string;
 }
 
+export interface OffPeakWindowResponse {
+  start_hour_ist: number;
+  end_hour_ist: number;
+  /** Equal start/end bounds disable the gate; the API reports that as false. */
+  enabled: boolean;
+}
+
+/** Governor-wide off-peak window. Read-only: not a per-table setting. */
+export const getGovernorOffPeakWindow = (api: ApiOptions) =>
+  apiFetch<OffPeakWindowResponse>("/governor/offpeak-window", api);
+
 export const getPropertyRecommendations = (api: ApiOptions, tableId: UUID) =>
   apiFetch<PropertyRecommendationsResponse>(`/tables/${tableId}/property-recommendations`, api);
+
+export type {
+  ConfigApplyResponse,
+  ConfigChange,
+  ConfigChangePreview,
+  ConfigPreviewResponse,
+  ConfigRisk,
+  MaintenanceOperationRead,
+  OperationExclusionsResponse,
+  OperationExclusionsWrite,
+  PropertyDetailRead,
+  SettingGroupRead,
+  TableConfigMetadataRead,
+  TableConfigResponse,
+  TableOperationsRead,
+  TableSettingRead
+};
+
+export const getTableConfig = (api: ApiOptions, tableId: UUID, refresh = false) =>
+  apiFetch<TableConfigResponse>(`/tables/${tableId}/config`, api, refresh ? { query: { refresh: true } } : undefined);
+
+export const previewTableConfig = (api: ApiOptions, tableId: UUID, changes: ConfigChange[]) =>
+  apiFetch<ConfigPreviewResponse>(`/tables/${tableId}/config/preview`, api, {
+    method: "POST",
+    body: { changes }
+  });
+
+export const applyTableConfig = (
+  api: ApiOptions,
+  tableId: UUID,
+  body: { changes: ConfigChange[]; confirm: boolean; reason?: string | null }
+) =>
+  apiFetch<ConfigApplyResponse>(`/tables/${tableId}/config/apply`, api, { method: "POST", body });
+
+export const putOperationExclusions = (api: ApiOptions, tableId: UUID, body: OperationExclusionsWrite) =>
+  apiFetch<OperationExclusionsResponse>(`/tables/${tableId}/config/operations`, api, { method: "PUT", body });
 
 export const analyzeWairBoundaries = (api: ApiOptions, tableId: UUID, aggressiveness = 1) =>
   apiFetch<WairBoundaryReport>(

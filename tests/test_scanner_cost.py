@@ -101,6 +101,43 @@ def test_metadata_accounting_reclaims_only_expired_files() -> None:
     assert "s3://bucket/data/live.parquet" in result.referenced_file_paths
 
 
+class SharedManifestSnapshot(FakeSnapshot):
+    def __init__(self, snapshot_id: int, timestamp_ms: int, manifests: list[FakeManifest]) -> None:
+        super().__init__(snapshot_id, timestamp_ms, [])
+        self._manifests = manifests
+
+    def manifests(self, io: object) -> list[FakeManifest]:
+        del io
+        return list(self._manifests)
+
+
+def test_metadata_accounting_counts_files_in_manifests_carried_into_current_snapshot() -> None:
+    scan_at = datetime(2026, 7, 3, tzinfo=UTC)
+    old_ts = int((scan_at - timedelta(days=30)).timestamp() * 1000)
+    recent_ts = int((scan_at - timedelta(days=1)).timestamp() * 1000)
+    base = FakeManifest(
+        [FakeDataFile("s3://bucket/data/base.parquet", 30_000)],
+        manifest_path="s3://bucket/metadata/base.avro",
+    )
+    append = FakeManifest(
+        [FakeDataFile("s3://bucket/data/append.parquet", 100)],
+        manifest_path="s3://bucket/metadata/append.avro",
+    )
+    snapshots: list[FakeSnapshot] = [
+        SharedManifestSnapshot(1, old_ts, [base]),
+        SharedManifestSnapshot(2, recent_ts, [base, append]),
+    ]
+    table = FakeTable(snapshots, {})
+
+    result = account_metadata_cost(table, scan_at=scan_at, settings=Settings())
+
+    assert result.breakdown.live_bytes == 30_100
+    assert result.breakdown.dead_bytes == 0
+    assert result.reclaim_expire_bytes == 0
+    assert result.breakdown.metadata_bytes == 1024
+    assert result.raw["manifest_count"] == 2
+
+
 def test_metadata_accounting_falls_back_when_snapshot_bound_exceeded() -> None:
     scan_at = datetime(2026, 7, 3, tzinfo=UTC)
     snapshots = [

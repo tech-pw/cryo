@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -45,6 +45,7 @@ def build_execution_plan(
     operations: tuple[OperationType, ...] | None,
     protected_snapshot_ids: Sequence[int] = (),
     has_shared_location: bool = False,
+    excluded_operations: Collection[str] = (),
 ) -> MaintenancePlan:
     plan_params = execution_plan_params(params, destination, stats)
     skip_operations = skip_operations_from_preset(operations)
@@ -63,11 +64,14 @@ def build_execution_plan(
         Mode(mode),
         plan_params,
         protected_snapshot_ids=protected_snapshot_ids,
+        excluded_operations=excluded_operations,
     )
     plan = gate_orphan_removal_on_shared_location(
         plan,
         has_shared_location=has_shared_location,
     )
+    plan = gate_gc_disabled(plan, gc_disabled=gc_disabled_in_stats(stats))
+    plan = gate_engine_unsupported(plan, destination=destination)
     return gate_native_optimize_manifests(
         plan,
         operations=operations,
@@ -146,19 +150,29 @@ def execution_plan_params(
 def skip_operations_from_preset(
     operations: tuple[OperationType, ...] | None,
 ) -> list[str]:
-    if not operations:
-        return []
-    requested = set(operations)
-    skipped = [
-        operation.value for operation in _PRESET_GATED_OPERATION_TYPES if operation not in requested
-    ]
-    if OperationType.OPTIMIZE not in requested:
-        skipped.extend(
-            operation.value
-            for operation in _COMPACTION_FAMILY_OPERATION_TYPES
-            if operation not in requested
-        )
-    return skipped
+    """Deliberately always returns []: Preset.operations no longer force-skips anything.
+
+    Until 2026-10, any operation type absent from a preset's `operations` list was force-
+    skipped here regardless of what the table actually needed -- confirmed live, 2026-10-13:
+    a table assigned the "default-spark-compact" preset (operations=["optimize"]) only ever
+    got optimize, even on a deep-mode run, with expire_snapshots/remove_orphan_files/
+    optimize_manifests silently dropped every single time by this allowlist, not by any
+    per-table decision.
+
+    build_plan() (cryo/planner/planner.py) already decides what a given table actually needs
+    -- small-files threshold for optimize, delete-ratio policy for convert_deletes vs.
+    rewrite_position_deletes, mode-gating for orphan/manifest work -- and already writes a
+    plan.notes entry explaining every operation it skips. That per-table decision is the
+    real gate now; a preset's operations list is no longer consulted as a second, blunter
+    one layered on top of it. _PRESET_GATED_OPERATION_TYPES/_COMPACTION_FAMILY_OPERATION_TYPES
+    above are kept only as a record of what used to be gated, not read by this function
+    anymore -- do not wire them back in without re-reading the regression comment in
+    planner.py's _apply_skip_operations, which is the reason this mechanism existed at all
+    (Preset.operations looked like it controlled execution for over a month without actually
+    doing so, until the 2026-08-03 fix made it a real gate -- this change removes it as a
+    gate again, deliberately, not by accident this time).
+    """
+    return []
 
 
 def gate_orphan_removal_on_shared_location(
@@ -207,25 +221,100 @@ def gate_orphan_removal_on_shared_location(
     )
 
 
+_GC_OPERATION_TYPES = (OperationType.EXPIRE_SNAPSHOTS, OperationType.REMOVE_ORPHAN_FILES)
+
+
+def gc_disabled_in_stats(stats: Mapping[str, Any]) -> bool:
+    """True only when the table explicitly sets ``gc.enabled`` to something other than true.
+
+    Iceberg reads the property with Java ``Boolean.parseBoolean``, so only a case-insensitive
+    ``true`` keeps GC on. The scanner's typed ``gc_enabled`` is the fallback when the raw
+    property was not captured.
+    """
+    raw = stats.get("raw")
+    raw = raw if isinstance(raw, Mapping) else {}
+    properties = raw.get("iceberg_properties")
+    if isinstance(properties, Mapping) and "gc.enabled" in properties:
+        return str(properties["gc.enabled"]).strip().lower() != "true"
+    flag = raw.get("gc_enabled", stats.get("gc_enabled"))
+    return flag is False
+
+
+def gate_gc_disabled(plan: MaintenancePlan, *, gc_disabled: bool) -> MaintenancePlan:
+    """Drop expire_snapshots and remove_orphan_files when the table sets ``gc.enabled=false``.
+
+    Owners set it when another table shares this table's files (snapshot/migrate procedures),
+    so deleting "unreferenced" files corrupts the other table. Spark and iceberg-go refuse
+    these operations; Trino only honours the property from 484, so older Trino deletes anyway.
+    """
+    if not gc_disabled:
+        return plan
+    if all(operation.type not in _GC_OPERATION_TYPES for operation in plan.operations):
+        return plan
+    return MaintenancePlan(
+        table_ref=plan.table_ref,
+        mode=plan.mode,
+        operations=tuple(
+            operation for operation in plan.operations if operation.type not in _GC_OPERATION_TYPES
+        ),
+        notes=(
+            *plan.notes,
+            "Skipped expire_snapshots and remove_orphan_files: the table sets gc.enabled=false, "
+            "which forbids deleting its files. Re-enable gc.enabled on the table to resume them.",
+        ),
+    )
+
+
+_ENGINE_UNSUPPORTED: dict[str, dict[OperationType, str]] = {
+    EngineType.TRINO.value: {
+        OperationType.REWRITE_POSITION_DELETES: (
+            "Skipped rewrite_position_deletes: Trino has no procedure for it. Route the table to "
+            "a Spark destination to merge position deletes."
+        ),
+    },
+}
+
+
+def gate_engine_unsupported(
+    plan: MaintenancePlan,
+    *,
+    destination: ExecutionDestination,
+) -> MaintenancePlan:
+    """Drop operations the destination engine cannot run, with a plan note per operation.
+
+    The Trino renderer raises on rewrite_position_deletes rather than downgrading it to a full
+    OPTIMIZE, so leaving it in the plan failed the whole run at render time.
+    """
+    engine = destination.engine
+    engine_value = engine.value if isinstance(engine, EngineType) else str(engine).lower()
+    unsupported = _ENGINE_UNSUPPORTED.get(engine_value)
+    if not unsupported:
+        return plan
+    dropped = [op for op in plan.operations if op.type in unsupported]
+    if not dropped:
+        return plan
+    return MaintenancePlan(
+        table_ref=plan.table_ref,
+        mode=plan.mode,
+        operations=tuple(op for op in plan.operations if op.type not in unsupported),
+        notes=(*plan.notes, *dict.fromkeys(unsupported[op.type] for op in dropped)),
+    )
+
+
 def gate_native_optimize_manifests(
     plan: MaintenancePlan,
     *,
     operations: tuple[OperationType, ...] | None,
     destination: ExecutionDestination,
 ) -> MaintenancePlan:
-    if not destination_is_native(destination):
-        return plan
-    if all(operation.type is not OperationType.OPTIMIZE_MANIFESTS for operation in plan.operations):
-        return plan
-    if operations is not None and OperationType.OPTIMIZE_MANIFESTS in operations:
-        return plan
-    return MaintenancePlan(
-        table_ref=plan.table_ref,
-        mode=plan.mode,
-        operations=tuple(
-            operation
-            for operation in plan.operations
-            if operation.type is not OperationType.OPTIMIZE_MANIFESTS
-        ),
-        notes=plan.notes,
-    )
+    """Deliberately a no-op as of 2026-10-13: see skip_operations_from_preset's docstring.
+
+    This used to strip optimize_manifests from a native-engine plan unless the preset's
+    operations list explicitly named it -- the same preset-as-allowlist pattern removed
+    there, just special-cased to one operation and one engine. No documented reason was
+    found for why native/optimize_manifests needed a second, separate gate on top of
+    build_plan's own mode-gating (optimize_manifests is deep-only already) -- kept as a
+    pass-through, not deleted, so a real native-engine-specific constraint can be reinstated
+    here deliberately if one turns out to exist, rather than rediscovering this function.
+    """
+    return plan

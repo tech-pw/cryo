@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { useGoogleIdentityServices } from "../../hooks/useGoogleIdentityServices";
@@ -186,41 +187,51 @@ export const AccessControl = () => {
   });
 
   return (
-    <div className="flex flex-col gap-6">
-      <section>
-        <h2 className="text-base font-medium">Roles</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Viewer can look. Operator can run maintenance. Admin can change connections, users, and
-          sign-in. A miss by a viewer cannot start a job.
-        </p>
-        <ul className="mt-3 flex flex-col gap-2">
-          {(roles.data?.roles ?? []).map((row) => (
-            <li key={row.role} className="rounded-[var(--radius-default)] border border-border px-3 py-2">
-              <span className="font-medium">{row.role}</span>
-              <span className="mt-1 block text-muted-foreground">{row.can}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base font-medium tracking-[-0.01em]">Roles</CardTitle>
+          <CardDescription>
+            Viewer can look. Operator can run maintenance. Admin can change connections, users, and
+            sign-in. A miss by a viewer cannot start a job.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ul className="grid grid-cols-1 gap-2 md:grid-cols-3">
+            {(roles.data?.roles ?? []).map((row) => (
+              <li
+                key={row.role}
+                className="min-w-0 rounded-[var(--radius-default)] border border-border bg-[var(--color-surface-sunken)] px-3 py-2"
+              >
+                <span className="font-medium">{row.role}</span>
+                <span className="mt-1 block text-muted-foreground">{row.can}</span>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
       {role !== "admin" ? (
-        <p className="text-sm text-muted-foreground">Only an admin can change users or Google sign-in.</p>
+        <p className="settings-note text-sm text-muted-foreground">Only an admin can change users or Google sign-in.</p>
       ) : (
         <>
           {error ? <Alert variant="error" title="Could not save" description={error} /> : null}
-          <section>
-            <h2 className="text-base font-medium">People</h2>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base font-medium tracking-[-0.01em]">People</CardTitle>
+            </CardHeader>
+            <CardContent>
             <form
-              className="mt-3 flex flex-wrap items-end gap-2"
+              className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(12rem,1fr)_minmax(12rem,1fr)_minmax(8rem,0.55fr)_auto]"
               onSubmit={(event) => {
                 event.preventDefault();
                 createUser.mutate();
               }}
             >
-              <div>
+              <div className="min-w-0">
                 <Label htmlFor="new-username">Username</Label>
                 <Input id="new-username" value={username} onChange={(event) => setUsername(event.target.value)} required />
               </div>
-              <div>
+              <div className="min-w-0">
                 <Label htmlFor="new-password">Password</Label>
                 <Input
                   id="new-password"
@@ -231,13 +242,13 @@ export const AccessControl = () => {
                   required
                 />
               </div>
-              <div>
+              <div className="min-w-0">
                 <Label htmlFor="new-role">Role</Label>
                 <select
                   id="new-role"
                   value={userRole}
                   onChange={(event) => setUserRole(event.target.value)}
-                  className="flex h-[var(--control-height)] rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
+                  className="flex h-[var(--control-height)] w-full min-w-0 max-w-full rounded-[var(--radius-default)] border border-[var(--color-control-border)] bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-[var(--focus-ring-color)]"
                 >
                   <option value="viewer">viewer</option>
                   <option value="operator">operator</option>
@@ -250,13 +261,16 @@ export const AccessControl = () => {
             </form>
             <ul className="mt-3 flex flex-col gap-2">
               {(users.data ?? []).map((user) => (
-                <li key={user.id} className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="min-w-40">{user.username}</span>
+                <li
+                  key={user.id}
+                  className="flex flex-wrap items-center gap-2 rounded-[var(--radius-default)] border border-border bg-[var(--color-surface-sunken)] px-3 py-2 text-sm"
+                >
+                  <span className="min-w-40 font-medium">{user.username}</span>
                   <select
                     aria-label={`Role for ${user.username}`}
                     value={user.role}
                     onChange={(event) => patchUser.mutate({ id: user.id, role: event.target.value })}
-                    className="rounded-[var(--radius-default)] border border-border bg-background px-2 py-1"
+                    className="h-[var(--control-height)] w-full min-w-0 max-w-full rounded-[var(--radius-default)] border border-[var(--color-control-border)] bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-[var(--focus-ring-color)]"
                   >
                     <option value="viewer">viewer</option>
                     <option value="operator">operator</option>
@@ -272,23 +286,26 @@ export const AccessControl = () => {
                 </li>
               ))}
             </ul>
-          </section>
+            </CardContent>
+          </Card>
 
-          <section>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-medium">Google sign-in</h2>
-              {settings.data?.google_enabled ? (
-                <Badge variant="success">Enabled</Badge>
-              ) : (
-                <Badge variant="secondary">Disabled</Badge>
-              )}
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Same shape as Metabase: paste the Google Client ID. No client secret is stored. New
-              Google accounts are not created unless you add them here. Auto-provision stays off.
-            </p>
-
-            <div className="mt-4 rounded-[var(--radius-default)] border border-border bg-[var(--color-surface-sunken)] p-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-base font-medium tracking-[-0.01em]">Google sign-in</CardTitle>
+                {settings.data?.google_enabled ? (
+                  <Badge variant="success">Enabled</Badge>
+                ) : (
+                  <Badge variant="secondary">Disabled</Badge>
+                )}
+              </div>
+              <CardDescription>
+                Same shape as Metabase: paste the Google Client ID. No client secret is stored. New
+                Google accounts are not created unless you add them here. Auto-provision stays off.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+            <div className="rounded-[var(--radius-default)] border border-border bg-[var(--color-surface-sunken)] p-4">
               <h3 className="text-sm font-medium">1. Create an OAuth Client ID in Google Cloud Console</h3>
               <ol className="mt-2 flex list-decimal flex-col gap-1 pl-5 text-sm text-muted-foreground">
                 <li>
@@ -318,7 +335,7 @@ export const AccessControl = () => {
               </p>
             </div>
 
-            <div className="mt-4 flex flex-col gap-2">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="google-client-id">2. Client ID</Label>
               <Input
                 id="google-client-id"
@@ -399,7 +416,8 @@ export const AccessControl = () => {
                 />
               ) : null}
             </div>
-          </section>
+            </CardContent>
+          </Card>
         </>
       )}
     </div>

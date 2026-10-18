@@ -571,7 +571,7 @@ expires snapshots **and** frees the orphaned files, with correct audited counts/
 
 **Tests added/updated:** `orphans.rs` unit tests (`normalize_s3_scheme_aliases`, `parse_table_location`); `test_unsupported_native_op_maps_to_skipped_exec_result` now covers `rewrite_manifests` upstream block.
 
-**E2E (Phase 2 exit criteria):** `tests/integration/native/test_native_expire_orphan_e2e.py` — seeds a REST table with 3 snapshots + deliberate orphan object, runs native `expire_snapshots` + `remove_orphan_files`, asserts orphan bytes removed from MinIO. Local: `make test-native-e2e-local` (requires `cargo build --release` in `cryo-engine/`). CI: `native-e2e` job in `.github/workflows/ci.yml`.
+**E2E (Phase 2 exit criteria):** `tests/integration/native/test_native_expire_orphan_e2e.py` — seeds a REST table with 3 snapshots + deliberate orphan object, runs native `expire_snapshots` + `remove_orphan_files`, asserts orphan bytes removed from MinIO. Local: `make test-native-e2e-local` (requires `cargo build --release` in `cryo-engine/`). CI: `native-e2e` job in `.github/workflows/ci.yml`. REST rejects removing more than one snapshot in a single commit (`commit state is unknown`); Rust execute mode steps `retain_last` down one snapshot at a time, matching `engine-go/internal/ops/expire.go`.
 
 **Phase 2 status:** **Complete** (pending green `native-e2e` CI on merge).
 
