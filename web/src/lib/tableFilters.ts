@@ -341,6 +341,11 @@ export type TriageViewId = (typeof TRIAGE_VIEW_IDS)[number];
 export const isTriageView = (view: string | null | undefined): view is TriageViewId =>
   (TRIAGE_VIEW_IDS as readonly string[]).includes(view ?? "");
 
+// Mirrors REASON_COOLDOWN/REASON_BACKOFF/REASON_BUDGET_CAP/REASON_STALE_STATS/REASON_EXCLUDED
+// in cryo/maintenance/skip_history.py -- not REASON_NO_WORK, which only ever pairs with
+// STAGE_EVALUATED (no-work tables), never STAGE_NEEDS_WORK/STAGE_ELIGIBLE, so it can't appear
+// here anyway. These aren't exposed as a typed enum from the backend; if that reason list
+// changes, update this array to match.
 const SKIP_REASONS = ["cooldown", "backoff", "budget_cap", "stale_stats", "excluded"];
 
 /** Server-side predicate for each quick view. Counts and table rows both use this, so they agree. */

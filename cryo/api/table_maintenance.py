@@ -165,7 +165,11 @@ def derive_state(inputs: StateInputs, *, now: datetime) -> tuple[TableMaintenanc
     if not inputs.has_stats:
         return "not_scanned", "Waiting for its first scan"
     if inputs.last_finished_status in FAILED_JOB_STATUSES:
-        label = "Last run partly failed" if inputs.last_finished_status == "partial" else None
+        label = (
+            "Last run partly failed"
+            if inputs.last_finished_status == "partial"
+            else "Last run failed"
+        )
         return "failed", label
     if (
         inputs.needs_work
@@ -403,6 +407,11 @@ def funnel_path(row: FunnelRow) -> list[str]:
     if row.stage == STAGE_ELIGIBLE and row.reason == REASON_BUDGET_CAP:
         return [*path, "skip_budget_cap"]
     if row.stage == STAGE_NEEDS_WORK:
+        # `row.reason or REASON_EXCLUDED` is a defensive fallback, not a live case: the only
+        # producer of STAGE_NEEDS_WORK rows (selection._exclusion_rows -> _exclusion_reason)
+        # always returns a non-empty reason string, falling back to REASON_EXCLUDED itself.
+        # If a future caller ever writes a STAGE_NEEDS_WORK row with an empty reason, this
+        # silently mislabels it as "excluded" in the funnel -- worth revisiting then.
         return [*path, f"skip_{row.reason or REASON_EXCLUDED}"]
     path.append("selected")
     return [*path, _RANK_OUTCOME.get(row.job_rank or 0, "not_run")]
