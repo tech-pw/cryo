@@ -813,6 +813,9 @@ class TablePartitionsResponse(BaseModel):
     offset: int
 
 
+_HISTORY_RAW_FIELDS = ("total_delete_files", "delete_file_pct", "manifest_count", "total_snapshots")
+
+
 class TableStatsHistoryRead(OrmModel):
     id: int
     table_id: uuid.UUID
@@ -822,6 +825,25 @@ class TableStatsHistoryRead(OrmModel):
     total_size_gb: float | None = None
     grade: str | None = None
     overall_score: int | None = None
+    total_delete_files: int | None = None
+    delete_file_pct: float | None = None
+    manifest_count: int | None = None
+    total_snapshots: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_raw(cls, data: Any) -> Any:
+        if isinstance(data, Mapping):
+            values = dict(data)
+            raw = values.get("raw")
+        else:
+            values = {name: getattr(data, name, None) for name in cls.model_fields}
+            raw = getattr(data, "raw", None)
+        if isinstance(raw, Mapping):
+            for name in _HISTORY_RAW_FIELDS:
+                if values.get(name) is None:
+                    values[name] = raw.get(name)
+        return values
 
 
 class TableStatsHistoryResponse(BaseModel):

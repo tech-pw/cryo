@@ -239,6 +239,39 @@
 .td-grid-legend li[data-tone="queued"] i { border: 1px dashed var(--tone-queued); }
 .td-grid-legend li[data-tone="skipped"] i { background: var(--tone-skipped); }
 .td-grid-legend li[data-tone="none"] i { border-color: var(--color-border); }
+.td-grid-bar--passed {
+  justify-content: center;
+}
+.td-grid-bar--passed span {
+  width: 8px;
+  background: transparent;
+  border: 1.5px dotted var(--color-muted);
+}
+.td-grid-bar--passed em {
+  color: var(--color-muted);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 650;
+}
+.td-grid-bar--passed[data-work] span { border-color: var(--tone-attention); }
+.td-grid-bar--passed[data-work] em { color: var(--tone-attention); }
+.td-grid-cell--passed {
+  background: transparent;
+  border: 1.5px dotted var(--color-border-strong, var(--color-muted));
+}
+.td-grid-cell--passed[data-work] {
+  background: color-mix(in srgb, var(--tone-attention) 8%, transparent);
+  border-color: color-mix(in srgb, var(--tone-attention) 60%, transparent);
+}
+.td-grid-legend-passed i {
+  border: 1.5px dotted var(--color-muted) !important;
+}
+.td-run-passed-why p {
+  margin: 0 0 12px;
+  color: var(--color-ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
 .td-grid-legend-manual i {
   width: 8px;
   height: 8px;
@@ -480,6 +513,17 @@
 .td-run-gantt span[data-tone="success"] { background: var(--tone-success); }
 .td-run-gantt span[data-tone="failed"] { background: var(--tone-failed); }
 .td-run-gantt span[data-tone="running"] { background: var(--tone-running); }
+
+.td-run-step-effect {
+  margin: 4px 0 0 22px;
+  color: var(--color-ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.td-run-step-effect[data-measured="false"] {
+  color: var(--color-ink-muted, var(--color-muted-foreground));
+}
 
 .td-run-statement {
   margin: 6px 0 0 22px;

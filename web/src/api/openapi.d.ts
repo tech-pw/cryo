@@ -2099,6 +2099,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tables/{table_id}/maintenance-impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Table Maintenance Impact
+         * @description Bytes freed and files reduced, as reported by engines on successful operations.
+         */
+        get: operations["get_table_maintenance_impact_api_v1_tables__table_id__maintenance_impact_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/{table_id}/benefit-scores": {
         parameters: {
             query?: never;
@@ -4315,6 +4335,42 @@ export interface paths {
         post?: never;
         /** Remove Exclusion */
         delete: operations["remove_exclusion_api_v1_maintenance_exclusions__exclusion_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/maintenance-hold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Table Hold */
+        get: operations["get_table_hold_api_v1_tables__table_id__maintenance_hold_get"];
+        /** Put Table Hold */
+        put: operations["put_table_hold_api_v1_tables__table_id__maintenance_hold_put"];
+        post?: never;
+        /** Delete Table Hold */
+        delete: operations["delete_table_hold_api_v1_tables__table_id__maintenance_hold_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/column-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Table Column Usage */
+        get: operations["get_table_column_usage_api_v1_tables__table_id__column_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6710,6 +6766,39 @@ export interface components {
                 [key: string]: components["schemas"]["ColumnSketchRead"];
             };
         };
+        /** ColumnUsageRead */
+        ColumnUsageRead: {
+            /** Column */
+            column: string;
+            /** Filter Count */
+            filter_count: number;
+            /** Equality Filter Count */
+            equality_filter_count: number;
+            /** Range Filter Count */
+            range_filter_count: number;
+            /** Join Count */
+            join_count: number;
+            /** Projection Count */
+            projection_count: number;
+            /** Avg Selectivity */
+            avg_selectivity: number | null;
+        };
+        /** ColumnUsageResponse */
+        ColumnUsageResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Window Days */
+            window_days: number;
+            /** Queries */
+            queries: number | null;
+            /** Aggregated At */
+            aggregated_at: string | null;
+            /** Columns */
+            columns: components["schemas"]["ColumnUsageRead"][];
+        };
         /** CompactionCandidateRead */
         CompactionCandidateRead: {
             /** Partition Path */
@@ -8566,6 +8655,27 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** ImpactWindowRead */
+        ImpactWindowRead: {
+            /** Days */
+            days: number | null;
+            /** Since */
+            since: string | null;
+            /** Ops */
+            ops: number;
+            /** Ops With Bytes */
+            ops_with_bytes: number;
+            /** Ops With Files */
+            ops_with_files: number;
+            /** Bytes Freed */
+            bytes_freed: number;
+            /** Files In */
+            files_in: number;
+            /** Files Out */
+            files_out: number;
+            /** By Operation */
+            by_operation: components["schemas"]["OperationImpactRead"][];
+        };
         /** IntervalEvaluationResponse */
         IntervalEvaluationResponse: {
             /** Target */
@@ -8911,6 +9021,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Expires At */
+            expires_at?: string | null;
             /** Table Count */
             table_count: number;
         };
@@ -8927,6 +9039,16 @@ export interface components {
             table_name?: string | null;
             /** Reason */
             reason: string;
+        };
+        /** MaintenanceImpactResponse */
+        MaintenanceImpactResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            recent: components["schemas"]["ImpactWindowRead"];
+            lifetime: components["schemas"]["ImpactWindowRead"];
         };
         /** MaintenanceIntentRead */
         MaintenanceIntentRead: {
@@ -9438,6 +9560,23 @@ export interface components {
              * @default false
              */
             confirm: boolean;
+        };
+        /** OperationImpactRead */
+        OperationImpactRead: {
+            /** Operation */
+            operation: string;
+            /** Ops */
+            ops: number;
+            /** Ops With Bytes */
+            ops_with_bytes: number;
+            /** Ops With Files */
+            ops_with_files: number;
+            /** Bytes Freed */
+            bytes_freed: number;
+            /** Files In */
+            files_in: number;
+            /** Files Out */
+            files_out: number;
         };
         /** OperationRead */
         OperationRead: {
@@ -12230,6 +12369,46 @@ export interface components {
             added_data_files?: number | null;
             /** Deleted Data Files */
             deleted_data_files?: number | null;
+            /** Added Records */
+            added_records?: number | null;
+            /** Deleted Records */
+            deleted_records?: number | null;
+            /** Added Files Size */
+            added_files_size?: number | null;
+            /** Removed Files Size */
+            removed_files_size?: number | null;
+            /** Added Delete Files */
+            added_delete_files?: number | null;
+            /** Removed Delete Files */
+            removed_delete_files?: number | null;
+            /** Added Position Delete Files */
+            added_position_delete_files?: number | null;
+            /** Added Equality Delete Files */
+            added_equality_delete_files?: number | null;
+            /** Added Dvs */
+            added_dvs?: number | null;
+            /** Total Delete Files */
+            total_delete_files?: number | null;
+            /** Total Position Deletes */
+            total_position_deletes?: number | null;
+            /** Total Equality Deletes */
+            total_equality_deletes?: number | null;
+            /** Changed Partition Count */
+            changed_partition_count?: number | null;
+            writer?: components["schemas"]["SnapshotWriterRead"] | null;
+        };
+        /** SnapshotWriterRead */
+        SnapshotWriterRead: {
+            /** Engine */
+            engine?: string | null;
+            /** Engine Version */
+            engine_version?: string | null;
+            /** User */
+            user?: string | null;
+            /** Query Id */
+            query_id?: string | null;
+            /** Job Id */
+            job_id?: string | null;
         };
         /** SortFieldRead */
         SortFieldRead: {
@@ -12732,6 +12911,36 @@ export interface components {
             /** Days To Critical */
             days_to_critical: number | null;
         };
+        /** TableHoldRead */
+        TableHoldRead: {
+            /** Held */
+            held: boolean;
+            /** Scope */
+            scope?: ("table" | "schema") | null;
+            /** Reason */
+            reason?: string | null;
+            /** Created By */
+            created_by?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /**
+             * Max Hold Days
+             * @default 90
+             */
+            max_hold_days: number;
+        };
+        /** TableHoldWrite */
+        TableHoldWrite: {
+            /** Reason */
+            reason: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+        };
         /** TableMetadataRead */
         TableMetadataRead: {
             /** Format Version */
@@ -13139,6 +13348,14 @@ export interface components {
             grade?: string | null;
             /** Overall Score */
             overall_score?: number | null;
+            /** Total Delete Files */
+            total_delete_files?: number | null;
+            /** Delete File Pct */
+            delete_file_pct?: number | null;
+            /** Manifest Count */
+            manifest_count?: number | null;
+            /** Total Snapshots */
+            total_snapshots?: number | null;
         };
         /** TableStatsHistoryResponse */
         TableStatsHistoryResponse: {
@@ -17853,6 +18070,39 @@ export interface operations {
             };
         };
     };
+    get_table_maintenance_impact_api_v1_tables__table_id__maintenance_impact_get: {
+        parameters: {
+            query?: {
+                window_days?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MaintenanceImpactResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_table_benefit_scores_api_v1_tables__table_id__benefit_scores_get: {
         parameters: {
             query?: {
@@ -21542,6 +21792,134 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_table_hold_api_v1_tables__table_id__maintenance_hold_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableHoldRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_table_hold_api_v1_tables__table_id__maintenance_hold_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TableHoldWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableHoldRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_table_hold_api_v1_tables__table_id__maintenance_hold_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableHoldRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_table_column_usage_api_v1_tables__table_id__column_usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ColumnUsageResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

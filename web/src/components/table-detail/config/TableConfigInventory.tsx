@@ -18,6 +18,7 @@ import { Skeleton } from "../../ui/skeleton";
 import { ConfigReviewDialog } from "./ConfigReviewDialog";
 import { MaintenanceOperationsCard, OPERATIONS_SECTION_ID } from "./MaintenanceOperationsCard";
 import { RiskPill } from "./RiskPopover";
+import { ScanSuggestions } from "./ScanSuggestions";
 import { SettingRow } from "./SettingRow";
 import { AllProperties, TableMetadataCard } from "./TableMetadataCard";
 import {
@@ -189,6 +190,21 @@ export const TableConfigInventory = ({ tableId }: { tableId: string }) => {
           </InventoryBody>
         ) : null}
       </AsyncBoundary>
+
+      {data ? (
+        <ScanSuggestions
+          tableId={tableId}
+          settings={settingsByKey}
+          staged={staged}
+          blockedReasonFor={(setting) => {
+            if (!liveRead) return SCAN_FALLBACK_REASON;
+            if (!setting.editable) return setting.read_only_reason ?? "Read-only";
+            const access = setting.min_role === "admin" ? adminAccess : operatorAccess;
+            return access.allowed ? null : access.reason;
+          }}
+          onStage={(setting, value) => stage(setting, value)}
+        />
+      ) : null}
 
       {stagedCount ? (
         <div className="tc-bar" role="region" aria-label="Staged configuration changes">

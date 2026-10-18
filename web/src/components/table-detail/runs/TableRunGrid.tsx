@@ -2,10 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, CheckCircle2, Circle, Loader2, MinusCircle, Play, RefreshCw, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { getTableAudit, getTableRuns } from "../../../api/client";
+import { getTableAudit, getTableRuns, getTableSkipEvaluations } from "../../../api/client";
 import { useRunLiveEvents } from "../../../hooks/useRunLiveEvents";
 import { useAuth } from "../../../lib/auth";
-import { formatTime } from "../../../lib/format";
+import { formatBytesGb, formatNumber, formatTime } from "../../../lib/format";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
 import { QueryErrorAlert } from "../../common";
 import { Button } from "../../ui/button";
@@ -17,16 +17,21 @@ import {
   gradeChange,
   gridRows,
   isActiveTone,
+  mergeSkipColumns,
+  skipReasonText,
   statChanges,
   toneFor,
   type CellTone,
+  type GridColumn,
   type OpCell,
-  type RunColumn
+  type RunColumn,
+  type SkipColumn
 } from "./runModel";
 import "./runs.css";
 
 const RUNS_LIMIT = 25;
 const AUDIT_LIMIT = 200;
+const SKIP_LIMIT = 120;
 const LIVE_LOG_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 type Filter = "all" | "manual" | "nightly";
@@ -55,6 +60,12 @@ const shortDate = (iso: string | null) =>
 const manualTriggerLabel = (trigger?: string | null): string =>
   !trigger || trigger === "manual" ? "Manual" : `Manual · ${trigger.replace(/[-_]/g, " ")}`;
 
+const skipRange = (column: SkipColumn) =>
+  column.count === 1 ? shortDate(column.lastAt) : `${shortDate(column.firstAt)} – ${shortDate(column.lastAt)}`;
+
+const skipLabel = (column: SkipColumn) =>
+  `Not selected ${skipRange(column)}, ${skipReasonText(column.reason).title}${column.count > 1 ? `, ${column.count} nights` : ""}`;
+
 export const TableRunGrid = ({ tableId }: { tableId: string }) => {
   const { api, token } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -73,16 +84,29 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
     refetchInterval: (runs.data ?? []).some((run) => isActiveTone(toneFor(run.status))) ? 5000 : false
   });
 
+  const skips = useQuery({
+    queryKey: tableKeys.skipEvaluations(tableId, token, SKIP_LIMIT),
+    queryFn: () => getTableSkipEvaluations(api, tableId, { limit: SKIP_LIMIT }),
+    enabled: tableId.length > 0
+  });
+
   const allColumns = useMemo(() => buildRunColumns(runs.data ?? [], audit.data ?? []), [runs.data, audit.data]);
-  const columns = allColumns.filter((column) => filter === "all" || (filter === "manual" ? column.manual : !column.manual));
+  const columns: GridColumn[] = useMemo(() => {
+    const shownRuns = allColumns.filter((column) => filter === "all" || (filter === "manual" ? column.manual : !column.manual));
+    return filter === "manual" ? shownRuns : mergeSkipColumns(shownRuns, skips.data?.items ?? []);
+  }, [filter, allColumns, skips.data]);
+  const runColumns = columns.filter((column): column is RunColumn => column.kind === "run");
   const rows = gridRows(columns);
-  const peak = Math.max(1, ...columns.map((column) => column.durationMs ?? 0));
+  const peak = Math.max(1, ...runColumns.map((column) => column.durationMs ?? 0));
   const requestedRun = searchParams.get("run");
   const selected =
-    columns.find((column) => column.run.run_id === requestedRun || column.key === requestedRun) ?? columns[columns.length - 1] ?? null;
-  const select = (column: RunColumn) => {
+    columns.find((column) => column.key === requestedRun || (column.kind === "run" && column.run.run_id === requestedRun)) ??
+    [...columns].reverse().find((column) => column.kind === "run") ??
+    columns[columns.length - 1] ??
+    null;
+  const select = (column: GridColumn) => {
     const next = new URLSearchParams(searchParams);
-    next.set("run", column.run.run_id);
+    next.set("run", column.kind === "run" ? column.run.run_id : column.key);
     setSearchParams(next, { replace: true });
   };
   const counts = {
@@ -90,6 +114,8 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
     failed: allColumns.filter((column) => column.tone === "failed").length,
     active: allColumns.filter((column) => isActiveTone(column.tone)).length
   };
+  const shownSkips = columns.filter((column): column is SkipColumn => column.kind === "skip");
+  const skippedWithWork = shownSkips.filter((column) => column.hadWork).reduce((sum, column) => sum + column.count, 0);
 
   return (
     <section className="td-runs" id="maintenance-runs" aria-labelledby="maintenance-runs-title">
@@ -101,6 +127,14 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
             <span className="td-runs-count" data-tone="success">{counts.success} succeeded</span>
             {counts.failed ? <> · <span className="td-runs-count" data-tone="failed">{counts.failed} failed</span></> : null}
             {counts.active ? <> · <span className="td-runs-count" data-tone="running">{counts.active} in progress</span></> : null}
+            {skippedWithWork ? (
+              <>
+                {" "}
+                · <span className="td-runs-count" data-tone="attention">
+                  passed over {skippedWithWork} night{skippedWithWork === 1 ? "" : "s"} with work pending
+                </span>
+              </>
+            ) : null}
           </p>
         </div>
         <div className="td-runs-tools">
@@ -136,7 +170,21 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
               }}
             >
               <div className="td-grid-label td-grid-label--bars">Duration</div>
-              {columns.map((column) => (
+              {columns.map((column) =>
+                column.kind === "skip" ? (
+                  <button
+                    key={`bar-${column.key}`}
+                    type="button"
+                    className="td-grid-bar td-grid-bar--passed"
+                    data-work={column.hadWork || undefined}
+                    data-selected={selected?.key === column.key || undefined}
+                    aria-label={skipLabel(column)}
+                    title={skipLabel(column)}
+                    onClick={() => select(column)}
+                  >
+                    {column.count > 1 ? <em>{column.count}</em> : <span />}
+                  </button>
+                ) : (
                 <button
                   key={`bar-${column.key}`}
                   type="button"
@@ -157,7 +205,8 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
                   />
                   {column.manual ? <i className="td-grid-manual" aria-hidden="true" /> : null}
                 </button>
-              ))}
+                )
+              )}
               {rows.map((op) => (
                 <GridRow key={op} op={op} columns={columns} selectedKey={selected?.key ?? null} onSelect={select} />
               ))}
@@ -180,8 +229,14 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
               <i aria-hidden="true" />
               Manual run
             </li>
+            {shownSkips.length ? (
+              <li className="td-grid-legend-passed">
+                <i aria-hidden="true" />
+                Not selected
+              </li>
+            ) : null}
           </ul>
-          {selected ? <RunDetailPanel column={selected} /> : null}
+          {selected?.kind === "skip" ? <SkipDetailPanel column={selected} /> : selected ? <RunDetailPanel column={selected} /> : null}
         </>
       )}
     </section>
@@ -195,13 +250,27 @@ const GridRow = ({
   onSelect
 }: {
   op: string;
-  columns: RunColumn[];
+  columns: GridColumn[];
   selectedKey: string | null;
-  onSelect: (column: RunColumn) => void;
+  onSelect: (column: GridColumn) => void;
 }) => (
   <>
     <div className="td-grid-label">{OPERATION_SHORT[op] ?? op.replaceAll("_", " ")}</div>
     {columns.map((column) => {
+      if (column.kind === "skip") {
+        return (
+          <button
+            key={`${op}-${column.key}`}
+            type="button"
+            className="td-grid-cell td-grid-cell--passed"
+            data-work={column.hadWork || undefined}
+            data-selected={selectedKey === column.key || undefined}
+            aria-label={skipLabel(column)}
+            title={skipLabel(column)}
+            onClick={() => onSelect(column)}
+          />
+        );
+      }
       const cell = column.cells.get(op);
       const tone: CellTone = cell ? cell.tone : "none";
       return (
@@ -219,6 +288,56 @@ const GridRow = ({
     })}
   </>
 );
+
+const SKIP_NEXT_STEP: Record<string, string> = {
+  stale_stats: "Rescan the table, or check why the scheduled scan is failing.",
+  excluded: "Check that the table and its source are active and the schema is in the maintenance allow-list.",
+  held: "See the hold's reason and expiry in table settings. Release it there to let tonight's run pick the table.",
+  backoff: "Open the last failed run to see the error. Cryo retries on its own after the backoff.",
+  budget_cap: "Raise the scheduled run's table cap, or run this table on demand."
+};
+
+const SkipDetailPanel = ({ column }: { column: SkipColumn }) => {
+  const reason = skipReasonText(column.reason);
+  const next = column.reason ? SKIP_NEXT_STEP[column.reason] : undefined;
+  return (
+    <div className="td-run-detail td-run-detail--passed">
+      <div className="td-run-summary">
+        <p className="td-run-status" data-tone={column.hadWork ? "attention" : undefined}>
+          <MinusCircle size={14} aria-hidden="true" /> Not selected · {reason.title}
+        </p>
+        <dl>
+          <div>
+            <dt>{column.count === 1 ? "Night" : "Nights"}</dt>
+            <dd>{skipRange(column)}</dd>
+          </div>
+          <div>
+            <dt>Times passed over</dt>
+            <dd>{column.count}</dd>
+          </div>
+          <div>
+            <dt>Work pending</dt>
+            <dd>{column.hadWork ? "Yes, the last scan found work" : "No"}</dd>
+          </div>
+          <div>
+            <dt>Trigger</dt>
+            <dd>Nightly schedule</dd>
+          </div>
+        </dl>
+      </div>
+      <div className="td-run-passed-why">
+        <p className="td-run-subhead">Why</p>
+        <p>{reason.detail}</p>
+        {next ? (
+          <>
+            <p className="td-run-subhead">What to do</p>
+            <p>{next}</p>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+};
 
 const RunDetailPanel = ({ column }: { column: RunColumn }) => {
   const [tab, setTab] = useState<"steps" | "live">("steps");
@@ -417,9 +536,26 @@ const StepRow = ({ cell, runStart, runEnd }: { cell: OpCell; runStart: number; r
           />
         </div>
       ) : null}
+      <StepEffect cell={cell} />
       {cell.detail ? <pre className="td-run-statement">{cell.detail}</pre> : null}
     </li>
   );
+};
+
+const StepEffect = ({ cell }: { cell: OpCell }) => {
+  const parts: string[] = [];
+  if (cell.filesIn != null && cell.filesOut != null) {
+    parts.push(`${formatNumber(cell.filesIn)} → ${formatNumber(cell.filesOut)} files`);
+  } else if (cell.filesIn != null) {
+    parts.push(`${formatNumber(cell.filesIn)} files rewritten`);
+  }
+  if (cell.bytesFreed != null) parts.push(`${formatBytesGb(cell.bytesFreed)} freed`);
+  if (!parts.length) {
+    return cell.tone === "success" ? (
+      <p className="td-run-step-effect" data-measured="false">The engine didn't report what this step changed.</p>
+    ) : null;
+  }
+  return <p className="td-run-step-effect">{parts.join(" · ")}</p>;
 };
 
 const LiveLog = ({ runId, jobId }: { runId: string; jobId: string }) => {

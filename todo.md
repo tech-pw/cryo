@@ -1,5 +1,24 @@
 # Cryo — TODO
 
+## Table detail insights — 2026-10-18
+
+See [docs/TABLE_DETAIL_INSIGHTS_2026-10-18.md](docs/TABLE_DETAIL_INSIGHTS_2026-10-18.md).
+
+- [x] Run grid shows passed-over nights with reason, work pending and next step (incl. `held`).
+- [x] Measured maintenance impact (30 days and lifetime) and per-step effect in run detail.
+- [x] Fix metadata cost accounting for manifests carried into later snapshots (spurious metadata
+  deduction, inflated expire-reclaim estimate).
+- [x] Snapshot summary: writer, rows, bytes, delete files by kind, changed partitions.
+- [x] Delete-file debt chip and trend using the health check's cut-offs.
+- [x] Manifests & metadata strip in Layout checks.
+- [x] Partition-evolution card and non-duplicate property suggestions staged through Config review.
+- [x] Column filter/join heatmap from `query_patterns`, honest empty state for `iceberg_table` sources.
+- [x] Maintenance hold with reason and expiry (≤ 90 days), audited, enforced in selection.
+- [ ] After deploy: `alembic upgrade head` (`20261018_1300`) before rolling API/worker/scheduler.
+- [ ] After deploy: compare fleet reclaimable before/after the first full scan (expected to drop).
+- [ ] Remove the unreferenced `PropertyRecommendations.tsx` / `HealthQualityTabPanel.tsx` and the
+  write-gate test that still imports them.
+
 ## Table configuration inventory — 2026-10-17
 
 See [docs/TABLE_CONFIG_INVENTORY_2026-10-17.md](docs/TABLE_CONFIG_INVENTORY_2026-10-17.md).

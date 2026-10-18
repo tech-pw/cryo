@@ -45,6 +45,7 @@ from cryo.maintenance.skip_history import (
     REASON_BACKOFF,
     REASON_COOLDOWN,
     REASON_EXCLUDED,
+    REASON_HELD,
     REASON_STALE_STATS,
     clear_pending,
     engine_id_for,
@@ -360,7 +361,7 @@ def load_candidates(
             Table.last_scan_error_kind.is_(None),
             or_(Table.maintenance_retry_after.is_(None), Table.maintenance_retry_after <= now),
             TableStats.scan_at >= now - timedelta(days=max_stats_age_days),
-            ~table_is_excluded(),
+            ~table_is_excluded(now),
         )
     )
     if table_ids:
@@ -503,6 +504,7 @@ def _exclusion_rows(
             TableStats.scan_at,
             TableStats.needs_compaction,
             TableStats.delete_file_pct,
+            table_is_excluded(now).label("operator_excluded"),
         )
         .select_from(Table)
         .join(Source, Source.id == Table.source_id)
@@ -536,6 +538,7 @@ def _exclusion_rows(
             maintenance_retry_after=row.maintenance_retry_after,
             scan_at=row.scan_at,
             cooled=row.id in cooled,
+            operator_excluded=bool(row.operator_excluded),
             now=now,
             cutoff=cutoff,
         )
@@ -561,9 +564,12 @@ def _exclusion_reason(
     cooled: bool,
     now: datetime,
     cutoff: datetime,
+    operator_excluded: bool = False,
 ) -> str:
     if not is_active or not source_enabled or last_scan_error_kind is not None:
         return REASON_EXCLUDED
+    if operator_excluded:
+        return REASON_HELD
     if maintenance_retry_after is not None and _as_utc(maintenance_retry_after) > _as_utc(now):
         return REASON_BACKOFF
     if scan_at is None or _as_utc(scan_at) < cutoff:

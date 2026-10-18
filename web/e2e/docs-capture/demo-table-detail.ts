@@ -36,8 +36,8 @@ export function demoTableDetail(id: string) {
       partition_skew_ratio: 11.8,
       total_records: 9_420_000_000,
       avg_file_size_mb: 8.8,
-      total_delete_files: 1_940,
-      position_delete_files: 1_940,
+      total_delete_files: 640,
+      position_delete_files: 640,
       equality_delete_files: 0,
       delete_file_pct: 3.9,
       manifest_count: 96,
@@ -53,10 +53,12 @@ export function demoTableDetail(id: string) {
         commits_per_day: 42.8,
         last_snapshot_committed_at: ago(5),
         snapshot_overhead_gb: 128.4,
+        manifest_stats: { manifest_count: 96, avg_files_per_manifest: 502.19, manifest_total_bytes: 96 * 410_000, avg_manifest_bytes: 410_000 },
+        iceberg_properties: { "write.metadata.previous-versions-max": "100", "format-version": "2" },
         health_deductions: [
           { label: "Small-file fragmentation", deduction: 20, severity: "critical", reason: "87% of data files are under the 128 MiB write target." },
           { label: "Snapshot retention buildup", deduction: 20, severity: "critical", reason: "1,284 snapshots retained; the table policy keeps 7 days." },
-          { label: "Delete files", deduction: 8, severity: "warning", reason: "1,940 position-delete files are merged on every read." },
+          { label: "Delete files", deduction: 8, severity: "warning", reason: "640 position-delete files are merged on every read." },
           { label: "Partition skew", deduction: 8, severity: "warning", reason: "The largest partition holds 11.8× the average file count." },
           { label: "Metadata overhead", deduction: 8, severity: "warning", reason: "96 manifests; several cover a single day." },
           { label: "Orphan files", deduction: 8, severity: "warning", reason: "6.2 GB under the table location is not referenced by any snapshot." }
@@ -76,7 +78,10 @@ export function demoTableHistory(id: string) {
         small_files_count: Math.round(6_000 + decay * 35_930),
         total_files: Math.round(12_000 + decay * 36_210),
         total_size_gb: Math.round((360 + decay * 52.6) * 10) / 10,
-        total_snapshots: Math.round(200 + decay * 1_084)
+        total_snapshots: Math.round(200 + decay * 1_084),
+        total_delete_files: Math.round(60 + decay * 580),
+        delete_file_pct: Math.round((0.5 + decay * 3.4) * 10) / 10,
+        manifest_count: Math.round(40 + decay * 56)
       };
     })
   };
@@ -120,7 +125,8 @@ export function demoTableRuns(id: string): S["TableRunsResponse"] {
   const day1 = 24 * 60;
   const items = [
     run(1, "ui", [42, 24, 19, 18, 16, 14], [20, 76_337, 70_057], [28, 48_210, 41_930]),
-    run(2, "schedule", [day1 + 150, day1 + 121, day1 + 116, day1 + 114.5, day1 + 112, day1 + 109], [20, 74_120, 68_400], [20, 61_204, 55_880])
+    run(2, "schedule", [day1 + 150, day1 + 121, day1 + 116, day1 + 114.5, day1 + 112, day1 + 109], [20, 74_120, 68_400], [20, 61_204, 55_880]),
+    run(3, "schedule", [6 * day1 + 150, 6 * day1 + 118, 6 * day1 + 114, 6 * day1 + 112, 6 * day1 + 110, 6 * day1 + 107], [28, 70_400, 63_900], [36, 52_310, 45_120])
   ];
   return { table_id: id, items, total: items.length, limit: 20, offset: 0 };
 }
@@ -239,6 +245,33 @@ const partitionAccess = (id: string): S["PartitionAccessResponse"] => {
   };
 };
 
+const snapshotSummary = (i: number, op: string): S["SnapshotSummaryRead"] => {
+  const added = op === "replace" ? 165 : op === "delete" ? 0 : 38 + ((i * 7) % 20);
+  const removed = op === "replace" ? 15_882 : op === "delete" ? 4 : 0;
+  const rows = op === "append" ? 1_800_000 : 0;
+  const deletes = op === "overwrite" || op === "delete" ? 6 + (i % 5) : 0;
+  const compaction = op === "replace";
+  return {
+    total_records: 9_420_000_000 - i * 1_800_000,
+    total_files_size: Math.round((412.6 - i * 0.12) * GB),
+    added_data_files: added,
+    deleted_data_files: removed,
+    added_records: compaction ? null : rows,
+    deleted_records: op === "delete" ? 42_000 : op === "overwrite" ? 9_300 : compaction ? null : 0,
+    added_files_size: Math.round(added * (compaction ? 128 : 9) * MIB),
+    removed_files_size: Math.round(removed * 8.8 * MIB),
+    added_delete_files: deletes,
+    added_position_delete_files: deletes,
+    total_delete_files: 640 - i * 2,
+    changed_partition_count: compaction ? 31 : op === "append" ? 1 : 3,
+    writer: compaction
+      ? { engine: "trino", engine_version: "480", user: "cryo-maintenance", query_id: `20260928_0${i}1122_00${i}_cryo`, job_id: null }
+      : op === "append"
+        ? { engine: "flink", engine_version: "1.20", user: null, query_id: null, job_id: "c7e1b0e2f6a4" }
+        : { engine: "spark", engine_version: "3.5.3", user: "etl", query_id: null, job_id: "app-20260928-0042" }
+  };
+};
+
 const snapshots = (id: string, url: URL): S["SnapshotListResponse"] => {
   const page = Number(url.searchParams.get("page") ?? 1);
   const pageSize = Number(url.searchParams.get("page_size") ?? 25);
@@ -257,12 +290,7 @@ const snapshots = (id: string, url: URL): S["SnapshotListResponse"] => {
       committed_at: ago(minutes),
       sequence_number: 4_120 - i,
       operation: op,
-      summary: {
-        total_records: 9_420_000_000 - i * 1_800_000,
-        total_files_size: Math.round((412.6 - i * 0.12) * GB),
-        added_data_files: op === "replace" ? 165 : op === "delete" ? 0 : 38 + ((i * 7) % 20),
-        deleted_data_files: op === "replace" ? 15_882 : op === "delete" ? 4 : 0
-      },
+      summary: snapshotSummary(i, op),
       is_current: i === 0,
       refs,
       protected: i === 9,
@@ -630,6 +658,137 @@ const s3Tiering = (id: string): S["S3TieringRecommendationRead"] => ({
   reason: "Table accessed 0 days ago (< 30 days threshold)"
 });
 
+const propertyRecommendations = (id: string): S["PropertyRecommendationsResponse"] => {
+  const apply = (property_key: string, current_value: string, recommended_value: string, reason: string) => ({
+    property_key,
+    current_value,
+    recommended_value,
+    reason,
+    tier: "tier1" as const,
+    action: "apply" as const,
+    layout_recommendation_id: null,
+    bloom_filter_column: null,
+    needs_confirmation: false
+  });
+  return {
+    table_id: id,
+    generated_at: ago(25),
+    gc_blocked: false,
+    items: [
+      apply(
+        "write.metadata.delete-after-commit.enabled",
+        "false",
+        "true",
+        "42.8 commits a day each leave a metadata.json behind. With this on, each commit trims versions beyond write.metadata.previous-versions-max."
+      ),
+      apply(
+        "commit.retry.num-retries",
+        "4",
+        "10",
+        "Flink appends every few minutes while compaction commits; 3 commits in the last week failed after 4 retries."
+      )
+    ]
+  };
+};
+
+const partitionEvolution = (id: string): S["PartitionEvolutionRecommendationRead"] => ({
+  table_id: id,
+  table_name: name,
+  current_partition_spec: "event_date",
+  recommended_partition_spec: "event_date, bucket(16, user_id)",
+  reason: "71% of queries filter on user_id with equality predicates, and each day partition holds 117 files.",
+  confidence: 0.71,
+  estimated_pruning_improvement_pct: 49.7,
+  query_patterns_analyzed: 18_240,
+  cardinality_estimate: "high",
+  warnings: ["Existing files keep the event_date-only layout until compaction rewrites them."],
+  scan_ratio: null,
+  avg_selectivity: 0.004,
+  trigger: "filter_frequency"
+});
+
+const columnUsage = (id: string): S["ColumnUsageResponse"] => {
+  const use = (column: string, filter: number, eq: number, join: number, proj: number, selectivity: number | null) => ({
+    column,
+    filter_count: filter,
+    equality_filter_count: eq,
+    range_filter_count: filter - eq,
+    join_count: join,
+    projection_count: proj,
+    avg_selectivity: selectivity
+  });
+  return {
+    table_id: id,
+    window_days: 30,
+    queries: 18_240,
+    aggregated_at: ago(40),
+    columns: [
+      use("event_date", 17_150, 2_100, 0, 9_800, 0.03),
+      use("user_id", 12_960, 12_960, 6_420, 15_100, 0.004),
+      use("session_id", 4_210, 4_210, 2_880, 7_300, 0.001),
+      use("event_type", 3_900, 3_900, 0, 16_200, 0.12),
+      use("country", 1_120, 1_120, 0, 5_400, 0.2),
+      use("device", 310, 310, 0, 4_100, 0.4)
+    ]
+  };
+};
+
+const impactWindow = (days: number | null, since: string | null, scale: number): S["ImpactWindowRead"] => {
+  const op = (operation: string, ops: number, withBytes: number, withFiles: number, bytes: number, filesIn: number, filesOut: number) => ({
+    operation,
+    ops,
+    ops_with_bytes: withBytes,
+    ops_with_files: withFiles,
+    bytes_freed: Math.round(bytes * scale),
+    files_in: Math.round(filesIn * scale),
+    files_out: Math.round(filesOut * scale)
+  });
+  const by_operation = [
+    op("optimize", Math.round(4 * scale), 0, Math.round(4 * scale), 0, 61_400, 1_820),
+    op("compute_statistics", Math.round(4 * scale), 0, 0, 0, 0, 0),
+    op("optimize_manifests", Math.round(4 * scale), 0, 0, 0, 0, 0),
+    op("expire_snapshots", Math.round(4 * scale), Math.round(4 * scale), 0, 86 * GB, 0, 0),
+    op("remove_orphan_files", Math.round(4 * scale), Math.round(3 * scale), 0, 11.4 * GB, 0, 0)
+  ];
+  const sum = (key: "ops" | "ops_with_bytes" | "ops_with_files" | "bytes_freed" | "files_in" | "files_out") =>
+    by_operation.reduce((total, item) => total + item[key], 0);
+  return {
+    days,
+    since,
+    ops: sum("ops"),
+    ops_with_bytes: sum("ops_with_bytes"),
+    ops_with_files: sum("ops_with_files"),
+    bytes_freed: sum("bytes_freed"),
+    files_in: sum("files_in"),
+    files_out: sum("files_out"),
+    by_operation
+  };
+};
+
+const maintenanceImpact = (id: string): S["MaintenanceImpactResponse"] => ({
+  table_id: id,
+  recent: impactWindow(30, ago(30 * 24 * 60), 1),
+  lifetime: impactWindow(null, ago(96 * 24 * 60), 3)
+});
+
+const skipEvaluations = (id: string): S["SkipEvaluationPage"] => {
+  const night = (daysAgo: number, stage: string, reason: string | null): S["SkipEvaluationRead"] => ({
+    id: visualUuid(0xd0 + daysAgo),
+    run_id: visualUuid(0xc0 + daysAgo),
+    table_id: id,
+    stage,
+    reason,
+    evaluated_at: ago(daysAgo * 24 * 60 + 150)
+  });
+  const items = [
+    night(2, "needs_work", "budget_cap"),
+    night(3, "needs_work", "budget_cap"),
+    night(4, "needs_work", "budget_cap"),
+    night(5, "evaluated", "cooldown")
+  ];
+  return { items, total: items.length, limit: 120, offset: 0 };
+};
+
 /** Returns a body for a table-detail tab endpoint, or undefined when the path isn't one. */
 export function demoTableTabResponse(path: string, url: URL): unknown {
   const id = path.match(/\/api\/v1\/(?:tables|advanced\/[a-z-]+)\/([0-9a-f-]{36})/)?.[1] ?? EVENTS.id;
@@ -650,7 +809,7 @@ export function demoTableTabResponse(path: string, url: URL): unknown {
       protected_snapshot_count: 1
     };
   }
-  if (tail("/property-recommendations")) return { table_id: id, generated_at: ago(25), items: [], gc_blocked: false };
+  if (tail("/property-recommendations")) return propertyRecommendations(id);
   if (tail("/tiering/partitions")) return tieringPartitions(url);
   if (tail("/tiering/jobs")) return tieringJobs();
   if (tail("/partitions")) return partitions(id);
@@ -658,7 +817,11 @@ export function demoTableTabResponse(path: string, url: URL): unknown {
   if (path.includes("/advanced/data-quality/")) return dataQuality(id);
   if (path.includes("/advanced/column-stats/")) return columnStats(id);
   if (path.includes("/advanced/bloom-filter-recommendations/")) return bloom(id);
-  if (path.includes("/advanced/partition-evolution/")) return null;
+  if (path.includes("/advanced/partition-evolution/")) return partitionEvolution(id);
+  if (tail("/column-usage")) return columnUsage(id);
+  if (tail("/maintenance-impact")) return maintenanceImpact(id);
+  if (tail("/maintenance-hold")) return { held: false, max_hold_days: 90 };
+  if (tail("/skip-evaluations")) return skipEvaluations(id);
   if (tail("/partition-access")) return partitionAccess(id);
   if (tail("/protected-snapshots")) return protectedSnapshots(id);
   if (tail("/snapshots")) return snapshots(id, url);

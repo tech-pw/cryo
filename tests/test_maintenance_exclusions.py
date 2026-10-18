@@ -15,7 +15,12 @@ from cryo.db.models import (
     Table,
     TableStats,
 )
-from cryo.db.repositories.exclusions import create_exclusion, delete_exclusion
+from cryo.db.repositories.exclusions import (
+    create_exclusion,
+    delete_exclusion,
+    exclusions_covering,
+    set_table_hold,
+)
 from cryo.db.repositories.intents import set_pause_state
 from cryo.db.repositories.scheduler_store import SQLSchedulerStore
 from cryo.maintenance.coordinator import BatchMaintenance
@@ -257,6 +262,110 @@ def test_exclusion_model_allows_one_rule_per_target(session) -> None:
     )
     session.commit()
     assert len(list(session.scalars(select(MaintenanceExclusion)))) == 2
+
+
+def test_table_hold_blocks_selection_until_it_expires(session) -> None:
+    _source, tables = _seed(session)
+    set_table_hold(
+        session,
+        tables["orders"],
+        reason="backfill in progress",
+        expires_at=NOW + timedelta(days=2),
+        actor="op",
+    )
+    session.commit()
+    assert "orders" not in _candidate_names(session)
+
+    later = load_candidates(
+        session, now=NOW + timedelta(days=3), cooldown_hours=20, max_stats_age_days=30
+    )
+    assert "orders" in {candidate.table_name for candidate in later}
+    assert exclusions_covering(session, tables["orders"], now=NOW + timedelta(days=3)) == []
+
+    actions = list(
+        session.scalars(select(AuditLog.detail).where(AuditLog.table_id == tables["orders"].id))
+    )
+    assert any("until=" in (detail or "") for detail in actions)
+
+
+def test_held_table_is_recorded_as_held_not_generic_excluded(session) -> None:
+    from cryo.maintenance.selection import _exclusion_rows
+    from cryo.maintenance.skip_history import REASON_HELD
+
+    _source, tables = _seed(session)
+    set_table_hold(
+        session,
+        tables["orders"],
+        reason="backfill",
+        expires_at=NOW + timedelta(days=1),
+        actor="op",
+    )
+    session.commit()
+    rows = _exclusion_rows(
+        session,
+        now=NOW,
+        cooldown_hours=20,
+        max_stats_age_days=3,
+        table_ids=None,
+        candidate_ids=set(),
+    )
+    reasons = {table_id: reason for table_id, reason, _work in rows}
+    assert reasons[tables["orders"].id] == REASON_HELD
+
+
+def test_expired_hold_does_not_block_a_new_exclusion(session) -> None:
+    source, tables = _seed(session)
+    hold = set_table_hold(
+        session,
+        tables["orders"],
+        reason="short freeze",
+        expires_at=NOW + timedelta(hours=1),
+        actor="op",
+    )
+    hold.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+    session.commit()
+    create_exclusion(
+        session,
+        source_id=source.id,
+        schema_name="sales",
+        table_name="orders",
+        reason="permanent opt-out",
+        actor="op",
+    )
+    session.commit()
+    rows = list(session.scalars(select(MaintenanceExclusion)))
+    assert [(row.reason, row.expires_at) for row in rows] == [("permanent opt-out", None)]
+
+
+def test_table_hold_api_requires_operator_and_bounded_expiry(api_db: ApiDb) -> None:
+    source_id, _ = _seed_source_destination(api_db.session_factory)
+    hot_table_id, _ = _seed_tables(api_db.session_factory, source_id)
+    client = api_db.client
+    url = f"/api/v1/tables/{hot_table_id}/maintenance-hold"
+    soon = (datetime.now(UTC) + timedelta(days=3)).isoformat()
+
+    assert client.get(url, headers=VIEWER_HEADERS).json()["held"] is False
+    body = {"reason": "vendor backfill", "expires_at": soon}
+    assert client.put(url, headers=VIEWER_HEADERS, json=body).status_code == 403
+    past = {"reason": "vendor backfill", "expires_at": "2020-01-01T00:00:00Z"}
+    assert client.put(url, headers=OPERATOR_HEADERS, json=past).status_code == 422
+    far = (datetime.now(UTC) + timedelta(days=120)).isoformat()
+    too_long = {"reason": "vendor backfill", "expires_at": far}
+    assert client.put(url, headers=OPERATOR_HEADERS, json=too_long).status_code == 422
+
+    held = client.put(url, headers=OPERATOR_HEADERS, json=body)
+    assert held.status_code == 200
+    assert held.json()["held"] is True
+    assert held.json()["scope"] == "table"
+    assert held.json()["reason"] == "vendor backfill"
+
+    listed = client.get("/api/v1/maintenance/exclusions", headers=VIEWER_HEADERS).json()
+    assert listed[0]["expires_at"] is not None
+
+    released = client.delete(url, headers=OPERATOR_HEADERS)
+    assert released.status_code == 200
+    assert released.json()["held"] is False
+    assert client.delete(url, headers=OPERATOR_HEADERS).status_code == 404
 
 
 def test_admin_headers_can_also_manage_exclusions(api_db: ApiDb) -> None:

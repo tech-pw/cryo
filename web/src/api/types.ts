@@ -275,6 +275,15 @@ export interface ExplainHealthResponse {
 
 export type SchedulingBaselineRead = components["schemas"]["SchedulingBaselineRead"];
 export type AutoCompCompareResponse = components["schemas"]["AutoCompCompareResponse"];
+export type SkipEvaluationRead = components["schemas"]["SkipEvaluationRead"];
+export type SkipEvaluationPage = components["schemas"]["SkipEvaluationPage"];
+export type MaintenanceImpactResponse = components["schemas"]["MaintenanceImpactResponse"];
+export type ImpactWindowRead = components["schemas"]["ImpactWindowRead"];
+export type TableHoldRead = components["schemas"]["TableHoldRead"];
+export type TableHoldWrite = components["schemas"]["TableHoldWrite"];
+export type ColumnUsageResponse = components["schemas"]["ColumnUsageResponse"];
+export type ColumnUsageRead = components["schemas"]["ColumnUsageRead"];
+export type TableStatsHistoryRead = components["schemas"]["TableStatsHistoryRead"];
 
 export interface CopilotQuestion {
   id: string;

@@ -20,7 +20,7 @@ import {
 import { QueryErrorAlert } from "../../components/common";
 import { ExcludedFromExpiry } from "../../components/table-detail/ExcludedFromExpiry";
 import { useOperationLauncher } from "../../components/table-detail/operations/OperationLauncher";
-import { SnapshotSelection } from "../../components/table-detail/SnapshotSelection";
+import { SnapshotSelection, writerLabel } from "../../components/table-detail/SnapshotSelection";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
@@ -108,6 +108,31 @@ const SummaryCard = ({
         <div><dt>Oldest retained commit</dt><dd><When value={oldest} /></dd></div>
       </dl>
     </Card>
+  );
+};
+
+const signed = (value: number, sign: "+" | "−") => `${sign}${formatNumber(value)}`;
+
+/** Rows and delete files this commit added or removed, from the writer's snapshot summary. */
+const CommitChange = ({ summary }: { summary: TableSnapshot["summary"] }) => {
+  const rows = [
+    summary.added_records ? signed(summary.added_records, "+") : null,
+    summary.deleted_records ? signed(summary.deleted_records, "−") : null
+  ].filter(Boolean);
+  const deletes = summary.added_delete_files ?? 0;
+  if (!rows.length && !deletes) {
+    const recorded = summary.added_records != null || summary.deleted_records != null;
+    return <span className="text-muted-foreground">{recorded ? "No row change" : "—"}</span>;
+  }
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1 whitespace-nowrap">
+      {rows.length ? <span>{rows.join(" ")} rows</span> : null}
+      {deletes ? (
+        <Badge variant="warning" title="Merge-on-read delete files. Readers apply them until compaction rewrites the data.">
+          +{formatNumber(deletes)} delete file{deletes === 1 ? "" : "s"}
+        </Badge>
+      ) : null}
+    </span>
   );
 };
 
@@ -256,8 +281,19 @@ export const SnapshotsTab = () => {
         header: "Snapshot",
         cell: ({ row }) => (
           <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
-            <span data-snapshot-id={row.original.snapshot_id} title={row.original.snapshot_id} className="font-mono text-xs">
-              {shortId(row.original.snapshot_id)}
+            <span className="flex flex-col">
+              <span data-snapshot-id={row.original.snapshot_id} title={row.original.snapshot_id} className="font-mono text-xs">
+                {shortId(row.original.snapshot_id)}
+              </span>
+              <span
+                data-parent-snapshot-id={row.original.parent_snapshot_id ?? ""}
+                title={row.original.parent_snapshot_id ?? undefined}
+                className="font-mono text-[11px] text-muted-foreground"
+              >
+                {row.original.parent_snapshot_id
+                  ? `from ${loadedIds.has(row.original.parent_snapshot_id) ? shortId(row.original.parent_snapshot_id) : "outside this page"}`
+                  : "first snapshot"}
+              </span>
             </span>
             <Button
               type="button"
@@ -291,23 +327,6 @@ export const SnapshotsTab = () => {
         )
       },
       {
-        id: "parent_snapshot_id",
-        header: "Parent",
-        cell: ({ row }) => (
-          <span
-            data-parent-snapshot-id={row.original.parent_snapshot_id ?? ""}
-            title={row.original.parent_snapshot_id ?? undefined}
-            className="whitespace-nowrap font-mono text-xs"
-          >
-            {row.original.parent_snapshot_id
-              ? loadedIds.has(row.original.parent_snapshot_id)
-                ? shortId(row.original.parent_snapshot_id)
-                : "Outside loaded page"
-              : "—"}
-          </span>
-        )
-      },
-      {
         id: "timestamp",
         header: "Timestamp",
         cell: ({ row }) => (
@@ -316,7 +335,10 @@ export const SnapshotsTab = () => {
               className="inline-block size-1.5 rounded-full bg-[var(--color-primary)]"
               aria-hidden="true"
             />
-            <time dateTime={row.original.committed_at ?? undefined} title={formatTime(row.original.committed_at)}>
+            <time
+              dateTime={row.original.committed_at ?? undefined}
+              title={row.original.sequence_number == null ? undefined : `Sequence ${formatNumber(row.original.sequence_number)}`}
+            >
               {formatTime(row.original.committed_at)}
             </time>
             {sameSnapshotId(row.original.snapshot_id, currentSnapshotId) ? <Badge>Current</Badge> : null}
@@ -324,31 +346,55 @@ export const SnapshotsTab = () => {
         )
       },
       {
-        id: "sequence",
-        header: "Sequence",
-        cell: ({ row }) => formatNumber(row.original.sequence_number)
-      },
-      {
         id: "operation",
         header: "Operation",
         cell: ({ row }) => row.original.operation ?? "Unknown"
       },
       {
-        id: "records",
-        header: "Records",
-        cell: ({ row }) => formatNumber(row.original.summary.total_records)
+        id: "change",
+        header: "Change",
+        cell: ({ row }) => <CommitChange summary={row.original.summary} />
       },
       {
-        id: "size",
-        header: "Total size",
-        cell: ({ row }) => <span className="whitespace-nowrap">{sizeLabel(row.original.summary.total_files_size)}</span>
-      },
-      {
-        id: "refs",
-        header: "References",
+        id: "partitions",
+        header: "Partitions",
         cell: ({ row }) =>
-          row.original.refs.length === 0 ? (
-            <span className="text-muted-foreground">None</span>
+          row.original.summary.changed_partition_count == null ? (
+            <span className="text-muted-foreground" title="Not recorded by this writer">—</span>
+          ) : (
+            formatNumber(row.original.summary.changed_partition_count)
+          )
+      },
+      {
+        id: "table_after",
+        header: "Table after",
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap" title={`${formatNumber(row.original.summary.total_records)} rows`}>
+            {formatNumber(row.original.summary.total_records, true)} rows · {sizeLabel(row.original.summary.total_files_size)}
+          </span>
+        )
+      },
+      {
+        id: "writer",
+        header: "Writer",
+        cell: ({ row }) => {
+          const writer = row.original.summary.writer;
+          const label = writerLabel(writer);
+          return label ? (
+            <span className="whitespace-nowrap" title={[writer?.user, writer?.query_id ?? writer?.job_id].filter(Boolean).join(" · ") || undefined}>
+              {label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground" title="Not recorded by this writer">—</span>
+          );
+        }
+      },
+      {
+        id: "retention",
+        header: "Retention",
+        cell: ({ row }) =>
+          row.original.refs.length === 0 && !row.original.protected ? (
+            <span className="text-muted-foreground">—</span>
           ) : (
             <span className="flex flex-wrap gap-1">
               {row.original.refs.map((ref) => (
@@ -365,19 +411,12 @@ export const SnapshotsTab = () => {
                   {ref.name}
                 </span>
               ))}
+              {row.original.protected ? (
+                <Badge variant="warning" title={row.original.protected_label ?? undefined}>
+                  Excluded from Cryo expiry
+                </Badge>
+              ) : null}
             </span>
-          )
-      },
-      {
-        id: "protected",
-        header: "Protected",
-        cell: ({ row }) =>
-          row.original.protected ? (
-            <Badge variant="warning" title={row.original.protected_label ?? undefined}>
-              Excluded from Cryo expiry
-            </Badge>
-          ) : (
-            <span className="text-muted-foreground">No</span>
           )
       },
       {

@@ -35,7 +35,8 @@ export type WriteAction =
   | "runDedup"
   | "editTableConfig"
   | "editTableConfigAdmin"
-  | "archivePartitions";
+  | "archivePartitions"
+  | "holdMaintenance";
 
 type MinRole = "operator" | "admin";
 
@@ -78,7 +79,8 @@ export const WRITE_MIN_ROLE: Record<WriteAction, MinRole> = {
   editTableConfig: "operator",
   // Format upgrades and Cryo retention overrides: one-way or data-deleting.
   editTableConfigAdmin: "admin",
-  archivePartitions: "operator"
+  archivePartitions: "operator",
+  holdMaintenance: "operator"
 };
 
 const DESTRUCTIVE_ADMIN: ReadonlySet<WriteAction> = new Set([
