@@ -711,6 +711,78 @@ class TableRead(OrmModel):
     failure_category_actionable_from_cryo: bool = False
     owner_email: str | None = None
     stats: TableStatsRead | None = None
+    # Populated by GET /tables only (bounded to the page); detail views leave it null.
+    maintenance: TableMaintenanceRead | None = None
+
+
+TableMaintenanceState = Literal[
+    "running",
+    "queued",
+    "failed",
+    "held",
+    "excluded",
+    "scan_failing",
+    "not_scanned",
+    "skipped",
+    "needs_work",
+    "healthy",
+    "inactive",
+]
+
+
+class TableJobRef(BaseModel):
+    run_id: uuid.UUID
+    job_id: uuid.UUID
+    status: str
+    trigger: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class TableSelectionRef(BaseModel):
+    """The table's outcome in the latest nightly selection (skip_evaluations)."""
+
+    stage: str
+    reason: str | None = None
+    evaluated_at: datetime
+
+
+class TableMaintenanceRead(BaseModel):
+    state: TableMaintenanceState
+    reason: str | None = None
+    workflow_name: str | None = None
+    # False when the workflow came from a preset rule rather than an operator pin.
+    workflow_pinned: bool = False
+    active_run: TableJobRef | None = None
+    last_run: TableJobRef | None = None
+    last_selection: TableSelectionRef | None = None
+    score_delta_7d: int | None = None
+
+
+class FunnelNode(BaseModel):
+    id: str
+    label: str
+    count: int
+    # Explorer view that lists the tables currently in this state, when one exists.
+    view: str | None = None
+
+
+class FunnelLink(BaseModel):
+    source: str
+    target: str
+    value: int
+
+
+class TablesFunnelResponse(BaseModel):
+    """Where every active table landed in the latest nightly batch, from scan to outcome."""
+
+    run_id: uuid.UUID | None = None
+    run_status: str | None = None
+    run_started_at: datetime | None = None
+    run_finished_at: datetime | None = None
+    total_active: int
+    nodes: list[FunnelNode]
+    links: list[FunnelLink]
 
 
 class TablePatch(BaseModel):
@@ -813,6 +885,9 @@ class TablePartitionsResponse(BaseModel):
     offset: int
 
 
+_HISTORY_RAW_FIELDS = ("total_delete_files", "delete_file_pct", "manifest_count", "total_snapshots")
+
+
 class TableStatsHistoryRead(OrmModel):
     id: int
     table_id: uuid.UUID
@@ -822,6 +897,25 @@ class TableStatsHistoryRead(OrmModel):
     total_size_gb: float | None = None
     grade: str | None = None
     overall_score: int | None = None
+    total_delete_files: int | None = None
+    delete_file_pct: float | None = None
+    manifest_count: int | None = None
+    total_snapshots: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_raw(cls, data: Any) -> Any:
+        if isinstance(data, Mapping):
+            values = dict(data)
+            raw = values.get("raw")
+        else:
+            values = {name: getattr(data, name, None) for name in cls.model_fields}
+            raw = getattr(data, "raw", None)
+        if isinstance(raw, Mapping):
+            for name in _HISTORY_RAW_FIELDS:
+                if values.get(name) is None:
+                    values[name] = raw.get(name)
+        return values
 
 
 class TableStatsHistoryResponse(BaseModel):
@@ -954,6 +1048,7 @@ class DatalakeTotals(BaseModel):
     projected_savings_usd_month: float = 0
     reclaimable_bytes: int | None = None
     query_count_30d: int
+    running_jobs: int = 0
 
 
 class GradeDistributionItem(BaseModel):
@@ -981,6 +1076,17 @@ class DashboardTopOffender(BaseModel):
     query_count_30d: int = 0
 
 
+class DashboardImprovedTable(BaseModel):
+    table_id: uuid.UUID
+    schema_name: str
+    table_name: str
+    previous_grade: str | None = None
+    previous_score: int | None = None
+    grade: str | None = None
+    overall_score: int | None = None
+    improved_at: datetime
+
+
 class DashboardDriftPoint(BaseModel):
     scan_at: datetime
     total_size_gb: float
@@ -995,6 +1101,10 @@ class DatalakeDashboardResponse(BaseModel):
     freshness_distribution: list[FreshnessDistributionItem] = Field(default_factory=list)
     freshness_as_of: datetime | None = None
     top_offenders: list[DashboardTopOffender]
+    hot_at_risk: list[DashboardTopOffender] = Field(default_factory=list)
+    hot_at_risk_count: int = 0
+    recently_improved: list[DashboardImprovedTable] = Field(default_factory=list)
+    recently_improved_count: int = 0
     drift: list[DashboardDriftPoint]
     cost_by_schema: list[CostSchemaItem] = Field(default_factory=list)
 
@@ -1156,6 +1266,22 @@ class TablePreviewRead(BaseModel):
 
 class MaintenancePreviewResponse(BaseModel):
     items: list[TablePreviewRead]
+
+
+class OffPeakWindowResponse(BaseModel):
+    """The governor-wide off-peak window heavy maintenance is restricted to.
+
+    Deliberately read-only and not table-scoped: ``offpeak_start_ist`` /
+    ``offpeak_end_ist`` are process settings on the Governor, so a per-table
+    editor here would imply an override the admission path cannot honour
+    (see cryo/governor/admission.py:is_offpeak).
+    """
+
+    start_hour_ist: int
+    end_hour_ist: int
+    # Equal bounds disable the gate entirely -- surfaced explicitly so the UI
+    # can say "any hour" instead of rendering a misleading 00:00-00:00 window.
+    enabled: bool
 
 
 class MaintenanceRunRequest(BaseModel):

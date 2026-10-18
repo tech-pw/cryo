@@ -122,7 +122,7 @@ const FindingRow = ({ finding, reasonId }: { finding: Discovery; reasonId: strin
         </span>
         {missingTarget ? (
           <Link
-            to={`/tables/${finding.table_id}?tab=files#files-properties`}
+            to={`/tables/${finding.table_id}?tab=config#config-properties`}
             className="block min-w-0 truncate whitespace-nowrap text-sm text-[var(--color-link)] hover:underline"
             aria-label={`Open property recommendations for ${finding.table_name}`}
           >

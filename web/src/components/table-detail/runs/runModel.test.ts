@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TableRunRead } from "../../../api/types";
-import { buildRunColumns, gradeChange, gridRows, isManualTrigger, statChanges, toneFor } from "./runModel";
+import { buildRunColumns, gradeChange, gridRows, isManualTrigger, mergeSkipColumns, statChanges, toneFor } from "./runModel";
 
 const run = (overrides: Partial<TableRunRead>): TableRunRead => ({
   job_id: "job-1",
@@ -13,6 +13,54 @@ const run = (overrides: Partial<TableRunRead>): TableRunRead => ({
   duration_seconds: 656,
   steps: [],
   ...overrides
+});
+
+const skip = (id: string, at: string, reason: string | null, stage = "evaluated") => ({
+  id,
+  run_id: `nightly-${id}`,
+  table_id: "t1",
+  stage,
+  reason,
+  evaluated_at: at
+});
+
+describe("mergeSkipColumns", () => {
+  it("collapses a streak of same-reason nights and breaks it at a run", () => {
+    const runs = buildRunColumns(
+      [
+        run({ job_id: "a", run_id: "ra", started_at: "2026-10-01T23:00:00Z" }),
+        run({ job_id: "b", run_id: "rb", started_at: "2026-10-05T23:00:00Z" })
+      ],
+      []
+    );
+    const merged = mergeSkipColumns(runs, [
+      skip("1", "2026-10-02T23:00:00Z", "cooldown"),
+      skip("2", "2026-10-03T23:00:00Z", "cooldown"),
+      skip("3", "2026-10-04T23:00:00Z", "budget_cap", "eligible"),
+      skip("4", "2026-10-06T23:00:00Z", "cooldown"),
+      skip("5", "2026-10-07T23:00:00Z", null, "selected")
+    ]);
+    expect(merged.map((column) => (column.kind === "run" ? column.run.run_id : `${column.reason}x${column.count}`))).toEqual([
+      "ra",
+      "cooldownx2",
+      "budget_capx1",
+      "rb",
+      "cooldownx1"
+    ]);
+    const capped = merged[2];
+    expect(capped.kind === "skip" && capped.hadWork).toBe(true);
+  });
+
+  it("drops nights older than the oldest shown run and keeps only the newest skip columns", () => {
+    const runs = buildRunColumns([run({ job_id: "a", run_id: "ra", started_at: "2026-10-10T23:00:00Z" })], []);
+    const evaluations = [
+      skip("old", "2026-10-01T23:00:00Z", "no_work"),
+      ...["a", "b", "c"].map((id, index) => skip(id, `2026-10-1${index + 1}T23:00:00Z`, index % 2 ? "cooldown" : "no_work"))
+    ];
+    const merged = mergeSkipColumns(runs, evaluations, 2);
+    expect(merged.filter((column) => column.kind === "skip")).toHaveLength(2);
+    expect(merged.some((column) => column.key === "skip-old")).toBe(false);
+  });
 });
 
 describe("runModel", () => {

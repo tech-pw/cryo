@@ -80,11 +80,11 @@ Text description
 
 localhost:5173/
 
-*Home after the first scan. The donut counts tables per grade. Storage impact shows what last night's run reclaimed.*
+*Home after a few nights of maintenance. Last night's run and your next steps come first. The lake's grades, the tables people query most and the tables Cryo just fixed sit below.*
 
 localhost:5173/tables
 
-*Tables lists every table the scanner has seen. This view is sorted by small-file count, and each row shows the grade next to the counts that produced it.*
+*Tables opens on what needs you: last night's failures and skips, then every table the scanner has seen, sorted by small-file count with the grade next to the counts that produced it.*
 
 localhost:5173/runs/7f3c9a21
 
