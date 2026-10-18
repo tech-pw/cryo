@@ -37,8 +37,9 @@ export function AsyncBoundary({
   emptyAction,
   onRetry,
   children,
-  className
-}: AsyncBoundaryProps) {
+  className,
+  fade = true
+}: AsyncBoundaryProps & { fade?: boolean }) {
   const [showContent, setShowContent] = useState(!isLoading);
   const [contentReady, setContentReady] = useState(!isLoading);
 
@@ -94,6 +95,10 @@ export function AsyncBoundary({
         )}
       </div>
     );
+  }
+
+  if (!fade) {
+    return <div className={className}>{children}</div>;
   }
 
   return (

@@ -75,6 +75,7 @@ class MaintenanceJobRecord:
     last_maintained_at: datetime | None = None
     actor: str | None = None
     operations: tuple[OperationType, ...] | None = None
+    excluded_operations: tuple[str, ...] = ()
     force_admit: bool = False
     dispatch_id: str | None = None
     intent_id: str | None = None
@@ -479,6 +480,14 @@ class Worker:
         reconciliation_required = False
         effect_budget_usage = EffectBudgetUsage()
         try:
+            # Intent-bound jobs check the pause inside begin_attempt; legacy jobs have no
+            # attempt, so without this a hold set from the UI would not stop them.
+            if (
+                job.intent_id is None
+                and self._intent_store is not None
+                and self._intent_store.is_paused(destination_id=str(job.destination_id))
+            ):
+                raise MaintenancePausedError("maintenance execution is paused")
             table_data = self._store.get_table_data(job.table_id)
             set_context(snapshot_id=table_data.stats.get("snapshot_watermark"))
             table_ref = _table_ref_from_stats(table_data.stats)
@@ -540,6 +549,7 @@ class Worker:
                     operations=job.operations,
                     protected_snapshot_ids=_protected_snapshot_ids(job.table_id),
                     has_shared_location=self._has_shared_location(job.table_id),
+                    excluded_operations=job.excluded_operations,
                 )
                 self._store.save_plan(job.id, plan_to_dict(plan))
 

@@ -9,17 +9,9 @@ export interface AppShellLayoutProps {
 }
 
 export const AppShellLayout = ({ children }: AppShellLayoutProps) => (
-  <>
-    <a
-      href="#main-content"
-      className="absolute -left-[9999px] top-2 z-[9999] rounded-md bg-primary px-4 py-2.5 font-semibold text-white no-underline shadow-md focus:left-2"
-    >
-      Skip to main content
-    </a>
-    <AppShell>
-      <NoSourcesBanner />
-      <FirstRunWizard />
-      {children}
-    </AppShell>
-  </>
+  <AppShell>
+    <NoSourcesBanner />
+    <FirstRunWizard />
+    {children}
+  </AppShell>
 );

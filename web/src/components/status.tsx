@@ -24,16 +24,25 @@ const gradeVariant = (grade?: string | null) => {
 };
 
 const priorityVariant = (priority?: string | null) => {
-  switch (priority) {
-    case "HIGH":
+  switch (priority?.trim().toLowerCase()) {
+    case "high":
+    case "critical":
       return "danger" as const;
-    case "MEDIUM":
+    case "medium":
       return "warning" as const;
-    case "LOW":
-      return "secondary" as const;
+    case "low":
+      return "success" as const;
     default:
       return "secondary" as const;
   }
+};
+
+const priorityLabel = (priority?: string | null): string => {
+  const key = priority?.trim().toLowerCase() ?? "";
+  if (key === "high" || key === "critical") return "High";
+  if (key === "medium") return "Medium";
+  if (key === "low") return "Low";
+  return priority?.trim() || "-";
 };
 
 const statusVariant = (status?: string | null) => {
@@ -59,7 +68,9 @@ export const GradePill = ({ grade }: { grade?: string | null }) => (
 );
 
 export const PriorityTag = ({ priority }: { priority?: string | null }) => (
-  <Badge variant={priorityVariant(priority)}>{priority ?? "-"}</Badge>
+  <Badge variant={priorityVariant(priority)} className="whitespace-nowrap capitalize">
+    {priorityLabel(priority)}
+  </Badge>
 );
 
 const statusLabel = (status?: string | null): string => {
@@ -86,7 +97,7 @@ export const healthScoreColor = (score: number): string => {
 };
 
 export const CompactionTag = ({ needsCompaction }: { needsCompaction?: boolean | null }) => (
-  <Badge variant={needsCompaction ? "warning" : "secondary"}>
+  <Badge variant={needsCompaction ? "warning" : "secondary"} className="whitespace-nowrap">
     {needsCompaction ? "Needs compaction" : "Healthy"}
   </Badge>
 );

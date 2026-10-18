@@ -11,7 +11,7 @@ const TabsList = forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-[var(--control-height)] max-w-full items-center justify-start overflow-x-auto rounded-[var(--radius-default)] bg-[var(--color-surface-sunken)] p-1 text-muted-foreground",
+      "cryo-tabs inline-flex h-10 max-w-full items-center justify-start gap-0.5 overflow-x-auto rounded-[var(--radius-lg)] bg-[var(--color-surface-sunken)] p-1 text-muted-foreground shadow-[inset_0_0_0_1px_var(--color-border),inset_0_1px_2px_rgba(0,0,0,0.06)]",
       className
     )}
     {...props}
@@ -26,10 +26,10 @@ const TabsTrigger = forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] px-3 py-1.5 text-sm font-medium transition-all duration-[var(--motion-base)] ease-[var(--ease-standard)]",
+      "inline-flex h-8 items-center justify-center whitespace-nowrap rounded-[8px] px-3 text-[13px] font-medium leading-none tracking-[-0.01em] text-[var(--color-text-secondary)] transition-[background-color,color,box-shadow,transform] duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97] motion-reduce:active:scale-100",
       "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-ring focus-visible:ring-offset-[var(--focus-ring-offset)]",
       "disabled:pointer-events-none disabled:opacity-60",
-      "data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm",
+      "data-[state=active]:bg-[var(--color-surface-2)] data-[state=active]:text-foreground data-[state=active]:shadow-[0_1px_2px_rgba(0,0,0,0.18),0_0_0_1px_var(--color-border-strong)]",
       className
     )}
     {...props}

@@ -735,6 +735,7 @@ def _capped_submit_config(
             driver_mem_mib=cfg.driver_mem_mib,
         ),
         operation=operation,
+        total_size_gb=total_size_gb,
     )
     return replace(
         cfg,

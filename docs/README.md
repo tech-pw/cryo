@@ -112,6 +112,13 @@ The authoritative architecture / contract docs live at the repo root:
 - [`ARCHIVE_TIERING_RESEARCH_2026-10-01.md`](./ARCHIVE_TIERING_RESEARCH_2026-10-01.md) — research
   and recommendation for a partition-aware Archive section / storage tiering (S3 mechanics,
   competitors, live fleet sizing, existing-code defects, phased plan).
+- [`ARCHIVE_EXECUTION_2026-10-18.md`](./ARCHIVE_EXECUTION_2026-10-18.md) — how archive and restore
+  actually run: preflight, permissions and IAM policy, bucket guardrails, jobs, planner skip.
+- [`TABLE_DETAIL_POLISH_2026-10-18.md`](./TABLE_DETAIL_POLISH_2026-10-18.md) — what moved where on
+  the table page (checks to Overview, Archive to Cost, Properties to Config) and why.
+- [`TABLE_DETAIL_INSIGHTS_2026-10-18.md`](./TABLE_DETAIL_INSIGHTS_2026-10-18.md) — passed-over
+  nights, measured maintenance impact, commit summaries, delete debt, manifest strip, revived
+  recommendations, column heatmap, maintenance holds, and the metadata-cost accounting fix.
 
 ### Local development
 

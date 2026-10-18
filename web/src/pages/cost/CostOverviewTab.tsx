@@ -1,6 +1,7 @@
 import type { ColumnDef, RowSelectionState } from "@tanstack/react-table";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { ArrowRight, Info } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bar,
   BarChart,
@@ -60,7 +61,6 @@ const OPPORTUNITY_PAGE_SIZE = 50;
 const EMPTY_TABLES: TableRead[] = [];
 const COST_UNAVAILABLE = "Cost data unavailable";
 const NOT_MEASURED = "Not measured";
-
 const displayCost = (value: number | null | undefined): string =>
   value == null || Number.isNaN(value) ? COST_UNAVAILABLE : formatCurrency(value);
 
@@ -72,6 +72,27 @@ const displayMeasuredGb = (value: number | null | undefined): string =>
 
 const displayMeasuredBytes = (value: number | null | undefined): string =>
   value == null || !Number.isFinite(value) ? NOT_MEASURED : formatBytesGb(value);
+
+const MetricHint = ({ label }: { label: string }) => (
+  <Tooltip delayDuration={0}>
+    <TooltipTrigger asChild>
+      <button type="button" className="cursor-help text-muted-foreground" aria-label={label}>
+        <Info className="size-3.5" aria-hidden="true" />
+      </button>
+    </TooltipTrigger>
+    <TooltipContent>{label}</TooltipContent>
+  </Tooltip>
+);
+
+const ModelStat = ({ label, value, detail }: { label: string; value: string; detail?: string }) => (
+  <div className="min-w-[7.5rem]">
+    <p className="text-[11px] font-medium leading-4 text-muted-foreground">{label}</p>
+    <p className="mt-0.5 text-sm font-semibold leading-5 tracking-[-0.01em] text-foreground [font-variant-numeric:tabular-nums]">
+      {value}
+      {detail ? <span className="ml-1 text-xs font-normal text-muted-foreground">{detail}</span> : null}
+    </p>
+  </div>
+);
 
 const offsetFromSearch = (raw: string | null): number => {
   const parsed = Number(raw);
@@ -104,23 +125,29 @@ const opportunityColumns: ColumnDef<TableRead, unknown>[] = [
     id: "table",
     header: "Table",
     cell: ({ row }) => (
-      <div className="flex items-center gap-1.5">
-        <Link to={`/tables/${row.original.id}`} className="font-medium text-foreground hover:text-primary">
-          {qualifiedTableName(row.original)}
-        </Link>
-        <GradePill grade={row.original.stats?.grade} />
-      </div>
+      <Link to={`/tables/${row.original.id}`} className="font-medium text-foreground hover:text-primary">
+        {qualifiedTableName(row.original)}
+      </Link>
+    )
+  },
+  {
+    id: "grade",
+    header: "Grade",
+    cell: ({ row }) => <GradePill grade={row.original.stats?.grade} />
+  },
+  {
+    id: "reclaim",
+    header: () => <span className="block text-right">Reclaimable</span>,
+    cell: ({ row }) => (
+      <span className="block text-right tabular-nums">{displayMeasuredBytes(row.original.stats?.reclaimable_bytes)}</span>
     )
   },
   {
     id: "size",
-    header: "Size",
-    cell: ({ row }) => displayMeasuredGb(row.original.stats?.total_size_gb)
-  },
-  {
-    id: "reclaim",
-    header: "Reclaimable",
-    cell: ({ row }) => displayMeasuredBytes(row.original.stats?.reclaimable_bytes)
+    header: () => <span className="block text-right">Size</span>,
+    cell: ({ row }) => (
+      <span className="block text-right tabular-nums">{displayMeasuredGb(row.original.stats?.total_size_gb)}</span>
+    )
   },
   {
     id: "scan_at",
@@ -133,7 +160,13 @@ const opportunityColumns: ColumnDef<TableRead, unknown>[] = [
  * Overview tab of the consolidated Cost page. Wraps the body of the legacy
  * CostSavings page so the same chart + tables + planner flows live in one tab.
  */
-export const CostOverviewTab = () => {
+export const CostOverviewTab = ({
+  active = true,
+  onHeaderActions
+}: {
+  active?: boolean;
+  onHeaderActions?: (actions: ReactNode) => void;
+}) => {
   const { api, token } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const oppOffset = offsetFromSearch(searchParams.get("oppOffset"));
@@ -283,6 +316,21 @@ export const CostOverviewTab = () => {
     onSuccess: (result) => toastScanResult(result),
     onError: (error) => toast.error((error as Error).message)
   });
+
+  useEffect(() => {
+    if (!active) return;
+    onHeaderActions?.(
+      <Button
+        size="sm"
+        disabled={!scanAccess.allowed || fullCostScan.isPending}
+        title={scanAccess.reason ?? undefined}
+        onClick={() => fullCostScan.mutate()}
+      >
+        {fullCostScan.isPending ? "Starting scan…" : "Run full cost scan"}
+      </Button>
+    );
+    return () => onHeaderActions?.(null);
+  }, [active, fullCostScan.isPending, fullCostScan.mutate, onHeaderActions, scanAccess.allowed]);
   const bulkManifestRewrite = useMutation({
     mutationFn: (args: { destinationId: UUID; presetId: UUID }) => {
       if (!manifestAccess.allowed) throw new Error(manifestAccess.reason ?? "Not allowed");
@@ -360,26 +408,33 @@ export const CostOverviewTab = () => {
         </div>
       ) : data ? (
         <>
-          <div className="mb-3 flex flex-wrap items-center gap-3">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
             <CostPrecisionBadge
               precision={dominantPrecision}
               lastFullCostScanAt={data.totals.last_full_cost_scan_at}
               orphanScanStale={data.totals.orphan_scan_stale}
             />
-            <Link to="/scan-cost" className="text-xs text-primary hover:underline">
-              Scan cost
-            </Link>
-            <span className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               {data.totals.last_full_cost_scan_at
-                ? `Last full storage-truth scan: ${formatTime(data.totals.last_full_cost_scan_at)}`
-                : "No full storage-truth cost scan recorded yet -- figures below use metadata estimates."}
-            </span>
-            {data.totals.orphan_scan_stale ? (
-              <p className="text-sm text-muted-foreground">
-                Orphan estimates may be stale — run a full cost scan for storage-truth accuracy.
-              </p>
-            ) : null}
+                ? `Last full storage-truth scan: ${formatTime(data.totals.last_full_cost_scan_at)}. ${metadataCoverage}% of tables have a metadata or storage-truth figure.`
+                : "Metadata estimates. No storage-truth scan yet."}
+              {data.totals.orphan_scan_stale
+                ? " Orphan estimates may be stale — run a full cost scan for storage-truth accuracy."
+                : ""}
+            </p>
           </div>
+          {!onHeaderActions ? (
+            <div className="mb-3 flex justify-end">
+              <Button
+                size="sm"
+                disabled={!scanAccess.allowed || fullCostScan.isPending}
+                title={scanAccess.reason ?? undefined}
+                onClick={() => fullCostScan.mutate()}
+              >
+                {fullCostScan.isPending ? "Starting scan…" : "Run full cost scan"}
+              </Button>
+            </div>
+          ) : null}
           <MetricGrid columns={4} className="mb-3">
             <MetricTile
               metricId="modeled_s3_storage_cost"
@@ -390,78 +445,76 @@ export const CostOverviewTab = () => {
             <MetricTile
               label="After maintenance"
               value={displayCost(data.totals.projected_monthly_cost_usd)}
-              hint={
-                <span title="Projected S3 storage cost if all recommended maintenance ran today." className="cursor-help">
-                  ⓘ
-                </span>
-              }
+              hint={<MetricHint label="Projected S3 storage cost if all recommended maintenance ran today." />}
             />
             <MetricTile metricId="modeled_savings" value={displayCost(data.totals.projected_savings_usd_month)} />
             <MetricTile
               label="Saved to date"
               value={displayCost(data.totals.total_realized_savings_usd)}
-              hint={
-                <span title="Cumulative savings from completed maintenance runs." className="cursor-help">
-                  ⓘ
-                </span>
-              }
+              hint={<MetricHint label="Cumulative savings from completed maintenance runs." />}
             />
           </MetricGrid>
           <MetricGrid columns={2} className="mb-4">
             <MetricTile
               label="Reclaimable storage"
               value={displayBytes(data.totals.reclaimable_bytes)}
-              hint={
-                <span title="Disk space maintenance would free up." className="cursor-help">
-                  ⓘ
-                </span>
-              }
+              hint={<MetricHint label="Disk space maintenance would free up." />}
             />
             <MetricTile
               label="Precision coverage"
               value={`${metadataCoverage}%`}
-              hint={
-                <span title="Share of tables with metadata or storage-truth cost figures." className="cursor-help">
-                  ⓘ
-                </span>
-              }
+              hint={<MetricHint label="Share of tables with metadata or storage-truth cost figures." />}
             />
           </MetricGrid>
           {costModel.data ? (
             <Card className="mb-3">
-              <CardHeader className="pb-2">
-                <CardTitle>Learned cost model (holdout)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap items-center gap-4 text-sm">
-                  <span>
-                    MAE learned {formatCurrency(costModel.data.mae_learned)}/mo vs heuristic{" "}
-                    {formatCurrency(costModel.data.mae_heuristic)}/mo
-                  </span>
-                  <Badge variant={costModel.data.beats_heuristic ? "success" : "secondary"}>
-                    {costModel.data.beats_heuristic ? "Learned wins" : "Heuristic competitive"}
-                  </Badge>
-                  <span className="text-muted-foreground">
-                    {costModel.data.n_evaluated}/{costModel.data.n_samples} holdout outcomes evaluated ·{" "}
-                    {(costModel.data.band_coverage * 100).toFixed(0)}% conformal coverage
-                  </span>
-                  <span className="text-muted-foreground">
-                    {(costModel.data.lineage_completeness * 100).toFixed(0)}% complete lineage
-                  </span>
-                  <span className="text-muted-foreground">
-                    {(costModel.data.abstention_rate * 100).toFixed(0)}% outside training domain
-                  </span>
-                  <Link to="/ai" className="text-primary hover:underline">
-                    Governor & copilot →
-                  </Link>
+              <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold leading-5 tracking-tight">Learned cost model</p>
+                    <Badge variant={costModel.data.beats_heuristic ? "success" : "secondary"}>
+                      {costModel.data.beats_heuristic ? "Learned wins" : "Heuristic competitive"}
+                    </Badge>
+                  </div>
+                  <div className="hidden h-8 w-px bg-border lg:block" aria-hidden="true" />
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                    <ModelStat
+                      label="Error, learned"
+                      value={`${formatCurrency(costModel.data.mae_learned)}/mo`}
+                      detail={`vs ${formatCurrency(costModel.data.mae_heuristic)}`}
+                    />
+                    <ModelStat
+                      label="Holdout"
+                      value={`${costModel.data.n_evaluated}/${costModel.data.n_samples}`}
+                      detail={`${(costModel.data.band_coverage * 100).toFixed(0)}% coverage`}
+                    />
+                    <ModelStat
+                      label="Lineage"
+                      value={`${(costModel.data.lineage_completeness * 100).toFixed(0)}%`}
+                    />
+                    <ModelStat
+                      label="Outside domain"
+                      value={`${(costModel.data.abstention_rate * 100).toFixed(0)}%`}
+                    />
+                  </div>
                 </div>
-              </CardContent>
+                <Link
+                  to="/ai"
+                  className="inline-flex h-8 shrink-0 items-center gap-1 self-start rounded-[var(--radius-default)] px-2 text-xs font-medium text-primary transition-colors duration-[var(--motion-fast)] ease-[var(--ease-out)] hover:bg-[var(--color-surface-sunken)] active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 lg:self-center"
+                >
+                  Governor & copilot
+                  <ArrowRight className="size-3.5" aria-hidden="true" />
+                </Link>
+              </div>
             </Card>
           ) : null}
           <div className="mb-3 grid gap-3 xl:grid-cols-12">
             <Card className="xl:col-span-8">
               <CardHeader className="pb-2">
                 <CardTitle>Current to projected</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Each step is what that operation saves. The last bar is the bill after all of them.
+                </p>
               </CardHeader>
               <CardContent>
                 <CostSavingsWaterfall
@@ -498,6 +551,7 @@ export const CostOverviewTab = () => {
             <Card className="xl:col-span-4">
               <CardHeader className="pb-2">
                 <CardTitle>Savings by operation</CardTitle>
+                <p className="text-xs text-muted-foreground">Same steps, ranked by dollars.</p>
               </CardHeader>
               <CardContent>
                 <SavingsByOperation items={data.savings_by_operation} />
@@ -570,10 +624,10 @@ export const CostOverviewTab = () => {
                     />
                   </>
                 ) : (
-                  <EmptyState
-                    title="No realized savings history yet"
-                    description="Realized savings appear here after maintenance runs complete."
-                  />
+                    <EmptyState
+                      title="No realized savings history yet"
+                      description="Realized savings appear here after maintenance runs complete."
+                    />
                 )}
               </CardContent>
             </Card>
@@ -651,32 +705,66 @@ export const CostOverviewTab = () => {
                     <TooltipContent>Ranked by reclaimable bytes — biggest wins first.</TooltipContent>
                   </Tooltip>
                 ) : null}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex">
-                      <Button
-                        size="sm"
-                        type="button"
-                        loading={fullCostScan.isPending}
-                        disabled={!scanAccess.allowed}
-                        title={scanAccess.reason ?? undefined}
-                        onClick={() => {
-                          if (!scanAccess.allowed) return;
-                          fullCostScan.mutate();
-                        }}
-                      >
-                        Run full cost scan
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {scanAccess.reason ??
-                      "Runs a Tier-2 storage scan (bounded S3 LIST) to refresh orphan-byte estimates."}
-                  </TooltipContent>
-                </Tooltip>
                 {deniedReason ? <span className="text-xs text-muted-foreground">{deniedReason}</span> : null}
               </div>
             </CardHeader>
+            {bulkWritesAllowed ? (
+              <div className="px-4">
+                <BulkAssignBar
+                  selection={selection}
+                  presets={presets.data ?? []}
+                  destinations={destinations.data ?? []}
+                  onClear={clearSelection}
+                  onAssign={(presetId) => assign.mutate(presetId)}
+                  onRun={({ destinationId, presetId, mode }) => bulkRun.mutate({ destinationId, presetId, mode })}
+                  onManifestRewrite={({ destinationId, presetId }) =>
+                    bulkManifestRewrite.mutate({ destinationId, presetId })
+                  }
+                  onScan={() => bulkScan.mutate()}
+                  onPreview={() => {
+                    if (!selection) throw new Error("No tables selected");
+                    const picked =
+                      selection.mode === "ids"
+                        ? opportunityRows.filter((row) => selection.ids.includes(row.id))
+                        : opportunityRows;
+                    setPreviewTables(picked.slice(0, 25));
+                    setPreviewOpen(true);
+                  }}
+                />
+              </div>
+            ) : selection ? (
+              <div className="bulk-bar mx-4 w-auto" data-testid="bulk-assign-bar" role="region" aria-label="Selection actions">
+                <span className="bulk-bar__count-value">{selection.totalSelected.toLocaleString()} selected</span>
+                {assignAccess.hidden ? null : assignAccess.allowed ? (
+                  <Select
+                    aria-label="Assign preset"
+                    placeholder="Select preset"
+                    options={(presets.data ?? []).map((preset) => ({ label: preset.name, value: preset.id }))}
+                    loading={assign.isPending}
+                    onChange={(presetId) => {
+                      if (presetId && assignAccess.allowed) assign.mutate(presetId);
+                    }}
+                  />
+                ) : (
+                  <Button type="button" disabled title={assignAccess.reason ?? undefined} aria-label="Assign preset">
+                    Assign
+                  </Button>
+                )}
+                {runAccess.hidden ? null : (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    disabled={!runAccess.allowed}
+                    title={runAccess.reason ?? undefined}
+                  >
+                    Run now
+                  </Button>
+                )}
+                <Button type="button" variant="ghost" onClick={clearSelection}>
+                  Clear
+                </Button>
+              </div>
+            ) : null}
             <CardContent className="p-0 pt-0">
               <DataTable
                 columns={opportunityColumns}
@@ -709,62 +797,6 @@ export const CostOverviewTab = () => {
               />
             </CardContent>
           </Card>
-
-          {bulkWritesAllowed ? (
-            <BulkAssignBar
-              selection={selection}
-              presets={presets.data ?? []}
-              destinations={destinations.data ?? []}
-              onClear={clearSelection}
-              onAssign={(presetId) => assign.mutate(presetId)}
-              onRun={({ destinationId, presetId, mode }) => bulkRun.mutate({ destinationId, presetId, mode })}
-              onManifestRewrite={({ destinationId, presetId }) =>
-                bulkManifestRewrite.mutate({ destinationId, presetId })
-              }
-              onScan={() => bulkScan.mutate()}
-              onPreview={() => {
-                if (!selection) throw new Error("No tables selected");
-                const picked =
-                  selection.mode === "ids"
-                    ? opportunityRows.filter((row) => selection.ids.includes(row.id))
-                    : opportunityRows;
-                setPreviewTables(picked.slice(0, 25));
-                setPreviewOpen(true);
-              }}
-            />
-          ) : selection ? (
-            <div className="bulk-bar flex flex-wrap items-center gap-2" data-testid="bulk-assign-bar">
-              <span className="font-semibold">{selection.totalSelected.toLocaleString()} selected</span>
-              {assignAccess.hidden ? null : assignAccess.allowed ? (
-                <Select
-                  aria-label="Assign preset"
-                  placeholder="Select preset"
-                  options={(presets.data ?? []).map((preset) => ({ label: preset.name, value: preset.id }))}
-                  loading={assign.isPending}
-                  onChange={(presetId) => {
-                    if (presetId && assignAccess.allowed) assign.mutate(presetId);
-                  }}
-                />
-              ) : (
-                <Button type="button" disabled title={assignAccess.reason ?? undefined} aria-label="Assign preset">
-                  Assign
-                </Button>
-              )}
-              {runAccess.hidden ? null : (
-                <Button
-                  type="button"
-                  variant="primary"
-                  disabled={!runAccess.allowed}
-                  title={runAccess.reason ?? undefined}
-                >
-                  Run now
-                </Button>
-              )}
-              <Button type="button" onClick={clearSelection}>
-                Clear
-              </Button>
-            </div>
-          ) : null}
 
           <PlanPreview open={previewOpen} onClose={() => setPreviewOpen(false)} tables={previewTables} />
         </>

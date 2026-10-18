@@ -1,15 +1,19 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
 
+import { getCostDashboard, triggerScan } from "../api/client";
 import { getImpactHistory } from "../api/impact";
 import { RankedBars } from "../components/charts";
 import { PageHeader, QueryErrorAlert } from "../components/common";
 import { Button } from "../components/ui/button";
 import { DataTable } from "../components/ui/data-table";
+import { MetricGrid, MetricTile } from "../components/ui/metric-grid";
 import { useAuth } from "../lib/auth";
 import { formatCurrency } from "../lib/format";
+import { useWriteControl } from "../lib/useWriteControl";
 import {
   engineBytesLabel,
   fullyMeasuredSummary,
@@ -41,7 +45,13 @@ export const Impact = ({ embedded = false }: { embedded?: boolean }) => {
     queryKey: ["impact-history", token, since, until],
     queryFn: () => getImpactHistory(api, since, until)
   });
+  const dashboard = useQuery({
+    queryKey: ["cost-dashboard", token],
+    queryFn: () => getCostDashboard(api)
+  });
   const rows = history.data?.rows ?? [];
+  const hasRows = rows.length > 0;
+  const realized = dashboard.data?.totals.total_realized_savings_usd;
   const chartRows = rows.map((row) => ({
     day: row.report_date,
     gb: impactChartGb(row),
@@ -75,7 +85,18 @@ export const Impact = ({ embedded = false }: { embedded?: boolean }) => {
     []
   );
 
-  const rangeButtons = (
+  const queryClient = useQueryClient();
+  const canScan = useWriteControl("triggerScan");
+  const scan = useMutation({
+    mutationFn: () => triggerScan(api, { trigger: "web-impact" }),
+    onSuccess: async () => {
+      toast.success("Scan queued");
+      await queryClient.invalidateQueries({ queryKey: ["impact-history"] });
+    },
+    onError: (error) => toast.error((error as Error).message)
+  });
+
+  const rangeButtons = hasRows ? (
     <div className="flex gap-2">
       {RANGES.map((days) => (
         <Button
@@ -94,33 +115,59 @@ export const Impact = ({ embedded = false }: { embedded?: boolean }) => {
         </Button>
       ))}
     </div>
-  );
+  ) : null;
+
+  const scanButton = canScan ? (
+    <Button size="sm" variant="secondary" loading={scan.isPending} onClick={() => scan.mutate()}>
+      Run a scan
+    </Button>
+  ) : null;
 
   return (
     <div className="flex flex-col gap-4">
       {embedded ? (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">
-            {rows.length ? fullyMeasuredSummary(rows) : "Daily ledger of what maintenance actually changed."} Unmeasured
-            days are gaps, not zero.
+            {hasRows
+              ? `${fullyMeasuredSummary(rows)} Unmeasured days are gaps, not zero.`
+              : "Nothing recorded yet. The ledger starts after the first reporter day."}
           </p>
-          {rangeButtons}
+          <div className="flex flex-wrap items-center gap-2">
+            {rangeButtons}
+            {scanButton}
+          </div>
         </div>
       ) : (
       <PageHeader
         title="Impact"
-        subtitle={rows.length ? fullyMeasuredSummary(rows) : "Daily ledger of what maintenance actually changed."}
+        subtitle={
+          hasRows
+            ? `${fullyMeasuredSummary(rows)} Unmeasured days are gaps, not zero.`
+            : "Nothing recorded yet. The ledger starts after the first reporter day."
+        }
         rootCrumb={{ label: "Impact", to: "/cost?tab=impact" }}
-        actions={rangeButtons}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {rangeButtons}
+            {scanButton}
+          </div>
+        }
       />
       )}
-      <p className="text-sm text-muted-foreground">
-        Logical file changes recorded by maintenance, not a billing line. Unmeasured days are gaps, not zero.
-      </p>
       {history.isError ? (
         <QueryErrorAlert error={history.error} title="Failed to load impact history" />
       ) : (
       <>
+      {hasRows ? (
+        <MetricGrid columns={2}>
+          <MetricTile
+            label="Saved to date"
+            value={realized == null ? "Not measured" : formatCurrency(realized)}
+            hint="Recorded after maintenance runs. Missing days are left out, not counted as zero."
+          />
+        </MetricGrid>
+      ) : null}
+      {hasRows ? (
       <RankedBars
         title="Which days have a measured reclaim?"
         unit="GB"
@@ -128,6 +175,7 @@ export const Impact = ({ embedded = false }: { embedded?: boolean }) => {
         limit={Math.max(chartRows.length, 1)}
         items={chartRows.map((row) => ({ id: row.day, label: `${row.day} · ${row.label}`, value: row.gb }))}
       />
+      ) : null}
       <DataTable
         columns={columns}
         data={rows}

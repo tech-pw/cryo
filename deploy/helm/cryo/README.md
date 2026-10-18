@@ -34,7 +34,7 @@ A default install is not a production install.
 | `image.tag` or `image.digest` | `latest` / empty | A tag or digest you published |
 | `global.envFromSecret` | `""` | Name of a Secret that holds `CRYO_DATABASE_URL` |
 | `global.env.CRYO_ENVIRONMENT` | `dev` | `prod` before the API is reachable |
-| `web.enabled` | `false` | `true` only after you publish a web image and set `web.image` |
+| `web.enabled` | `false` | `true` only after you publish a web image and set `web.image`. The web Deployment injects `CRYO_API_UPSTREAM` (API Service FQDN) and `NGINX_ENTRYPOINT_LOCAL_RESOLVERS` so nginx uses the pod nameserver, not kube-dns |
 
 The Secret must also hold `CRYO_SECRET_KEY`. The code default is `dev-only-change-me`. Leaving it unset lets HS256 tokens signed with that published default pass.
 
