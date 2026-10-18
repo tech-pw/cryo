@@ -18,11 +18,13 @@ from cryo.db.models import (
     MaintenanceIntent,
     MaintenanceJob,
     MaintenanceRun,
+    PartitionStorageClass,
     Source,
     Table,
     TableAssignment,
     TablePartition,
 )
+from cryo.db.repositories.operation_exclusions import excluded_operations
 from cryo.domain.enums import JobStatus, Mode, OperationType
 from cryo.observability.correlation import correlation_id_from_summary
 from cryo.worker.worker import (
@@ -473,6 +475,7 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         params=params,
         status=JobStatus(job.status),
         plan=job.plan,
+        excluded_operations=excluded_operations(session, job.table_id),
         engine_ref=job.engine_ref,
         replica=job.replica,
         admitted_at=job.admitted_at,
@@ -649,9 +652,18 @@ def _latest_partitions(session: Session, table_id: uuid.UUID) -> Sequence[Mappin
             TablePartition.scan_at == latest_scan,
         )
     )
+    archived: dict[str, str] = {
+        key: storage_class
+        for key, storage_class in session.execute(
+            select(PartitionStorageClass.partition_key, PartitionStorageClass.storage_class).where(
+                PartitionStorageClass.table_id == table_id
+            )
+        ).all()
+    }
     return [
         {
             "partition_value": row.partition_value,
+            "storage_class": archived.get(row.partition_key or ""),
             "partition_values": dict(row.partition_values or {}),
             "small_files_in_partition_count": row.small_files_in_partition_count,
             "partition_size_gb": row.partition_size_gb,

@@ -1,19 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   getBloomFilterRecommendations,
   getColumnStats,
   getDataQualityProfile,
-  getPropertyRecommendations,
   getTable,
+  getTableColumnUsage,
   getTableHistory,
   getTablePartitions,
-  getTablePiiClassification,
-  type PropertyRecommendationRead
+  getTablePiiClassification
 } from "../../../api/client";
-import type { ColumnSketchRead } from "../../../api/types";
+import type { ColumnSketchRead, ColumnUsageRead, ColumnUsageResponse } from "../../../api/types";
 import { MissingPattern } from "../../charts/MissingPattern";
 import { RankedBars } from "../../charts/RankedBars";
 import { TimeSeries } from "../../charts/TimeSeries";
@@ -21,11 +20,12 @@ import { useAuth } from "../../../lib/auth";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
 import { Badge } from "../../ui/badge";
 import { Input } from "../../ui/input";
-import { PropertyRecommendations } from "../PropertyRecommendations";
 import { SectionNav } from "../SectionNav";
 import { DataTable } from "../../ui/data-table";
 import "./files.css";
 import { WairRecluster } from "../WairRecluster";
+import { DELETE_THRESHOLDS, deleteDebt, deleteSeries } from "./deleteDebt";
+import { PartitionEvolutionCard } from "./PartitionEvolutionCard";
 import {
   compareSchemaColumns,
   fileMeasures,
@@ -36,8 +36,6 @@ import {
   mergeSchemaColumns,
   NOT_MEASURED,
   partitionSpecInWords,
-  propertySource,
-  propertyValue,
   rankPartitions,
   smallFileSeries,
   sortOrderLabel,
@@ -51,11 +49,12 @@ const SECTIONS = [
   { id: "files-schema", label: "Schema" },
   { id: "files-files", label: "Files" },
   { id: "files-layout", label: "Layout" },
-  { id: "files-partitions", label: "Partitions" },
-  { id: "files-properties", label: "Properties" }
+  { id: "files-partitions", label: "Partitions" }
 ];
 
-const textOrMissing = (value: string | null): string => value ?? NOT_MEASURED;
+const MissingValue = () => <span className="text-muted-foreground" title={NOT_MEASURED}>—</span>;
+const textOrMissing = (value: string | null) => value ?? <MissingValue />;
+const countOrMissing = (value: number | null | undefined) => (value == null ? <MissingValue /> : formatCount(value));
 
 const SchemaBadges = ({ row }: { row: SchemaColumnRow }) => (
   <span className="inline-flex flex-wrap gap-1">
@@ -84,15 +83,41 @@ const NullRateCell = ({ rate }: { rate: number | null }) =>
 const hasSketches = (rows: SchemaColumnRow[]): boolean =>
   rows.some((row) => row.ndv != null || row.p50 != null || row.p95 != null);
 
+const UsageCell = ({ use, max }: { use: ColumnUsageRead | undefined; max: number }) => {
+  if (!use || (!use.filter_count && !use.join_count)) return <span className="text-muted-foreground">—</span>;
+  const title = [
+    `${formatCount(use.filter_count)} filters (${formatCount(use.equality_filter_count)} equality, ${formatCount(use.range_filter_count)} range)`,
+    `${formatCount(use.join_count)} joins`,
+    use.avg_selectivity != null ? `average selectivity ${(use.avg_selectivity * 100).toFixed(1)}%` : null
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <span className="td-usage" title={title}>
+      <span className="td-usage-bar" data-kind="filter" style={{ width: `${(use.filter_count / max) * 100}%` }} />
+      <span className="td-usage-bar" data-kind="join" style={{ width: `${(use.join_count / max) * 100}%` }} />
+      <span className="td-usage-text">
+        {formatCount(use.filter_count)} filter · {formatCount(use.join_count)} join
+      </span>
+    </span>
+  );
+};
+
 const SchemaTable = ({
   rows,
   highlight,
-  columnStatsError
+  columnStatsError,
+  usage
 }: {
   rows: SchemaColumnRow[];
   highlight: string | null;
   columnStatsError?: string | null;
+  usage?: Map<string, ColumnUsageRead>;
 }) => {
+  const maxUse = useMemo(
+    () => Math.max(1, ...[...(usage?.values() ?? [])].map((use) => Math.max(use.filter_count, use.join_count))),
+    [usage]
+  );
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const filtered = useMemo(() => {
@@ -124,15 +149,25 @@ const SchemaTable = ({
     { id: "name", header: "Name", cell: ({ row }) => <span id={row.original.name.toLowerCase() === highlight ? "files-schema-highlight" : undefined} data-testid="schema-column-name" className="font-mono text-xs">{row.original.name}</span> },
     { id: "type", header: "Type", cell: ({ row }) => row.original.type },
     { id: "badges", header: "Signals", cell: ({ row }) => <SchemaBadges row={row.original} /> },
+    ...(usage?.size ? [
+      { id: "usage", header: "Query use · 30 days", cell: ({ row }: { row: { original: SchemaColumnRow } }) =>
+        <UsageCell use={usage.get(row.original.name.toLowerCase())} max={maxUse} /> }
+    ] : []),
     { id: "null", header: "Null rate", cell: ({ row }) => <NullRateCell rate={row.original.nullRate} /> },
-    { id: "lower", header: "Lower bound", cell: ({ row }) => textOrMissing(row.original.lowerBound) },
-    { id: "upper", header: "Upper bound", cell: ({ row }) => textOrMissing(row.original.upperBound) },
-    ...(hasSketches(rows) ? [
-      { id: "ndv", header: "Distinct values", cell: ({ row }: { row: { original: SchemaColumnRow } }) => formatCount(row.original.ndv) },
-      { id: "p50", header: "Median (p50)", cell: ({ row }: { row: { original: SchemaColumnRow } }) => formatCount(row.original.p50) },
-      { id: "p95", header: "p95", cell: ({ row }: { row: { original: SchemaColumnRow } }) => formatCount(row.original.p95) }
+    ...(rows.some((row) => row.lowerBound != null || row.upperBound != null) ? [
+      { id: "range", header: "Range", cell: ({ row }: { row: { original: SchemaColumnRow } }) =>
+        row.original.lowerBound == null && row.original.upperBound == null
+          ? <MissingValue />
+          : <span className="font-mono text-xs">{textOrMissing(row.original.lowerBound)} → {textOrMissing(row.original.upperBound)}</span> }
+    ] : []),
+    ...(rows.some((row) => row.ndv != null) ? [
+      { id: "ndv", header: "Distinct values", cell: ({ row }: { row: { original: SchemaColumnRow } }) => countOrMissing(row.original.ndv) }
+    ] : []),
+    ...(rows.some((row) => row.p50 != null || row.p95 != null) ? [
+      { id: "p50", header: "Median (p50)", cell: ({ row }: { row: { original: SchemaColumnRow } }) => countOrMissing(row.original.p50) },
+      { id: "p95", header: "p95", cell: ({ row }: { row: { original: SchemaColumnRow } }) => countOrMissing(row.original.p95) }
     ] : [])
-  ], [highlight, rows]);
+  ], [highlight, maxUse, rows, usage]);
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
@@ -155,6 +190,76 @@ const SchemaTable = ({
     </div>
   );
 };
+
+const seriesAnswer = (series: { scanAt: string; smallFiles: number | null }[]): string | undefined => {
+  const measured = series.filter((point) => point.smallFiles != null);
+  if (measured.length < 2) return undefined;
+  const first = measured[0];
+  const last = measured[measured.length - 1];
+  const since = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(Date.parse(first.scanAt));
+  if (last.smallFiles === first.smallFiles) return `${formatCount(last.smallFiles)} now, unchanged since ${since}`;
+  return `${formatCount(last.smallFiles)} now, ${(last.smallFiles ?? 0) > (first.smallFiles ?? 0) ? "up" : "down"} from ${formatCount(first.smallFiles)} on ${since}`;
+};
+
+const DEBT_BADGE = { healthy: "success", minor: "warning", major: "danger" } as const;
+
+const DeleteDebtSection = ({
+  history,
+  loading,
+  pct,
+  files
+}: {
+  history: Array<Record<string, unknown>> | undefined;
+  loading: boolean;
+  pct: number | null;
+  files: number | null;
+}) => {
+  const series = useMemo(() => deleteSeries(history), [history]);
+  const debt = deleteDebt(pct, files);
+  const recorded = series.filter((point) => point.deleteFiles != null);
+  if (!debt && !recorded.length) return null;
+  return (
+    <section className="td-files-section" aria-labelledby="files-deletes-title" data-series="delete files">
+      <div className="td-files-delete-head">
+        <h2 id="files-deletes-title" className="text-sm font-semibold">Delete files</h2>
+        {debt ? <Badge variant={DEBT_BADGE[debt.level]}>{debt.title}</Badge> : null}
+      </div>
+      <p className="td-files-caption">
+        {pct != null ? `${pct.toFixed(1)}% of files are delete files` : "Share of delete files not recorded"}
+        {files != null ? ` (${formatCount(files)})` : ""}. Every reader merges them into the data until compaction rewrites it.
+        Warning at {DELETE_THRESHOLDS.pctWarn}% or {formatCount(DELETE_THRESHOLDS.countWarn)} files, critical at{" "}
+        {DELETE_THRESHOLDS.pctCrit}% or {formatCount(DELETE_THRESHOLDS.countCrit)}, the same cut-offs as the health score.
+      </p>
+      {debt && debt.level !== "healthy" ? <p className="td-files-delete-action">{debt.action}</p> : null}
+      {recorded.length > 1 ? (
+        <TimeSeries
+          title="Delete files over scans"
+          unit="delete files"
+          points={series.map((point) => ({ at: point.scanAt, value: point.deleteFiles }))}
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {loading ? "Loading" : "A trend appears once two scans have recorded delete files."}
+        </p>
+      )}
+    </section>
+  );
+};
+
+const UsageCaption = ({ usage }: { usage: ColumnUsageResponse }) =>
+  usage.columns.length ? (
+    <p className="td-files-caption">
+      <span className="td-usage-key" data-kind="filter" aria-hidden="true" /> Filters{" "}
+      <span className="td-usage-key" data-kind="join" aria-hidden="true" /> Joins, from{" "}
+      {usage.queries != null ? `${formatCount(usage.queries)} queries` : "query logs"} in the last {usage.window_days} days.
+      Columns filtered often are partition, sort or bloom-filter candidates.
+    </p>
+  ) : (
+    <p className="td-files-caption">
+      No column-level query use recorded. Cryo reads it from per-query logs; a source that only records table-level
+      query counts can't show which columns queries filter or join on.
+    </p>
+  );
 
 const queryError = (error: unknown): string => (error instanceof Error ? error.message : "Request failed");
 
@@ -201,15 +306,15 @@ export const FilesTabPanel = () => {
     enabled,
     retry: false
   });
-  const bloom = useQuery({
-    queryKey: tableKeys.bloom(tableId, token),
-    queryFn: () => getBloomFilterRecommendations(api, tableId),
+  const columnUsage = useQuery({
+    queryKey: tableKeys.columnUsage(tableId, token),
+    queryFn: () => getTableColumnUsage(api, tableId),
     enabled,
     retry: false
   });
-  const properties = useQuery({
-    queryKey: tableKeys.properties(tableId, token),
-    queryFn: () => getPropertyRecommendations(api, tableId),
+  const bloom = useQuery({
+    queryKey: tableKeys.bloom(tableId, token),
+    queryFn: () => getBloomFilterRecommendations(api, tableId),
     enabled,
     retry: false
   });
@@ -227,7 +332,11 @@ export const FilesTabPanel = () => {
       }),
     [bloom.data?.recommendations, dataQuality.data, pii.data?.matches, sketches, stats]
   );
-  const checks = layoutChecks(stats);
+  const usage = useMemo(
+    () => new Map((columnUsage.data?.columns ?? []).map((use) => [use.column.toLowerCase(), use])),
+    [columnUsage.data]
+  );
+  const granularity = layoutChecks(stats).find((check) => check.name === "Granularity" && check.observed !== NOT_MEASURED);
   const measures = fileMeasures(stats);
   const unpartitioned = isUnpartitionedTable(stats);
   const partitionPage = Array.isArray(partitions.data)
@@ -239,20 +348,23 @@ export const FilesTabPanel = () => {
   const ranked = useMemo(() => rankPartitions(partitionPage.items), [partitionPage.items]);
   const top = ranked.ranked.slice(0, 15);
   const series = useMemo(() => smallFileSeries(history.data), [history.data]);
-  const propertyItems = (properties.data?.items ?? []) as Array<
-    PropertyRecommendationRead & { source?: string | null }
-  >;
 
   return (
     <div className="td-tab-content td-files-workspace">
-      <header className="td-files-intro"><h2>Schema & file layout</h2><p>Understand the table’s structure, inspect file pressure, then review improvements.</p></header>
+      <header className="td-files-intro">
+        <h2>Schema & file layout</h2>
+        <p>
+          Columns, file pressure and how the table is partitioned. Table properties live on{" "}
+          <Link to={`/tables/${tableId}?tab=config#config-properties`}>Config</Link>.
+        </p>
+      </header>
       <SectionNav sections={SECTIONS} />
 
       <section id="files-schema" className="td-files-section" aria-labelledby="files-schema-title">
         <h2 id="files-schema-title" className="text-sm font-semibold">
           Columns
         </h2>
-        <p className="td-files-caption">Column types, bounds and signals from recorded metadata. Missing measurements are shown explicitly.</p>
+        <p className="td-files-caption">Types, value ranges and signals from the table's metadata. A dash means the scan didn't record it.</p>
         {table.isLoading ? <p className="text-sm text-muted-foreground">Loading</p> : null}
         {table.isError ? <p role="alert">{queryError(table.error)}</p> : null}
         {columnStats.isError || pii.isError || dataQuality.isError || bloom.isError ? (
@@ -263,8 +375,10 @@ export const FilesTabPanel = () => {
             rows={columns}
             highlight={highlight}
             columnStatsError={columnStats.isError ? queryError(columnStats.error) : null}
+            usage={usage}
           />
         ) : null}
+        {columnUsage.data ? <UsageCaption usage={columnUsage.data} /> : null}
       </section>
 
       <section id="files-files" className="td-files-section" aria-labelledby="files-files-title">
@@ -289,11 +403,18 @@ export const FilesTabPanel = () => {
         ) : (
           <TimeSeries
             title="Small-file candidates over scans"
+            answer={seriesAnswer(series)}
             unit="candidates"
             points={series.map((point) => ({ at: point.scanAt, value: point.smallFiles }))}
           />
         )}
       </section>
+      <DeleteDebtSection
+        history={history.data}
+        loading={history.isLoading}
+        pct={stats?.delete_file_pct ?? null}
+        files={stats?.total_delete_files ?? null}
+      />
       <section id="files-layout" className="td-files-section" aria-labelledby="files-layout-title">
         <h2 id="files-layout-title" className="text-sm font-semibold">
           Layout
@@ -307,14 +428,15 @@ export const FilesTabPanel = () => {
             <dt className="text-xs text-muted-foreground">Sort order</dt>
             <dd>{sortOrderLabel(stats)}</dd>
           </div>
-          {checks.map((check) => (
-            <div key={check.name}>
-              <dt className="text-xs text-muted-foreground">{check.name}</dt>
-              <dd>
-                Observed: {check.observed}. {check.status}
+          {granularity ? (
+            <div className="sm:col-span-2">
+              <dt className="text-xs text-muted-foreground">Granularity</dt>
+              <dd className="flex flex-wrap items-center gap-2">
+                {granularity.observed}
+                {granularity.status !== "Unknown" ? <Badge variant="warning">{granularity.status}</Badge> : null}
               </dd>
             </div>
-          ))}
+          ) : null}
         </dl>
         <details className="td-files-disclosure"><summary>Workload-aware layout recommendations</summary>
           <h3 className="sr-only">Layout analysis (WAIR: workload-aware reclustering)</h3><WairRecluster />
@@ -361,38 +483,7 @@ export const FilesTabPanel = () => {
             </table></div></details>
           </>
         )}
-      </section>
-
-      <section id="files-properties" className="td-files-section" aria-labelledby="files-properties-title">
-        <h2 id="files-properties-title" className="text-sm font-semibold">
-          Properties
-        </h2>
-        {properties.isError ? <p role="alert">{queryError(properties.error)}</p> : null}
-        {propertyItems.length ? (<details className="td-files-disclosure"><summary>Property values and provenance</summary>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground">
-                  <th className="px-2 py-1 font-medium">Property</th>
-                  <th className="px-2 py-1 font-medium">Current</th>
-                  <th className="px-2 py-1 font-medium">Recommended</th>
-                  <th className="px-2 py-1 font-medium">Source</th>
-                </tr>
-              </thead>
-              <tbody>
-                {propertyItems.map((item) => (
-                  <tr key={item.property_key}>
-                    <td className="px-2 py-1 font-mono text-xs">{item.property_key}</td>
-                    <td className="px-2 py-1 font-mono text-xs">{propertyValue(item.current_value)}</td>
-                    <td className="px-2 py-1 font-mono text-xs">{propertyValue(item.recommended_value)}</td>
-                    <td className="px-2 py-1 text-xs">{propertySource(item)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div></details>
-        ) : null}
-        <PropertyRecommendations />
+        <PartitionEvolutionCard tableId={tableId} />
       </section>
 
     </div>

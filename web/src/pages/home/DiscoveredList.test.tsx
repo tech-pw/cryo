@@ -103,7 +103,7 @@ describe("DiscoveredList", () => {
     renderList({ findings: sevenFindings() });
     const list = screen.getByRole("list", { name: "Recently discovered" });
     const link = within(list).getByRole("link", { name: "Open property recommendations for sales.events_raw" });
-    expect(link).toHaveAttribute("href", "/tables/missing?tab=files#files-properties");
+    expect(link).toHaveAttribute("href", "/tables/missing?tab=config#config-properties");
     expect(link).toHaveTextContent("No target size");
     const name = within(list).getByRole("link", { name: "sales.events_raw" });
     expect(name.getAttribute("data-finding-tooltip")).toContain("Open property recommendations");

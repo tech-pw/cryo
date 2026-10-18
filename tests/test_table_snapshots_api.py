@@ -183,12 +183,7 @@ def test_pages_refs_missing_summary_and_protected_without_listing_files(
     assert current["protected"] is False
 
     missing = body["snapshots"][1]
-    assert missing["summary"] == {
-        "total_records": None,
-        "total_files_size": None,
-        "added_data_files": None,
-        "deleted_data_files": None,
-    }
+    assert set(missing["summary"].values()) == {None}
     assert missing["protected"] is False
 
     second = client.get(
@@ -214,6 +209,68 @@ def test_pages_refs_missing_summary_and_protected_without_listing_files(
     ]
     assert calls == {"manifests": 0, "scan": 0, "inspect": 0}
     assert _history_count(session) == 0
+
+
+def test_summary_reports_writer_deletes_and_changed_partitions(
+    session: Session, monkeypatch: Any
+) -> None:
+    table = _seed(session)
+    calls = {"manifests": 0, "scan": 0, "inspect": 0}
+    snaps = [
+        _Snap(
+            201,
+            1_700_000_001_000,
+            1,
+            {
+                "operation": "overwrite",
+                "trino_query_id": "20261018_000001_00042_abcde",
+                "trino_user": "etl_svc",
+                "added-records": "120",
+                "deleted-records": "7",
+                "added-position-delete-files": "2",
+                "added-delete-files": "2",
+                "total-delete-files": "14",
+                "changed-partition-count": "3",
+            },
+            calls,
+        ),
+        _Snap(
+            202,
+            1_700_000_002_000,
+            2,
+            {"operation": "append", "flink.job-id": "f00d", "engine-name": "Flink"},
+            calls,
+        ),
+        _Snap(203, 1_700_000_003_000, 3, {"operation": "append", "spark.app.id": "app-1"}, calls),
+    ]
+    metadata = _Metadata(203, snaps, {})
+    monkeypatch.setattr(
+        "cryo.sources.factory.source_catalog_for", lambda source: _catalog(metadata, calls)
+    )
+    rows = (
+        _client(session)
+        .get(f"/api/v1/tables/{table.id}/snapshots", headers=VIEWER_HEADERS)
+        .json()["snapshots"]
+    )
+    by_id = {row["snapshot_id"]: row["summary"] for row in rows}
+
+    trino = by_id["201"]
+    assert trino["writer"] == {
+        "engine": "trino",
+        "engine_version": None,
+        "user": "etl_svc",
+        "query_id": "20261018_000001_00042_abcde",
+        "job_id": None,
+    }
+    assert trino["added_records"] == 120
+    assert trino["deleted_records"] == 7
+    assert trino["added_position_delete_files"] == 2
+    assert trino["total_delete_files"] == 14
+    assert trino["changed_partition_count"] == 3
+    assert by_id["202"]["writer"]["engine"] == "flink"
+    assert by_id["202"]["writer"]["job_id"] == "f00d"
+    assert by_id["203"]["writer"]["engine"] == "spark"
+    assert calls == {"manifests": 0, "scan": 0, "inspect": 0}
 
 
 def test_catalog_timeout_returns_503(session: Session, monkeypatch: Any) -> None:

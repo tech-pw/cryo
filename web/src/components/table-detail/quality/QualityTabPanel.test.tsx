@@ -71,7 +71,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
 });
 
 describe("QualityTabPanel", () => {
-  it("labels the checklist score and does not call unknown checks all green", async () => {
+  it("leaves the layout checklist to Overview and shows freshness and drift", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
@@ -79,17 +79,14 @@ describe("QualityTabPanel", () => {
       </QueryClientProvider>
     );
 
-    expect(await screen.findByText(/Checklist score/)).toBeInTheDocument();
-    expect(screen.getByText("2 checked, 1 unknown")).toBeInTheDocument();
-    expect(screen.queryByText(/All green/i)).not.toBeInTheDocument();
+    expect(await screen.findByText(/added_col/)).toBeInTheDocument();
+    expect(screen.queryByText(/Checklist score/)).not.toBeInTheDocument();
     expect(screen.queryByText(/health grade/i)).not.toBeInTheDocument();
     expect(screen.queryByText("should-not-render-null-rate")).not.toBeInTheDocument();
-    expect(screen.getByText(/added_col/)).toBeInTheDocument();
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
     const experimental = screen.getByText("Experimental insights", { selector: "summary" }).closest("details");
     expect(experimental).not.toHaveAttribute("open");
-    expect(screen.getByText("Age uses the latest snapshot commit, or the latest scan when the commit time is unavailable.")).toBeInTheDocument();
-    expect(getTableChecklist).toHaveBeenCalledTimes(1);
+    expect(getTableChecklist).not.toHaveBeenCalled();
   });
 
   it("never displays another table's freshness when the scoped response has no matching row", async () => {
