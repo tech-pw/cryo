@@ -80,7 +80,7 @@ Text description
 
 localhost:5173/
 
-*Home after the first scan. The donut counts tables per grade. Storage impact shows what last night's run reclaimed.*
+*Home after a few nights of maintenance. Last night's run and your next steps come first. The lake's grades, the tables people query most and the tables Cryo just fixed sit below.*
 
 localhost:5173/tables
 

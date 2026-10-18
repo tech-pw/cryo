@@ -885,6 +885,9 @@ class TablePartitionsResponse(BaseModel):
     offset: int
 
 
+_HISTORY_RAW_FIELDS = ("total_delete_files", "delete_file_pct", "manifest_count", "total_snapshots")
+
+
 class TableStatsHistoryRead(OrmModel):
     id: int
     table_id: uuid.UUID
@@ -894,6 +897,25 @@ class TableStatsHistoryRead(OrmModel):
     total_size_gb: float | None = None
     grade: str | None = None
     overall_score: int | None = None
+    total_delete_files: int | None = None
+    delete_file_pct: float | None = None
+    manifest_count: int | None = None
+    total_snapshots: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_raw(cls, data: Any) -> Any:
+        if isinstance(data, Mapping):
+            values = dict(data)
+            raw = values.get("raw")
+        else:
+            values = {name: getattr(data, name, None) for name in cls.model_fields}
+            raw = getattr(data, "raw", None)
+        if isinstance(raw, Mapping):
+            for name in _HISTORY_RAW_FIELDS:
+                if values.get(name) is None:
+                    values[name] = raw.get(name)
+        return values
 
 
 class TableStatsHistoryResponse(BaseModel):
@@ -1026,6 +1048,7 @@ class DatalakeTotals(BaseModel):
     projected_savings_usd_month: float = 0
     reclaimable_bytes: int | None = None
     query_count_30d: int
+    running_jobs: int = 0
 
 
 class GradeDistributionItem(BaseModel):
@@ -1053,6 +1076,17 @@ class DashboardTopOffender(BaseModel):
     query_count_30d: int = 0
 
 
+class DashboardImprovedTable(BaseModel):
+    table_id: uuid.UUID
+    schema_name: str
+    table_name: str
+    previous_grade: str | None = None
+    previous_score: int | None = None
+    grade: str | None = None
+    overall_score: int | None = None
+    improved_at: datetime
+
+
 class DashboardDriftPoint(BaseModel):
     scan_at: datetime
     total_size_gb: float
@@ -1067,6 +1101,10 @@ class DatalakeDashboardResponse(BaseModel):
     freshness_distribution: list[FreshnessDistributionItem] = Field(default_factory=list)
     freshness_as_of: datetime | None = None
     top_offenders: list[DashboardTopOffender]
+    hot_at_risk: list[DashboardTopOffender] = Field(default_factory=list)
+    hot_at_risk_count: int = 0
+    recently_improved: list[DashboardImprovedTable] = Field(default_factory=list)
+    recently_improved_count: int = 0
     drift: list[DashboardDriftPoint]
     cost_by_schema: list[CostSchemaItem] = Field(default_factory=list)
 

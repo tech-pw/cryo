@@ -16,7 +16,10 @@ import {
   demoAuditBody,
   demoEffectivePreset,
   demoEngineLoad,
+  demoFastPathFindings,
+  demoFleetTrends,
   demoHealthTrends,
+  demoPendingApprovals,
   demoMultiCatalog,
   demoSignals,
   demoTableCost,
@@ -30,7 +33,7 @@ import {
   demoTablesFunnel,
   demoVitalsBody
 } from "./demo-data";
-import { demoTableDetail, demoTableHistory, demoTableRuns, demoTableTabResponse } from "./demo-table-detail";
+import { demoArchivePreflight, demoTableDetail, demoTableHistory, demoTableRuns, demoTableTabResponse } from "./demo-table-detail";
 import demoTableConfig from "./demo-table-config.json" with { type: "json" };
 
 // Writes docs-site screenshots of the real UI against synthetic demo data.
@@ -121,6 +124,13 @@ const openRunDialog = async (page: Page): Promise<void> => {
   await clearPointer(page);
 };
 
+const openArchiveDialog = async (page: Page): Promise<void> => {
+  const card = page.locator("#archive");
+  await card.scrollIntoViewIfNeeded();
+  await card.getByRole("button", { name: /Archive all suggested/ }).click();
+  await page.getByRole("dialog").getByText("Permissions", { exact: false }).first().waitFor();
+};
+
 const TABLE = `/tables/${DEMO_TABLES[0].id}`;
 const ACTIVE_PANEL = "[role='tabpanel'][data-state='active']";
 const tabShot = (tab: string, waitFor?: string, part?: { name: string; selector: string }) => ({
@@ -180,8 +190,11 @@ const SHOTS: Array<{
   tabShot("maintenance", "Stored benefit-score candidates", { name: "compaction", selector: `${MAINTENANCE} > :nth-child(4)` }),
   tabShot("config", "Differs from recommendation", { name: "settings", selector: ".td-config > section:nth-child(-n+2)" }),
   tabShot("usage", "Partition access"),
-  tabShot("quality", "Optimization checklist"),
-  tabShot("cost", "Compaction economics"),
+  tabShot("overview", "Layout checks", { name: "checks", selector: "[aria-labelledby='overview-checks']" }),
+  tabShot("quality", "Freshness vs target"),
+  tabShot("cost", "Ways to save"),
+  tabShot("cost", "Ways to save", { name: "archive", selector: "#archive" }),
+  { name: "table-archive-dialog", path: `${TABLE}?tab=cost`, waitFor: "Ways to save", height: 1000, act: openArchiveDialog },
   {
     ...tabShot("config", "Differs from recommendation", { name: "inventory", selector: ".td-config > section:nth-child(3)" }),
     name: "table-config",
@@ -207,6 +220,26 @@ const SHOTS: Array<{
     waitFor: "Differs from recommendation",
     height: 900,
     act: openPropertyInfo
+  },
+  tabShot("overview", "What maintenance achieved", { name: "history", selector: "[aria-labelledby='overview-history']" }),
+  tabShot("files", "Query use · 30 days", { name: "schema", selector: "#files-schema" }),
+  tabShot("files", "Delete files over scans", { name: "deletes", selector: "[data-series='delete files']" }),
+  tabShot("files", "Suggested partition change", { name: "partitions", selector: "#files-partitions" }),
+  {
+    name: "table-tab-snapshots-selected",
+    path: `${TABLE}?tab=snapshots&snapshot=8812286588`,
+    waitFor: "Selected snapshot",
+    height: 1100,
+    selector: `${ACTIVE_PANEL} .td-snapshots-selection`
+  },
+  tabShot("config", "More suggestions from the last scan", { name: "suggestions", selector: ".tc-suggestions" }),
+  {
+    name: "table-settings-hold",
+    path: TABLE,
+    waitFor: "What's pulling the score down",
+    height: 1100,
+    act: openTableSettings,
+    selector: "[role='dialog'] [aria-labelledby='settings-hold']"
   },
   { name: "runs", path: "/runs", waitFor: "Success rate · 7d", height: 1100 },
   { name: "runs-holds", path: "/runs?tab=holds", waitFor: "Active holds", height: 900 },
@@ -237,6 +270,7 @@ async function installDemo(page: Page, unhandled: Set<string>): Promise<void> {
       if (p.endsWith("/api/v1/tables")) return json(route, demoTablesBody(url));
       if (p.endsWith("/api/v1/tables/maintenance-funnel")) return json(route, demoTablesFunnel());
       if (/\/api\/v1\/tables\/[^/]+\/config\/preview$/.test(p)) return json(route, demoTableConfig.preview);
+      if (/\/api\/v1\/tables\/[^/]+\/tiering\/preflight$/.test(p)) return json(route, demoArchivePreflight(route.request().postDataJSON()));
       const sub = p.match(/\/api\/v1\/tables\/([^/]+)\/([a-z-]+)$/);
       if (sub) {
         const [, id, kind] = sub;
@@ -268,11 +302,20 @@ async function installDemo(page: Page, unhandled: Set<string>): Promise<void> {
       if (p.includes("/api/v1/advanced/silent-data-loss/")) return json(route, null);
       const one = p.match(/\/api\/v1\/tables\/([^/]+)$/);
       if (one && one[1] !== "export.csv" && one[1] !== "group-by") return json(route, demoTableDetail(one[1]));
+      if (p.endsWith("/api/v1/dashboard/fleet-trends")) return json(route, demoFleetTrends());
+      if (p.endsWith("/api/v1/advanced/approvals/pending")) return json(route, demoPendingApprovals());
+      if (p.endsWith("/api/v1/advanced/fast-path-findings") && !url.searchParams.has("table_id")) {
+        return json(route, demoFastPathFindings());
+      }
       const tab = demoTableTabResponse(p, url);
       if (tab !== undefined) return json(route, tab);
       if (p.endsWith("/api/v1/dashboards/datalake")) return json(route, demoDashboardBody());
       if (p.endsWith("/api/v1/vitals")) return json(route, demoVitalsBody());
-      if (p.endsWith("/api/v1/runs")) return json(route, DEMO_RUN_HISTORY);
+      if (p.endsWith("/api/v1/runs")) {
+        const pipeline = url.searchParams.get("pipeline");
+        const runs = pipeline ? DEMO_RUN_HISTORY.filter((run) => (run.summary as Record<string, unknown>).pipeline === pipeline) : DEMO_RUN_HISTORY;
+        return json(route, runs.slice(0, Number(url.searchParams.get("limit") ?? runs.length)));
+      }
       const jobs = p.match(/\/api\/v1\/runs\/([^/]+)\/jobs$/);
       if (jobs) return json(route, demoJobsBody(jobs[1]));
       const run = p.match(/\/api\/v1\/runs\/([^/]+)$/);

@@ -26,7 +26,7 @@ Every table starts at 100 points and loses points for each problem the scan find
 
 | **F** | Below 40 |
 
-The home screen rolls those grades up across the lake, so you can see at a glance how many tables need work and how much storage maintenance could give back. The [quickstart](https://tech-pw.github.io/cryo/quickstart/#next) shows that screen after the first scan of the seeded lake.
+The home screen rolls those grades up across the lake, so you can see at a glance how many tables need work and how much storage maintenance could give back. It shows whether the count of D and F tables moved since yesterday, which D and F tables people query most, and which tables Cryo moved up a grade in the last 24 hours. A table only counts as fixed once a scan after its maintenance job shows the better grade. The [quickstart](https://tech-pw.github.io/cryo/quickstart/#next) shows that screen after the first scan of the seeded lake.
 
 ## Deductions
 
@@ -75,9 +75,9 @@ Text description
 
 - Object storage is not read by Cost estimator
 
-Bytes, not money
+Bytes first, then a rate
 
-A modelled saving is not shown as money anywhere in Cryo or on this site. Projections are byte classes: live data, expirable, manifests and metadata, and orphan candidates.
+Projections are byte classes: live data, expirable, manifests and metadata, and orphan candidates. The bytes are what Cryo measures. The [Cost & Savings tab](https://tech-pw.github.io/cryo/table-detail/#cost) multiplies them by the AWS S3 Standard rate to show a monthly figure, labelled as modelled. For a table outside S3 it shows bytes only, because the rate wouldn't apply.
 
 ## What each operation projects
 

@@ -17,7 +17,9 @@ const mocks = vi.hoisted(() => ({
   getTableCost: vi.fn(),
   listPresets: vi.fn(),
   getEffectiveParams: vi.fn(),
-  runTableOperations: vi.fn()
+  runTableOperations: vi.fn(),
+  getTableChecklist: vi.fn(),
+  getTableMaintenanceImpact: vi.fn()
 }));
 
 vi.mock("../../../api/client", () => ({
@@ -31,7 +33,9 @@ vi.mock("../../../api/client", () => ({
   getTableCost: mocks.getTableCost,
   listPresets: mocks.listPresets,
   getEffectiveParams: mocks.getEffectiveParams,
-  runTableOperations: mocks.runTableOperations
+  runTableOperations: mocks.runTableOperations,
+  getTableChecklist: mocks.getTableChecklist,
+  getTableMaintenanceImpact: mocks.getTableMaintenanceImpact
 }));
 
 vi.mock("../../../api/maintenanceStatus", () => ({
@@ -75,6 +79,18 @@ const scanned = (stats?: Record<string, unknown>) => ({
   }
 });
 
+const emptyWindow = (days: number | null) => ({
+  days,
+  since: null,
+  ops: 0,
+  ops_with_bytes: 0,
+  ops_with_files: 0,
+  bytes_freed: 0,
+  files_in: 0,
+  files_out: 0,
+  by_operation: []
+});
+
 const renderPanel = (props?: { onScan?: () => void; onPreview?: () => void; onEdit?: () => void }) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -98,6 +114,20 @@ const renderPanel = (props?: { onScan?: () => void; onPreview?: () => void; onEd
 describe("OverviewPanel", () => {
   beforeEach(() => {
     mocks.getTable.mockReset().mockResolvedValue(unscanned());
+    mocks.getTableMaintenanceImpact.mockReset().mockResolvedValue({
+      table_id: "table-1",
+      recent: emptyWindow(30),
+      lifetime: emptyWindow(null)
+    });
+    mocks.getTableChecklist.mockReset().mockResolvedValue({
+      table_id: "table-1",
+      checked_at: "2026-09-28T09:10:00Z",
+      items: [
+        { key: "distribution_mode", label: "write.distribution-mode set", weight_pct: 5, tier: 2, status: "yellow", reason: "write.distribution-mode='none'", metric_value: null, threshold: null },
+        { key: "sort_order", label: "Sort order matches filter columns", weight_pct: 6, tier: 2, status: "green", reason: "Sort order configured", metric_value: null, threshold: null }
+      ],
+      summary: { counts: { green: 1, yellow: 1, red: 0, unknown: 0 }, weighted_score: 49 }
+    });
     mocks.getTableSignals.mockReset().mockResolvedValue({ table_id: "table-1", checked_at: "", signals: [], any_triggered: false });
     mocks.getTableAudit.mockReset().mockResolvedValue([]);
     mocks.getTableHealthTrends.mockReset().mockResolvedValue({ trend_points: [] });
@@ -211,7 +241,11 @@ describe("OverviewPanel", () => {
     expect(order[0]).toBe("Small-file fragmentation");
     expect(screen.getByText("critical")).toBeInTheDocument();
     expect(screen.getByText(/Write pattern/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Review" })).toHaveAttribute("href", "/tables/table-1?tab=files#files-properties");
+    expect(screen.queryByText("No target file size")).not.toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /Change in Config/ })).toHaveAttribute(
+      "href",
+      "/tables/table-1?tab=config#config-properties"
+    );
 
     const fix = document.querySelectorAll(".td-deductions li")[1].querySelector("button");
     expect(fix?.textContent).toBe("Expire snapshots");
@@ -266,5 +300,34 @@ describe("OverviewPanel", () => {
     await waitFor(() => {
       expect(mocks.getTableAudit).toHaveBeenCalledWith(api, "table-1", { limit: 40 });
     });
+  });
+
+  it("totals only what engines reported and counts silent operations as unmeasured", async () => {
+    mocks.getTable.mockResolvedValue(scanned());
+    mocks.getTableAudit.mockResolvedValue([]);
+    const optimize = { operation: "optimize", ops: 2, ops_with_bytes: 0, ops_with_files: 2, bytes_freed: 0, files_in: 400, files_out: 20 };
+    const expire = { operation: "expire_snapshots", ops: 1, ops_with_bytes: 1, ops_with_files: 0, bytes_freed: 3 * 1024 ** 3, files_in: 0, files_out: 0 };
+    const orphans = { operation: "remove_orphan_files", ops: 1, ops_with_bytes: 0, ops_with_files: 0, bytes_freed: 0, files_in: 0, files_out: 0 };
+    mocks.getTableMaintenanceImpact.mockResolvedValue({
+      table_id: "table-1",
+      recent: { ...emptyWindow(30), ops: 2, ops_with_files: 2, files_in: 400, files_out: 20, by_operation: [optimize] },
+      lifetime: {
+        ...emptyWindow(null),
+        since: "2026-08-01T00:00:00Z",
+        ops: 4,
+        ops_with_bytes: 1,
+        ops_with_files: 2,
+        bytes_freed: 3 * 1024 ** 3,
+        files_in: 400,
+        files_out: 20,
+        by_operation: [optimize, expire, orphans]
+      }
+    });
+    renderPanel();
+
+    expect(await screen.findByText("What maintenance achieved")).toBeInTheDocument();
+    expect(screen.getByText(/2 of 4 reported their effect/)).toBeInTheDocument();
+    expect(screen.getByText("400 → 20 files")).toBeInTheDocument();
+    expect(screen.queryByText("Orphan files")).not.toBeInTheDocument();
   });
 });

@@ -282,6 +282,15 @@ export interface ExplainHealthResponse {
 
 export type SchedulingBaselineRead = components["schemas"]["SchedulingBaselineRead"];
 export type AutoCompCompareResponse = components["schemas"]["AutoCompCompareResponse"];
+export type SkipEvaluationRead = components["schemas"]["SkipEvaluationRead"];
+export type SkipEvaluationPage = components["schemas"]["SkipEvaluationPage"];
+export type MaintenanceImpactResponse = components["schemas"]["MaintenanceImpactResponse"];
+export type ImpactWindowRead = components["schemas"]["ImpactWindowRead"];
+export type TableHoldRead = components["schemas"]["TableHoldRead"];
+export type TableHoldWrite = components["schemas"]["TableHoldWrite"];
+export type ColumnUsageResponse = components["schemas"]["ColumnUsageResponse"];
+export type ColumnUsageRead = components["schemas"]["ColumnUsageRead"];
+export type TableStatsHistoryRead = components["schemas"]["TableStatsHistoryRead"];
 
 export interface CopilotQuestion {
   id: string;
@@ -837,10 +846,11 @@ export interface DatalakeDashboard {
   totals?: {
     tables?: number;
     size_gb?: number;
+    total_files?: number;
     small_files?: number;
     monthly_cost_usd?: number;
     projected_monthly_cost_usd?: number;
-  projected_savings_usd_month?: number | null;
+    projected_savings_usd_month?: number | null;
     reclaimable_bytes?: number;
     needs_compaction?: number;
     running_jobs?: number;
@@ -848,6 +858,10 @@ export interface DatalakeDashboard {
   grade_distribution?: Array<{ grade: string; count: number }>;
   freshness_distribution?: FreshnessDistributionItem[];
   freshness_as_of?: string | null;
+  hot_at_risk?: TableRead[];
+  hot_at_risk_count?: number;
+  recently_improved?: DashboardImprovedTable[];
+  recently_improved_count?: number;
   cost_by_schema?: Array<{
     schema_name: string;
     cost_usd?: number;
@@ -858,6 +872,8 @@ export interface DatalakeDashboard {
   top_offenders?: TableRead[];
   drift?: Array<HistoryPoint & { table_id?: UUID; schema_name?: string; table_name?: string }>;
 }
+
+export type DashboardImprovedTable = components["schemas"]["DashboardImprovedTable"];
 
 export type FreshnessBucketKey =
   | "within_24h"

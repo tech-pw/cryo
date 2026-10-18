@@ -322,8 +322,8 @@ def operation_state(spec: OperationSpec, facts: TableOperationFacts) -> Operatio
     if op is OperationType.REWRITE_POSITION_DELETES and (facts.engine or "").lower() == "trino":
         return OperationState(
             "unsupported",
-            f"Preset {facts.preset_name} runs on Trino, which has no procedure for this. When "
-            "planned, the operation fails. Exclude it or route the table to Spark.",
+            f"Preset {facts.preset_name} runs on Trino, which has no procedure for this, so the "
+            "planner skips it and the plan notes why. Route the table to Spark to run it.",
         )
     if op in _WHEN_NEEDED:
         return OperationState("when_needed", _WHEN_NEEDED[op])

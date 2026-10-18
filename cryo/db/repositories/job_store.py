@@ -18,6 +18,7 @@ from cryo.db.models import (
     MaintenanceIntent,
     MaintenanceJob,
     MaintenanceRun,
+    PartitionStorageClass,
     Source,
     Table,
     TableAssignment,
@@ -651,9 +652,18 @@ def _latest_partitions(session: Session, table_id: uuid.UUID) -> Sequence[Mappin
             TablePartition.scan_at == latest_scan,
         )
     )
+    archived: dict[str, str] = {
+        key: storage_class
+        for key, storage_class in session.execute(
+            select(PartitionStorageClass.partition_key, PartitionStorageClass.storage_class).where(
+                PartitionStorageClass.table_id == table_id
+            )
+        ).all()
+    }
     return [
         {
             "partition_value": row.partition_value,
+            "storage_class": archived.get(row.partition_key or ""),
             "partition_values": dict(row.partition_values or {}),
             "small_files_in_partition_count": row.small_files_in_partition_count,
             "partition_size_gb": row.partition_size_gb,

@@ -28,11 +28,13 @@ from cryo.api.routes_alerts import router as alerts_router
 from cryo.api.routes_archive import router as archive_router
 from cryo.api.routes_audit import router as audit_router
 from cryo.api.routes_batch import router as batch_router
+from cryo.api.routes_column_usage import router as column_usage_router
 from cryo.api.routes_cost_attribution import router as cost_attribution_router
 from cryo.api.routes_dark_tables import router as dark_tables_router
 from cryo.api.routes_dedup import router as dedup_router
 from cryo.api.routes_engine_load import router as engine_load_router
 from cryo.api.routes_exclusions import router as maintenance_exclusions_router
+from cryo.api.routes_exclusions import table_router as table_hold_router
 from cryo.api.routes_explorer_views import router as explorer_views_router
 from cryo.api.routes_funnel import router as funnel_router
 from cryo.api.routes_impact import router as impact_router
@@ -188,6 +190,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(metrics_router)
     app.include_router(maintenance_control_router)
     app.include_router(maintenance_exclusions_router)
+    app.include_router(table_hold_router)
+    app.include_router(column_usage_router)
     app.include_router(maintenance_safety_router)
     app.include_router(cost_insights_router)
     app.include_router(s3_log_config_router)

@@ -36,8 +36,8 @@ export function demoTableDetail(id: string) {
       partition_skew_ratio: 11.8,
       total_records: 9_420_000_000,
       avg_file_size_mb: 8.8,
-      total_delete_files: 1_940,
-      position_delete_files: 1_940,
+      total_delete_files: 640,
+      position_delete_files: 640,
       equality_delete_files: 0,
       delete_file_pct: 3.9,
       manifest_count: 96,
@@ -51,11 +51,14 @@ export function demoTableDetail(id: string) {
         reduction_target_bytes: 128 * MIB,
         file_size_bins: { data: bins },
         commits_per_day: 42.8,
+        last_snapshot_committed_at: ago(5),
         snapshot_overhead_gb: 128.4,
+        manifest_stats: { manifest_count: 96, avg_files_per_manifest: 502.19, manifest_total_bytes: 96 * 410_000, avg_manifest_bytes: 410_000 },
+        iceberg_properties: { "write.metadata.previous-versions-max": "100", "format-version": "2" },
         health_deductions: [
           { label: "Small-file fragmentation", deduction: 20, severity: "critical", reason: "87% of data files are under the 128 MiB write target." },
           { label: "Snapshot retention buildup", deduction: 20, severity: "critical", reason: "1,284 snapshots retained; the table policy keeps 7 days." },
-          { label: "Delete files", deduction: 8, severity: "warning", reason: "1,940 position-delete files are merged on every read." },
+          { label: "Delete files", deduction: 8, severity: "warning", reason: "640 position-delete files are merged on every read." },
           { label: "Partition skew", deduction: 8, severity: "warning", reason: "The largest partition holds 11.8× the average file count." },
           { label: "Metadata overhead", deduction: 8, severity: "warning", reason: "96 manifests; several cover a single day." },
           { label: "Orphan files", deduction: 8, severity: "warning", reason: "6.2 GB under the table location is not referenced by any snapshot." }
@@ -75,42 +78,56 @@ export function demoTableHistory(id: string) {
         small_files_count: Math.round(6_000 + decay * 35_930),
         total_files: Math.round(12_000 + decay * 36_210),
         total_size_gb: Math.round((360 + decay * 52.6) * 10) / 10,
-        total_snapshots: Math.round(200 + decay * 1_084)
+        total_snapshots: Math.round(200 + decay * 1_084),
+        total_delete_files: Math.round(60 + decay * 580),
+        delete_file_pct: Math.round((0.5 + decay * 3.4) * 10) / 10,
+        manifest_count: Math.round(40 + decay * 56)
       };
     })
   };
 }
 
+const RUN_STEPS = ["optimize", "compute_statistics", "optimize_manifests", "expire_snapshots", "remove_orphan_files"];
+
 export function demoTableRuns(id: string): S["TableRunsResponse"] {
   if (id !== EVENTS.id) return { table_id: id, items: [], total: 0, limit: 20, offset: 0 };
+  // Step boundaries in minutes-ago; run 1 lines up with the audit receipts in demo-data.ts.
   const run = (
     n: number,
     trigger: string,
-    startedMin: number,
-    minutes: number,
+    bounds: number[],
     before: [number, number, number],
     after: [number, number, number]
-  ): S["TableRunRead"] => ({
-    job_id: visualUuid(0xa0 + n),
-    run_id: visualUuid(0xb0 + n),
-    status: "succeeded",
-    trigger,
-    mode: "standard",
-    started_at: ago(startedMin),
-    finished_at: ago(startedMin - minutes),
-    duration_seconds: minutes * 60,
-    error: null,
-    steps: ["optimize", "compute_statistics", "optimize_manifests", "expire_snapshots", "remove_orphan_files"].map((operation_type, step_index, all) => ({
-      step_index,
-      operation_type,
+  ): S["TableRunRead"] => {
+    const startedMin = bounds[0];
+    const finishedMin = bounds[bounds.length - 1];
+    return {
+      job_id: visualUuid(0xa0 + n),
+      run_id: visualUuid(0xb0 + n),
       status: "succeeded",
-      started_at: ago(startedMin - (minutes * step_index) / all.length),
-      finished_at: ago(startedMin - (minutes * (step_index + 1)) / all.length)
-    })),
-    before_stats: { scan_at: ago(startedMin + 5), grade: "F", overall_score: before[0], total_files: before[1], small_files_count: before[2], total_size_gb: 412.6 },
-    after_stats: { scan_at: ago(startedMin - minutes - 2), grade: "F", overall_score: after[0], total_files: after[1], small_files_count: after[2], total_size_gb: 412.6 }
-  });
-  const items = [run(1, "manual", 30, 16, [20, 76_337, 70_057], [28, 48_210, 41_930]), run(2, "schedule", 24 * 60 + 150, 41, [20, 74_120, 68_400], [20, 61_204, 55_880])];
+      trigger,
+      mode: "standard",
+      started_at: ago(startedMin),
+      finished_at: ago(finishedMin),
+      duration_seconds: (startedMin - finishedMin) * 60,
+      error: null,
+      steps: RUN_STEPS.map((operation_type, step_index) => ({
+        step_index,
+        operation_type,
+        status: "succeeded",
+        started_at: ago(bounds[step_index]),
+        finished_at: ago(bounds[step_index + 1])
+      })),
+      before_stats: { scan_at: ago(startedMin + 5), grade: "F", overall_score: before[0], total_files: before[1], small_files_count: before[2], total_size_gb: 412.6 },
+      after_stats: { scan_at: ago(finishedMin - 2), grade: "F", overall_score: after[0], total_files: after[1], small_files_count: after[2], total_size_gb: 412.6 }
+    };
+  };
+  const day1 = 24 * 60;
+  const items = [
+    run(1, "ui", [42, 24, 19, 18, 16, 14], [20, 76_337, 70_057], [28, 48_210, 41_930]),
+    run(2, "schedule", [day1 + 150, day1 + 121, day1 + 116, day1 + 114.5, day1 + 112, day1 + 109], [20, 74_120, 68_400], [20, 61_204, 55_880]),
+    run(3, "schedule", [6 * day1 + 150, 6 * day1 + 118, 6 * day1 + 114, 6 * day1 + 112, 6 * day1 + 110, 6 * day1 + 107], [28, 70_400, 63_900], [36, 52_310, 45_120])
+  ];
   return { table_id: id, items, total: items.length, limit: 20, offset: 0 };
 }
 
@@ -228,6 +245,33 @@ const partitionAccess = (id: string): S["PartitionAccessResponse"] => {
   };
 };
 
+const snapshotSummary = (i: number, op: string): S["SnapshotSummaryRead"] => {
+  const added = op === "replace" ? 165 : op === "delete" ? 0 : 38 + ((i * 7) % 20);
+  const removed = op === "replace" ? 15_882 : op === "delete" ? 4 : 0;
+  const rows = op === "append" ? 1_800_000 : 0;
+  const deletes = op === "overwrite" || op === "delete" ? 6 + (i % 5) : 0;
+  const compaction = op === "replace";
+  return {
+    total_records: 9_420_000_000 - i * 1_800_000,
+    total_files_size: Math.round((412.6 - i * 0.12) * GB),
+    added_data_files: added,
+    deleted_data_files: removed,
+    added_records: compaction ? null : rows,
+    deleted_records: op === "delete" ? 42_000 : op === "overwrite" ? 9_300 : compaction ? null : 0,
+    added_files_size: Math.round(added * (compaction ? 128 : 9) * MIB),
+    removed_files_size: Math.round(removed * 8.8 * MIB),
+    added_delete_files: deletes,
+    added_position_delete_files: deletes,
+    total_delete_files: 640 - i * 2,
+    changed_partition_count: compaction ? 31 : op === "append" ? 1 : 3,
+    writer: compaction
+      ? { engine: "trino", engine_version: "480", user: "cryo-maintenance", query_id: `20260928_0${i}1122_00${i}_cryo`, job_id: null }
+      : op === "append"
+        ? { engine: "flink", engine_version: "1.20", user: null, query_id: null, job_id: "c7e1b0e2f6a4" }
+        : { engine: "spark", engine_version: "3.5.3", user: "etl", query_id: null, job_id: "app-20260928-0042" }
+  };
+};
+
 const snapshots = (id: string, url: URL): S["SnapshotListResponse"] => {
   const page = Number(url.searchParams.get("page") ?? 1);
   const pageSize = Number(url.searchParams.get("page_size") ?? 25);
@@ -246,12 +290,7 @@ const snapshots = (id: string, url: URL): S["SnapshotListResponse"] => {
       committed_at: ago(minutes),
       sequence_number: 4_120 - i,
       operation: op,
-      summary: {
-        total_records: 9_420_000_000 - i * 1_800_000,
-        total_files_size: Math.round((412.6 - i * 0.12) * GB),
-        added_data_files: op === "replace" ? 165 : op === "delete" ? 0 : 38 + ((i * 7) % 20),
-        deleted_data_files: op === "replace" ? 15_882 : op === "delete" ? 4 : 0
-      },
+      summary: snapshotSummary(i, op),
       is_current: i === 0,
       refs,
       protected: i === 9,
@@ -339,43 +378,159 @@ const queryPerformance = (): S["QueryPerformanceResponse"] => ({
 
 const tiering = (id: string): S["ArchiveSummaryRead"] => ({
   table_id: id,
-  dry_run: true,
-  executes: false,
-  mode: "advisory",
+  dry_run: false,
+  executes: true,
+  mode: "manual",
   policy_name: "cold-after-180d",
   policy_scope: "schema",
   target_class: "GLACIER_IR",
   target_label: "Archive-instant",
   read_evidence: "trusted",
   read_evidence_copy: null,
-  bytes_by_tier: null,
+  bytes_by_tier: { GLACIER_IR: 4.2 },
   projected_savings_usd_month: 2.84,
   realized_savings_usd_month: null,
   partition_count: 412,
-  eligible_count: 230,
-  truncated: false
+  eligible_count: 234,
+  truncated: false,
+  archived_partitions: 4,
+  archived_gb: 4.2
 });
 
-const tieringPartitions = (): S["ArchivePartitionPage"] => ({
-  items: Array.from({ length: 5 }, (_, i) => ({
-    partition_key: `event_date_day=${day(400 - i)}`,
-    partition_value: day(400 - i),
-    size_gb: [1.1, 1.0, 1.2, 0.9, 1.0][i],
-    age_days: 400 - i,
+const tieringPartitions = (url: URL): S["ArchivePartitionPage"] => {
+  const row = (age: number, size: number, saving: number, movedDaysAgo: number | null): S["ArchivePartitionRead"] => ({
+    partition_key: `event_date_day=${day(age)}`,
+    partition_value: day(age),
+    size_gb: size,
+    age_days: age,
     suggestion: "archive_instant",
     suggestion_label: "Archive-instant",
-    storage_class: "STANDARD",
-    eligible: true,
+    storage_class: movedDaysAgo == null ? "STANDARD" : "GLACIER_IR",
+    current_class: movedDaysAgo == null ? null : "GLACIER_IR",
+    moved_at: movedDaysAgo == null ? null : ago(60 * 24 * movedDaysAgo),
+    eligible: movedDaysAgo == null,
     reason_codes: ["zero_reads"],
     evidence_copy: null,
-    net_saving_usd_month: [0.012, 0.011, 0.013, 0.01, 0.011][i],
+    net_saving_usd_month: saving,
     break_even_read_share: 0.18
-  })),
-  total: 230,
-  limit: 5,
-  offset: 0,
-  truncated: false
+  });
+  const sizes = [1.1, 1.0, 1.2, 0.9, 1.0, 1.3, 1.1, 0.8];
+  const savings = [0.012, 0.011, 0.013, 0.01, 0.011, 0.014, 0.012, 0.009];
+  const limit = Number(url.searchParams.get("limit") ?? 10);
+  const offset = Number(url.searchParams.get("offset") ?? 0);
+  if (url.searchParams.get("state") === "archived") {
+    const items = sizes.slice(0, 4).map((size, i) => row(405 + i, size, savings[i], 3));
+    return { items, total: items.length, limit, offset, truncated: false };
+  }
+  const items = Array.from({ length: limit }, (_, i) => row(400 - offset - i, sizes[i % 8], savings[i % 8], null));
+  return { items, total: 235, limit, offset, truncated: false };
+};
+
+const tieringJobs = (): S["ArchiveJobList"] => ({
+  items: [
+    {
+      id: visualUuid(0xc1),
+      action: "archive",
+      target_class: "GLACIER_IR",
+      target_label: "Archive-instant",
+      partitions: 4,
+      status: "succeeded",
+      stale: false,
+      objects_total: 412,
+      objects_moved: 412,
+      objects_skipped: 0,
+      objects_failed: 0,
+      gb_moved: 4.2,
+      errors: [],
+      actor: "priya@acme.io",
+      reason: "Quarter-old event days with no reads in 90 days",
+      created_at: ago(60 * 24 * 3 + 6),
+      started_at: ago(60 * 24 * 3 + 5),
+      finished_at: ago(60 * 24 * 3)
+    }
+  ]
 });
+
+// Same shape as cryo.tiering.executor.iam_policy("demo-lake").
+const ARCHIVE_POLICY = JSON.stringify({
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "CryoArchiveReadAndCopy",
+        "Effect": "Allow",
+        "Action": [
+          "s3:GetObject",
+          "s3:GetObjectTagging",
+          "s3:PutObjectTagging"
+        ],
+        "Resource": "arn:aws:s3:::demo-lake/*"
+      },
+      {
+        "Sid": "CryoArchiveInstantClassesOnly",
+        "Effect": "Allow",
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::demo-lake/*",
+        "Condition": {
+          "StringEquals": {
+            "s3:x-amz-storage-class": [
+              "GLACIER_IR",
+              "INTELLIGENT_TIERING",
+              "STANDARD",
+              "STANDARD_IA"
+            ]
+          }
+        }
+      },
+      {
+        "Sid": "CryoArchiveBucketChecks",
+        "Effect": "Allow",
+        "Action": [
+          "s3:GetBucketVersioning",
+          "s3:GetBucketObjectLockConfiguration",
+          "s3:GetReplicationConfiguration",
+          "s3:GetLifecycleConfiguration"
+        ],
+        "Resource": "arn:aws:s3:::demo-lake"
+      }
+    ]
+  }, null, 2);
+
+/** Preflight for the archive dialog: one permission is missing so the docs show the policy to add. */
+export function demoArchivePreflight(body: { action?: string; target_class?: string | null } | null): S["ArchivePreflightRead"] {
+  const target = body?.target_class ?? "GLACIER_IR";
+  const labels: Record<string, string> = { GLACIER_IR: "Archive-instant", STANDARD_IA: "Cool", INTELLIGENT_TIERING: "Auto" };
+  const monthly: Record<string, number> = { GLACIER_IR: -4.37, STANDARD_IA: -2.88, INTELLIGENT_TIERING: -0.31 };
+  return {
+    action: body?.action ?? "archive",
+    target_class: target,
+    target_label: labels[target] ?? target,
+    bucket: "demo-lake",
+    partitions_selected: 230,
+    object_estimate: 23_640,
+    gb_estimate: 236.1,
+    request_cost_usd: 0.47,
+    storage_change_usd_month: monthly[target] ?? -1,
+    retrieval_cost_usd: 0,
+    early_delete_usd: 0,
+    permissions: [
+      { action: "s3:GetObject", status: "ok", purpose: "Read each file's class" },
+      { action: "s3:PutObject", status: "missing", purpose: "Copy files to a new class" },
+      { action: "s3:GetBucketVersioning", status: "ok", purpose: "Check the bucket is safe to re-tier" },
+      { action: "s3:GetBucketObjectLockConfiguration", status: "ok", purpose: "Check the bucket is safe to re-tier" }
+    ],
+    guardrails: [
+      { name: "versioning", status: "pass", detail: "Not versioned." },
+      { name: "object_lock", status: "pass", detail: "Object Lock is off." },
+      { name: "replication", status: "pass", detail: "No replication." }
+    ],
+    missing_permissions: ["s3:PutObject"],
+    iam_policy: ARCHIVE_POLICY,
+    warnings: ["Archive-instant bills 90 days minimum. Restoring a partition sooner bills the remaining days."],
+    blockers: [],
+    requires_confirmation: false,
+    can_apply: false
+  };
+}
 
 const lineage = (id: string): S["LineageGraphRead"] => ({
   root_table_id: id,
@@ -412,7 +567,7 @@ const constraints = (id: string): S["QualityConstraintsResponse"] => {
     created_by: "priya@acme.io",
     created_at: ago(60 * 24 * 20),
     updated_at: ago(60 * 24 * 20),
-    latest: { status, evaluated_at: ago(25), reason }
+    latest: { status, scanned_at: ago(25), evaluated_at: ago(24), reason }
   });
   return {
     table_id: id,
@@ -503,20 +658,170 @@ const s3Tiering = (id: string): S["S3TieringRecommendationRead"] => ({
   reason: "Table accessed 0 days ago (< 30 days threshold)"
 });
 
+const propertyRecommendations = (id: string): S["PropertyRecommendationsResponse"] => {
+  const apply = (property_key: string, current_value: string, recommended_value: string, reason: string) => ({
+    property_key,
+    current_value,
+    recommended_value,
+    reason,
+    tier: "tier1" as const,
+    action: "apply" as const,
+    layout_recommendation_id: null,
+    bloom_filter_column: null,
+    needs_confirmation: false
+  });
+  return {
+    table_id: id,
+    generated_at: ago(25),
+    gc_blocked: false,
+    items: [
+      apply(
+        "write.metadata.delete-after-commit.enabled",
+        "false",
+        "true",
+        "42.8 commits a day each leave a metadata.json behind. With this on, each commit trims versions beyond write.metadata.previous-versions-max."
+      ),
+      apply(
+        "commit.retry.num-retries",
+        "4",
+        "10",
+        "Flink appends every few minutes while compaction commits; 3 commits in the last week failed after 4 retries."
+      )
+    ]
+  };
+};
+
+const partitionEvolution = (id: string): S["PartitionEvolutionRecommendationRead"] => ({
+  table_id: id,
+  table_name: name,
+  current_partition_spec: "event_date",
+  recommended_partition_spec: "event_date, bucket(16, user_id)",
+  reason: "71% of queries filter on user_id with equality predicates, and each day partition holds 117 files.",
+  confidence: 0.71,
+  estimated_pruning_improvement_pct: 49.7,
+  query_patterns_analyzed: 18_240,
+  cardinality_estimate: "high",
+  warnings: ["Existing files keep the event_date-only layout until compaction rewrites them."],
+  scan_ratio: null,
+  avg_selectivity: 0.004,
+  trigger: "filter_frequency"
+});
+
+const columnUsage = (id: string): S["ColumnUsageResponse"] => {
+  const use = (column: string, filter: number, eq: number, join: number, proj: number, selectivity: number | null) => ({
+    column,
+    filter_count: filter,
+    equality_filter_count: eq,
+    range_filter_count: filter - eq,
+    join_count: join,
+    projection_count: proj,
+    avg_selectivity: selectivity
+  });
+  return {
+    table_id: id,
+    window_days: 30,
+    queries: 18_240,
+    aggregated_at: ago(40),
+    columns: [
+      use("event_date", 17_150, 2_100, 0, 9_800, 0.03),
+      use("user_id", 12_960, 12_960, 6_420, 15_100, 0.004),
+      use("session_id", 4_210, 4_210, 2_880, 7_300, 0.001),
+      use("event_type", 3_900, 3_900, 0, 16_200, 0.12),
+      use("country", 1_120, 1_120, 0, 5_400, 0.2),
+      use("device", 310, 310, 0, 4_100, 0.4)
+    ]
+  };
+};
+
+const impactWindow = (days: number | null, since: string | null, scale: number): S["ImpactWindowRead"] => {
+  const op = (operation: string, ops: number, withBytes: number, withFiles: number, bytes: number, filesIn: number, filesOut: number) => ({
+    operation,
+    ops,
+    ops_with_bytes: withBytes,
+    ops_with_files: withFiles,
+    bytes_freed: Math.round(bytes * scale),
+    files_in: Math.round(filesIn * scale),
+    files_out: Math.round(filesOut * scale)
+  });
+  const by_operation = [
+    op("optimize", Math.round(4 * scale), 0, Math.round(4 * scale), 0, 61_400, 1_820),
+    op("compute_statistics", Math.round(4 * scale), 0, 0, 0, 0, 0),
+    op("optimize_manifests", Math.round(4 * scale), 0, 0, 0, 0, 0),
+    op("expire_snapshots", Math.round(4 * scale), Math.round(4 * scale), 0, 86 * GB, 0, 0),
+    op("remove_orphan_files", Math.round(4 * scale), Math.round(3 * scale), 0, 11.4 * GB, 0, 0)
+  ];
+  const sum = (key: "ops" | "ops_with_bytes" | "ops_with_files" | "bytes_freed" | "files_in" | "files_out") =>
+    by_operation.reduce((total, item) => total + item[key], 0);
+  return {
+    days,
+    since,
+    ops: sum("ops"),
+    ops_with_bytes: sum("ops_with_bytes"),
+    ops_with_files: sum("ops_with_files"),
+    bytes_freed: sum("bytes_freed"),
+    files_in: sum("files_in"),
+    files_out: sum("files_out"),
+    by_operation
+  };
+};
+
+const maintenanceImpact = (id: string): S["MaintenanceImpactResponse"] => ({
+  table_id: id,
+  recent: impactWindow(30, ago(30 * 24 * 60), 1),
+  lifetime: impactWindow(null, ago(96 * 24 * 60), 3)
+});
+
+const skipEvaluations = (id: string): S["SkipEvaluationPage"] => {
+  const night = (daysAgo: number, stage: string, reason: string | null): S["SkipEvaluationRead"] => ({
+    id: visualUuid(0xd0 + daysAgo),
+    run_id: visualUuid(0xc0 + daysAgo),
+    table_id: id,
+    stage,
+    reason,
+    evaluated_at: ago(daysAgo * 24 * 60 + 150)
+  });
+  const items = [
+    night(2, "needs_work", "budget_cap"),
+    night(3, "needs_work", "budget_cap"),
+    night(4, "needs_work", "budget_cap"),
+    night(5, "evaluated", "cooldown")
+  ];
+  return { items, total: items.length, limit: 120, offset: 0 };
+};
+
 /** Returns a body for a table-detail tab endpoint, or undefined when the path isn't one. */
 export function demoTableTabResponse(path: string, url: URL): unknown {
   const id = path.match(/\/api\/v1\/(?:tables|advanced\/[a-z-]+)\/([0-9a-f-]{36})/)?.[1] ?? EVENTS.id;
   const tail = (suffix: string) => path.endsWith(suffix);
   if (tail("/maintenance-status")) return maintenanceStatus(id);
-  if (tail("/compliance")) return { table_id: id, table_ref: `lakehouse.${name}`, pending_deletion: null, abac_policy_count: 0 };
-  if (tail("/property-recommendations")) return { table_id: id, generated_at: ago(25), items: [], gc_blocked: false };
-  if (tail("/tiering/partitions")) return tieringPartitions();
+  if (tail("/compliance")) {
+    return {
+      table_id: id,
+      table_ref: `lakehouse.${name}`,
+      pending_deletion: {
+        pending_rows: 18_420,
+        blocked_until: new Date(NOW + 2 * 86_400_000).toISOString(),
+        reason: "Position deletes still referenced by retained snapshots"
+      },
+      abac_policy_count: 0,
+      abac_enforcement_note: null,
+      abac_enforced: false,
+      protected_snapshot_count: 1
+    };
+  }
+  if (tail("/property-recommendations")) return propertyRecommendations(id);
+  if (tail("/tiering/partitions")) return tieringPartitions(url);
+  if (tail("/tiering/jobs")) return tieringJobs();
   if (tail("/partitions")) return partitions(id);
   if (tail("/pii-classification")) return { table_id: id, matches: [] };
   if (path.includes("/advanced/data-quality/")) return dataQuality(id);
   if (path.includes("/advanced/column-stats/")) return columnStats(id);
   if (path.includes("/advanced/bloom-filter-recommendations/")) return bloom(id);
-  if (path.includes("/advanced/partition-evolution/")) return null;
+  if (path.includes("/advanced/partition-evolution/")) return partitionEvolution(id);
+  if (tail("/column-usage")) return columnUsage(id);
+  if (tail("/maintenance-impact")) return maintenanceImpact(id);
+  if (tail("/maintenance-hold")) return { held: false, max_hold_days: 90 };
+  if (tail("/skip-evaluations")) return skipEvaluations(id);
   if (tail("/partition-access")) return partitionAccess(id);
   if (tail("/protected-snapshots")) return protectedSnapshots(id);
   if (tail("/snapshots")) return snapshots(id, url);

@@ -101,7 +101,9 @@ Each of the seven operations, listed in `CORRECT_ORDER`, shows:
   - Not in this mode (light, standard or deep)
   - Off in preset (`compute_statistics`)
   - Blocked, by `gc.enabled=false` or a shared S3 location
-  - Unsupported here (`rewrite_position_deletes` on a Trino preset, where the renderer refuses it)
+  - Skipped on this engine (`rewrite_position_deletes` on a Trino preset). The renderer refuses
+    it, so `gate_engine_unsupported` in `cryo/planner/execution.py` drops it from the plan with a
+    note instead of letting the run fail (2026-10-18).
   - Table on hold
   - Excluded, with who, when and why
 - **If excluded**, the risk of excluding it and what happens. Expiry is High, because storage and

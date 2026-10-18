@@ -132,7 +132,12 @@ export const MaintenanceTab = () => {
     <div className="td-maintenance-workspace">
       <div className="td-mt-grid">
         <section className="td-mt-card" aria-labelledby="maintenance-tonight">
-          <p className="td-mt-kicker">1 · Readiness</p>
+          <div className="td-mt-card-head">
+            <p className="td-mt-kicker">1 · Readiness</p>
+            <Link className="td-mt-config-link" to={`/tables/${tableId}?tab=config#config-maintenance`}>
+              Preset & overrides in Config <ArrowUpRight size={13} aria-hidden="true" />
+            </Link>
+          </div>
           {!data ? <h3 id="maintenance-tonight" className="td-mt-status">Nightly selection</h3> : null}
           <QueryErrorAlert error={status.error} title="Couldn't load maintenance status" />
           {!data && status.isLoading ? <p className="text-sm text-muted-foreground">Loading maintenance status</p> : null}
@@ -194,19 +199,6 @@ export const MaintenanceTab = () => {
             </>
           ) : null}
         </section>
-        <aside className="td-mt-card td-mt-config-pointer" aria-labelledby="maintenance-config-pointer">
-          <p className="td-mt-kicker">Config</p>
-          <h3 id="maintenance-config-pointer" className="td-mt-status">
-            Preset, overrides & properties
-          </h3>
-          <p className="td-mt-lede">
-            The workflow preset, parameter overrides and Iceberg table properties that decide what maintenance does to
-            this table now live on the Config tab.
-          </p>
-          <Link className="td-overview-link" to={`/tables/${tableId}?tab=config`}>
-            Open Config <ArrowUpRight size={14} aria-hidden="true" />
-          </Link>
-        </aside>
       </div>
       <div className="td-mt-stage">
         <p className="td-mt-kicker">2 · Choose an action</p>

@@ -401,6 +401,10 @@ def _total_size_gb(stats: Mapping[str, Any]) -> float | None:
         return None
 
 
+# Mirrors cryo.tiering.executor.ARCHIVED_CLASSES; the planner stays free of storage imports.
+_ARCHIVED_CLASSES = frozenset({"STANDARD_IA", "GLACIER_IR"})
+
+
 def _candidate_partitions(
     fields: Sequence[PartitionFieldSpec],
     partitions: Sequence[Mapping[str, Any]],
@@ -421,6 +425,15 @@ def _candidate_partitions(
             continue
         small_files = _small_files(row)
         if small_files < min_small_files:
+            continue
+        storage_class = row.get("storage_class")
+        if storage_class in _ARCHIVED_CLASSES:
+            partition_value = row.get("partition_value", row.get("partition_values", "<unknown>"))
+            notes.append(
+                f"Skipped archived partition {partition_value}: its files are in {storage_class}, "
+                "and compacting would rewrite them to Standard and bill the minimum duration. "
+                "Restore it first."
+            )
             continue
 
         predicate = build_predicate(fields, row)

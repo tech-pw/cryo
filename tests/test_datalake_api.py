@@ -44,10 +44,16 @@ def test_dashboard_endpoints_return_bounded_aggregates(monkeypatch: Any) -> None
     scan_at = datetime(2026, 1, 1, tzinfo=UTC)
 
     def datalake(
-        session: object, *, top_limit: int, drift_limit: int, settings: object = None
+        session: object,
+        *,
+        top_limit: int,
+        drift_limit: int,
+        hot_limit: int,
+        settings: object = None,
     ) -> dict[str, object]:
         assert top_limit == 5
         assert drift_limit == 7
+        assert hot_limit == 5
         return {
             "totals": {
                 "total_tables": 12,
