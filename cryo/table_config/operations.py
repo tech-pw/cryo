@@ -47,6 +47,33 @@ class OperationSpec:
 
 OPERATIONS: tuple[OperationSpec, ...] = (
     OperationSpec(
+        operation=OperationType.CONVERT_EQUALITY_DELETES,
+        label="Convert equality deletes",
+        phase="compaction",
+        summary=(
+            "Resolves equality-delete rows to file positions and commits position-delete "
+            "files in their place. Data files are not rewritten."
+        ),
+        when_planned=(
+            "Standard and deep modes, only when the preset sets convert_equality_deletes "
+            "and the scan finds equality-delete files."
+        ),
+        exclude_consequence=(
+            "Readers keep joining equality-delete files on every query. "
+            "convert_deletes can still fold them later by rewriting data files."
+        ),
+        exclude_risk="medium",
+        reasons_to_exclude=(
+            "The writer already converts its own equality deletes.",
+            "No configured engine can run the conversion yet.",
+        ),
+        engines=(
+            ("spark", "Blocked. rewrite_data_files is not this operation."),
+            ("trino", "Blocked. OPTIMIZE would rewrite data files."),
+        ),
+        doc_url=f"{_SPARK_PROCEDURES}#rewrite_data_files",
+    ),
+    OperationSpec(
         operation=OperationType.CONVERT_DELETES,
         label="Apply delete files",
         phase="compaction",
@@ -273,6 +300,7 @@ _MODE_OPERATIONS: dict[Mode, frozenset[OperationType]] = {
             OperationType.EXPIRE_DATA,
             OperationType.OPTIMIZE,
             OperationType.CONVERT_DELETES,
+            OperationType.CONVERT_EQUALITY_DELETES,
             OperationType.REWRITE_POSITION_DELETES,
             OperationType.COMPUTE_STATISTICS,
         }
@@ -348,6 +376,17 @@ def operation_state(spec: OperationSpec, facts: TableOperationFacts) -> Operatio
     ):
         return OperationState(
             "off", f"Preset {facts.preset_name} does not enable compute_statistics."
+        )
+    if op is OperationType.CONVERT_EQUALITY_DELETES and not bool(
+        facts.params.get("convert_equality_deletes")
+    ):
+        return OperationState(
+            "off", f"Preset {facts.preset_name} does not enable convert_equality_deletes."
+        )
+    if op is OperationType.CONVERT_EQUALITY_DELETES:
+        return OperationState(
+            "unsupported",
+            "No engine can convert equality deletes without rewriting data files yet.",
         )
     if op is OperationType.REWRITE_POSITION_DELETES and (facts.engine or "").lower() == "trino":
         return OperationState(

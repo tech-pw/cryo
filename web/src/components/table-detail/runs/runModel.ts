@@ -4,6 +4,7 @@ export type CellTone = "success" | "failed" | "attention" | "running" | "queued"
 
 /** Grid rows, in execution order. Delete rewrites and stats only appear when a run used them. */
 export const GRID_OPERATIONS = [
+  "convert_equality_deletes",
   "convert_deletes",
   "rewrite_position_deletes",
   "optimize",
@@ -17,6 +18,7 @@ export const GRID_OPERATIONS = [
 export const CORE_GRID_OPERATIONS = new Set(["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"]);
 
 export const OPERATION_SHORT: Record<string, string> = {
+  convert_equality_deletes: "Equality deletes",
   convert_deletes: "Convert deletes",
   rewrite_position_deletes: "Rewrite deletes",
   optimize: "Compact",

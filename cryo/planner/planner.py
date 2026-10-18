@@ -8,6 +8,7 @@ from typing import Any
 from cryo.domain.enums import Mode, OperationType, PartitionTransform, PredicateCapability
 from cryo.domain.models import MaintenancePlan, Operation, PartitionPredicate
 from cryo.planner.chunking import greedy_pack
+from cryo.planner.equality_deletes import plan_convert_equality_deletes
 from cryo.planner.guardrails import sort_operations_canonically
 from cryo.planner.partitions import (
     DEFAULT_RENDERABLE_CAPABILITIES,
@@ -100,6 +101,10 @@ def build_plan(
             excluded,
             dropped_by_table,
         )
+        equality_op, equality_notes = plan_convert_equality_deletes(stats, partitions, params)
+        notes.extend(equality_notes)
+        if equality_op is not None:
+            operations.append(equality_op)
         pathological_skew = _has_pathological_delete_skew(partitions, params)
         unreachable_skew = not pathological_skew and _has_unreachable_delete_skew(
             partitions, params

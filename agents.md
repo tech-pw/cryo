@@ -116,7 +116,7 @@ When touching scanner/planner/governor/engines, keep all of these (ported from t
 - **Load-aware admission** via `system.runtime.queries`; **per-replica caps** + **round-robin**.
 - **Cooldown** (skip recently maintained), **off-peak** windows, **adaptive budget**, **deadlines**.
 - **Failure isolation** per table; **per-table lock** (no double maintenance).
-- Correct op order: `convert_deletes → rewrite_position_deletes → optimize → compute_statistics →
+- Correct op order: `convert_equality_deletes → convert_deletes → rewrite_position_deletes → optimize → compute_statistics →
  optimize_manifests → expire_data → expire_snapshots → remove_orphan_files`. Compact first, clean up after, so a
  single run reclaims the space its own compaction freed. `cryo/planner/guardrails.py::CORRECT_ORDER`
  is the only definition; `web/src/lib/operationOrder.ts` mirrors it.

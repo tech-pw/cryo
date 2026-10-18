@@ -14,6 +14,7 @@ backend, update CORRECT_ORDER here too.
 */
 
 export const CORRECT_ORDER = [
+  "convert_equality_deletes",
   "convert_deletes",
   "rewrite_position_deletes",
   "optimize",

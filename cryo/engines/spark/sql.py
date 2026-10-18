@@ -46,6 +46,11 @@ def _render_operation(
         sql = _render_orphan(catalog, table_name, operation.params)
     elif operation.type is OperationType.OPTIMIZE:
         sql = _render_optimize(catalog, table_name, operation)
+    elif operation.type is OperationType.CONVERT_EQUALITY_DELETES:
+        raise UnsupportedPredicateError(
+            "convert_equality_deletes has no Spark procedure. "
+            "rewrite_data_files would rewrite data files, so it is not used."
+        )
     elif operation.type is OperationType.CONVERT_DELETES:
         sql = _render_convert_deletes(catalog, table_name, operation)
     elif operation.type is OperationType.REWRITE_POSITION_DELETES:

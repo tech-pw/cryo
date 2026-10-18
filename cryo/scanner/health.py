@@ -157,6 +157,36 @@ def compute_health_score(
             }
         )
 
+    equality_files = int(stats.get("equality_delete_files") or 0)
+    if equality_files >= 20:
+        score -= 20
+        deductions.append(
+            {
+                "label": "Equality delete buildup",
+                "deduction": 20,
+                "severity": "critical",
+                "reason": (
+                    f"{equality_files} equality-delete files. "
+                    "convert_equality_deletes turns them into position deletes "
+                    "without rewriting data files."
+                ),
+            }
+        )
+    elif equality_files >= 1:
+        score -= 8
+        deductions.append(
+            {
+                "label": "Equality delete buildup",
+                "deduction": 8,
+                "severity": "warning",
+                "reason": (
+                    f"{equality_files} equality-delete files. "
+                    "convert_equality_deletes turns them into position deletes "
+                    "without rewriting data files."
+                ),
+            }
+        )
+
     score = _deduct(
         score,
         deductions,
