@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { ArrowUpRight } from "lucide-react";
+import { Link, useParams } from "react-router-dom";
 import { getTable, getTableAudit, getTableCost } from "../../api/client";
 import { MaintenanceActions } from "../../components/table-detail/operations/MaintenanceActions";
 import { readDeductionList } from "../../components/table-detail/operations/operationCatalog";
@@ -8,7 +9,6 @@ import {
   type BlockingReasonRead,
 } from "../../api/maintenanceStatus";
 import { CompactionAnalysis } from "../../components/table-detail/maintenance/CompactionAnalysis";
-import { EffectiveSettings } from "../../components/table-detail/maintenance/EffectiveSettings";
 import { TableRunGrid } from "../../components/table-detail/runs/TableRunGrid";
 import { QueryErrorAlert } from "../../components/common";
 import { Badge } from "../../components/ui/badge";
@@ -132,7 +132,12 @@ export const MaintenanceTab = () => {
     <div className="td-maintenance-workspace">
       <div className="td-mt-grid">
         <section className="td-mt-card" aria-labelledby="maintenance-tonight">
-          <p className="td-mt-kicker">1 · Readiness</p>
+          <div className="td-mt-card-head">
+            <p className="td-mt-kicker">1 · Readiness</p>
+            <Link className="td-mt-config-link" to={`/tables/${tableId}?tab=config#config-maintenance`}>
+              Preset & overrides in Config <ArrowUpRight size={13} aria-hidden="true" />
+            </Link>
+          </div>
           {!data ? <h3 id="maintenance-tonight" className="td-mt-status">Nightly selection</h3> : null}
           <QueryErrorAlert error={status.error} title="Couldn't load maintenance status" />
           {!data && status.isLoading ? <p className="text-sm text-muted-foreground">Loading maintenance status</p> : null}
@@ -194,7 +199,6 @@ export const MaintenanceTab = () => {
             </>
           ) : null}
         </section>
-        <EffectiveSettings tableId={tableId} />
       </div>
       <div className="td-mt-stage">
         <p className="td-mt-kicker">2 · Choose an action</p>
