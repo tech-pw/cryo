@@ -343,7 +343,9 @@ def test_optimize_params_preserve_explicit_memory_overrides() -> None:
     assert request["params"]["compaction_execute"] is True
 
 
-def test_execute_request_parses_successful_stdout(tmp_path: Path) -> None:
+def test_execute_request_parses_successful_stdout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     script = tmp_path / "fake-cryo-engine"
     script.write_text(
         "#!/usr/bin/env python3\n"
@@ -357,6 +359,7 @@ def test_execute_request_parses_successful_stdout(tmp_path: Path) -> None:
         "print(json.dumps(payload))\n"
     )
     script.chmod(0o755)
+    monkeypatch.setenv("CRYO_ENGINE_BINARY", str(script))
 
     result = execute_request(
         {
@@ -372,7 +375,9 @@ def test_execute_request_parses_successful_stdout(tmp_path: Path) -> None:
     assert result.results[0].snapshots_expired == 2
 
 
-def test_execute_request_maps_oom_exit_codes(tmp_path: Path) -> None:
+def test_execute_request_maps_oom_exit_codes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """SIGKILL (-9) / Docker OOM (137) with empty stdout must be explicit OOM."""
     from cryo.engines.native.runner import is_oom_exit
 
@@ -393,6 +398,7 @@ def test_execute_request_maps_oom_exit_codes(tmp_path: Path) -> None:
         script = tmp_path / f"fake-oom-{abs(code)}"
         script.write_text(script_body)
         script.chmod(0o755)
+        monkeypatch.setenv("CRYO_ENGINE_BINARY", str(script))
         result = execute_request(
             {
                 "table_ref": "demo.orders",
@@ -486,6 +492,7 @@ def test_resolve_binary_path_prefers_go_impl(
     rust_binary.chmod(0o755)
 
     monkeypatch.setenv("CRYO_ENGINE_IMPL", "go")
+    monkeypatch.setenv("CRYO_ENGINE_BINARY", str(go_binary))
     resolved = resolve_binary_path(
         {"binary_path": str(go_binary), "engine_impl": "go"},
     )
@@ -521,7 +528,9 @@ def test_is_commit_race_lost_detects_engine_token() -> None:
     assert not is_commit_race_lost(None)
 
 
-def test_execute_request_honest_failure_when_operation_not_successful(tmp_path: Path) -> None:
+def test_execute_request_honest_failure_when_operation_not_successful(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     script = tmp_path / "fake-cryo-engine"
     script.write_text(
         "#!/usr/bin/env python3\n"
@@ -541,6 +550,7 @@ def test_execute_request_honest_failure_when_operation_not_successful(tmp_path: 
         "sys.exit(1)\n"
     )
     script.chmod(0o755)
+    monkeypatch.setenv("CRYO_ENGINE_BINARY", str(script))
 
     result = execute_request(
         {
