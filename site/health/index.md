@@ -37,7 +37,7 @@ Worked example: how a table reaches 64.
 | Step | Points | Running score |
 | --- | --- | --- |
 
-| Start |  | 100 |
+| Start | | 100 |
 
 | Small-file fragmentation (warning) | −8 | 92 |
 
@@ -45,7 +45,7 @@ Worked example: how a table reaches 64.
 
 | Position delete file buildup (critical) | −20 | 64 |
 
-| Final score and grade |  | **C** 64 |
+| Final score and grade | | **C** 64 |
 
 On the [Tables page](https://tech-pw.github.io/cryo/tables/), every row carries its grade, its score change over 7 days and the evidence behind it: small files out of total files, size and reads. The **Health triage** view lists grade D and F tables first.
 
