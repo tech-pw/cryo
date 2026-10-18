@@ -428,6 +428,7 @@ _TRINO_CELLS = (
     ),
 )
 
+
 def _spark_cell(operation: OperationType) -> OperationCapability:
     if operation is OperationType.CONVERT_EQUALITY_DELETES:
         return _cell(

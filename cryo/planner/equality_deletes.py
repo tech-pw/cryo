@@ -15,7 +15,8 @@ from cryo.domain.models import Operation
 
 
 def equality_delete_count(row: Mapping[str, Any]) -> int:
-    raw = row.get("raw") if isinstance(row.get("raw"), Mapping) else {}
+    raw_value = row.get("raw")
+    raw: Mapping[str, Any] = raw_value if isinstance(raw_value, Mapping) else {}
     value = row.get("equality_delete_files", raw.get("equality_delete_files", 0))
     try:
         return max(0, int(value or 0))
