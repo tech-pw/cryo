@@ -6,6 +6,7 @@ import { ApiError } from "../api/client";
 import { Alert } from "./ui/alert";
 import { Button } from "./ui/button";
 import { EmptyState } from "./ui/empty-state";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 export { ChartFrame } from "./ui/chart-panel";
 export { PageHeader } from "./ui/page-header";
@@ -27,13 +28,18 @@ export const HintLabel = ({ label, tooltip }: { label: ReactNode; tooltip?: stri
   tooltip ? (
     <span className="inline-flex items-center gap-1">
       <span>{label}</span>
-      <span
-        title={tooltip}
-        className="inline-flex cursor-help text-muted-foreground"
-        aria-label={typeof label === "string" ? `About ${label}` : "More information"}
-      >
-        <Info className="size-3.5" aria-hidden="true" />
-      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex cursor-help text-muted-foreground"
+            aria-label={typeof label === "string" ? `About ${label}` : "More information"}
+          >
+            <Info className="size-3.5" aria-hidden="true" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{tooltip}</TooltipContent>
+      </Tooltip>
     </span>
   ) : (
     <>{label}</>

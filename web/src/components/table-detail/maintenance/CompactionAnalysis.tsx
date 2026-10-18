@@ -16,6 +16,7 @@ import type { CompactionCandidateRead, TableStatsRead } from "../../../api/types
 import { QueryErrorAlert } from "../../common";
 import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
+import { Segmented } from "../../ui/segmented";
 import { useAuth } from "../../../lib/auth";
 import { formatCurrency, formatGb, formatTime } from "../../../lib/format";
 import { useWriteControl } from "../../../lib/useWriteControl";
@@ -55,13 +56,18 @@ const numberText = (value: number | null | undefined): string => {
   return String(value);
 };
 
+const countText = (value: number | null | undefined): string => {
+  if (value == null || Number.isNaN(value)) return "not reported";
+  return value.toLocaleString();
+};
+
 export const STORED_ROWS_PREVIEW = 10;
 
 const storedColumns: ColumnDef<AutoCompCandidateItem, unknown>[] = [
   { accessorKey: "partition_value", header: "Partition", cell: ({ row }) => <span className="td-compaction-partition" title={row.original.partition_value}>{row.original.partition_value || "not reported"}</span> },
   { accessorKey: "benefit_score", header: "Benefit score", cell: ({ row }) => numberText(row.original.benefit_score) },
   { accessorKey: "moop_score", header: "MOOP score", cell: ({ row }) => numberText(row.original.moop_score) },
-  { accessorKey: "small_files", header: "Small files", cell: ({ row }) => numberText(row.original.small_files) },
+  { accessorKey: "small_files", header: "Small files", cell: ({ row }) => countText(row.original.small_files) },
   { accessorKey: "size_gb", header: "Size", cell: ({ row }) => sizeText(row.original.size_gb) },
   { accessorKey: "eligible", header: "Selection status", cell: ({ row }) => <Badge variant={row.original.eligible ? "success" : "secondary"}>{row.original.eligible ? "Eligible" : row.original.skip_reason || "Skipped"}</Badge> }
 ];
@@ -69,7 +75,7 @@ const horizonColumns: ColumnDef<CompactionCandidateRead, unknown>[] = [
   { accessorKey: "partition_path", header: "Partition", cell: ({ row }) => <span className="td-compaction-partition" title={row.original.partition_path}>{row.original.partition_path || "not reported"}</span> },
   { accessorKey: "score", header: "Score", cell: ({ row }) => numberText(row.original.score) },
   { accessorKey: "priority", header: "Priority", cell: ({ row }) => row.original.priority || "not reported" },
-  { accessorKey: "small_files", header: "Small files", cell: ({ row }) => numberText(row.original.small_files) },
+  { accessorKey: "small_files", header: "Small files", cell: ({ row }) => countText(row.original.small_files) },
   { accessorKey: "partition_size_gb", header: "Size", cell: ({ row }) => sizeText(row.original.partition_size_gb) },
   { accessorKey: "savings_estimate_usd", header: "Modelled savings", cell: ({ row }) => row.original.savings_estimate_usd == null ? "not reported" : formatCurrency(row.original.savings_estimate_usd) }
 ];
@@ -77,7 +83,10 @@ const StoredRows = ({ items }: { items: AutoCompCandidateItem[] }) => {
   const [page, setPage] = useState(0);
   const ranked = [...items].sort((a, b) => (b.benefit_score ?? 0) - (a.benefit_score ?? 0));
   const currentPage = Math.min(page, Math.max(0, Math.ceil(ranked.length / STORED_ROWS_PREVIEW) - 1));
-  return <DataTable columns={storedColumns} data={ranked.slice(currentPage * STORED_ROWS_PREVIEW, (currentPage + 1) * STORED_ROWS_PREVIEW)}
+  const columns = items.some((item) => item.moop_score != null)
+    ? storedColumns
+    : storedColumns.filter((column) => !("accessorKey" in column) || column.accessorKey !== "moop_score");
+  return <DataTable columns={columns} data={ranked.slice(currentPage * STORED_ROWS_PREVIEW, (currentPage + 1) * STORED_ROWS_PREVIEW)}
     emptyTitle="No scored partitions recorded." emptyDescription="The latest scan has not recorded compaction benefit scores."
     pagination={ranked.length > STORED_ROWS_PREVIEW ? { pageIndex: currentPage, pageSize: STORED_ROWS_PREVIEW, totalRows: ranked.length, onPageChange: setPage } : undefined}
     showDensityToggle={false} />;
@@ -130,16 +139,28 @@ export const CompactionAnalysis = ({ tableId }: { tableId: string }) => {
     | null
     | undefined;
   const skipped = stored.data?.skipped ?? [];
+  const [ranking, setRanking] = useState<"stored" | "horizon">("stored");
+  const items = stored.data?.items ?? [];
+  const eligibleCount = items.filter((item) => item.eligible).length;
+  const topScore = items.reduce<number | null>(
+    (best, item) => (item.benefit_score == null ? best : best == null ? item.benefit_score : Math.max(best, item.benefit_score)),
+    null
+  );
+  const allSignals = signals.data?.signals ?? [];
+  const triggered = allSignals.filter((signal) => signal.triggered);
+  const quiet = allSignals.filter((signal) => !signal.triggered);
 
   return (
     <section id="maintenance-compaction" className="td-compaction-analysis" aria-labelledby="maintenance-compaction-heading">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h3 id="maintenance-compaction-heading" className="text-sm font-semibold text-foreground">
-          Compaction analysis
-        </h3>
+      <div className="td-compaction-head">
+        <div>
+          <h3 id="maintenance-compaction-heading">Compaction analysis</h3>
+          <p>{AUTOCOMP_DEFINITION}</p>
+        </div>
         <Button
           type="button"
           size="sm"
+          variant="secondary"
           disabled={!refreshAccess.allowed || refresh.isPending}
           title={refreshAccess.reason ?? undefined}
           loading={refresh.isPending}
@@ -151,78 +172,117 @@ export const CompactionAnalysis = ({ tableId }: { tableId: string }) => {
           Refresh benefit scores
         </Button>
       </div>
-      <p className="mb-3 text-sm text-muted-foreground">{AUTOCOMP_DEFINITION}</p>
       <QueryErrorAlert error={stored.error} title="Couldn't load stored benefit scores" />
       <QueryErrorAlert error={horizon.error} title="Couldn't load horizon candidates" />
       <QueryErrorAlert error={signals.error} title="Couldn't load table signals" />
       <QueryErrorAlert error={table.error} title="Couldn't load table stats" />
 
-      <div className="td-compaction-rankings">
-      <div className="space-y-2">
-        <h4 className="text-sm font-medium text-foreground">Stored benefit-score candidates</h4>
-        <p className="text-xs text-muted-foreground">{STORED_SCORE_BASIS}</p>
-        {stored.isLoading ? <p className="text-sm text-muted-foreground">Loading stored scores</p> : null}
-        {stored.isSuccess ? <StoredRows items={stored.data?.items ?? []} /> : null}
-        {skipped.length > 0 ? (
-          <ul className="text-xs text-muted-foreground">
-            {skipped.slice(0, 5).map((row) => (
-              <li key={`${row.partition_value}-${row.skip_reason}`}>
-                Skipped {row.partition_value || "not reported"}: {row.skip_reason}
-              </li>
-            ))}
-            {skipped.length > 5 ? <li>…and {(skipped.length - 5).toLocaleString()} more skipped</li> : null}
-          </ul>
-        ) : null}
-      </div>
+      <dl className="td-compaction-stats">
+        <div>
+          <dt>Eligible partitions</dt>
+          <dd>{stored.isSuccess ? `${eligibleCount.toLocaleString()} of ${items.length.toLocaleString()}` : "—"}</dd>
+        </div>
+        <div>
+          <dt>Top benefit score</dt>
+          <dd>{topScore == null ? "—" : topScore.toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd>
+        </div>
+        <div>
+          <dt>Last compaction effect</dt>
+          <dd title={effectiveness?.recommendation ?? undefined}>
+            {effectiveness?.effectiveness || "Not reported"}
+            {effectiveness?.effectiveness_ratio == null ? null : <span> · ×{effectiveness.effectiveness_ratio.toFixed(1)}</span>}
+          </dd>
+        </div>
+        <div>
+          <dt>Delete files</dt>
+          <dd>{table.isLoading ? "Loading" : deleteFileHealthLabel(table.data?.stats)}</dd>
+        </div>
+        <div>
+          <dt>Signals triggered</dt>
+          <dd data-alert={triggered.length > 0 || undefined}>
+            {signals.isSuccess ? `${triggered.length} of ${allSignals.length}` : "—"}
+          </dd>
+        </div>
+      </dl>
+      {effectiveness?.recommendation ? <p className="td-compaction-note">{effectiveness.recommendation}</p> : null}
 
-      <div id="maintenance-compaction-horizon" className="space-y-2">
-        <h4 className="text-sm font-medium text-foreground">Horizon query-frequency candidates</h4>
-        <p className="text-xs text-muted-foreground">{HORIZON_SCORE_BASIS}</p>
-        {horizon.isLoading ? <p className="text-sm text-muted-foreground">Loading horizon ranking</p> : null}
-        {horizon.isSuccess ? <HorizonRows items={horizon.data?.candidates ?? []} /> : null}
-      </div>
-
-      </div>
-      <div className="td-compaction-context">
-      <div>
-        <h4 className="mb-1 text-sm font-medium text-foreground">Effectiveness</h4>
-        {effectiveness ? (
-          <p className="text-sm text-muted-foreground">
-            {effectiveness.effectiveness || "not reported"}
-            {effectiveness.effectiveness_ratio == null
-              ? ""
-              : ` · ratio ${effectiveness.effectiveness_ratio.toFixed(1)}`}
-            {effectiveness.recommendation ? ` · ${effectiveness.recommendation}` : ""}
-          </p>
+      <div className="td-compaction-ranking">
+        <div className="td-compaction-ranking-bar">
+          <Segmented
+            size="small"
+            aria-label="Ranking"
+            value={ranking}
+            onChange={setRanking}
+            options={[
+              { value: "stored", label: "Stored score" },
+              { value: "horizon", label: "Query frequency · 30 d" }
+            ]}
+          />
+        </div>
+        {ranking === "stored" ? (
+          <div className="space-y-2">
+            <h4>Stored benefit-score candidates</h4>
+            <p className="td-compaction-basis">{STORED_SCORE_BASIS}</p>
+            {stored.isLoading ? <p className="td-compaction-basis">Loading stored scores</p> : null}
+            {stored.isSuccess ? <StoredRows items={items} /> : null}
+            {skipped.length > 0 ? (
+              <details className="td-compaction-details">
+                <summary>
+                  {skipped.length.toLocaleString()} {skipped.length === 1 ? "partition" : "partitions"} skipped
+                </summary>
+                <ul>
+                  {skipped.slice(0, 5).map((row) => (
+                    <li key={`${row.partition_value}-${row.skip_reason}`}>
+                      <code>{row.partition_value || "not reported"}</code> {row.skip_reason}
+                    </li>
+                  ))}
+                  {skipped.length > 5 ? <li>…and {(skipped.length - 5).toLocaleString()} more</li> : null}
+                </ul>
+              </details>
+            ) : null}
+          </div>
         ) : (
-          <p className="text-sm text-muted-foreground">Effectiveness not reported</p>
+          <div id="maintenance-compaction-horizon" className="space-y-2">
+            <h4>Horizon query-frequency candidates</h4>
+            <p className="td-compaction-basis">{HORIZON_SCORE_BASIS}</p>
+            {horizon.isLoading ? <p className="td-compaction-basis">Loading horizon ranking</p> : null}
+            {horizon.isSuccess ? <HorizonRows items={horizon.data?.candidates ?? []} /> : null}
+          </div>
         )}
       </div>
 
-      <div className="mb-4">
-        <h4 className="mb-1 text-sm font-medium text-foreground">Delete-file health</h4>
-        <Badge variant="secondary">{table.isLoading ? "Loading" : deleteFileHealthLabel(table.data?.stats)}</Badge>
-      </div>
-
-      <div>
-        <h4 className="mb-1 text-sm font-medium text-foreground">Maintenance trigger signals</h4>
-        {(signals.data?.signals.length ?? 0) === 0 && signals.isSuccess ? (
-          <p className="text-sm text-muted-foreground">No signals recorded.</p>
-        ) : null}
-        {(signals.data?.signals.length ?? 0) > 0 ? (
+      <div className="td-compaction-signals-block">
+        <h4>Maintenance trigger signals</h4>
+        {allSignals.length === 0 && signals.isSuccess ? <p className="td-compaction-basis">No signals recorded.</p> : null}
+        {triggered.length > 0 ? (
           <ul className="td-compaction-signals">
-            {signals.data?.signals.map((signal) => (
-              <li key={signal.signal_name}>
-                <strong>{signal.signal_name.replace(/_/g, " ")} · {signal.triggered ? "Triggered" : "Not triggered"} · {signal.severity}</strong>
+            {triggered.map((signal) => (
+              <li key={signal.signal_name} data-triggered>
+                <div>
+                  <strong>{signal.signal_name.replace(/_/g, " ")}</strong>
+                  <Badge variant={signal.severity === "critical" ? "danger" : "warning"}>{signal.severity}</Badge>
+                </div>
                 <p>{signal.reason}</p>
               </li>
             ))}
           </ul>
         ) : null}
-        {signals.data?.checked_at ? (
-          <p className="mt-1 text-xs text-muted-foreground">Checked {formatTime(signals.data.checked_at)}</p>
+        {quiet.length > 0 ? (
+          <details className="td-compaction-details" open={triggered.length === 0 || undefined}>
+            <summary>{quiet.length} not triggered</summary>
+            <ul className="td-compaction-signals">
+              {quiet.map((signal) => (
+                <li key={signal.signal_name}>
+                  <div>
+                    <strong>{signal.signal_name.replace(/_/g, " ")}</strong>
+                  </div>
+                  <p>{signal.reason}</p>
+                </li>
+              ))}
+            </ul>
+          </details>
         ) : null}
-      </div>
+        {signals.data?.checked_at ? <p className="td-compaction-basis">Checked {formatTime(signals.data.checked_at)}</p> : null}
       </div>
     </section>
   );

@@ -34,6 +34,12 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { MetricGrid, MetricTile } from "../../components/ui/metric-grid";
 import { PageHeader } from "../../components/ui/page-header";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from "../../components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { Separator } from "../../components/ui/separator";
 import {
@@ -117,7 +123,7 @@ export function Styleguide() {
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Cryo design system</p>
-            <h1 className="mt-1 text-2xl font-semibold">Phase 0 styleguide</h1>
+            <h1 className="mt-1 text-2xl font-semibold">Styleguide</h1>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
               Radix + Tailwind primitives, tokens, and async patterns for the frontend revamp.
             </p>
@@ -308,6 +314,17 @@ export function Styleguide() {
                     <p className="text-sm">Filter chips and quick actions can live here.</p>
                   </PopoverContent>
                 </Popover>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="secondary">Open menu</Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent>
+                    <DropdownMenuItem>Rewrite data files</DropdownMenuItem>
+                    <DropdownMenuItem>Expire snapshots</DropdownMenuItem>
+                    <DropdownMenuItem>Sign out</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
                 <Tooltip>
                   <TooltipTrigger asChild>

@@ -24,6 +24,7 @@ from cryo.db.models import (
     TableStats,
 )
 from cryo.db.repositories import presets
+from cryo.db.repositories.exclusions import excluded_table_ids
 from cryo.db.repositories.intents import IntentStore
 from cryo.domain.enums import EngineType, Mode, OperationType
 from cryo.domain.intents import AttemptStatus, EffectState, MaintenanceIntentRecord
@@ -612,6 +613,12 @@ def execute_layout_recommendation(
         raise HTTPException(
             status_code=422,
             detail="Layout rewrite is outside the effective chunk size budget for this table.",
+        )
+
+    if excluded_table_ids(session, [table.id]):
+        raise HTTPException(
+            status_code=409,
+            detail="This table is excluded from maintenance. Include it on the Runs page first.",
         )
 
     run = MaintenanceRun(

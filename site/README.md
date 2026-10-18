@@ -15,8 +15,10 @@ No dependencies. Node 22.
 | Path | What it is |
 |---|---|
 | `_src/site.json` | Navigation groups and site metadata |
+| `_src/contributors.json` | Snapshot of GitHub contributors for the homepage credit |
 | `_src/pages/*.html` | Page fragments with front matter (`title`, `lede`, `description`, `updated`) |
 | `scripts/build.mjs` | Generator: chrome, TOC, search index, sitemap, `llms.txt`, per-page `index.md` |
+| `scripts/contributors.mjs` | Refresh the contributor snapshot from GitHub (`node site/scripts/contributors.mjs`) |
 | `scripts/diagrams.mjs` | Diagram specs rendered to inline SVG at build time |
 | `scripts/highlight.mjs` | Small bash and SQL highlighter |
 | `assets/` | CSS, JS, self-hosted IBM Plex (reading) and Cormorant Garamond (homepage display, OFL), Cryo mark SVGs (`assets/svg/cryo-mark.svg`, `cryo-mark-small.svg`, `favicon.svg`), OG image |
@@ -27,6 +29,15 @@ Everything outside `_src/` and `scripts/` is generated or static and is what get
 Each page also writes `index.md`, and the site root writes `llms.txt`. HTML pages link the markdown with `rel="alternate" type="text/markdown"`. Copy page fetches that file. There is no chat on the site. The quickstart carries the prompt an agent should be given: read `llms.txt`, then answer only from those pages.
 
 The homepage's supported-stack list scrolls as a slow marquee, pauses on hover or focus, and wraps into a static list when reduced motion is enabled.
+
+The homepage credit (`<contributors />`) renders `site/_src/contributors.json`, a snapshot of the public GitHub contributor list. The build does not call GitHub. Refresh it when the list changes, then rebuild:
+
+```bash
+node site/scripts/contributors.mjs   # needs network; writes site/_src/contributors.json
+make docs
+```
+
+Bots and AI agents are dropped: GitHub `Bot` accounts, logins ending in `[bot]`, and known agent logins (`dependabot`, `copilot`, `github-actions`, `cryo-agent`, and the other patterns in `scripts/contributors.mjs`). Commits that were never linked to a GitHub user, including the local `Cryo Agent <cryo@local>` identity, never appear in that API list. Profile names that are email addresses are not published; `DISPLAY_NAMES` in that script supplies the public name. Add a login there when someone new shows up with an email as their GitHub name.
 
 The "What Cryo does" animation lives in `site/_src/includes/maintenance-flow.html`, its styles in the `.mf-*` block of `site.css`, and its controller in `site.js`. The markup is the finished state (step 5), and `.is-animated[data-step]` rules hide whatever hasn't happened yet, so the section stays readable without JavaScript or with reduced motion. Playback starts the first time the section scrolls into view; clicking a step pauses on it. In the markdown export, each step button keeps its text (`data-go`), and other buttons are dropped.
 
@@ -46,6 +57,8 @@ $ make up
 <linkcards><linkcard href="@/health/" title="Health">Why.</linkcard></linkcards>
 <screenshot name="runs" url="cryo.local/runs" alt="What the image shows, with its numbers." caption="One sentence." />
 ```
+
+The "life of one table" section lives in `site/_src/includes/table-journey.html`, its styles in the `.tj-*` block of `site.css`, and its controller in `site.js`. Each chapter carries its numbers in prose, so without JavaScript the chapters read as one column and the pinned stage stays hidden. With JavaScript, the chapter crossing the middle of the viewport sets the stage: Cryo's narration line, the core sample (the brand's ice core from `docs/brand/CRYO_BRAND_GUIDE.md` section 7.2, with loose grains for small files, solid blocks for compacted files, layer lines for snapshots, a manifest drawer, a statistics tag and one survey-orange marker), the bill, its stacked bar and the meters. The day 1 to 30 chapter is scrubbed by scroll position rather than switched. Mood (0 = day-1 bill, 1 = day-30 bill) drives the face, the mascot's mouth, the card glow and the colour of the total. Each meter is coloured against a healthy reference (`tjHealthy`). The before-and-after scorecards (`.tj-ba`) and rail colours (`tj-m-*`) are static classes in the include, so keep them in step with the numbers. The stage numbers are computed from the per-stage byte and file counts in `site.js` and the prices at the top of that block. Change the prose, the receipt table and those counts together. Each "cost that isn't on the bill" note links its source (AWS S3 performance guide, Trino cost-based optimizer, Iceberg maintenance). The markdown export drops every `<aside class="tj-…">` (the stage, the legend key and the calculator).
 
 The homepage closer is a native `<video>` in `site/_src/pages/index.html`, not a component. It plays
 `assets/video/homepage-intro-video.mp4`, a byte copy of `videos/cryo-showreel-30s/renders/16x9.mp4` (1080p, 60 fps,
@@ -77,7 +90,14 @@ cd web && npx playwright test -c e2e/docs-capture/playwright.config.ts
 The capture config starts Vite on :5173 and uses the installed Chrome at 2× pixel density. Demo
 scores must stay reachable under the grading rule (100 minus 8 per warning and 20 per critical),
 because the Health page explains them. Add a screen by adding an entry to `SHOTS` in `capture.ts`;
-the run logs any API call the demo data does not answer.
+the run logs any API call the demo data does not answer. An unanswered GET falls back to `[]`, which
+crashes any panel that expects an object, so answer it in the demo data rather than ignoring the log.
+The Table detail page's per-tab responses live in `demo-table-detail.ts`, typed against
+`web/src/api/openapi.d.ts`; check it with `npx tsc --noEmit --strict --skipLibCheck --module esnext
+--moduleResolution bundler --target es2022 --resolveJsonModule --types node
+e2e/docs-capture/capture.ts`, since `web/e2e` is outside the app's typecheck. A shot with `selector`
+captures the union of the matching elements with 16 px of page around them (`maxHeight` crops it),
+which is how each table tab is shot without the app chrome; `clip` crops a viewport shot instead.
 
 ## README images
 

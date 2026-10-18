@@ -28,6 +28,8 @@ class EngineLoadRow(BaseModel):
 
 class EngineLoadResponse(BaseModel):
     engines: list[EngineLoadRow]
+    # Consumers attached to the admitted stream; None when Redis is unreachable, never 0.
+    workers_online: int | None = None
 
 
 def engine_load_rows(
@@ -81,4 +83,15 @@ def load_engine_admission(session: Session) -> EngineLoadResponse:
     dependencies=[Depends(require_viewer)],
 )
 def get_engine_load(session: SessionDep) -> EngineLoadResponse:
-    return load_engine_admission(session)
+    response = load_engine_admission(session)
+    response.workers_online = workers_online()
+    return response
+
+
+def workers_online() -> int | None:
+    try:
+        from cryo.infra.wiring import build_runtime_wiring
+
+        return build_runtime_wiring().queue.active_worker_count()
+    except Exception:  # noqa: BLE001 - presence is best-effort; the page shows "Unavailable"
+        return None
