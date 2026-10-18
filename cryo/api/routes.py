@@ -6,11 +6,13 @@ import io
 import json
 import logging
 import uuid
-from collections.abc import Callable, Sequence
+from collections import Counter
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
+import boto3
 from fastapi import (
     APIRouter,
     Depends,
@@ -60,6 +62,7 @@ from cryo.api.schemas import (
     DestinationRead,
     DestinationTestRequest,
     DestinationTestResponse,
+    DiscoveredBucket,
     EffectiveParamsResponse,
     EffectivePresetResponse,
     JobRead,
@@ -67,6 +70,7 @@ from cryo.api.schemas import (
     MaintenancePreviewResponse,
     MaintenanceRunRequest,
     MaintenanceRunResponse,
+    OffPeakWindowResponse,
     OrphanScanCostRead,
     PaginatedTables,
     PresetCreate,
@@ -92,6 +96,8 @@ from cryo.api.schemas import (
     SourceNamespaceTablesResponse,
     SourcePatch,
     SourceRead,
+    SourceStorageDiscoveryRequest,
+    SourceStorageDiscoveryResponse,
     SourceTestRequest,
     SourceTestResponse,
     TableAlertSubscriptionCreate,
@@ -108,11 +114,13 @@ from cryo.api.schemas import (
     TablePreviewRead,
     TableRead,
     TableRunsResponse,
+    TablesFunnelResponse,
     TableStatsHistoryResponse,
     validate_destination_config,
 )
 from cryo.api.security import Principal, Role, principal_from_token
 from cryo.api.serializers import table_to_read
+from cryo.api.table_maintenance import maintenance_summaries, score_delta_expr, tables_funnel
 from cryo.api.table_view_filters import build_table_view_filter
 from cryo.api.validators import validate_cron_field
 from cryo.config import Settings, get_settings
@@ -171,6 +179,17 @@ from cryo.sources.factory import (
     catalog_from_config,
     source_catalog_for,
 )
+from cryo.sources.hms_thrift import (
+    derive_hive_warehouse_root,
+    list_hive_databases_from_uri,
+    list_hive_table_locations_for_databases,
+)
+from cryo.sources.locations import (
+    CatalogTableLocation,
+    bucket_from_location,
+    probe_bucket_access,
+    s3_client_kwargs_for_source_config,
+)
 
 router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger(__name__)
@@ -191,7 +210,11 @@ SORT_FIELDS = {
     "projected_monthly_s3_cost_usd": TableStats.projected_monthly_s3_cost_usd,
     "reclaimable_bytes": TableStats.reclaimable_bytes,
     "estimated_monthly_s3_cost_usd": TableStats.estimated_monthly_s3_cost_usd,
+    "query_count_30d": TableStats.query_count_30d,
+    "scan_at": TableStats.scan_at,
 }
+
+COMPUTED_SORT_FIELDS = {"score_delta_7d": score_delta_expr}
 
 
 @router.get(
@@ -204,9 +227,38 @@ def get_datalake_dashboard(
     session: SessionDep,
     top_limit: Annotated[int, Query(ge=1, le=50)] = 10,
     drift_limit: Annotated[int, Query(ge=1, le=365)] = 30,
+    hot_limit: Annotated[int, Query(ge=1, le=20)] = 5,
 ) -> dict[str, object]:
     return datalake.dashboard_datalake(
-        session, top_limit=top_limit, drift_limit=drift_limit, settings=Settings()
+        session,
+        top_limit=top_limit,
+        drift_limit=drift_limit,
+        hot_limit=hot_limit,
+        settings=Settings(),
+    )
+
+
+@router.get(
+    "/governor/offpeak-window",
+    response_model=OffPeakWindowResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["governor"],
+)
+def get_governor_offpeak_window() -> OffPeakWindowResponse:
+    """Report the off-peak window the admission path gates heavy modes on.
+
+    Read-only on purpose. The window is a Governor process setting, so the
+    table Config tab shows it as inherited context rather than an editable
+    per-table field.
+    """
+    settings = get_settings()
+    start = settings.offpeak_start_ist
+    end = settings.offpeak_end_ist
+    return OffPeakWindowResponse(
+        start_hour_ist=start,
+        end_hour_ist=end,
+        # Mirrors is_offpeak()'s own short-circuit: equal bounds mean no gate.
+        enabled=start != end,
     )
 
 
@@ -357,6 +409,13 @@ def create_source(payload: SourceCreate, session: SessionDep) -> Source:
 
 _CONNECTION_TEST_TIMEOUT_SECONDS = CONNECTION_TEST_TIMEOUT_SECONDS
 _NAMESPACE_LIST_TIMEOUT_SECONDS = NAMESPACE_LIST_TIMEOUT_SECONDS
+# One location read per namespace, so this scales with catalog size unlike the single
+# round trip the connection test makes. Measured against a real 251-database HMS: 1.5s for
+# the whole walk, because a database's location is one local row lookup on the metastore's
+# own Postgres -- nothing like the per-table enumeration test_source was trimmed of. 60s is
+# therefore a wide margin for a much larger or slower catalog, not an expected wait; a walk
+# that does hit it returns what it found rather than failing (see discover_source_storage).
+_STORAGE_DISCOVERY_TIMEOUT_SECONDS = 60
 
 
 @router.post(
@@ -388,14 +447,154 @@ def test_source(payload: SourceTestRequest, session: SessionDep) -> SourceTestRe
     except Exception as exc:
         return SourceTestResponse(ok=False, error=str(exc))
 
+    # Offer a warehouse root when the config has none. The test above passes without one
+    # (list_namespaces doesn't need a warehouse), but the scanner can't resolve a single
+    # table without it -- so onboarding would "succeed" and then fail every table.
+    suggested_warehouse: str | None = None
+    if payload.type == "hive" and not str(config.get("warehouse") or "").strip():
+        uri = str(config.get("uri") or "")
+        if uri:
+            try:
+                suggested_warehouse = _run_with_timeout(
+                    lambda: derive_hive_warehouse_root(uri),
+                    seconds=_NAMESPACE_LIST_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                logger.warning("warehouse derivation failed", exc_info=True)
+
     return SourceTestResponse(
         ok=True,
         namespaces=namespaces,
+        suggested_warehouse=suggested_warehouse,
         note=(
             "Connection verified. Table/schema discovery runs as a background scan after "
             "saving -- it isn't part of this quick check."
         ),
     )
+
+
+@router.post(
+    "/sources/discover-storage",
+    response_model=SourceStorageDiscoveryResponse,
+    dependencies=[Depends(require_operator)],
+)
+def discover_source_storage(
+    payload: SourceStorageDiscoveryRequest, session: SessionDep
+) -> SourceStorageDiscoveryResponse:
+    """Find which object-store buckets a catalog's tables actually live in, one slice
+    of databases per call.
+
+    Reads locations at the TABLE level, not the database level. A database's
+    ``DB_LOCATION_URI`` is only its default: measured against a real 251-database
+    metastore, 248 of them inherit the same warehouse default while their tables are
+    spread across 12 buckets, so a database-level answer reports 3 buckets and silently
+    hides where most of the data lives.
+
+    That accuracy costs round trips -- 14k tables took ~84s on that catalog -- which is
+    why this is paged rather than one request. The caller walks ``databases`` in slices
+    (``offset``/``limit``) and accumulates buckets as they arrive, so the common ones show
+    up within seconds instead of after the whole sweep. It is also why this is a separate
+    endpoint from ``test_source``, which must stay a single fast round trip.
+    """
+    config = payload.config
+    if payload.source_id is not None:
+        existing = get_scoped_resource(session, Source, payload.source_id, resource_type="Source")
+        config = unredact_merge(config, dict(existing.config or {}))
+
+    if payload.type != "hive":
+        # Only HMS exposes table locations cheaply over Thrift. Other catalogs would need a
+        # load_table() per table (minutes, and it fails on exactly the broken tables worth
+        # finding), so report "unsupported" rather than hanging the storage step.
+        return SourceStorageDiscoveryResponse(
+            ok=False, error="Bucket discovery is only available for Hive Metastore catalogs."
+        )
+
+    uri = str(config.get("uri") or "")
+    if not uri:
+        return SourceStorageDiscoveryResponse(ok=False, error="Catalog URI is required.")
+
+    try:
+        databases = _run_with_timeout(
+            lambda: list_hive_databases_from_uri(uri),
+            seconds=_NAMESPACE_LIST_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        return SourceStorageDiscoveryResponse(ok=False, error=str(exc))
+
+    total = len(databases)
+    offset = max(payload.offset, 0)
+    slice_names = databases[offset : offset + max(payload.limit, 1)]
+
+    rows_with_location: list[CatalogTableLocation] = []
+    if slice_names:
+        try:
+            rows = _run_with_timeout(
+                lambda: list_hive_table_locations_for_databases(uri, slice_names),
+                seconds=_STORAGE_DISCOVERY_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            # This slice failed, but earlier slices already gave the caller buckets. Report
+            # the failure with the cursor advanced so the walk can continue past it rather
+            # than retrying the same bad slice forever.
+            return SourceStorageDiscoveryResponse(
+                ok=True,
+                scanned=offset + len(slice_names),
+                total=total,
+                error=f"Skipped {len(slice_names)} schema(s): {exc}"[:500],
+            )
+        rows_with_location = [row for row in rows if row.location]
+
+    # Per-bucket weight, so the client can rank rather than show every bucket as an equal
+    # chip -- real catalogs are lopsided (one measured fleet put 99.5% of tables in four of
+    # twelve buckets, the rest being dev leakage and one-table audit siblings).
+    table_counts: Counter[str] = Counter()
+    schema_names: dict[str, set[str]] = {}
+    for row in rows_with_location:
+        bucket = bucket_from_location(row.location)
+        if not bucket:
+            continue
+        table_counts[bucket] += 1
+        schema_names.setdefault(bucket, set()).add(row.schema_name)
+
+    access = _probe_bucket_access_for_config(config, sorted(table_counts))
+
+    buckets = [
+        DiscoveredBucket(
+            name=name,
+            tables=count,
+            schemas=len(schema_names.get(name, ())),
+            access=access.get(name, ("unknown", None))[0],
+            access_detail=access.get(name, ("unknown", None))[1],
+        )
+        for name, count in table_counts.most_common()
+    ]
+    return SourceStorageDiscoveryResponse(
+        ok=True,
+        buckets=buckets,
+        scanned=offset + len(slice_names),
+        total=total,
+    )
+
+
+def _probe_bucket_access_for_config(
+    config: Mapping[str, Any], buckets: list[str]
+) -> dict[str, tuple[str, str | None]]:
+    """Read-probe each bucket with the credentials being onboarded, never the ambient ones.
+
+    Uses the config under test rather than the pod's default chain, because the whole point
+    is to answer "will the settings on this screen work?" -- a probe that quietly succeeded
+    via some other credential would be worse than no probe at all. Failures here degrade to
+    "unknown" rather than failing discovery: an unprobeable bucket is still worth listing.
+    """
+    if not buckets:
+        return {}
+    try:
+        return probe_bucket_access(
+            boto3.client("s3", **s3_client_kwargs_for_source_config(dict(config))), buckets
+        )
+    except Exception:
+        logger.warning("bucket access probe failed", exc_info=True)
+        return {}
 
 
 @router.patch(
@@ -972,8 +1171,14 @@ def list_tables(
         ).encode()
 
     view_fields = view.response_fields(view_metrics)
+    maintenance = maintenance_summaries(session, items)
     return PaginatedTables(
-        items=[table_to_read(item, include_raw=False) for item in items],
+        items=[
+            table_to_read(item, include_raw=False).model_copy(
+                update={"maintenance": maintenance.get(item.id)}
+            )
+            for item in items
+        ],
         total=total,
         limit=limit,
         offset=actual_offset,
@@ -1118,6 +1323,16 @@ _GROUP_BY_FIELDS = {
     "needs_compaction": TableStats.needs_compaction,
     "size_bucket": _SIZE_BUCKET_EXPR,
 }
+
+
+@router.get(
+    "/tables/maintenance-funnel",
+    response_model=TablesFunnelResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["tables"],
+)
+def get_tables_maintenance_funnel(session: SessionDep) -> TablesFunnelResponse:
+    return tables_funnel(session, tenant_id=require_tenant(session))
 
 
 @router.get(
@@ -1434,10 +1649,8 @@ def get_effective_params(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
         raise HTTPException(status_code=404, detail="Table not found")
     effective = presets.resolve_effective_preset(session, table)
     assignment = session.get(TableAssignment, table_id)
-    overrides = (
-        dict(assignment.param_overrides) if assignment and assignment.param_overrides else {}
-    )
-    preset_params = dict(effective.preset.params) if effective else {}
+    overrides = _json_object(assignment.param_overrides if assignment else None)
+    preset_params = _json_object(effective.preset.params if effective else None)
     return EffectiveParamsResponse(
         table_id=table_id,
         preset_id=uuid.UUID(effective.preset.id) if effective else None,
@@ -1446,6 +1659,11 @@ def get_effective_params(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
         param_overrides=overrides,
         effective_params={**preset_params, **overrides},
     )
+
+
+def _json_object(value: object) -> dict[str, Any]:
+    """JSONB columns can hold any JSON value; a non-object must not 500 the settings panel."""
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 @router.patch(
@@ -1934,6 +2152,7 @@ def list_runs(
     kind: str | None = Query(default=None),
     source_id: uuid.UUID | None = Query(default=None),  # noqa: B008 - uuid.UUID isn't in ruff's immutable-type allowlist; default is always None
     preset_id: uuid.UUID | None = Query(default=None),  # noqa: B008
+    pipeline: str | None = Query(default=None, max_length=32),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[RunRead]:
@@ -1945,6 +2164,8 @@ def list_runs(
     )
     if kind:
         stmt = stmt.where(MaintenanceRun.kind == kind)
+    if pipeline:
+        stmt = stmt.where(MaintenanceRun.summary["pipeline"].astext == pipeline)
     if preset_id is not None:
         stmt = stmt.where(MaintenanceRun.preset_id == preset_id)
     if source_id is not None:
@@ -2407,7 +2628,8 @@ def _sort_clauses(sort: str | None) -> tuple[Any, ...]:
             continue
         descending = field.startswith("-")
         field_name = field[1:] if descending else field
-        column = SORT_FIELDS.get(field_name)
+        computed = COMPUTED_SORT_FIELDS.get(field_name)
+        column = computed() if computed is not None else SORT_FIELDS.get(field_name)
         if column is None:
             raise HTTPException(status_code=400, detail=f"Unsupported sort field: {field_name}")
         if descending:

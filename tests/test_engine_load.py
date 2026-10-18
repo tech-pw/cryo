@@ -1,6 +1,28 @@
+from types import SimpleNamespace
 from uuid import uuid4
 
-from cryo.api.routes_engine_load import engine_load_rows
+import pytest
+
+from cryo.api import routes_engine_load
+from cryo.api.routes_engine_load import engine_load_rows, workers_online
+
+
+def test_workers_online_reads_consumer_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    queue = SimpleNamespace(active_worker_count=lambda: 3)
+    monkeypatch.setattr(
+        "cryo.infra.wiring.build_runtime_wiring", lambda: SimpleNamespace(queue=queue)
+    )
+    assert workers_online() == 3
+
+
+def test_workers_online_is_unknown_not_zero_when_redis_is_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken() -> None:
+        raise ConnectionError("redis unreachable")
+
+    monkeypatch.setattr("cryo.infra.wiring.build_runtime_wiring", broken)
+    assert routes_engine_load.workers_online() is None
 
 
 def test_engine_load_marks_throttled_when_slots_are_full() -> None:

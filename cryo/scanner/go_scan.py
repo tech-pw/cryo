@@ -31,7 +31,7 @@ from cryo.scanner.cost import (
     estimate_storage_cost,
 )
 from cryo.scanner.health import compute_health_score
-from cryo.scanner.signals import enrich_stats_signals
+from cryo.scanner.signals import enrich_stats_signals, manifest_stats
 
 logger = logging.getLogger(__name__)
 
@@ -375,10 +375,7 @@ def table_analysis_from_go_payload(
         "iceberg_properties": dict(payload.get("iceberg_properties") or {}),
         "gc_enabled": payload.get("gc_enabled"),
         "file_size_bins": _file_size_bins(payload),
-        "manifest_stats": {
-            "manifest_count": manifest_count,
-            "avg_files_per_manifest": round(total_files / max(manifest_count, 1), 2),
-        },
+        "manifest_stats": manifest_stats(manifest_count, manifest_total_bytes, total_files),
         "scan_engine": "go",
         "wair_file_sample": list(payload.get("wair_file_sample") or []),
         "wair_file_sample_complete": total_files == 0

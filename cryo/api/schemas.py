@@ -102,6 +102,12 @@ class SourceTestResponse(BaseModel):
     # Kept (always empty) rather than removed, so older frontend builds don't break on the
     # response shape.
     table_count: int = 0
+    # Warehouse root inferred from where the catalog's databases actually live, so the UI
+    # can fill the field instead of letting an operator invent a value. A connection test
+    # passes without a warehouse (listing namespaces doesn't need one) but every scan then
+    # fails with "source config missing warehouse", so a wrong-but-present value is the
+    # worst outcome -- see routes.test_source.
+    suggested_warehouse: str | None = None
     sample_tables: list[str] = Field(default_factory=list)
     error: str | None = None
     note: str | None = None
@@ -114,6 +120,66 @@ class SourceNamespacesResponse(BaseModel):
 
     ok: bool
     namespaces: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class SourceStorageDiscoveryRequest(BaseModel):
+    """One slice of a bucket-discovery walk over a not-yet-saved catalog config.
+
+    Paged because the walk reads table locations (see ``discover_source_storage`` for why
+    database-level is not accurate enough), which is minutes on a large metastore. The
+    client advances ``offset`` by the returned ``scanned`` until it reaches ``total``.
+    """
+
+    type: str
+    config: JsonDict = Field(default_factory=dict)
+    source_id: uuid.UUID | None = None
+    offset: int = 0
+    # Databases per request. Small enough that first buckets appear within a couple of
+    # seconds, large enough not to spend the whole walk on HTTP round trips.
+    limit: int = 25
+
+
+class DiscoveredBucket(BaseModel):
+    """One object-store bucket the catalog's tables live in, with how much is in it.
+
+    ``tables``/``schemas`` are what make the list usable: a real catalog's buckets are not
+    equal partners. Measured on a 251-schema metastore, four buckets held 99.5% of tables
+    while eight were long-tail noise (dev leakage, ``-audit`` siblings, a POC bucket with
+    one table). Counts let the UI rank them instead of presenting twelve identical chips.
+
+    ``access`` is the result of a read probe:
+      - ``readable``      -- a list call succeeded
+      - ``denied``        -- credentials reached S3 but aren't allowed to read it
+      - ``missing``       -- the bucket does not exist (stale catalog location)
+      - ``unknown``       -- not probed, or the probe itself failed for another reason
+    Surfacing this during onboarding turns a silent first-scan failure into an answer the
+    operator gets while they still have the credentials dialog in front of them.
+    """
+
+    name: str
+    tables: int = 0
+    schemas: int = 0
+    access: str = "unknown"
+    access_detail: str | None = None
+
+
+class SourceStorageDiscoveryResponse(BaseModel):
+    """Buckets the catalog's tables live in, for one slice of the database walk.
+
+    Deliberately NOT part of test_source: locations are read per table (a database's own
+    location is only a default most of its tables don't follow), which is far more round
+    trips than the single call test_source is held to.
+
+    ``scanned``/``total`` report how far the walk got, so a partial result -- a timeout, or
+    a slice the catalog refused -- can say so instead of presenting an incomplete bucket
+    list as if it were the whole picture.
+    """
+
+    ok: bool
+    buckets: list[DiscoveredBucket] = Field(default_factory=list)
+    scanned: int = 0
+    total: int = 0
     error: str | None = None
 
 
@@ -645,6 +711,78 @@ class TableRead(OrmModel):
     failure_category_actionable_from_cryo: bool = False
     owner_email: str | None = None
     stats: TableStatsRead | None = None
+    # Populated by GET /tables only (bounded to the page); detail views leave it null.
+    maintenance: TableMaintenanceRead | None = None
+
+
+TableMaintenanceState = Literal[
+    "running",
+    "queued",
+    "failed",
+    "held",
+    "excluded",
+    "scan_failing",
+    "not_scanned",
+    "skipped",
+    "needs_work",
+    "healthy",
+    "inactive",
+]
+
+
+class TableJobRef(BaseModel):
+    run_id: uuid.UUID
+    job_id: uuid.UUID
+    status: str
+    trigger: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class TableSelectionRef(BaseModel):
+    """The table's outcome in the latest nightly selection (skip_evaluations)."""
+
+    stage: str
+    reason: str | None = None
+    evaluated_at: datetime
+
+
+class TableMaintenanceRead(BaseModel):
+    state: TableMaintenanceState
+    reason: str | None = None
+    workflow_name: str | None = None
+    # False when the workflow came from a preset rule rather than an operator pin.
+    workflow_pinned: bool = False
+    active_run: TableJobRef | None = None
+    last_run: TableJobRef | None = None
+    last_selection: TableSelectionRef | None = None
+    score_delta_7d: int | None = None
+
+
+class FunnelNode(BaseModel):
+    id: str
+    label: str
+    count: int
+    # Explorer view that lists the tables currently in this state, when one exists.
+    view: str | None = None
+
+
+class FunnelLink(BaseModel):
+    source: str
+    target: str
+    value: int
+
+
+class TablesFunnelResponse(BaseModel):
+    """Where every active table landed in the latest nightly batch, from scan to outcome."""
+
+    run_id: uuid.UUID | None = None
+    run_status: str | None = None
+    run_started_at: datetime | None = None
+    run_finished_at: datetime | None = None
+    total_active: int
+    nodes: list[FunnelNode]
+    links: list[FunnelLink]
 
 
 class TablePatch(BaseModel):
@@ -747,6 +885,9 @@ class TablePartitionsResponse(BaseModel):
     offset: int
 
 
+_HISTORY_RAW_FIELDS = ("total_delete_files", "delete_file_pct", "manifest_count", "total_snapshots")
+
+
 class TableStatsHistoryRead(OrmModel):
     id: int
     table_id: uuid.UUID
@@ -756,6 +897,25 @@ class TableStatsHistoryRead(OrmModel):
     total_size_gb: float | None = None
     grade: str | None = None
     overall_score: int | None = None
+    total_delete_files: int | None = None
+    delete_file_pct: float | None = None
+    manifest_count: int | None = None
+    total_snapshots: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_raw(cls, data: Any) -> Any:
+        if isinstance(data, Mapping):
+            values = dict(data)
+            raw = values.get("raw")
+        else:
+            values = {name: getattr(data, name, None) for name in cls.model_fields}
+            raw = getattr(data, "raw", None)
+        if isinstance(raw, Mapping):
+            for name in _HISTORY_RAW_FIELDS:
+                if values.get(name) is None:
+                    values[name] = raw.get(name)
+        return values
 
 
 class TableStatsHistoryResponse(BaseModel):
@@ -888,6 +1048,7 @@ class DatalakeTotals(BaseModel):
     projected_savings_usd_month: float = 0
     reclaimable_bytes: int | None = None
     query_count_30d: int
+    running_jobs: int = 0
 
 
 class GradeDistributionItem(BaseModel):
@@ -915,6 +1076,17 @@ class DashboardTopOffender(BaseModel):
     query_count_30d: int = 0
 
 
+class DashboardImprovedTable(BaseModel):
+    table_id: uuid.UUID
+    schema_name: str
+    table_name: str
+    previous_grade: str | None = None
+    previous_score: int | None = None
+    grade: str | None = None
+    overall_score: int | None = None
+    improved_at: datetime
+
+
 class DashboardDriftPoint(BaseModel):
     scan_at: datetime
     total_size_gb: float
@@ -929,6 +1101,10 @@ class DatalakeDashboardResponse(BaseModel):
     freshness_distribution: list[FreshnessDistributionItem] = Field(default_factory=list)
     freshness_as_of: datetime | None = None
     top_offenders: list[DashboardTopOffender]
+    hot_at_risk: list[DashboardTopOffender] = Field(default_factory=list)
+    hot_at_risk_count: int = 0
+    recently_improved: list[DashboardImprovedTable] = Field(default_factory=list)
+    recently_improved_count: int = 0
     drift: list[DashboardDriftPoint]
     cost_by_schema: list[CostSchemaItem] = Field(default_factory=list)
 
@@ -1090,6 +1266,22 @@ class TablePreviewRead(BaseModel):
 
 class MaintenancePreviewResponse(BaseModel):
     items: list[TablePreviewRead]
+
+
+class OffPeakWindowResponse(BaseModel):
+    """The governor-wide off-peak window heavy maintenance is restricted to.
+
+    Deliberately read-only and not table-scoped: ``offpeak_start_ist`` /
+    ``offpeak_end_ist`` are process settings on the Governor, so a per-table
+    editor here would imply an override the admission path cannot honour
+    (see cryo/governor/admission.py:is_offpeak).
+    """
+
+    start_hour_ist: int
+    end_hour_ist: int
+    # Equal bounds disable the gate entirely -- surfaced explicitly so the UI
+    # can say "any hour" instead of rendering a misleading 00:00-00:00 window.
+    enabled: bool
 
 
 class MaintenanceRunRequest(BaseModel):
