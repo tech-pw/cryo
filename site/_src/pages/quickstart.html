@@ -52,7 +52,7 @@ $ make seed
 
 <tabs group="ui">
   <tab title="Home">
-    <screenshot name="health" url="localhost:5173/" alt="Cryo home screen. A donut chart shows 14 tracked tables by grade, with 4 tables at grade D or F, 1.7 TB of data and 38.4 GB reclaimed by last night's maintenance." caption="Home after the first scan. The donut counts tables per grade. Storage impact shows what last night's run reclaimed." />
+    <screenshot name="health" url="localhost:5173/" alt="Cryo home screen. A live strip shows 3 jobs running, 4 workers online and the 01:00 to 07:00 IST off-peak window. Last night's run succeeded on 7 of 9 tables, with 10 of the last 14 nights free of failures. Next steps list 1 failed table, 1 hold, 1 approval and 4 queried tables at grade D or F. A donut shows 14 tables, 4 at D or F, down 2 since yesterday. Storage impact shows 38.4 GB reclaimed and 325.1 GB reclaimable. Below, the most-queried D and F tables sit beside three tables whose grade rose after maintenance." caption="Home after a few nights of maintenance. Last night's run and your next steps come first. The lake's grades, the tables people query most and the tables Cryo just fixed sit below." />
   </tab>
   <tab title="Tables">
     <screenshot name="tables" url="localhost:5173/tables" alt="Catalogs and tables page. One catalog with 14 tables, 8 needing compaction. The table list shows grade, compaction status, small and total files, size and last scan per table, sorted by small-file count." caption="Tables lists every table the scanner has seen. This view is sorted by small-file count, and each row shows the grade next to the counts that produced it." />
