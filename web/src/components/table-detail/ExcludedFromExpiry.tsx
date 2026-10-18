@@ -41,13 +41,13 @@ export const ExcludedFromExpiry = ({ tableId }: { tableId: string }) => {
   const rows = excluded.data?.snapshots ?? [];
 
   return (
-    <section className="mb-4" aria-labelledby="excluded-from-expiry">
+    <section className="mb-3" aria-labelledby="excluded-from-expiry">
       <h3 id="excluded-from-expiry" className="text-sm font-semibold">
         Excluded from Cryo expiry
       </h3>
       <p className="mb-2 text-xs text-muted-foreground">
-        Spark expire keeps each id with a tag named cryo-protect-{"{id}"}. Trino expire cannot skip one id.
-        Removing a row does not drop a tag already created.
+        On Spark, Cryo keeps each one by tagging it <code>cryo-protect-{"{id}"}</code>. Trino's expiry can't skip a single
+        snapshot, so exclusions only hold on Spark. Removing a row doesn't drop a tag already created.
       </p>
       {excluded.isError ? (
         <p className="text-xs text-destructive">

@@ -239,7 +239,7 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
     ? `${sourceHref}${sourceHref.includes("?") ? "&" : "?"}schema=${encodeURIComponent(schemaName.trim())}`
     : sourceHref;
   const tableHref = `/tables/${encodeURIComponent(tableId)}`;
-  const workflowHref = `${tableHref}?tab=maintenance#maintenance-settings`;
+  const workflowHref = `${tableHref}?tab=config#maintenance-settings`;
   const sourceLabel = sourceName.trim() || catalogName?.trim() || UNKNOWN;
   const schemaLabel = schemaName.trim() || UNKNOWN;
   const locationText = location?.trim() || null;

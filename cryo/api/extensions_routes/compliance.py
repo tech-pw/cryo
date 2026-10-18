@@ -7,7 +7,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from cryo.api.deps import SessionDep, require_admin, require_operator, require_viewer
@@ -19,7 +19,8 @@ from cryo.api.snapshot_presence import (
     parse_snapshot_id,
 )
 from cryo.compliance.governance import track_pending_deletions
-from cryo.db.models import AuditLog, Source, Table, TableStats
+from cryo.db.models import AuditLog, ProtectedSnapshot, Source, Table, TableStats
+from cryo.db.repositories.deletion_tracking import DeletionTrackingRepository
 from cryo.db.repositories.protected_snapshots import ProtectedSnapshotRepository
 from cryo.sources.latency import get_catalog_latency_monitor
 
@@ -33,6 +34,8 @@ class ComplianceStatusResponse(BaseModel):
     pending_deletion: dict[str, Any] | None = None
     abac_policy_count: int = 0
     abac_enforcement_note: str | None = None
+    abac_enforced: bool = False
+    protected_snapshot_count: int = 0
 
 
 class ProtectSnapshotRequest(BaseModel):
@@ -226,36 +229,52 @@ def get_compliance_status(table_id: uuid.UUID, session: SessionDep) -> Complianc
     table = session.get(Table, table_id)
     if table is None:
         raise HTTPException(status_code=404, detail="Table not found")
-    stats = session.scalar(select(TableStats).where(TableStats.table_id == table_id))
-    stats_dict = table_stats_dict(table, stats)
-    pending = track_pending_deletions(
-        f"iceberg.{table.schema_name}.{table.table_name}",
-        stats_dict,
-    )
+    tracked = DeletionTrackingRepository(session).pending_for_table(table_id)
+    pending_deletion: dict[str, Any] | None = None
+    if tracked:
+        pending_deletion = {
+            "pending_rows": sum(row.pending_rows for row in tracked),
+            "blocked_until": max(row.blocked_until for row in tracked).isoformat(),
+            "reason": tracked[0].reason,
+        }
+    else:
+        stats = session.scalar(select(TableStats).where(TableStats.table_id == table_id))
+        pending = track_pending_deletions(
+            f"iceberg.{table.schema_name}.{table.table_name}",
+            table_stats_dict(table, stats),
+        )
+        if pending is not None:
+            # Stats only carry a count, not when the rows were deleted, so the date is unknown.
+            pending_deletion = {
+                "pending_rows": pending.pending_rows,
+                "blocked_until": None,
+                "reason": pending.reason,
+            }
     abac_count = len(
         session.scalars(select(ABACPolicy).where(ABACPolicy.table_id == table_id)).all()
     )
     abac_note = (
-        "ABAC maintenance enforcement active; scan-time row/column filters require catalog proxy."
+        "Recorded only. Cryo does not enforce these yet: engines read the catalog directly, "
+        "so row filters and column masks apply nowhere."
         if abac_count
         else None
+    )
+    protected = int(
+        session.scalar(
+            select(func.count())
+            .select_from(ProtectedSnapshot)
+            .where(ProtectedSnapshot.table_id == table_id)
+        )
+        or 0
     )
     return ComplianceStatusResponse(
         table_id=table_id,
         table_ref=f"iceberg.{table.schema_name}.{table.table_name}",
-        pending_deletion=(
-            {
-                "pending_rows": pending.pending_rows,
-                "blocked_until": pending.blocked_until.isoformat()
-                if pending.blocked_until
-                else None,
-                "reason": pending.reason,
-            }
-            if pending
-            else None
-        ),
+        pending_deletion=pending_deletion,
         abac_policy_count=abac_count,
         abac_enforcement_note=abac_note,
+        abac_enforced=False,
+        protected_snapshot_count=protected,
     )
 
 

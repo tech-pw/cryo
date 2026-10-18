@@ -13,6 +13,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../api/client")>();
   return {
     ...actual,
+    apiFetch: vi.fn().mockResolvedValue({ items: [], total: 0, read_evidence: "missing", partition_count: 0 }),
     getTableCost: vi.fn().mockResolvedValue({
       table_id: "table-1",
       precision: "heuristic",
@@ -46,7 +47,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
       current_monthly_cost_usd: 5,
       intelligent_tiering_monthly_cost_usd: 3,
       estimated_annual_savings_usd: 24,
-      recommendation: "Move to Intelligent-Tiering",
+      recommendation: "enable",
       reason: "Objects have not been read recently"
     }),
     getCompactionCandidates: vi.fn().mockResolvedValue({
@@ -86,8 +87,10 @@ describe("TableCostPanel", () => {
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
     expect(screen.queryByText("Delete-file bytes")).not.toBeInTheDocument();
     expect(screen.getByText("Request logs have not been recorded")).toBeInTheDocument();
-    expect(screen.getAllByText(/Modelled/).length).toBeGreaterThan(0);
-    expect(await screen.findByText("Move to Intelligent-Tiering")).toBeInTheDocument();
+    expect(screen.getByText("Maintenance can save / month")).toBeInTheDocument();
+    expect(await screen.findByText("Turn on Intelligent-Tiering")).toBeInTheDocument();
+    expect(screen.queryByText("enable")).not.toBeInTheDocument();
+    expect(screen.queryByText("GET/SELECT")).not.toBeInTheDocument();
     expect(screen.getByText("Objects have not been read recently")).toBeInTheDocument();
     expect(screen.queryByText("dt=do-not-rank/")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open compaction ranking" })).toHaveAttribute(

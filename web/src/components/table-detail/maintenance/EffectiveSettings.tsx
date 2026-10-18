@@ -12,7 +12,7 @@ import {
   unassignTables
 } from "../../../api/client";
 import { QueryErrorAlert } from "../../common";
-import { provenanceLabel } from "../helpers";
+import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
 import { Input } from "../../ui/input";
 import { Select } from "../../ui/select";
@@ -31,10 +31,20 @@ const formatParamValue = (value: unknown): string => {
 };
 
 const provenanceText = (value?: string | null): string => {
-  if (!value) return "not recorded";
-  if (value === "rule_after_stale_pin") return "rule after a stale pin";
-  const label = provenanceLabel(value);
-  return label === "unknown" ? "not recorded" : label;
+  switch (value) {
+    case "assignment":
+      return "Assigned to this table by an operator.";
+    case "rule":
+      return "Picked by a matching assignment rule.";
+    case "rule_after_stale_pin":
+      return "Picked by a rule because the pinned preset no longer applies.";
+    case "default":
+      return "The platform default. Nothing is assigned to this table directly.";
+    case "none":
+      return "No preset assigned.";
+    default:
+      return "How this preset was chosen wasn't recorded.";
+  }
 };
 
 const parseOverrideValue = (raw: string): unknown => {
@@ -121,12 +131,20 @@ export const EffectiveSettings = ({ tableId }: { tableId: string }) => {
     onError: (error) => toast.error((error as Error).message)
   });
 
-  const effective = params.data?.effective_params ?? {};
   const presetParams = params.data?.preset_params ?? {};
   const overrides = params.data?.param_overrides ?? {};
-  const entries = [...new Set([...Object.keys(effective), ...Object.keys(presetParams), ...Object.keys(overrides)])].map(
-    (key) => [key, key in effective ? effective[key] : key in overrides ? overrides[key] : presetParams[key]] as const
-  );
+  const entries = [...new Set([...Object.keys(presetParams), ...Object.keys(overrides)])]
+    .sort()
+    .map((key) => {
+      const overridden = key in overrides;
+      return {
+        key,
+        value: overridden ? overrides[key] : presetParams[key],
+        overridden,
+        presetValue: key in presetParams ? presetParams[key] : undefined
+      };
+    });
+  const overrideCount = entries.filter((entry) => entry.overridden).length;
   const currentId = preset.data?.preset_id ?? undefined;
   const options = (compatible.data ?? []).map((item) => {
     const destination = destinations.data?.find((row) => row.id === item.destination_id);
@@ -150,100 +168,138 @@ export const EffectiveSettings = ({ tableId }: { tableId: string }) => {
     patch.mutate({ ...overrides, [key]: parseOverrideValue(overrideValue) });
   };
 
+  const workflowName = preset.isLoading
+    ? "Loading workflow…"
+    : preset.isError
+      ? "Workflow unavailable"
+      : preset.data?.preset_name || "No workflow assigned";
+
   return (
-    <section id="maintenance-settings" className="td-maintenance-settings td-mt-card" aria-labelledby="maintenance-settings-heading">
-      <h3 id="maintenance-settings-heading" className="mb-2 text-sm font-semibold text-foreground">
-        Effective settings
-      </h3>
-      <p className="td-maintenance-intro">The workflow and parameters that govern this table's maintenance.</p>
+    <div id="maintenance-settings" className="td-maintenance-settings">
       <QueryErrorAlert error={preset.error} title="Couldn't load workflow" />
       <QueryErrorAlert error={params.error} title="Couldn't load effective parameters" />
-      <p className="text-sm text-foreground">
-        {preset.isLoading ? "Loading workflow…" : preset.isError ? "Workflow unavailable" : preset.data?.preset_name || "No workflow assigned"}
-      </p>
-      <p className="mt-1 text-xs text-muted-foreground">
-        Preset provenance {preset.data ? provenanceText(preset.data.provenance) : "not recorded"}
-      </p>
-      <div className="mt-3">
-        {pickerOpen ? (
-          <Select
-            aria-label="Assign preset"
-            allowClear
-            placeholder="Assign preset"
-            value={currentId}
-            disabled={!assignAccess.allowed || assign.isPending || unassign.isPending}
-            title={assignAccess.reason ?? undefined}
-            options={presetOptions}
-            onChange={(presetId) => {
-              if (!assignAccess.allowed) return;
-              if (presetId) assign.mutate(presetId);
-              else unassign.mutate();
-            }}
+      <div className="td-maintenance-workflow">
+        <div className="td-maintenance-workflow-text">
+          <p className="td-maintenance-kicker">Workflow</p>
+          <p className="td-maintenance-workflow-name">{workflowName}</p>
+          <p className="td-maintenance-workflow-why">{preset.data ? provenanceText(preset.data.provenance) : null}</p>
+        </div>
+        <dl className="td-maintenance-workflow-stats">
+          <div>
+            <dt>Parameters</dt>
+            <dd>{params.isSuccess ? entries.length : "—"}</dd>
+          </div>
+          <div>
+            <dt>Overridden here</dt>
+            <dd data-active={overrideCount > 0 || undefined}>{params.isSuccess ? overrideCount : "—"}</dd>
+          </div>
+        </dl>
+        <div className="td-maintenance-workflow-action">
+          {pickerOpen ? (
+            <Select
+              aria-label="Assign preset"
+              allowClear
+              placeholder="Assign preset"
+              value={currentId}
+              disabled={!assignAccess.allowed || assign.isPending || unassign.isPending}
+              title={assignAccess.reason ?? undefined}
+              options={presetOptions}
+              onChange={(presetId) => {
+                if (!assignAccess.allowed) return;
+                if (presetId) assign.mutate(presetId);
+                else unassign.mutate();
+              }}
+            />
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={!assignAccess.allowed}
+              title={assignAccess.reason ?? undefined}
+              onClick={() => {
+                if (!assignAccess.allowed) return;
+                setPickerOpen(true);
+              }}
+            >
+              {currentId ? "Change workflow" : "Choose a workflow"}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="td-maintenance-params">
+        <h3 className="td-maintenance-subhead">Effective parameters</h3>
+        {params.isLoading ? <p className="td-maintenance-intro">Loading parameters</p> : null}
+        {entries.length === 0 && params.isSuccess ? (
+          <p className="td-maintenance-intro">This workflow sets no parameters, so engine defaults apply.</p>
+        ) : null}
+        {entries.length > 0 ? (
+          <table className="td-maintenance-param-table">
+            <thead>
+              <tr>
+                <th scope="col">Parameter</th>
+                <th scope="col">Value</th>
+                <th scope="col">Comes from</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry) => (
+                <tr key={entry.key} data-overridden={entry.overridden || undefined}>
+                  <td>
+                    <code>{entry.key}</code>
+                  </td>
+                  <td>{formatParamValue(entry.value)}</td>
+                  <td>
+                    {entry.overridden ? (
+                      <>
+                        <Badge variant="warning">Override</Badge>
+                        {entry.presetValue !== undefined ? (
+                          <span className="td-maintenance-param-was">preset: {formatParamValue(entry.presetValue)}</span>
+                        ) : null}
+                      </>
+                    ) : (
+                      <Badge variant="secondary">Preset</Badge>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
+      </div>
+
+      <details className="td-maintenance-parameters">
+        <summary>
+          Override a parameter <span>Admin only</span>
+        </summary>
+        <p className="td-maintenance-intro">
+          An override pins one value for this table and survives preset reassignment. Review the resulting plan before
+          running maintenance.
+        </p>
+        <div className="td-maintenance-override">
+          <Input
+            aria-label="Override name"
+            placeholder="Param name"
+            value={overrideKey}
+            disabled={!canOverride || patch.isPending}
+            onChange={(event) => setOverrideKey(event.target.value)}
+            className="w-[200px]"
           />
-        ) : (
-          <Button
-            type="button"
-            size="sm"
-            disabled={!assignAccess.allowed}
-            title={assignAccess.reason ?? undefined}
-            onClick={() => {
-              if (!assignAccess.allowed) return;
-              setPickerOpen(true);
-            }}
-          >
-            Choose a workflow
+          <Input
+            aria-label="Override value"
+            placeholder="Value"
+            value={overrideValue}
+            disabled={!canOverride || patch.isPending}
+            onChange={(event) => setOverrideValue(event.target.value)}
+            className="w-[140px]"
+          />
+          <Button type="button" size="sm" disabled={!canOverride || patch.isPending} title={overrideReason ?? undefined} onClick={addOverride}>
+            Add override
           </Button>
-        )}
-      </div>
-      <details className="td-maintenance-parameters">
-      <summary>Parameters <span>{entries.length ? `· ${entries.length} recorded` : ""}</span></summary>
-      {params.isLoading ? <p className="text-sm text-muted-foreground">Loading parameters</p> : null}
-      {entries.length === 0 && params.isSuccess ? (
-        <p className="text-sm text-muted-foreground">No parameters recorded.</p>
-      ) : (
-        <ul className="space-y-2">
-          {entries.map(([key, value]) => (
-            <li key={key} className="td-maintenance-parameter">
-              <span className="text-sm font-medium text-foreground">{key}</span>
-              <span className="text-sm text-foreground">{formatParamValue(value)}</span>
-              <span className="text-sm text-muted-foreground">Source not recorded</span>
-            </li>
-          ))}
-        </ul>
-      )}
+        </div>
+        {!canOverride ? <p className="mt-2 text-xs text-muted-foreground">{overrideReason}</p> : null}
       </details>
-      <details className="td-maintenance-parameters">
-      <summary>Parameter overrides <span>Admin only</span></summary>
-      <p className="td-maintenance-intro">Overrides replace workflow parameters for this table. Review the resulting plan before execution.</p>
-      <div className="td-maintenance-override">
-        <Input
-          aria-label="Override name"
-          placeholder="Param name"
-          value={overrideKey}
-          disabled={!canOverride || patch.isPending}
-          onChange={(event) => setOverrideKey(event.target.value)}
-          className="w-[200px]"
-        />
-        <Input
-          aria-label="Override value"
-          placeholder="Value"
-          value={overrideValue}
-          disabled={!canOverride || patch.isPending}
-          onChange={(event) => setOverrideValue(event.target.value)}
-          className="w-[140px]"
-        />
-        <Button
-          type="button"
-          size="sm"
-          disabled={!canOverride || patch.isPending}
-          title={overrideReason ?? undefined}
-          onClick={addOverride}
-        >
-          Add override
-        </Button>
-      </div>
-      {!canOverride ? <p className="mt-2 text-xs text-muted-foreground">{overrideReason}</p> : null}
-      </details>
-    </section>
+    </div>
   );
 };

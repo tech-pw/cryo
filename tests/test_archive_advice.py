@@ -301,13 +301,10 @@ def test_plan_request_rejects_page_ids() -> None:
         ArchivePlanRequest.model_validate({"partition_ids": ["page-1"]})
 
 
-def test_archive_routes_do_not_write_s3() -> None:
+def test_archive_routes_only_move_data_through_the_job_runner() -> None:
     import cryo.api.routes_archive as routes
 
     source = inspect.getsource(routes)
-    assert "CopyObject" not in source
     assert "boto3" not in source
-    assert "session.commit" not in source
-    assert "session.add" not in source
-    assert "/tiering/apply" not in source
-    assert "/tiering/restore" not in source
+    assert "transition_objects" not in source
+    assert "archive_jobs.submit(" in source

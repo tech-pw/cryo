@@ -25,7 +25,7 @@ export const ConfigTab = () => {
 
   return (
     <div className="td-config">
-      <section className="td-config-section" aria-labelledby="config-maintenance-title">
+      <section id="config-maintenance" className="td-config-section" aria-labelledby="config-maintenance-title">
         <header className="td-config-head">
           <h2 id="config-maintenance-title">Maintenance settings</h2>
           <p>
@@ -47,7 +47,7 @@ export const ConfigTab = () => {
         <OffPeakWindow />
       </section>
 
-      <section className="td-config-section" aria-labelledby="config-properties-title">
+      <section id="config-properties" className="td-config-section" aria-labelledby="config-properties-title">
         <header className="td-config-head">
           <h2 id="config-properties-title">Table configuration</h2>
           <p>

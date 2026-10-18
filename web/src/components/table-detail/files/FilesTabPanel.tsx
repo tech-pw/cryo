@@ -1,17 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   getBloomFilterRecommendations,
   getColumnStats,
   getDataQualityProfile,
-  getPropertyRecommendations,
   getTable,
   getTableHistory,
   getTablePartitions,
-  getTablePiiClassification,
-  type PropertyRecommendationRead
+  getTablePiiClassification
 } from "../../../api/client";
 import type { ColumnSketchRead } from "../../../api/types";
 import { MissingPattern } from "../../charts/MissingPattern";
@@ -21,7 +19,6 @@ import { useAuth } from "../../../lib/auth";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
 import { Badge } from "../../ui/badge";
 import { Input } from "../../ui/input";
-import { PropertyRecommendations } from "../PropertyRecommendations";
 import { SectionNav } from "../SectionNav";
 import { DataTable } from "../../ui/data-table";
 import "./files.css";
@@ -36,8 +33,6 @@ import {
   mergeSchemaColumns,
   NOT_MEASURED,
   partitionSpecInWords,
-  propertySource,
-  propertyValue,
   rankPartitions,
   smallFileSeries,
   sortOrderLabel,
@@ -51,11 +46,12 @@ const SECTIONS = [
   { id: "files-schema", label: "Schema" },
   { id: "files-files", label: "Files" },
   { id: "files-layout", label: "Layout" },
-  { id: "files-partitions", label: "Partitions" },
-  { id: "files-properties", label: "Properties" }
+  { id: "files-partitions", label: "Partitions" }
 ];
 
-const textOrMissing = (value: string | null): string => value ?? NOT_MEASURED;
+const MissingValue = () => <span className="text-muted-foreground" title={NOT_MEASURED}>—</span>;
+const textOrMissing = (value: string | null) => value ?? <MissingValue />;
+const countOrMissing = (value: number | null | undefined) => (value == null ? <MissingValue /> : formatCount(value));
 
 const SchemaBadges = ({ row }: { row: SchemaColumnRow }) => (
   <span className="inline-flex flex-wrap gap-1">
@@ -125,12 +121,18 @@ const SchemaTable = ({
     { id: "type", header: "Type", cell: ({ row }) => row.original.type },
     { id: "badges", header: "Signals", cell: ({ row }) => <SchemaBadges row={row.original} /> },
     { id: "null", header: "Null rate", cell: ({ row }) => <NullRateCell rate={row.original.nullRate} /> },
-    { id: "lower", header: "Lower bound", cell: ({ row }) => textOrMissing(row.original.lowerBound) },
-    { id: "upper", header: "Upper bound", cell: ({ row }) => textOrMissing(row.original.upperBound) },
-    ...(hasSketches(rows) ? [
-      { id: "ndv", header: "Distinct values", cell: ({ row }: { row: { original: SchemaColumnRow } }) => formatCount(row.original.ndv) },
-      { id: "p50", header: "Median (p50)", cell: ({ row }: { row: { original: SchemaColumnRow } }) => formatCount(row.original.p50) },
-      { id: "p95", header: "p95", cell: ({ row }: { row: { original: SchemaColumnRow } }) => formatCount(row.original.p95) }
+    ...(rows.some((row) => row.lowerBound != null || row.upperBound != null) ? [
+      { id: "range", header: "Range", cell: ({ row }: { row: { original: SchemaColumnRow } }) =>
+        row.original.lowerBound == null && row.original.upperBound == null
+          ? <MissingValue />
+          : <span className="font-mono text-xs">{textOrMissing(row.original.lowerBound)} → {textOrMissing(row.original.upperBound)}</span> }
+    ] : []),
+    ...(rows.some((row) => row.ndv != null) ? [
+      { id: "ndv", header: "Distinct values", cell: ({ row }: { row: { original: SchemaColumnRow } }) => countOrMissing(row.original.ndv) }
+    ] : []),
+    ...(rows.some((row) => row.p50 != null || row.p95 != null) ? [
+      { id: "p50", header: "Median (p50)", cell: ({ row }: { row: { original: SchemaColumnRow } }) => countOrMissing(row.original.p50) },
+      { id: "p95", header: "p95", cell: ({ row }: { row: { original: SchemaColumnRow } }) => countOrMissing(row.original.p95) }
     ] : [])
   ], [highlight, rows]);
 
@@ -154,6 +156,16 @@ const SchemaTable = ({
       ) : null}
     </div>
   );
+};
+
+const seriesAnswer = (series: { scanAt: string; smallFiles: number | null }[]): string | undefined => {
+  const measured = series.filter((point) => point.smallFiles != null);
+  if (measured.length < 2) return undefined;
+  const first = measured[0];
+  const last = measured[measured.length - 1];
+  const since = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(Date.parse(first.scanAt));
+  if (last.smallFiles === first.smallFiles) return `${formatCount(last.smallFiles)} now, unchanged since ${since}`;
+  return `${formatCount(last.smallFiles)} now, ${(last.smallFiles ?? 0) > (first.smallFiles ?? 0) ? "up" : "down"} from ${formatCount(first.smallFiles)} on ${since}`;
 };
 
 const queryError = (error: unknown): string => (error instanceof Error ? error.message : "Request failed");
@@ -207,12 +219,6 @@ export const FilesTabPanel = () => {
     enabled,
     retry: false
   });
-  const properties = useQuery({
-    queryKey: tableKeys.properties(tableId, token),
-    queryFn: () => getPropertyRecommendations(api, tableId),
-    enabled,
-    retry: false
-  });
 
   const stats = (table.data?.stats ?? null) as ScanStats | null;
   const sketches = (columnStats.data?.columns ?? null) as Record<string, ColumnSketchRead> | null;
@@ -227,7 +233,7 @@ export const FilesTabPanel = () => {
       }),
     [bloom.data?.recommendations, dataQuality.data, pii.data?.matches, sketches, stats]
   );
-  const checks = layoutChecks(stats);
+  const granularity = layoutChecks(stats).find((check) => check.name === "Granularity" && check.observed !== NOT_MEASURED);
   const measures = fileMeasures(stats);
   const unpartitioned = isUnpartitionedTable(stats);
   const partitionPage = Array.isArray(partitions.data)
@@ -239,20 +245,23 @@ export const FilesTabPanel = () => {
   const ranked = useMemo(() => rankPartitions(partitionPage.items), [partitionPage.items]);
   const top = ranked.ranked.slice(0, 15);
   const series = useMemo(() => smallFileSeries(history.data), [history.data]);
-  const propertyItems = (properties.data?.items ?? []) as Array<
-    PropertyRecommendationRead & { source?: string | null }
-  >;
 
   return (
     <div className="td-tab-content td-files-workspace">
-      <header className="td-files-intro"><h2>Schema & file layout</h2><p>Understand the table’s structure, inspect file pressure, then review improvements.</p></header>
+      <header className="td-files-intro">
+        <h2>Schema & file layout</h2>
+        <p>
+          Columns, file pressure and how the table is partitioned. Table properties live on{" "}
+          <Link to={`/tables/${tableId}?tab=config#config-properties`}>Config</Link>.
+        </p>
+      </header>
       <SectionNav sections={SECTIONS} />
 
       <section id="files-schema" className="td-files-section" aria-labelledby="files-schema-title">
         <h2 id="files-schema-title" className="text-sm font-semibold">
           Columns
         </h2>
-        <p className="td-files-caption">Column types, bounds and signals from recorded metadata. Missing measurements are shown explicitly.</p>
+        <p className="td-files-caption">Types, value ranges and signals from the table's metadata. A dash means the scan didn't record it.</p>
         {table.isLoading ? <p className="text-sm text-muted-foreground">Loading</p> : null}
         {table.isError ? <p role="alert">{queryError(table.error)}</p> : null}
         {columnStats.isError || pii.isError || dataQuality.isError || bloom.isError ? (
@@ -289,6 +298,7 @@ export const FilesTabPanel = () => {
         ) : (
           <TimeSeries
             title="Small-file candidates over scans"
+            answer={seriesAnswer(series)}
             unit="candidates"
             points={series.map((point) => ({ at: point.scanAt, value: point.smallFiles }))}
           />
@@ -307,14 +317,15 @@ export const FilesTabPanel = () => {
             <dt className="text-xs text-muted-foreground">Sort order</dt>
             <dd>{sortOrderLabel(stats)}</dd>
           </div>
-          {checks.map((check) => (
-            <div key={check.name}>
-              <dt className="text-xs text-muted-foreground">{check.name}</dt>
-              <dd>
-                Observed: {check.observed}. {check.status}
+          {granularity ? (
+            <div className="sm:col-span-2">
+              <dt className="text-xs text-muted-foreground">Granularity</dt>
+              <dd className="flex flex-wrap items-center gap-2">
+                {granularity.observed}
+                {granularity.status !== "Unknown" ? <Badge variant="warning">{granularity.status}</Badge> : null}
               </dd>
             </div>
-          ))}
+          ) : null}
         </dl>
         <details className="td-files-disclosure"><summary>Workload-aware layout recommendations</summary>
           <h3 className="sr-only">Layout analysis (WAIR: workload-aware reclustering)</h3><WairRecluster />
@@ -361,38 +372,6 @@ export const FilesTabPanel = () => {
             </table></div></details>
           </>
         )}
-      </section>
-
-      <section id="files-properties" className="td-files-section" aria-labelledby="files-properties-title">
-        <h2 id="files-properties-title" className="text-sm font-semibold">
-          Properties
-        </h2>
-        {properties.isError ? <p role="alert">{queryError(properties.error)}</p> : null}
-        {propertyItems.length ? (<details className="td-files-disclosure"><summary>Property values and provenance</summary>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground">
-                  <th className="px-2 py-1 font-medium">Property</th>
-                  <th className="px-2 py-1 font-medium">Current</th>
-                  <th className="px-2 py-1 font-medium">Recommended</th>
-                  <th className="px-2 py-1 font-medium">Source</th>
-                </tr>
-              </thead>
-              <tbody>
-                {propertyItems.map((item) => (
-                  <tr key={item.property_key}>
-                    <td className="px-2 py-1 font-mono text-xs">{item.property_key}</td>
-                    <td className="px-2 py-1 font-mono text-xs">{propertyValue(item.current_value)}</td>
-                    <td className="px-2 py-1 font-mono text-xs">{propertyValue(item.recommended_value)}</td>
-                    <td className="px-2 py-1 text-xs">{propertySource(item)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div></details>
-        ) : null}
-        <PropertyRecommendations />
       </section>
 
     </div>

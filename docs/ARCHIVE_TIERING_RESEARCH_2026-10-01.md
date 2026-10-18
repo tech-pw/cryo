@@ -20,14 +20,14 @@ The research below is unchanged. This section records what the follow-up impleme
 | Storage-class checklist | Done. Readable: `STANDARD`, `INTELLIGENT_TIERING` with no `ArchiveStatus`, `STANDARD_IA`, `ONEZONE_IA`, `GLACIER_IR`. Red: `GLACIER`, `DEEP_ARCHIVE`, and Intelligent-Tiering with `ArchiveStatus`. No sample stays unknown. Sampling still depends on file paths being passed in. |
 | Partition-access query | Done. Aggregates in SQL and caps the read. Production emptiness and stale log ingest are unchanged. |
 | Policy form | Done. Options are Cool (`STANDARD_IA`), Archive-instant (`GLACIER_IR`), and Auto (`INTELLIGENT_TIERING`). `GLACIER` and `DEEP_ARCHIVE` are not offered. |
-| Advisory Archive section | Done. Usage tab, under partition access. Cost tab `#cost-tiering` is a summary that links there. |
+| Advisory Archive section | Done, then moved on 2026-10-18 to Cost & Savings (`#archive`) and made executable. See [`ARCHIVE_EXECUTION_2026-10-18.md`](./ARCHIVE_EXECUTION_2026-10-18.md). |
 | Dry-run plan | Done. `GET /api/v1/tables/{id}/tiering`, `GET .../tiering/partitions`, `POST .../tiering/plan`. No apply or restore route. |
 | Missing read evidence | Caps the suggestion at Auto (`No evidence — Auto only`). The log-delivery delay is not stored, so the route treats read evidence as missing. |
 | S3 log ingest repair | Not done. Bronze, silver, gold, and temp can still fail the date-partitioned listing. |
 | `partition_last_access` rollup | Not done. "No read in 90 days" still cannot be proven after the 35-day prune. |
 | Bytes by class on the source page | Not done. |
 | Feature flag, OpenAPI client types, operation-cart card | Not done. |
-| Execute, restore, IAM allow-list, realized savings | Not started (P2). |
+| Execute, restore, IAM allow-list, realized savings | Execute, restore and the IAM policy done 2026-10-18 ([`ARCHIVE_EXECUTION_2026-10-18.md`](./ARCHIVE_EXECUTION_2026-10-18.md)). Realized savings not done. |
 | Retrieval-cost guard | Not started (P3). |
 | Offline tiers | Still deferred (P4). |
 

@@ -51,6 +51,7 @@ export function demoTableDetail(id: string) {
         reduction_target_bytes: 128 * MIB,
         file_size_bins: { data: bins },
         commits_per_day: 42.8,
+        last_snapshot_committed_at: ago(5),
         snapshot_overhead_gb: 128.4,
         health_deductions: [
           { label: "Small-file fragmentation", deduction: 20, severity: "critical", reason: "87% of data files are under the 128 MiB write target." },
@@ -81,36 +82,46 @@ export function demoTableHistory(id: string) {
   };
 }
 
+const RUN_STEPS = ["optimize", "compute_statistics", "optimize_manifests", "expire_snapshots", "remove_orphan_files"];
+
 export function demoTableRuns(id: string): S["TableRunsResponse"] {
   if (id !== EVENTS.id) return { table_id: id, items: [], total: 0, limit: 20, offset: 0 };
+  // Step boundaries in minutes-ago; run 1 lines up with the audit receipts in demo-data.ts.
   const run = (
     n: number,
     trigger: string,
-    startedMin: number,
-    minutes: number,
+    bounds: number[],
     before: [number, number, number],
     after: [number, number, number]
-  ): S["TableRunRead"] => ({
-    job_id: visualUuid(0xa0 + n),
-    run_id: visualUuid(0xb0 + n),
-    status: "succeeded",
-    trigger,
-    mode: "standard",
-    started_at: ago(startedMin),
-    finished_at: ago(startedMin - minutes),
-    duration_seconds: minutes * 60,
-    error: null,
-    steps: ["optimize", "compute_statistics", "optimize_manifests", "expire_snapshots", "remove_orphan_files"].map((operation_type, step_index, all) => ({
-      step_index,
-      operation_type,
+  ): S["TableRunRead"] => {
+    const startedMin = bounds[0];
+    const finishedMin = bounds[bounds.length - 1];
+    return {
+      job_id: visualUuid(0xa0 + n),
+      run_id: visualUuid(0xb0 + n),
       status: "succeeded",
-      started_at: ago(startedMin - (minutes * step_index) / all.length),
-      finished_at: ago(startedMin - (minutes * (step_index + 1)) / all.length)
-    })),
-    before_stats: { scan_at: ago(startedMin + 5), grade: "F", overall_score: before[0], total_files: before[1], small_files_count: before[2], total_size_gb: 412.6 },
-    after_stats: { scan_at: ago(startedMin - minutes - 2), grade: "F", overall_score: after[0], total_files: after[1], small_files_count: after[2], total_size_gb: 412.6 }
-  });
-  const items = [run(1, "manual", 30, 16, [20, 76_337, 70_057], [28, 48_210, 41_930]), run(2, "schedule", 24 * 60 + 150, 41, [20, 74_120, 68_400], [20, 61_204, 55_880])];
+      trigger,
+      mode: "standard",
+      started_at: ago(startedMin),
+      finished_at: ago(finishedMin),
+      duration_seconds: (startedMin - finishedMin) * 60,
+      error: null,
+      steps: RUN_STEPS.map((operation_type, step_index) => ({
+        step_index,
+        operation_type,
+        status: "succeeded",
+        started_at: ago(bounds[step_index]),
+        finished_at: ago(bounds[step_index + 1])
+      })),
+      before_stats: { scan_at: ago(startedMin + 5), grade: "F", overall_score: before[0], total_files: before[1], small_files_count: before[2], total_size_gb: 412.6 },
+      after_stats: { scan_at: ago(finishedMin - 2), grade: "F", overall_score: after[0], total_files: after[1], small_files_count: after[2], total_size_gb: 412.6 }
+    };
+  };
+  const day1 = 24 * 60;
+  const items = [
+    run(1, "ui", [42, 24, 19, 18, 16, 14], [20, 76_337, 70_057], [28, 48_210, 41_930]),
+    run(2, "schedule", [day1 + 150, day1 + 121, day1 + 116, day1 + 114.5, day1 + 112, day1 + 109], [20, 74_120, 68_400], [20, 61_204, 55_880])
+  ];
   return { table_id: id, items, total: items.length, limit: 20, offset: 0 };
 }
 
@@ -339,43 +350,159 @@ const queryPerformance = (): S["QueryPerformanceResponse"] => ({
 
 const tiering = (id: string): S["ArchiveSummaryRead"] => ({
   table_id: id,
-  dry_run: true,
-  executes: false,
-  mode: "advisory",
+  dry_run: false,
+  executes: true,
+  mode: "manual",
   policy_name: "cold-after-180d",
   policy_scope: "schema",
   target_class: "GLACIER_IR",
   target_label: "Archive-instant",
   read_evidence: "trusted",
   read_evidence_copy: null,
-  bytes_by_tier: null,
+  bytes_by_tier: { GLACIER_IR: 4.2 },
   projected_savings_usd_month: 2.84,
   realized_savings_usd_month: null,
   partition_count: 412,
-  eligible_count: 230,
-  truncated: false
+  eligible_count: 234,
+  truncated: false,
+  archived_partitions: 4,
+  archived_gb: 4.2
 });
 
-const tieringPartitions = (): S["ArchivePartitionPage"] => ({
-  items: Array.from({ length: 5 }, (_, i) => ({
-    partition_key: `event_date_day=${day(400 - i)}`,
-    partition_value: day(400 - i),
-    size_gb: [1.1, 1.0, 1.2, 0.9, 1.0][i],
-    age_days: 400 - i,
+const tieringPartitions = (url: URL): S["ArchivePartitionPage"] => {
+  const row = (age: number, size: number, saving: number, movedDaysAgo: number | null): S["ArchivePartitionRead"] => ({
+    partition_key: `event_date_day=${day(age)}`,
+    partition_value: day(age),
+    size_gb: size,
+    age_days: age,
     suggestion: "archive_instant",
     suggestion_label: "Archive-instant",
-    storage_class: "STANDARD",
-    eligible: true,
+    storage_class: movedDaysAgo == null ? "STANDARD" : "GLACIER_IR",
+    current_class: movedDaysAgo == null ? null : "GLACIER_IR",
+    moved_at: movedDaysAgo == null ? null : ago(60 * 24 * movedDaysAgo),
+    eligible: movedDaysAgo == null,
     reason_codes: ["zero_reads"],
     evidence_copy: null,
-    net_saving_usd_month: [0.012, 0.011, 0.013, 0.01, 0.011][i],
+    net_saving_usd_month: saving,
     break_even_read_share: 0.18
-  })),
-  total: 230,
-  limit: 5,
-  offset: 0,
-  truncated: false
+  });
+  const sizes = [1.1, 1.0, 1.2, 0.9, 1.0, 1.3, 1.1, 0.8];
+  const savings = [0.012, 0.011, 0.013, 0.01, 0.011, 0.014, 0.012, 0.009];
+  const limit = Number(url.searchParams.get("limit") ?? 10);
+  const offset = Number(url.searchParams.get("offset") ?? 0);
+  if (url.searchParams.get("state") === "archived") {
+    const items = sizes.slice(0, 4).map((size, i) => row(405 + i, size, savings[i], 3));
+    return { items, total: items.length, limit, offset, truncated: false };
+  }
+  const items = Array.from({ length: limit }, (_, i) => row(400 - offset - i, sizes[i % 8], savings[i % 8], null));
+  return { items, total: 235, limit, offset, truncated: false };
+};
+
+const tieringJobs = (): S["ArchiveJobList"] => ({
+  items: [
+    {
+      id: visualUuid(0xc1),
+      action: "archive",
+      target_class: "GLACIER_IR",
+      target_label: "Archive-instant",
+      partitions: 4,
+      status: "succeeded",
+      stale: false,
+      objects_total: 412,
+      objects_moved: 412,
+      objects_skipped: 0,
+      objects_failed: 0,
+      gb_moved: 4.2,
+      errors: [],
+      actor: "priya@acme.io",
+      reason: "Quarter-old event days with no reads in 90 days",
+      created_at: ago(60 * 24 * 3 + 6),
+      started_at: ago(60 * 24 * 3 + 5),
+      finished_at: ago(60 * 24 * 3)
+    }
+  ]
 });
+
+// Same shape as cryo.tiering.executor.iam_policy("demo-lake").
+const ARCHIVE_POLICY = JSON.stringify({
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "CryoArchiveReadAndCopy",
+        "Effect": "Allow",
+        "Action": [
+          "s3:GetObject",
+          "s3:GetObjectTagging",
+          "s3:PutObjectTagging"
+        ],
+        "Resource": "arn:aws:s3:::demo-lake/*"
+      },
+      {
+        "Sid": "CryoArchiveInstantClassesOnly",
+        "Effect": "Allow",
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::demo-lake/*",
+        "Condition": {
+          "StringEquals": {
+            "s3:x-amz-storage-class": [
+              "GLACIER_IR",
+              "INTELLIGENT_TIERING",
+              "STANDARD",
+              "STANDARD_IA"
+            ]
+          }
+        }
+      },
+      {
+        "Sid": "CryoArchiveBucketChecks",
+        "Effect": "Allow",
+        "Action": [
+          "s3:GetBucketVersioning",
+          "s3:GetBucketObjectLockConfiguration",
+          "s3:GetReplicationConfiguration",
+          "s3:GetLifecycleConfiguration"
+        ],
+        "Resource": "arn:aws:s3:::demo-lake"
+      }
+    ]
+  }, null, 2);
+
+/** Preflight for the archive dialog: one permission is missing so the docs show the policy to add. */
+export function demoArchivePreflight(body: { action?: string; target_class?: string | null } | null): S["ArchivePreflightRead"] {
+  const target = body?.target_class ?? "GLACIER_IR";
+  const labels: Record<string, string> = { GLACIER_IR: "Archive-instant", STANDARD_IA: "Cool", INTELLIGENT_TIERING: "Auto" };
+  const monthly: Record<string, number> = { GLACIER_IR: -4.37, STANDARD_IA: -2.88, INTELLIGENT_TIERING: -0.31 };
+  return {
+    action: body?.action ?? "archive",
+    target_class: target,
+    target_label: labels[target] ?? target,
+    bucket: "demo-lake",
+    partitions_selected: 230,
+    object_estimate: 23_640,
+    gb_estimate: 236.1,
+    request_cost_usd: 0.47,
+    storage_change_usd_month: monthly[target] ?? -1,
+    retrieval_cost_usd: 0,
+    early_delete_usd: 0,
+    permissions: [
+      { action: "s3:GetObject", status: "ok", purpose: "Read each file's class" },
+      { action: "s3:PutObject", status: "missing", purpose: "Copy files to a new class" },
+      { action: "s3:GetBucketVersioning", status: "ok", purpose: "Check the bucket is safe to re-tier" },
+      { action: "s3:GetBucketObjectLockConfiguration", status: "ok", purpose: "Check the bucket is safe to re-tier" }
+    ],
+    guardrails: [
+      { name: "versioning", status: "pass", detail: "Not versioned." },
+      { name: "object_lock", status: "pass", detail: "Object Lock is off." },
+      { name: "replication", status: "pass", detail: "No replication." }
+    ],
+    missing_permissions: ["s3:PutObject"],
+    iam_policy: ARCHIVE_POLICY,
+    warnings: ["Archive-instant bills 90 days minimum. Restoring a partition sooner bills the remaining days."],
+    blockers: [],
+    requires_confirmation: false,
+    can_apply: false
+  };
+}
 
 const lineage = (id: string): S["LineageGraphRead"] => ({
   root_table_id: id,
@@ -412,7 +539,7 @@ const constraints = (id: string): S["QualityConstraintsResponse"] => {
     created_by: "priya@acme.io",
     created_at: ago(60 * 24 * 20),
     updated_at: ago(60 * 24 * 20),
-    latest: { status, evaluated_at: ago(25), reason }
+    latest: { status, scanned_at: ago(25), evaluated_at: ago(24), reason }
   });
   return {
     table_id: id,
@@ -508,9 +635,24 @@ export function demoTableTabResponse(path: string, url: URL): unknown {
   const id = path.match(/\/api\/v1\/(?:tables|advanced\/[a-z-]+)\/([0-9a-f-]{36})/)?.[1] ?? EVENTS.id;
   const tail = (suffix: string) => path.endsWith(suffix);
   if (tail("/maintenance-status")) return maintenanceStatus(id);
-  if (tail("/compliance")) return { table_id: id, table_ref: `lakehouse.${name}`, pending_deletion: null, abac_policy_count: 0 };
+  if (tail("/compliance")) {
+    return {
+      table_id: id,
+      table_ref: `lakehouse.${name}`,
+      pending_deletion: {
+        pending_rows: 18_420,
+        blocked_until: new Date(NOW + 2 * 86_400_000).toISOString(),
+        reason: "Position deletes still referenced by retained snapshots"
+      },
+      abac_policy_count: 0,
+      abac_enforcement_note: null,
+      abac_enforced: false,
+      protected_snapshot_count: 1
+    };
+  }
   if (tail("/property-recommendations")) return { table_id: id, generated_at: ago(25), items: [], gc_blocked: false };
-  if (tail("/tiering/partitions")) return tieringPartitions();
+  if (tail("/tiering/partitions")) return tieringPartitions(url);
+  if (tail("/tiering/jobs")) return tieringJobs();
   if (tail("/partitions")) return partitions(id);
   if (tail("/pii-classification")) return { table_id: id, matches: [] };
   if (path.includes("/advanced/data-quality/")) return dataQuality(id);

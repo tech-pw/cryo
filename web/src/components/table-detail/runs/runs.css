@@ -85,9 +85,11 @@
 }
 
 /* ---- Grid (Airflow-style) ---- */
+/* The selected outline and hover scale reach ~3px past a cell; an overflow-x container clips them without this padding. */
 .td-grid-scroll {
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding: 4px;
+  margin: -4px;
 }
 
 .td-grid {

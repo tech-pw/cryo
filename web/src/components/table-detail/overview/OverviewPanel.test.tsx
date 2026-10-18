@@ -17,7 +17,8 @@ const mocks = vi.hoisted(() => ({
   getTableCost: vi.fn(),
   listPresets: vi.fn(),
   getEffectiveParams: vi.fn(),
-  runTableOperations: vi.fn()
+  runTableOperations: vi.fn(),
+  getTableChecklist: vi.fn()
 }));
 
 vi.mock("../../../api/client", () => ({
@@ -31,7 +32,8 @@ vi.mock("../../../api/client", () => ({
   getTableCost: mocks.getTableCost,
   listPresets: mocks.listPresets,
   getEffectiveParams: mocks.getEffectiveParams,
-  runTableOperations: mocks.runTableOperations
+  runTableOperations: mocks.runTableOperations,
+  getTableChecklist: mocks.getTableChecklist
 }));
 
 vi.mock("../../../api/maintenanceStatus", () => ({
@@ -98,6 +100,15 @@ const renderPanel = (props?: { onScan?: () => void; onPreview?: () => void; onEd
 describe("OverviewPanel", () => {
   beforeEach(() => {
     mocks.getTable.mockReset().mockResolvedValue(unscanned());
+    mocks.getTableChecklist.mockReset().mockResolvedValue({
+      table_id: "table-1",
+      checked_at: "2026-09-28T09:10:00Z",
+      items: [
+        { key: "distribution_mode", label: "write.distribution-mode set", weight_pct: 5, tier: 2, status: "yellow", reason: "write.distribution-mode='none'", metric_value: null, threshold: null },
+        { key: "sort_order", label: "Sort order matches filter columns", weight_pct: 6, tier: 2, status: "green", reason: "Sort order configured", metric_value: null, threshold: null }
+      ],
+      summary: { counts: { green: 1, yellow: 1, red: 0, unknown: 0 }, weighted_score: 49 }
+    });
     mocks.getTableSignals.mockReset().mockResolvedValue({ table_id: "table-1", checked_at: "", signals: [], any_triggered: false });
     mocks.getTableAudit.mockReset().mockResolvedValue([]);
     mocks.getTableHealthTrends.mockReset().mockResolvedValue({ trend_points: [] });
@@ -211,7 +222,11 @@ describe("OverviewPanel", () => {
     expect(order[0]).toBe("Small-file fragmentation");
     expect(screen.getByText("critical")).toBeInTheDocument();
     expect(screen.getByText(/Write pattern/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Review" })).toHaveAttribute("href", "/tables/table-1?tab=files#files-properties");
+    expect(screen.queryByText("No target file size")).not.toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /Change in Config/ })).toHaveAttribute(
+      "href",
+      "/tables/table-1?tab=config#config-properties"
+    );
 
     const fix = document.querySelectorAll(".td-deductions li")[1].querySelector("button");
     expect(fix?.textContent).toBe("Expire snapshots");

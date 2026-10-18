@@ -135,9 +135,9 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 6px;
-  padding: 20px 16px;
+  padding: 24px 16px;
   border-right: 1px solid var(--color-border);
   background: color-mix(in srgb, var(--hero-accent) 6%, var(--color-surface-raised));
   text-align: center;
@@ -978,3 +978,16 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- Layout checks ---- */
+.td-checks-tally { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 12px; font-size: 13px; font-weight: 500; }
+.td-checks-tally span::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--color-muted-subtle); }
+.td-checks-tally [data-status="red"]::before { background: var(--color-status-danger); }
+.td-checks-tally [data-status="green"]::before { background: var(--color-status-success); }
+.td-checks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 8px; }
+.td-check { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; }
+.td-check[data-status="red"] { border-color: color-mix(in srgb, var(--color-status-danger) 35%, var(--color-border)); }
+.td-check-text b { font-size: 13px; font-weight: 600; }
+.td-check-text p { margin: 2px 0 0; font-size: 12px; color: var(--color-muted); overflow-wrap: anywhere; }
+.td-check .td-overview-link { white-space: nowrap; font-size: 12px; }
+.td-ov-checks .cryo-collapsible, .td-ov-checks details { margin-top: 10px; }

@@ -213,7 +213,7 @@ export const OPERATION_STATUS_LABEL: Record<OperationStatus, string> = {
   held: "Table on hold",
   excluded: "Excluded",
   not_scheduled: "Not scheduled",
-  unsupported: "Unsupported here"
+  unsupported: "Skipped on this engine"
 };
 
 export const OPERATION_STATUS_TONE: Record<OperationStatus, "ok" | "muted" | "warn" | "danger"> = {

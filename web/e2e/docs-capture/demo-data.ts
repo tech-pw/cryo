@@ -360,6 +360,7 @@ export function demoAuditBody() {
       status,
       detail,
       engine: "trino",
+      job_id: visualUuid(0xa1),
       duration_ms: duration,
       actual_bytes_freed: freed === null ? null : Math.round(freed),
       input_files_count: input,
@@ -424,21 +425,26 @@ export function demoTableCost(tableId: string) {
   const live = t.stats.total_size_bytes;
   const dead = Math.round(live * 0.31);
   const monthly = ((live + dead) / GB) * 0.023;
+  const orphan = Math.round(6.2 * GB);
+  const rate = (bytes: number) => (bytes / GB) * 0.023;
   return {
     table_id: t.id,
     precision: "estimated",
     price_per_gb_month: 0.023,
     current_monthly_cost_usd: monthly,
     projected_monthly_cost_usd: (live / GB) * 0.023,
-    projected_savings_usd_month: (dead / GB) * 0.023,
+    projected_savings_usd_month: rate(dead + orphan),
     query_request_savings_usd_month: 3.4,
     live_bytes: live,
     dead_bytes: dead,
     metadata_bytes: Math.round(1.8 * GB),
-    orphan_bytes: Math.round(6.2 * GB),
+    orphan_bytes: orphan,
     listed_bytes: null,
-    reclaimable_bytes: dead,
-    by_operation: [],
+    reclaimable_bytes: dead + orphan,
+    by_operation: [
+      { operation: "expire_snapshots", reclaimable_bytes: dead, savings_usd_month: rate(dead) },
+      { operation: "remove_orphan_files", reclaimable_bytes: orphan, savings_usd_month: rate(orphan) }
+    ],
     last_full_cost_scan_at: ago(60 * 26),
     scan_at: ago(25)
   };

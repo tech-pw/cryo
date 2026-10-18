@@ -1,4 +1,3 @@
-import type { PropertyRecommendationRead } from "../../../api/client";
 import type {
   ColumnSketchRead,
   DataQualityProfileRead,
@@ -197,11 +196,9 @@ const granularityObserved = (stats: ScanStats, unpartitioned: boolean): string =
     : stats.partition_col_type?.trim() || NOT_MEASURED;
   const partitions = measuredNumber(stats.total_partitions);
   const avg = measuredNumber(stats.avg_files_per_partition);
-  return [
-    `transform ${transform}`,
-    partitions == null ? `${NOT_MEASURED} partitions` : `${partitions.toLocaleString()} partitions`,
-    avg == null ? `${NOT_MEASURED} files/partition` : `${avg.toFixed(1)} files/partition`
-  ].join(", ");
+  if (partitions == null) return NOT_MEASURED;
+  const by = transform === NOT_MEASURED ? "" : ` by ${transform}`;
+  return `${partitions.toLocaleString()} partitions${by}${avg == null ? "" : ` · ${avg >= 10 ? Math.round(avg) : avg.toFixed(1)} files each`}`;
 };
 
 const granularityStatus = (stats: ScanStats, unpartitioned: boolean): NamedCheck["status"] => {
@@ -451,13 +448,3 @@ export const smallFileSeries = (items: Array<Record<string, unknown>> | undefine
     })
     .filter((item): item is SmallFileScan => item != null)
     .sort((a, b) => a.scanAt.localeCompare(b.scanAt));
-
-export const propertySource = (item: PropertyRecommendationRead & { source?: string | null }): string => {
-  if (typeof item.source === "string" && item.source.trim()) return item.source.trim();
-  return "Source not recorded";
-};
-
-export const propertyValue = (value: string | null | undefined): string => {
-  if (value == null || value === "") return NOT_MEASURED;
-  return value;
-};

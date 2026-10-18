@@ -52,6 +52,9 @@ const ToneIcon = ({ tone }: { tone: CellTone }) => {
 const shortDate = (iso: string | null) =>
   iso ? new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(Date.parse(iso)) : "—";
 
+const manualTriggerLabel = (trigger?: string | null): string =>
+  !trigger || trigger === "manual" ? "Manual" : `Manual · ${trigger.replace(/[-_]/g, " ")}`;
+
 export const TableRunGrid = ({ tableId }: { tableId: string }) => {
   const { api, token } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -254,7 +257,7 @@ const RunDetailPanel = ({ column }: { column: RunColumn }) => {
           </div>
           <div>
             <dt>Trigger</dt>
-            <dd>{column.manual ? `Manual · ${run.trigger ?? "api"}` : "Nightly schedule"}</dd>
+            <dd>{column.manual ? manualTriggerLabel(run.trigger) : "Nightly schedule"}</dd>
           </div>
           <div>
             <dt>Mode · engine</dt>

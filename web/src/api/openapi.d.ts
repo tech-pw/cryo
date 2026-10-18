@@ -4976,6 +4976,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tables/{table_id}/tiering/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Archive Preflight
+         * @description Cost, permissions and bucket guardrails for an archive or restore, without moving data.
+         *
+         *     Probes S3 with the source's credentials: a HEAD on a sample file, a self-copy that S3
+         *     rejects whether or not it is allowed (only the error code differs), and bucket reads.
+         */
+        post: operations["post_archive_preflight_api_v1_tables__table_id__tiering_preflight_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/tiering/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Archive Apply
+         * @description Start an archive or restore job. Audited; refuses while another job runs on the table.
+         */
+        post: operations["post_archive_apply_api_v1_tables__table_id__tiering_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/tiering/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Archive Jobs */
+        get: operations["get_archive_jobs_api_v1_tables__table_id__tiering_jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/{table_id}/quality-constraints": {
         parameters: {
             query?: never;
@@ -5858,6 +5918,80 @@ export interface components {
             /** Note */
             note?: string | null;
         };
+        /** ArchiveApplyRequest */
+        ArchiveApplyRequest: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "archive" | "restore";
+            /** Target Class */
+            target_class?: string | null;
+            /** Partition Keys */
+            partition_keys?: string[];
+            /**
+             * All Eligible
+             * @default false
+             */
+            all_eligible: boolean;
+            /** Reason */
+            reason: string;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
+        };
+        /** ArchiveJobList */
+        ArchiveJobList: {
+            /** Items */
+            items: components["schemas"]["ArchiveJobRead"][];
+        };
+        /** ArchiveJobRead */
+        ArchiveJobRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Action */
+            action: string;
+            /** Target Class */
+            target_class: string;
+            /** Target Label */
+            target_label: string;
+            /** Partitions */
+            partitions: number;
+            /** Status */
+            status: string;
+            /** Stale */
+            stale: boolean;
+            /** Objects Total */
+            objects_total: number;
+            /** Objects Moved */
+            objects_moved: number;
+            /** Objects Skipped */
+            objects_skipped: number;
+            /** Objects Failed */
+            objects_failed: number;
+            /** Gb Moved */
+            gb_moved: number;
+            /** Errors */
+            errors: string[];
+            /** Actor */
+            actor: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Started At */
+            started_at: string | null;
+            /** Finished At */
+            finished_at: string | null;
+        };
         /** ArchivePartitionPage */
         ArchivePartitionPage: {
             /** Items */
@@ -5897,6 +6031,10 @@ export interface components {
             net_saving_usd_month: number | null;
             /** Break Even Read Share */
             break_even_read_share: number | null;
+            /** Current Class */
+            current_class?: string | null;
+            /** Moved At */
+            moved_at?: string | null;
         };
         /** ArchivePlanRead */
         ArchivePlanRead: {
@@ -5950,6 +6088,64 @@ export interface components {
             /** Max Bytes */
             max_bytes?: number | null;
         };
+        /** ArchivePreflightRead */
+        ArchivePreflightRead: {
+            /** Action */
+            action: string;
+            /** Target Class */
+            target_class: string;
+            /** Target Label */
+            target_label: string;
+            /** Bucket */
+            bucket: string | null;
+            /** Partitions Selected */
+            partitions_selected: number;
+            /** Object Estimate */
+            object_estimate: number;
+            /** Gb Estimate */
+            gb_estimate: number;
+            /** Request Cost Usd */
+            request_cost_usd: number;
+            /** Storage Change Usd Month */
+            storage_change_usd_month: number;
+            /** Retrieval Cost Usd */
+            retrieval_cost_usd: number;
+            /** Early Delete Usd */
+            early_delete_usd: number;
+            /** Permissions */
+            permissions: components["schemas"]["PermissionRead"][];
+            /** Guardrails */
+            guardrails: components["schemas"]["BucketGuardrailRead"][];
+            /** Missing Permissions */
+            missing_permissions: string[];
+            /** Iam Policy */
+            iam_policy: string | null;
+            /** Warnings */
+            warnings: string[];
+            /** Blockers */
+            blockers: string[];
+            /** Requires Confirmation */
+            requires_confirmation: boolean;
+            /** Can Apply */
+            can_apply: boolean;
+        };
+        /** ArchiveSelection */
+        ArchiveSelection: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "archive" | "restore";
+            /** Target Class */
+            target_class?: string | null;
+            /** Partition Keys */
+            partition_keys?: string[];
+            /**
+             * All Eligible
+             * @default false
+             */
+            all_eligible: boolean;
+        };
         /** ArchiveSummaryRead */
         ArchiveSummaryRead: {
             /**
@@ -5995,6 +6191,16 @@ export interface components {
             eligible_count: number;
             /** Truncated */
             truncated: boolean;
+            /**
+             * Archived Partitions
+             * @default 0
+             */
+            archived_partitions: number;
+            /**
+             * Archived Gb
+             * @default 0
+             */
+            archived_gb: number;
         };
         /** AssignmentDeleteRequest */
         AssignmentDeleteRequest: {
@@ -6313,6 +6519,15 @@ export interface components {
             /** Message */
             message?: string | null;
         };
+        /** BucketGuardrailRead */
+        BucketGuardrailRead: {
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+            /** Detail */
+            detail: string;
+        };
         /** CapabilityEvidence */
         CapabilityEvidence: {
             /** Kind */
@@ -6551,6 +6766,16 @@ export interface components {
             abac_policy_count: number;
             /** Abac Enforcement Note */
             abac_enforcement_note?: string | null;
+            /**
+             * Abac Enforced
+             * @default false
+             */
+            abac_enforced: boolean;
+            /**
+             * Protected Snapshot Count
+             * @default 0
+             */
+            protected_snapshot_count: number;
         };
         /** ConfigApplyRequest */
         ConfigApplyRequest: {
@@ -9393,6 +9618,15 @@ export interface components {
             partition_field?: string | null;
             /** Unsupported Reason */
             unsupported_reason?: string | null;
+        };
+        /** PermissionRead */
+        PermissionRead: {
+            /** Action */
+            action: string;
+            /** Status */
+            status: string;
+            /** Purpose */
+            purpose: string;
         };
         /** PiiClassificationResponse */
         PiiClassificationResponse: {
@@ -22447,6 +22681,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                state?: "all" | "standard" | "archived";
             };
             header?: never;
             path: {
@@ -22498,6 +22733,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArchivePlanRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_archive_preflight_api_v1_tables__table_id__tiering_preflight_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArchiveSelection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArchivePreflightRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_archive_apply_api_v1_tables__table_id__tiering_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArchiveApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArchiveJobRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_archive_jobs_api_v1_tables__table_id__tiering_jobs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArchiveJobList"];
                 };
             };
             /** @description Validation Error */

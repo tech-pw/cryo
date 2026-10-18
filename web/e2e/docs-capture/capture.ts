@@ -29,7 +29,7 @@ import {
   demoTablesBody,
   demoVitalsBody
 } from "./demo-data";
-import { demoTableDetail, demoTableHistory, demoTableRuns, demoTableTabResponse } from "./demo-table-detail";
+import { demoArchivePreflight, demoTableDetail, demoTableHistory, demoTableRuns, demoTableTabResponse } from "./demo-table-detail";
 import demoTableConfig from "./demo-table-config.json" with { type: "json" };
 
 // Writes docs-site screenshots of the real UI against synthetic demo data.
@@ -78,6 +78,13 @@ const openTableSettings = async (page: Page): Promise<void> => {
   });
 };
 
+const openArchiveDialog = async (page: Page): Promise<void> => {
+  const card = page.locator("#archive");
+  await card.scrollIntoViewIfNeeded();
+  await card.getByRole("button", { name: /Archive all suggested/ }).click();
+  await page.getByRole("dialog").getByText("Permissions", { exact: false }).first().waitFor();
+};
+
 const TABLE = `/tables/${DEMO_TABLES[0].id}`;
 const ACTIVE_PANEL = "[role='tabpanel'][data-state='active']";
 const tabShot = (tab: string, waitFor?: string, part?: { name: string; selector: string }) => ({
@@ -124,8 +131,11 @@ const SHOTS: Array<{
   tabShot("maintenance", "Stored benefit-score candidates", { name: "compaction", selector: `${MAINTENANCE} > :nth-child(4)` }),
   tabShot("config", "Differs from recommendation", { name: "settings", selector: ".td-config > section:nth-child(-n+2)" }),
   tabShot("usage", "Partition access"),
-  tabShot("quality", "Optimization checklist"),
-  tabShot("cost", "Compaction economics"),
+  tabShot("overview", "Layout checks", { name: "checks", selector: "#overview-checks" }),
+  tabShot("quality", "Freshness vs target"),
+  tabShot("cost", "Ways to save"),
+  tabShot("cost", "Ways to save", { name: "archive", selector: "#archive" }),
+  { name: "table-archive-dialog", path: `${TABLE}?tab=cost`, waitFor: "Ways to save", height: 1000, act: openArchiveDialog },
   {
     ...tabShot("config", "Differs from recommendation", { name: "inventory", selector: ".td-config > section:nth-child(3)" }),
     name: "table-config",
@@ -180,6 +190,7 @@ async function installDemo(page: Page, unhandled: Set<string>): Promise<void> {
       if (p.endsWith("/api/v1/auth/token")) return json(route, { access_token: demoAccessToken(), token_type: "bearer", role: "operator" });
       if (p.endsWith("/api/v1/tables")) return json(route, demoTablesBody(url));
       if (/\/api\/v1\/tables\/[^/]+\/config\/preview$/.test(p)) return json(route, demoTableConfig.preview);
+      if (/\/api\/v1\/tables\/[^/]+\/tiering\/preflight$/.test(p)) return json(route, demoArchivePreflight(route.request().postDataJSON()));
       const sub = p.match(/\/api\/v1\/tables\/([^/]+)\/([a-z-]+)$/);
       if (sub) {
         const [, id, kind] = sub;

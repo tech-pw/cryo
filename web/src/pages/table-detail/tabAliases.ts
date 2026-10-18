@@ -28,10 +28,13 @@ export const TABLE_TAB_ALIASES: Record<string, TableDetailTab> = {
   cost: "cost"
 };
 
-/** `#hq-*` anchors from the old Health & Quality tab. */
+/** Anchors whose section moved: `#hq-*` from the old Health & Quality tab, and later moves. */
 export const TABLE_HASH_ALIASES: Record<string, { tab: TableDetailTab; hash: string }> = {
-  "hq-properties": { tab: "files", hash: "files-properties" },
-  "hq-checklist": { tab: "quality", hash: "quality-checklist" },
+  "hq-properties": { tab: "config", hash: "config-properties" },
+  "files-properties": { tab: "config", hash: "config-properties" },
+  "maintenance-settings": { tab: "config", hash: "maintenance-settings" },
+  "hq-checklist": { tab: "overview", hash: "overview-checks" },
+  "quality-checklist": { tab: "overview", hash: "overview-checks" },
   "hq-quality": { tab: "quality", hash: "quality-checks" },
   "hq-compaction": { tab: "maintenance", hash: "maintenance-compaction" },
   "hq-ai-signals": { tab: "quality", hash: "quality-experimental" }
@@ -50,7 +53,7 @@ export const translateTableDetailLocation = (
   const requested = next.get("tab");
   const canonical = canonicalTableTab(requested);
   const bare = hash.replace(/^#/, "");
-  const mapped = bare.startsWith("hq-") ? TABLE_HASH_ALIASES[bare] : undefined;
+  const mapped = TABLE_HASH_ALIASES[bare];
   const tab = mapped?.tab ?? canonical;
   if (tab === "overview") next.delete("tab");
   else next.set("tab", tab);

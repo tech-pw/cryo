@@ -212,7 +212,7 @@ describe("TableDetailHeader", () => {
     renderHeader();
     expect(screen.getByRole("link", { name: "nightly-standard (preset)" })).toHaveAttribute(
       "href",
-      "/tables/tbl-1?tab=maintenance#maintenance-settings"
+      "/tables/tbl-1?tab=config#maintenance-settings"
     );
     expect(screen.getByText(formatNumber(21400))).toBeInTheDocument();
     expect(screen.getByText(`56% of ${formatNumber(38120)} files`)).toBeInTheDocument();

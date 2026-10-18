@@ -141,7 +141,8 @@ describe("FilesTabPanel", () => {
     const files = document.getElementById("files-files");
     expect(files).not.toBeNull();
     expect(within(files as HTMLElement).getByText("Data files").parentElement).toHaveTextContent("Not measured");
-    expect(screen.getByText("Source not recorded")).toBeInTheDocument();
+    expect(document.getElementById("files-properties")).toBeNull();
+    expect(screen.getByRole("link", { name: "Config" })).toHaveAttribute("href", "/tables/table-1?tab=config#config-properties");
     expect(screen.getByRole("heading", { name: "Layout analysis (WAIR: workload-aware reclustering)" })).toBeInTheDocument();
   });
 

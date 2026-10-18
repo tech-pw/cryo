@@ -38,6 +38,7 @@ import {
 import { useOperationLauncher } from "../operations/OperationLauncher";
 import { FileLayoutCard } from "./FileLayoutCard";
 import { gradeLetter, healthTrendPoints, integerScore, isTableScanned, readDeductions, scoreTrendAnswer, topBySeverity } from "./gradeReasons";
+import { OptimizationChecks } from "./OptimizationChecks";
 import { OverviewCard } from "./OverviewCard";
 import { ScoreTrend } from "./ScoreTrend";
 import { TableHealthGauge } from "./TableHealthGauge";
@@ -96,8 +97,10 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
   const points = healthTrendPoints(trends.data?.trend_points ?? []);
   const trendText = trendAnswerText(scoreTrendAnswer(points));
   const auditRows = audit.data ?? [];
+  const pendingRows = compliance.data?.pending_deletion?.pending_rows ?? 0;
   const workflowPreset = presets.data?.find((item) => item.id === preset.data?.preset_id);
-  const finding = relevantFinding(tableId, fastPath.data ?? [], signals.data?.signals ?? []);
+  // The score panel already names every deduction; a second callout would repeat the worst one.
+  const finding = deductions.length ? null : relevantFinding(tableId, fastPath.data ?? [], signals.data?.signals ?? []);
 
   return (
     <div className="td-ov">
@@ -121,6 +124,8 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
         }
         onPreview={preset.data?.preset_id ? onPreview : undefined}
       />
+
+      <OptimizationChecks tableId={tableId} />
 
       <div className="td-ov-evidence">
         <div className="td-ov-stack">
@@ -160,7 +165,7 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
             <Glance label="Storage · per month" value={money(cost.data?.current_monthly_cost_usd ?? stats?.estimated_monthly_s3_cost_usd)} hint={cost.data?.precision === "storage_truth" ? "Measured from storage" : "Estimated"} />
             <Glance label="S3 requests · per month" value={money(cost.data?.request_cost_usd_month)} hint={cost.data?.get_requests_30d != null ? `${formatNumber(cost.data.get_requests_30d)} GETs in 30 days` : undefined} />
             <Glance label="Rows" value={knownCount(stats?.total_records)} />
-            <Glance label="Owner" value={table.data.owner_email?.trim() || "No owner"} hint={compliance.data ? `${compliance.data.abac_policy_count} ABAC ${compliance.data.abac_policy_count === 1 ? "policy" : "policies"}` : undefined} />
+            <Glance label="Owner" value={table.data.owner_email?.trim() || "No owner"} hint={pendingRows ? `${formatNumber(pendingRows)} deleted rows still in snapshots` : undefined} />
           </dl>
           <div className="td-glance-actions">
             {onEdit ? (
@@ -452,7 +457,7 @@ function HistoryCard({
           {rows.map((row, index) => {
             const at = row.ts ?? row.created_at ?? "";
             const failed = isFailureStatus(row.status ?? "");
-            const title = OPERATION_CATALOG[row.action as keyof typeof OPERATION_CATALOG]?.title ?? (row.action ?? "Action").replaceAll("_", " ");
+            const title = actionTitle(row.action);
             return (
               <li key={`${row.id ?? index}`} data-state={failed ? "failed" : "ok"}>
                 <span className="td-timeline-dot" aria-hidden="true" />
@@ -480,6 +485,22 @@ function HistoryCard({
       </Link>
     </OverviewCard>
   );
+}
+
+const ACTION_TITLES: Record<string, string> = {
+  compute_statistics: "Compute statistics",
+  convert_deletes: "Convert deletes",
+  rewrite_position_deletes: "Merge position deletes",
+  "archive.archive": "Archive partitions",
+  "archive.restore": "Restore partitions"
+};
+
+function actionTitle(action: string | null | undefined): string {
+  if (!action) return "Action";
+  const known = OPERATION_CATALOG[action as keyof typeof OPERATION_CATALOG]?.title ?? ACTION_TITLES[action];
+  if (known) return known;
+  const words = action.replaceAll(/[._]/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /** Before → after as the engine reported it; nothing is inferred when a count is missing. */
@@ -520,7 +541,7 @@ function relevantFinding(
 ): { title: string; detail: string; href: string } | null {
   const fast = topBySeverity(findings.filter((item) => !item.table_id || item.table_id === tableId));
   if (fast) {
-    const href = fast.finding_type === "missing_target_file_size" ? `/tables/${tableId}?tab=files#files-properties` : `/tables/${tableId}?tab=quality`;
+    const href = fast.finding_type === "missing_target_file_size" ? `/tables/${tableId}?tab=config#config-properties` : `/tables/${tableId}?tab=quality`;
     return { title: fast.finding_type, detail: fast.reason, href };
   }
   const signal = topBySeverity(signals.filter((item) => item.triggered));
