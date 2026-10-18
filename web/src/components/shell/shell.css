@@ -409,13 +409,52 @@
 }
 
 .cryo-shell__content {
+  --shell-content-pad: 24px;
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: 24px;
+  padding: var(--shell-content-pad);
   overflow: auto;
   overscroll-behavior: contain;
   background: var(--layout-bg);
+}
+
+/* Sticky offsets resolve against the padded content edge, so pull `top` back by the padding to pin it flush under the topbar. */
+.cryo-dev-banner {
+  position: sticky;
+  top: calc(-1 * var(--shell-content-pad));
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: calc(-1 * var(--shell-content-pad)) calc(-1 * var(--shell-content-pad)) var(--shell-content-pad);
+  padding: 10px var(--shell-content-pad);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-status-warning) 40%, var(--color-border));
+  background: color-mix(in srgb, var(--color-status-warning) 12%, var(--color-surface-raised));
+  color: var(--color-ink);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.cryo-dev-banner svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--color-status-warning-fg);
+}
+
+.cryo-dev-banner__title {
+  font-weight: 600;
+}
+
+.cryo-dev-banner__detail {
+  color: var(--color-ink-soft);
+}
+
+.cryo-dev-banner code {
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 .cryo-shell__search-group {
@@ -651,7 +690,7 @@
 
 @media (max-width: 1024px) {
   .cryo-shell__content {
-    padding: 16px;
+    --shell-content-pad: 16px;
   }
 }
 
@@ -701,7 +740,7 @@
   }
 
   .cryo-shell__content {
-    padding: 12px;
+    --shell-content-pad: 12px;
   }
 
   .cryo-shell__user-trigger span {

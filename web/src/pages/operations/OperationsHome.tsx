@@ -1,23 +1,21 @@
-import { MoreHorizontal, RefreshCw } from "lucide-react";
+import { MoreHorizontal, RefreshCw, Sparkles } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getScannerStatus, listPendingApprovals, listPresets, listRuns } from "../../api/client";
 import type { PresetRead, RunRead } from "../../api/types";
-import { PageHeader, QueryErrorAlert, StatStrip } from "../../components/common";
-import { MiniRunHistoryBar } from "../../components/operations/RunHistoryGrid";
+import { PageHeader, QueryErrorAlert } from "../../components/common";
 import { describeCronSchedule } from "../../components/operations/scheduleSummary";
 import { StatusTag, RunKindTag } from "../../components/status";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { DataTable } from "../../components/ui/data-table";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { useAuth } from "../../lib/auth";
 import { cn } from "../../lib/cn";
-import { formatDuration, formatNumber, formatTime } from "../../lib/format";
+import { formatDuration, formatNumber, formatPercent, formatTime } from "../../lib/format";
 import { formatPresetSummary } from "../../lib/presetForm";
 import {
   ACTIVE_RUN_STATUSES,
@@ -39,6 +37,8 @@ import {
   nightlyBatchRuns,
   NO_PRESETS_COPY
 } from "./nightlyBatch";
+import { DurationCell, RunDurationBars, RunStateCounts, RunStateLabel, RunTimeline } from "./RunBars";
+import { countByTone, formatRelative, successRate } from "./runState";
 import "./operationsHome.css";
 
 const ControlRoom = lazy(() => import("../ControlRoom").then((m) => ({ default: m.ControlRoom })));
@@ -47,13 +47,53 @@ const RUN_FILTER_VALUES = new Set(["all", "failed", "active"]);
 const isRunFilter = (value: string | null): value is "all" | "failed" | "active" =>
   value !== null && RUN_FILTER_VALUES.has(value);
 
-const HealthDot = ({ ok, label }: { ok?: boolean; label: string }) => (
-  <span className="inline-flex items-center gap-1.5">
-    <span
-      className={cn("size-2 rounded-full", ok ? "bg-[var(--color-status-success)]" : "bg-[var(--color-status-warning)]")}
-      aria-hidden
-    />
-    <span>{label}</span>
+type PulseTone = "neutral" | "active" | "danger" | "success";
+
+const PulseTile = ({
+  label,
+  value,
+  context,
+  tone = "neutral",
+  selected,
+  onClick,
+  to
+}: {
+  label: string;
+  value: ReactNode;
+  context?: ReactNode;
+  tone?: PulseTone;
+  selected?: boolean;
+  onClick?: () => void;
+  to?: string;
+}) => {
+  const body = (
+    <>
+      <span className="ops-pulse__label">
+        <span className="ops-pulse__dot" aria-hidden="true" />
+        {label}
+      </span>
+      <span className="ops-pulse__value">{value}</span>
+      {context ? <span className="ops-pulse__context">{context}</span> : null}
+    </>
+  );
+  const className = cn("ops-pulse__tile", `ops-pulse__tile--${tone}`, selected && "is-selected");
+  if (to) {
+    return (
+      <Link to={to} className={className}>
+        {body}
+      </Link>
+    );
+  }
+  return (
+    <button type="button" className={className} aria-pressed={selected} onClick={onClick}>
+      {body}
+    </button>
+  );
+};
+
+const FilterCount = ({ value }: { value: number }) => (
+  <span aria-hidden="true" className="ops-filter-count">
+    {formatNumber(value)}
   </span>
 );
 
@@ -71,7 +111,7 @@ type WorkflowRow = {
   preset?: PresetRead;
 };
 
-const HISTORY_COLUMN_VISIBILITY = { kind: false, trigger: false };
+const HISTORY_COLUMN_VISIBILITY = { kind: false };
 
 const plural = (count: number, noun: string) => `${formatNumber(count)} ${noun}${count === 1 ? "" : "s"}`;
 
@@ -199,6 +239,20 @@ export const OperationsHome = () => {
     return runs.filter((run) => run.status === "failed" && Date.parse(run.created_at) >= cutoff);
   }, [runs]);
   const activeRuns = useMemo(() => runs.filter((run) => ACTIVE_RUN_STATUSES.has(run.status)), [runs]);
+  const pulse = useMemo(() => {
+    const now = Date.now();
+    const day = runs.filter((run) => Date.parse(run.created_at) >= now - 864e5);
+    const week = runs.filter((run) => Date.parse(run.created_at) >= now - 7 * 864e5);
+    const dayCounts = countByTone(day);
+    const weekCounts = countByTone(week);
+    return {
+      queued: countByTone(activeRuns).queued,
+      succeeded24h: dayCounts.succeeded,
+      finished24h: dayCounts.succeeded + dayCounts.failed + dayCounts.partial,
+      rate7d: successRate(week),
+      finished7d: weekCounts.succeeded + weekCounts.failed + weekCounts.partial
+    };
+  }, [activeRuns, runs]);
 
   const [liveMessage, setLiveMessage] = useState("");
   const prevCountsRef = useRef<{ active: number; failed: number } | null>(null);
@@ -244,6 +298,10 @@ export const OperationsHome = () => {
     const start = runsPage * RUNS_PAGE_SIZE;
     return filteredRuns.slice(start, start + RUNS_PAGE_SIZE);
   }, [filteredRuns, runsPage]);
+  const longestOnPage = useMemo(
+    () => Math.max(0, ...paginatedRuns.map((run) => runDurationMs(run) ?? 0)),
+    [paginatedRuns]
+  );
 
   const nightlyRuns = useMemo(() => nightlyBatchRuns(runs), [runs]);
   const noPresets = presets.isSuccess && (presets.data ?? []).length === 0;
@@ -319,9 +377,15 @@ export const OperationsHome = () => {
   const runColumns = useMemo<ColumnDef<RunRead, unknown>[]>(
     () => [
       {
+        id: "status",
+        header: "State",
+        size: 112,
+        cell: ({ row }) => <RunStateLabel status={row.original.status} />
+      },
+      {
         id: "run",
         header: "Run",
-        size: 168,
+        size: 200,
         cell: ({ row }) => {
           const workflow = workflowNameFor(row.original);
           return (
@@ -338,27 +402,24 @@ export const OperationsHome = () => {
           );
         }
       },
-      { id: "target", header: "Target", cell: ({ row }) => runTargetLabel(row.original) },
       {
-        id: "status",
-        header: "Status",
-        size: 110,
-        cell: ({ row }) => <StatusTag status={row.original.status} />
+        id: "started",
+        header: "Started",
+        size: 132,
+        cell: ({ row }) => (
+          <span className="ops-started" title={formatTime(row.original.created_at)}>
+            <span>{formatRelative(row.original.created_at)}</span>
+            <span className="ops-started__abs">{formatTime(row.original.created_at)}</span>
+          </span>
+        )
       },
       {
         id: "duration",
         header: "Duration",
-        size: 96,
-        cell: ({ row }) => (
-          <span className="[font-variant-numeric:tabular-nums]">{formatDuration(runDurationMs(row.original))}</span>
-        )
+        size: 150,
+        cell: ({ row }) => <DurationCell run={row.original} longest={longestOnPage} />
       },
-      {
-        id: "started",
-        header: "Started",
-        size: 148,
-        cell: ({ row }) => formatTime(row.original.created_at)
-      },
+      { id: "target", header: "Target", cell: ({ row }) => runTargetLabel(row.original) },
       {
         id: "result",
         header: "Result",
@@ -366,19 +427,19 @@ export const OperationsHome = () => {
         cell: ({ row }) => <span className="ops-result-line">{runResultLabel(row.original)}</span>
       },
       {
+        id: "trigger",
+        header: "Trigger",
+        size: 100,
+        cell: ({ row }) => <Badge variant="outline">{row.original.trigger ?? "manual"}</Badge>
+      },
+      {
         id: "kind",
         header: "Kind",
         size: 110,
         cell: ({ row }) => <RunKindTag kind={row.original.kind} />
-      },
-      {
-        id: "trigger",
-        header: "Trigger",
-        size: 120,
-        cell: ({ row }) => row.original.trigger ?? "manual"
       }
     ],
-    [presetNameById]
+    [longestOnPage, presetNameById]
   );
 
   const workflowColumns = useMemo<ColumnDef<WorkflowRow, unknown>[]>(
@@ -424,10 +485,36 @@ export const OperationsHome = () => {
         )
       },
       {
-        id: "lastRuns",
-        header: "Last runs",
-        size: 180,
-        cell: ({ row }) => <MiniRunHistoryBar runs={row.original.runs} />
+        id: "runs",
+        header: "Runs",
+        size: 150,
+        cell: ({ row }) => <RunStateCounts runs={row.original.runs.slice(0, 25)} />
+      },
+      {
+        id: "lastRun",
+        header: "Last run",
+        size: 120,
+        cell: ({ row }) => {
+          const latest = row.original.runs[0];
+          if (!latest) return <span className="text-muted-foreground">—</span>;
+          return (
+            <Link
+              to={`/runs/${latest.id}`}
+              className="ops-started hover:underline"
+              title={formatTime(latest.created_at)}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <span>{formatRelative(latest.created_at)}</span>
+              <span className="ops-started__abs">{formatDuration(runDurationMs(latest))}</span>
+            </Link>
+          );
+        }
+      },
+      {
+        id: "recent",
+        header: "Recent runs",
+        size: 150,
+        cell: ({ row }) => <RunDurationBars runs={row.original.runs} />
       },
       {
         id: "status",
@@ -455,95 +542,76 @@ export const OperationsHome = () => {
         subtitle="What ran, what failed, and what is held?"
         breadcrumbs={false}
         actions={
-          role !== "viewer" ? (
-            <Button variant="secondary" asChild>
-              <Link to="/operations/scanner">
-                <RefreshCw className="size-4" aria-hidden />
-                Scanner
+          <>
+            <Button variant="ghost" asChild>
+              <Link to="/smart-maintenance">
+                <Sparkles className="size-4" aria-hidden />
+                Smart maintenance
               </Link>
             </Button>
-          ) : undefined
+            {role !== "viewer" ? (
+              <Button variant="secondary" asChild>
+                <Link to="/operations/scanner">
+                  <RefreshCw className="size-4" aria-hidden />
+                  Scanner
+                </Link>
+              </Button>
+            ) : null}
+          </>
         }
       />
 
       <span className="sr-only" role="status" aria-live="polite">
         {liveMessage}
       </span>
-      <section className="ops-control-hero" aria-labelledby="ops-control-hero-title">
-        <div className="ops-control-hero__copy">
-          <p className="ops-control-hero__eyebrow">Fleet</p>
-          <h2 id="ops-control-hero-title">See the fleet, then follow the work</h2>
-          <p>
-            Start with the signal, move to the workflow, and open the exact run that needs attention.
-            Every status below is backed by a live run or scanner record.
-          </p>
-        </div>
-        <div className="ops-control-hero__actions" aria-label="Run shortcuts">
-          <Button size="sm" variant={activeRuns.length ? "primary" : "secondary"} onClick={() => setRunFilter("active")}>
-            Running now ({allRuns.isError ? "—" : activeRuns.length})
-          </Button>
-          <Button size="sm" variant={failed24h.length ? "danger" : "secondary"} onClick={() => setRunFilter("failed")}>
-            Failed runs ({allRuns.isError ? "—" : failed24h.length})
-          </Button>
-          <Button size="sm" variant={overdueScans ? "danger" : "secondary"} asChild>
-            <Link to="/operations/scanner">
-              Overdue scans{scannerStatus.isSuccess ? ` (${overdueScans})` : ""}
-            </Link>
-          </Button>
-          <Button size="sm" variant="secondary" asChild>
-            <Link to="/smart-maintenance">Smart maintenance</Link>
-          </Button>
-        </div>
+      <section className="ops-pulse" aria-label="Fleet pulse">
+        <PulseTile
+          label="Running now"
+          tone={activeRuns.length ? "active" : "neutral"}
+          selected={tab === "runs" && runFilter === "active"}
+          value={allRuns.isError ? "—" : formatNumber(activeRuns.length)}
+          context={allRuns.isError ? "Runs unavailable" : pulse.queued ? `${formatNumber(pulse.queued)} waiting in queue` : "Nothing queued"}
+          onClick={() => setRunFilter("active")}
+        />
+        <PulseTile
+          label="Failed runs · 24h"
+          tone={failed24h.length ? "danger" : "neutral"}
+          selected={tab === "runs" && runFilter === "failed"}
+          value={allRuns.isError ? "—" : formatNumber(failed24h.length)}
+          context={failed24h[0] ? `Latest ${formatRelative(failed24h[0].created_at)}` : "No failures"}
+          onClick={() => setRunFilter("failed")}
+        />
+        <PulseTile
+          label="Succeeded · 24h"
+          tone={pulse.succeeded24h ? "success" : "neutral"}
+          value={allRuns.isError ? "—" : formatNumber(pulse.succeeded24h)}
+          context={`of ${formatNumber(pulse.finished24h)} finished`}
+          onClick={() => setRunFilter("all")}
+        />
+        <PulseTile
+          label="Success rate · 7d"
+          value={allRuns.isError || pulse.rate7d === null ? "—" : formatPercent(pulse.rate7d * 100)}
+          context={`${formatNumber(pulse.finished7d)} finished runs`}
+          onClick={() => setRunFilter("all")}
+        />
+        <PulseTile
+          label="Scanner"
+          to="/operations/scanner"
+          tone={overdueScans ? "danger" : scannerStatus.data?.active_run ? "active" : "neutral"}
+          value={
+            scannerStatus.isError
+              ? "Unavailable"
+              : scannerStatus.data?.active_run
+                ? "Running"
+                : overdueScans
+                  ? "Overdue"
+                  : "Idle"
+          }
+          context={`${formatNumber(scannerStatus.data?.tables_with_stats)} / ${formatNumber(scannerStatus.data?.total_tables)} tables with stats · queue ${formatNumber(scannerStatus.data?.queue_depth ?? null)}`}
+        />
       </section>
 
-      <div className="ops-context-grid">
-        <EngineLoadStrip />
-        <DecisionFunnelStrip />
-      </div>
-
       <div className="flex flex-col gap-3">
-        <Card className="ops-fleet-card">
-          <CardHeader className="pb-2">
-            <CardTitle>Fleet health</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <StatStrip
-              items={[
-                {
-                  label: "Scanner",
-                  value: (
-                    <HealthDot
-                      ok={scannerStatus.isError ? false : !scannerStatus.data?.active_run}
-                      label={
-                        scannerStatus.isError
-                          ? "Unavailable"
-                          : scannerStatus.data?.active_run
-                            ? "Running"
-                            : "Idle"
-                      }
-                    />
-                  )
-                },
-                {
-                  label: "Tables with stats",
-                  value: `${formatNumber(scannerStatus.data?.tables_with_stats)} / ${formatNumber(scannerStatus.data?.total_tables)}`
-                },
-                {
-                  label: "Failed runs (24h)",
-                  value: allRuns.isError ? "—" : formatNumber(failed24h.length)
-                },
-                {
-                  label: "Active runs",
-                  value: allRuns.isError ? "—" : formatNumber(activeRuns.length)
-                },
-                {
-                  label: "Scan queue",
-                  value: formatNumber(scannerStatus.data?.queue_depth ?? null)
-                }
-              ]}
-            />
-          </CardContent>
-        </Card>
 
         <section className="ops-workspace-card" aria-label="Run operations workspace">
           <Tabs
@@ -583,21 +651,15 @@ export const OperationsHome = () => {
             </TabsContent>
 
             <TabsContent value="runs">
-            <div className="space-y-2">
-              <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col gap-3">
+              <div className="ops-filter-row" role="group" aria-label="Filter runs">
                 <Button
                   size="sm"
                   variant={runFilter === "all" ? "primary" : "secondary"}
                   onClick={() => setRunFilter("all")}
                 >
                   All
-                </Button>
-                <Button
-                  size="sm"
-                  variant={runFilter === "failed" ? "primary" : "secondary"}
-                  onClick={() => setRunFilter("failed")}
-                >
-                  Failed · 24h
+                  <FilterCount value={runs.length} />
                 </Button>
                 <Button
                   size="sm"
@@ -605,8 +667,18 @@ export const OperationsHome = () => {
                   onClick={() => setRunFilter("active")}
                 >
                   Active
+                  <FilterCount value={activeRuns.length} />
+                </Button>
+                <Button
+                  size="sm"
+                  variant={runFilter === "failed" ? "primary" : "secondary"}
+                  onClick={() => setRunFilter("failed")}
+                >
+                  Failed · 24h
+                  <FilterCount value={failed24h.length} />
                 </Button>
               </div>
+              {allRuns.isError ? null : <RunTimeline runs={filteredRuns} />}
               {allRuns.isError ? (
                 <QueryErrorAlert error={allRuns.error} title="Failed to load runs" />
               ) : (
@@ -640,6 +712,11 @@ export const OperationsHome = () => {
             </TabsContent>
           </Tabs>
         </section>
+
+        <div className="ops-context-grid">
+          <EngineLoadStrip />
+          <DecisionFunnelStrip />
+        </div>
       </div>
     </div>
   );

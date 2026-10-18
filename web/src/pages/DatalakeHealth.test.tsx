@@ -2,7 +2,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getDatalakeDashboard, getFastPathFindings, getScannerStatus, listPendingApprovals, listRuns } from "../api/client";
+import {
+  getDatalakeDashboard,
+  getFastPathFindings,
+  getFleetTrends,
+  getGovernorOffPeakWindow,
+  getScannerStatus,
+  listMaintenanceControls,
+  listPendingApprovals,
+  listRuns
+} from "../api/client";
 import { getCryoVitals } from "../api/vitals";
 import { getEngineLoad } from "../api/engineLoad";
 import { DatalakeHealth, tablesAtGradeDf } from "./DatalakeHealth";
@@ -11,7 +20,8 @@ vi.mock("../lib/auth", () => ({ useAuth: () => ({ api: { token: "test-token" }, 
 vi.mock("../api/client", () => ({
   ApiError: class ApiError extends Error {},
   getDatalakeDashboard: vi.fn(), getScannerStatus: vi.fn(), getFastPathFindings: vi.fn(),
-  listRuns: vi.fn(), listPendingApprovals: vi.fn()
+  listRuns: vi.fn(), listPendingApprovals: vi.fn(), listMaintenanceControls: vi.fn(), getFleetTrends: vi.fn(),
+  getGovernorOffPeakWindow: vi.fn()
 }));
 vi.mock("../api/vitals", () => ({ getCryoVitals: vi.fn() }));
 vi.mock("../api/engineLoad", () => ({ getEngineLoad: vi.fn() }));
@@ -29,20 +39,26 @@ beforeEach(() => {
   vi.mocked(listRuns).mockReset().mockResolvedValue([]);
   vi.mocked(getScannerStatus).mockReset().mockResolvedValue({ active_run: null, queue_depth: 0 } as Awaited<ReturnType<typeof getScannerStatus>>);
   vi.mocked(getFastPathFindings).mockReset().mockResolvedValue([]);
-  vi.mocked(getEngineLoad).mockReset().mockResolvedValue({ engines: [] });
+  vi.mocked(getEngineLoad).mockReset().mockResolvedValue({ engines: [], workers_online: 2 });
+  vi.mocked(listMaintenanceControls).mockReset().mockResolvedValue([]);
+  vi.mocked(getFleetTrends).mockReset().mockResolvedValue({ days: 14, health_trend: [], cost_trend: [] });
+  vi.mocked(getGovernorOffPeakWindow).mockReset().mockResolvedValue({ start_hour_ist: 1, end_hour_ist: 7, enabled: true });
 });
+const pause = (scope_type: "global" | "tenant" | "destination", reason: string | null) => ({
+  scope_type, scope_id: scope_type === "global" ? null : "t1", paused: true, reason, changed_by: "aamir", updated_at: "2026-09-28T00:00:00Z"
+}) as Awaited<ReturnType<typeof listMaintenanceControls>>[number];
 const renderHome = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } })}><MemoryRouter><DatalakeHealth /></MemoryRouter></QueryClientProvider>);
 
 describe("Home overview", () => {
   it("separates lake condition, platform health, maintenance and impact", async () => {
     renderHome();
-    expect(await screen.findByText(/tables at D or F/)).toBeInTheDocument();
-    for (const name of ["Lake health", "Cryo platform", "Latest nightly maintenance", "Storage impact", "Table freshness", "Your next steps"]) {
+    expect(await screen.findByRole("link", { name: /1 of 5 tables at D or F/ })).toBeInTheDocument();
+    for (const name of ["Lake health", "Cryo platform", "Latest nightly maintenance", "Storage impact", "Table freshness", "Your next steps", "Worst tables people query", "Fixed by Cryo"]) {
       expect(screen.getByRole("region", { name })).toBeInTheDocument();
     }
     expect(screen.getByRole("img", { name: /Cryo platform health: 91 out of 100/ })).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Lake health" })).queryByText("/ 100")).not.toBeInTheDocument();
-    expect(screen.getByText("No nightly run")).toBeInTheDocument();
+    expect(screen.getByText("No nightly run yet")).toBeInTheDocument();
   });
   it("uses precise table filters and preserves freshness time boundaries", async () => {
     renderHome();
@@ -55,7 +71,7 @@ describe("Home overview", () => {
   });
   it("announces health and compaction counts without hiding ungraded tables", async () => {
     renderHome();
-    await screen.findByText(/tables at D or F/);
+    await screen.findByRole("link", { name: /1 of 5 tables at D or F/ });
     expect(screen.getByRole("status")).toHaveTextContent("1 tables at grade D or F");
     expect(screen.getByRole("status")).toHaveTextContent("1 tables need compaction");
     expect(screen.getByText("Not graded").closest("li")).toHaveTextContent("3");
@@ -107,13 +123,42 @@ describe("Home overview", () => {
       "href",
       "/decisions?tab=approvals#operation-approvals"
     );
-    expect(screen.getByRole("link", { name: /Scan queue: 0 waiting/ })).toHaveAttribute("href", "/runs/scanner");
-    expect(screen.queryByText("Keep the lake in view")).not.toBeInTheDocument();
+    const platform = screen.getByRole("navigation", { name: "Platform" });
+    expect(within(platform).getByRole("link", { name: /Scanner/ })).toHaveAttribute("href", "/runs/scanner");
+    expect(screen.queryByText("The scanner needs a look")).not.toBeInTheDocument();
   });
-  it("asks to check the scanner only when it is off, failed, or backed up", async () => {
+  it("asks to check the scanner when it is off or the last scan failed, not when work is queued", async () => {
     vi.mocked(getScannerStatus).mockResolvedValue({ active_run: null, queue_depth: 2, config: { enabled: true } } as Awaited<ReturnType<typeof getScannerStatus>>);
+    const { unmount } = renderHome();
+    expect(await screen.findByText(/2 waiting/)).toBeInTheDocument();
+    expect(screen.queryByText("The scanner needs a look")).not.toBeInTheDocument();
+    unmount();
+    vi.mocked(getScannerStatus).mockResolvedValue({ active_run: null, queue_depth: 0, config: { enabled: false } } as Awaited<ReturnType<typeof getScannerStatus>>);
     renderHome();
-    expect(await screen.findByRole("link", { name: /Keep the lake in view/ })).toHaveAttribute("href", "/runs/scanner");
+    expect(await screen.findByRole("link", { name: /The scanner needs a look/ })).toHaveAttribute("href", "/runs/scanner");
+  });
+  it("puts a global pause in a banner and at the top of next steps", async () => {
+    vi.mocked(listMaintenanceControls).mockResolvedValue([pause("global", "Trino upgrade"), pause("tenant", null)]);
+    renderHome();
+    expect(await screen.findAllByText("Maintenance is paused globally")).toHaveLength(2);
+    expect(screen.getByText(/Trino upgrade Paused by aamir/)).toBeInTheDocument();
+    const steps = within(screen.getByRole("region", { name: "Your next steps" })).getAllByRole("link");
+    expect(steps[0]).toHaveAccessibleName(/Maintenance is paused globally/);
+    expect(steps[0]).toHaveAttribute("href", "/runs?tab=holds");
+    expect(within(screen.getByRole("navigation", { name: "Platform" })).getByRole("link", { name: /Paused globally$/ })).toBeInTheDocument();
+  });
+  it("says all clear when nothing needs an operator", async () => {
+    vi.mocked(listPendingApprovals).mockResolvedValue([]);
+    vi.mocked(getDatalakeDashboard).mockResolvedValue({ ...dashboard, totals: { ...dashboard.totals, needs_compaction: 0 } });
+    renderHome();
+    const steps = await screen.findByRole("region", { name: "Your next steps" });
+    expect(await within(steps).findByText("All clear")).toBeInTheDocument();
+    expect(within(steps).queryByText(/0 tables/)).not.toBeInTheDocument();
+  });
+  it("reads only the last fourteen batch runs", async () => {
+    renderHome();
+    await waitFor(() => expect(listRuns).toHaveBeenCalledWith(expect.anything(), { pipeline: "batch", limit: 14 }));
+    expect(getDatalakeDashboard).toHaveBeenCalledWith(expect.anything(), { top_limit: 1, hot_limit: 5 });
   });
   it("refreshes read models without starting maintenance", async () => {
     renderHome();

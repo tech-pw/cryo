@@ -109,7 +109,7 @@ export async function signIn(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByLabel("Username").fill("visual-e2e");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByText("Datalake health").first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Home", exact: true })).toBeVisible({ timeout: 15_000 });
 }
 
 export async function settlePage(page: Page): Promise<void> {

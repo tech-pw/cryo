@@ -16,7 +16,6 @@ import { QueryErrorAlert } from "../../common";
 import { Badge } from "../../ui/badge";
 import { Collapsible } from "../../ui/collapsible";
 import { DataTable } from "../../ui/data-table";
-import { ArchiveSection } from "../ArchiveSection";
 import { ChartCard } from "../ChartCard";
 import { LineageGraph } from "../LineageGraph";
 import { PartitionAccessChart } from "../PartitionAccessChart";
@@ -253,7 +252,6 @@ export const UsageTabPanel = ({ tableId }: { tableId: string }) => (
   <div className="td-tab-content td-usage">
     <QueryActivity tableId={tableId} />
     <PartitionAccess tableId={tableId} />
-    <ArchiveSection tableId={tableId} />
     <div className="td-usage-secondary">
       <Lineage tableId={tableId} />
       <SameShape tableId={tableId} />

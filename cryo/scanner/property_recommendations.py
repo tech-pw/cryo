@@ -38,15 +38,17 @@ TIER1_APPLYABLE_KEYS = frozenset(
         "commit.retry.num-retries",
         "commit.retry.min-wait-ms",
         "commit.retry.max-wait-ms",
-        "write.delete-mode",
-        "write.update-mode",
-        "write.merge-mode",
+        "write.delete.mode",
+        "write.update.mode",
+        "write.merge.mode",
     }
 )
 
 BLOOM_FILTER_PROPERTY_PREFIX = "write.parquet.bloom-filter-enabled.column."
 
-RISKY_APPLYABLE_KEYS = frozenset({"format-version"})
+# format-version is reserved: set_properties stores it as a plain property and never upgrades
+# the table. Upgrades go through the Config tab, which calls upgrade_table_version.
+RISKY_APPLYABLE_KEYS: frozenset[str] = frozenset()
 
 _DEFAULT_TARGET_BYTES = 256 * 1024 * 1024
 _LARGE_TARGET_BYTES = 512 * 1024 * 1024
@@ -334,25 +336,6 @@ def compute_property_recommendations(
             )
         )
 
-    delete_pct = float(stats_dict.get("delete_file_pct") or 0)
-    eq_deletes = int(stats_dict.get("equality_delete_files") or 0)
-    merge_mode = props.get("write.merge-mode") or props.get("write.update-mode")
-    recommended_mode = "merge-on-read" if delete_pct >= 5 or eq_deletes >= 100 else "copy-on-write"
-    if merge_mode is None or str(merge_mode) != recommended_mode:
-        recommendations.append(
-            PropertyRecommendation(
-                property_key="write.merge-mode",
-                current_value=merge_mode,
-                recommended_value=recommended_mode,
-                reason=(
-                    f"Delete-file load is {delete_pct:.1f}% ({eq_deletes:,} equality deletes) — "
-                    f"{recommended_mode} fits this table's update pattern."
-                ),
-                tier="tier2",
-                action="apply",
-            )
-        )
-
     try:
         blooms = (
             analyze_table_layout(session, table_id).bloom_filter_recommendations[:3]
@@ -404,11 +387,10 @@ def compute_property_recommendations(
                 recommended_value="3",
                 reason=(
                     "Eligible for Iceberg v3 (deletion vectors) — verify all readers support "
-                    "format version 3 before upgrading."
+                    "format version 3, then upgrade with Spark or Trino DDL."
                 ),
                 tier="tier3",
-                action="apply",
-                needs_confirmation=True,
+                action="read_only",
             )
         )
 
