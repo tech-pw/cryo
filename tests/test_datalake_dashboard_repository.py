@@ -24,8 +24,22 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session as SessionCls
 
 from cryo.config import Settings
-from cryo.db.models import AuditLog, Source, Table, TableCost, TableStats
-from cryo.db.repositories.datalake import _sql_aggregate_cost_totals, dashboard_datalake
+from cryo.db.models import (
+    AuditLog,
+    Destination,
+    MaintenanceJob,
+    MaintenanceRun,
+    Source,
+    Table,
+    TableCost,
+    TableStats,
+    TableStatsHistory,
+)
+from cryo.db.repositories.datalake import (
+    _sql_aggregate_cost_totals,
+    dashboard_datalake,
+    recently_improved_tables,
+)
 
 _PG_URL = "postgresql+psycopg://cryo:cryo@localhost:5432/cryo"
 
@@ -574,3 +588,154 @@ def test_dashboard_cost_total_realized_savings_is_all_time_not_trend_bounded(
 
     expected_usd = round(3 * settings.cost_price_per_gb_month, 4)
     assert payload["totals"]["total_realized_savings_usd"] == expected_usd
+
+
+def _seed_graded_table(
+    session,
+    source: Source,
+    *,
+    name: str,
+    grade: str,
+    score: int,
+    queries: int,
+    scan_at: datetime,
+) -> uuid.UUID:
+    table_id = uuid.uuid4()
+    session.add(
+        Table(
+            id=table_id,
+            source_id=source.id,
+            schema_name="analytics",
+            table_name=name,
+            first_seen_at=scan_at,
+            is_active=True,
+        )
+    )
+    session.add(
+        TableStats(
+            table_id=table_id,
+            scan_at=scan_at,
+            needs_compaction=grade in {"D", "F"},
+            compaction_priority="HIGH",
+            grade=grade,
+            overall_score=score,
+            total_files=100,
+            small_files_count=50,
+            total_size_gb=10.0,
+            query_count_30d=queries,
+        )
+    )
+    return table_id
+
+
+def test_hot_at_risk_ranks_queried_df_tables_and_skips_cold_ones(session) -> None:
+    source = _seed_source(session)
+    scan_at = datetime(2026, 7, 10, tzinfo=UTC)
+    _seed_graded_table(
+        session, source, name="cold_f", grade="F", score=20, queries=0, scan_at=scan_at
+    )
+    _seed_graded_table(
+        session, source, name="warm_d", grade="D", score=50, queries=40, scan_at=scan_at
+    )
+    _seed_graded_table(
+        session, source, name="hot_f", grade="F", score=28, queries=900, scan_at=scan_at
+    )
+    _seed_graded_table(
+        session, source, name="hot_b", grade="B", score=80, queries=5000, scan_at=scan_at
+    )
+    session.commit()
+
+    payload = dashboard_datalake(session, hot_limit=5)
+
+    assert [row["table_name"] for row in payload["hot_at_risk"]] == ["hot_f", "warm_d"]
+    assert payload["hot_at_risk_count"] == 2
+
+
+def _seed_job(
+    session, table_id: uuid.UUID, *, status: str, started: datetime, finished: datetime
+) -> None:
+    destination = Destination(
+        id=uuid.uuid4(), name=f"dest-{uuid.uuid4()}", engine="trino", config={}
+    )
+    run = MaintenanceRun(
+        id=uuid.uuid4(), kind="maintenance", status="succeeded", created_at=started, summary={}
+    )
+    session.add_all([destination, run])
+    session.flush()
+    session.add(
+        MaintenanceJob(
+            id=uuid.uuid4(),
+            run_id=run.id,
+            table_id=table_id,
+            destination_id=destination.id,
+            mode="standard",
+            status=status,
+            started_at=started,
+            finished_at=finished,
+        )
+    )
+
+
+def test_recently_improved_claims_only_grades_raised_after_a_succeeded_job(session) -> None:
+    source = _seed_source(session)
+    now = datetime(2026, 7, 10, 6, tzinfo=UTC)
+    started, finished = now - timedelta(hours=4), now - timedelta(hours=3)
+    rescanned = now - timedelta(hours=1)
+
+    improved = _seed_graded_table(
+        session, source, name="fixed", grade="B", score=80, queries=1, scan_at=rescanned
+    )
+    session.add(
+        TableStatsHistory(
+            table_id=improved, scan_at=now - timedelta(hours=10), grade="D", overall_score=52
+        )
+    )
+    _seed_job(session, improved, status="succeeded", started=started, finished=finished)
+
+    failed = _seed_graded_table(
+        session, source, name="failed_job", grade="B", score=80, queries=1, scan_at=rescanned
+    )
+    session.add(
+        TableStatsHistory(
+            table_id=failed, scan_at=now - timedelta(hours=10), grade="D", overall_score=52
+        )
+    )
+    _seed_job(session, failed, status="failed", started=started, finished=finished)
+
+    stale = _seed_graded_table(
+        session,
+        source,
+        name="not_rescanned",
+        grade="B",
+        score=80,
+        queries=1,
+        scan_at=started - timedelta(minutes=5),
+    )
+    session.add(
+        TableStatsHistory(
+            table_id=stale, scan_at=now - timedelta(hours=10), grade="D", overall_score=52
+        )
+    )
+    _seed_job(session, stale, status="succeeded", started=started, finished=finished)
+
+    same = _seed_graded_table(
+        session, source, name="unchanged", grade="C", score=64, queries=1, scan_at=rescanned
+    )
+    session.add(
+        TableStatsHistory(
+            table_id=same, scan_at=now - timedelta(hours=10), grade="C", overall_score=60
+        )
+    )
+    _seed_job(session, same, status="succeeded", started=started, finished=finished)
+    session.commit()
+
+    rows, count = recently_improved_tables(session, now=now)
+
+    assert count == 1
+    assert rows[0]["table_name"] == "fixed"
+    assert (rows[0]["previous_grade"], rows[0]["grade"]) == ("D", "B")
+    assert (rows[0]["previous_score"], rows[0]["overall_score"]) == (52, 80)
+
+
+def test_recently_improved_is_empty_without_recent_runs(session) -> None:
+    assert recently_improved_tables(session, now=datetime(2026, 7, 10, tzinfo=UTC)) == ([], 0)

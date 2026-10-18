@@ -28,10 +28,13 @@ from cryo.api.routes_alerts import router as alerts_router
 from cryo.api.routes_archive import router as archive_router
 from cryo.api.routes_audit import router as audit_router
 from cryo.api.routes_batch import router as batch_router
+from cryo.api.routes_column_usage import router as column_usage_router
 from cryo.api.routes_cost_attribution import router as cost_attribution_router
 from cryo.api.routes_dark_tables import router as dark_tables_router
 from cryo.api.routes_dedup import router as dedup_router
 from cryo.api.routes_engine_load import router as engine_load_router
+from cryo.api.routes_exclusions import router as maintenance_exclusions_router
+from cryo.api.routes_exclusions import table_router as table_hold_router
 from cryo.api.routes_explorer_views import router as explorer_views_router
 from cryo.api.routes_funnel import router as funnel_router
 from cryo.api.routes_impact import router as impact_router
@@ -42,6 +45,7 @@ from cryo.api.routes_skip_history import router as skip_history_router
 from cryo.api.routes_smart_maintenance import router as smart_maintenance_router
 from cryo.api.routes_snapshots import router as snapshots_router
 from cryo.api.routes_sources import router as sources_router
+from cryo.api.routes_table_config import router as table_config_router
 from cryo.api.routes_table_maintenance import router as table_maintenance_router
 from cryo.api.s3_log_config_routes import router as s3_log_config_router
 from cryo.api.search_routes import router as search_router
@@ -173,6 +177,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(api_router)
     app.include_router(assistant_router)
     app.include_router(property_recommendations_router)
+    app.include_router(table_config_router)
     app.include_router(smart_maintenance_router)
     app.include_router(sources_router)
     app.include_router(auth_router)
@@ -184,6 +189,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(advanced_router)
     app.include_router(metrics_router)
     app.include_router(maintenance_control_router)
+    app.include_router(maintenance_exclusions_router)
+    app.include_router(table_hold_router)
+    app.include_router(column_usage_router)
     app.include_router(maintenance_safety_router)
     app.include_router(cost_insights_router)
     app.include_router(s3_log_config_router)

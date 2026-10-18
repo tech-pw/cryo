@@ -24,10 +24,12 @@ import { useAuth } from "../../../lib/auth";
 import { formatBytesGb, formatCurrency, formatDuration, formatNumber, formatTime } from "../../../lib/format";
 import { useWriteControl } from "../../../lib/useWriteControl";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
-import { MaintenanceActions } from "../operations/MaintenanceActions";
 import {
   OPERATION_CATALOG,
+  RUNNABLE_OPERATIONS,
   isFailureStatus,
+  operationEvidence,
+  pointsByOperation,
   readDeductionList,
   relativeTime,
   remedyForDeduction,
@@ -35,7 +37,9 @@ import {
 } from "../operations/operationCatalog";
 import { useOperationLauncher } from "../operations/OperationLauncher";
 import { FileLayoutCard } from "./FileLayoutCard";
+import { MaintenanceImpact } from "./MaintenanceImpact";
 import { gradeLetter, healthTrendPoints, integerScore, isTableScanned, readDeductions, scoreTrendAnswer, topBySeverity } from "./gradeReasons";
+import { OptimizationChecks } from "./OptimizationChecks";
 import { OverviewCard } from "./OverviewCard";
 import { ScoreTrend } from "./ScoreTrend";
 import { TableHealthGauge } from "./TableHealthGauge";
@@ -94,8 +98,10 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
   const points = healthTrendPoints(trends.data?.trend_points ?? []);
   const trendText = trendAnswerText(scoreTrendAnswer(points));
   const auditRows = audit.data ?? [];
+  const pendingRows = compliance.data?.pending_deletion?.pending_rows ?? 0;
   const workflowPreset = presets.data?.find((item) => item.id === preset.data?.preset_id);
-  const finding = relevantFinding(tableId, fastPath.data ?? [], signals.data?.signals ?? []);
+  // The score panel already names every deduction; a second callout would repeat the worst one.
+  const finding = deductions.length ? null : relevantFinding(tableId, fastPath.data ?? [], signals.data?.signals ?? []);
 
   return (
     <div className="td-ov">
@@ -111,41 +117,16 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
         hasWorkflow={Boolean(preset.data?.preset_id)}
         statusLoading={maintenance.isPending || preset.isPending}
         statusError={maintenance.isError || preset.isError}
-      />
-
-      <MaintenanceActions
-        tableId={tableId}
         stats={stats}
         audit={auditRows}
         orphanBytes={cost.data?.orphan_bytes}
-        deductions={deductions}
-        footer={
-          <>
-            <span>
-              {preset.data?.preset_name ? (
-                <>
-                  Runs on the <b>{preset.data.preset_name}</b> workflow's engine
-                  {workflowPreset?.params && typeof workflowPreset.params.retention_days === "number"
-                    ? ` · ${workflowPreset.params.retention_days}-day snapshot retention`
-                    : ""}
-                </>
-              ) : (
-                "Assign a workflow to choose the engine and retention settings"
-              )}
-            </span>
-            <span className="td-ops-footer-actions">
-              {onPreview && preset.data?.preset_id ? (
-                <Button type="button" size="sm" variant="ghost" onClick={onPreview}>
-                  Preview full workflow plan
-                </Button>
-              ) : null}
-              <Link className="td-overview-link" to={`/tables/${tableId}?tab=maintenance`}>
-                Schedule, history & settings <ArrowUpRight size={14} aria-hidden="true" />
-              </Link>
-            </span>
-          </>
+        retentionDays={
+          typeof workflowPreset?.params?.retention_days === "number" ? workflowPreset.params.retention_days : null
         }
+        onPreview={preset.data?.preset_id ? onPreview : undefined}
       />
+
+      <OptimizationChecks tableId={tableId} stats={stats} />
 
       <div className="td-ov-evidence">
         <div className="td-ov-stack">
@@ -185,7 +166,7 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
             <Glance label="Storage · per month" value={money(cost.data?.current_monthly_cost_usd ?? stats?.estimated_monthly_s3_cost_usd)} hint={cost.data?.precision === "storage_truth" ? "Measured from storage" : "Estimated"} />
             <Glance label="S3 requests · per month" value={money(cost.data?.request_cost_usd_month)} hint={cost.data?.get_requests_30d != null ? `${formatNumber(cost.data.get_requests_30d)} GETs in 30 days` : undefined} />
             <Glance label="Rows" value={knownCount(stats?.total_records)} />
-            <Glance label="Owner" value={table.data.owner_email?.trim() || "No owner"} hint={compliance.data ? `${compliance.data.abac_policy_count} ABAC ${compliance.data.abac_policy_count === 1 ? "policy" : "policies"}` : undefined} />
+            <Glance label="Owner" value={table.data.owner_email?.trim() || "No owner"} hint={pendingRows ? `${formatNumber(pendingRows)} deleted rows still in snapshots` : undefined} />
           </dl>
           <div className="td-glance-actions">
             {onEdit ? (
@@ -229,7 +210,12 @@ function HealthHero({
   workflowName,
   hasWorkflow,
   statusLoading,
-  statusError
+  statusError,
+  stats,
+  audit,
+  orphanBytes,
+  retentionDays,
+  onPreview
 }: {
   tableId: string;
   score: number | null;
@@ -242,6 +228,11 @@ function HealthHero({
   hasWorkflow: boolean;
   statusLoading: boolean;
   statusError: boolean;
+  stats: TableStatsRead | null | undefined;
+  audit: AuditEntry[];
+  orphanBytes: number | null | undefined;
+  retentionDays: number | null;
+  onPreview?: () => void;
 }) {
   const launcher = useOperationLauncher();
   const lost = deductions.reduce((sum, item) => sum + item.deduction, 0);
@@ -294,7 +285,7 @@ function HealthHero({
                   <div className="td-ded-text">
                     <p>
                       <b>{item.label}</b>
-                      <span className="td-ded-sev">{severity === "critical" ? "Critical" : "Warning"}</span>
+                      <span className="td-ded-sev">{severity === "critical" ? "critical" : "warning"}</span>
                     </p>
                     <p className="td-ded-reason">{item.reason}</p>
                     <div className="td-ded-bar" aria-hidden="true">
@@ -332,8 +323,93 @@ function HealthHero({
             <p>{deductionsRecorded ? "Review file layout and maintenance history below for the supporting evidence." : "Refresh the table stats to collect the evidence behind this score."}</p>
           </div>
         )}
+        <OtherOperations tableId={tableId} stats={stats} audit={audit} orphanBytes={orphanBytes} deductions={deductions} />
+        <footer className="td-hero-footer">
+          <span>
+            {workflowName ? (
+              <>
+                Runs on the <b>{workflowName}</b> workflow's engine
+                {retentionDays != null ? ` · ${retentionDays}-day snapshot retention` : ""}
+              </>
+            ) : (
+              "Assign a workflow to choose the engine and retention settings"
+            )}
+          </span>
+          <span className="td-hero-footer-actions">
+            {onPreview ? (
+              <Button type="button" size="sm" variant="ghost" onClick={onPreview}>
+                Preview full workflow plan
+              </Button>
+            ) : null}
+            <Link className="td-overview-link" to={`/tables/${tableId}?tab=maintenance`}>
+              Schedule, history & settings <ArrowUpRight size={14} aria-hidden="true" />
+            </Link>
+          </span>
+        </footer>
       </div>
     </section>
+  );
+}
+
+/**
+ * Operations not already surfaced by a health deduction above. Collapsed by
+ * default: on a clean table every one of the four ops lands here, and a
+ * fully-open grid duplicating "Run on demand" was the thing being removed.
+ */
+function OtherOperations({
+  tableId,
+  stats,
+  audit,
+  orphanBytes,
+  deductions
+}: {
+  tableId: string;
+  stats: TableStatsRead | null | undefined;
+  audit: AuditEntry[];
+  orphanBytes: number | null | undefined;
+  deductions: Deduction[];
+}) {
+  const launcher = useOperationLauncher();
+  const recovery = pointsByOperation(deductions, tableId);
+  const other = RUNNABLE_OPERATIONS.filter((op) => !(recovery.get(op) ?? 0));
+  if (!other.length) return null;
+  const blocked = !launcher || Boolean(launcher.blockedReason) || launcher.pending;
+
+  return (
+    <details className="td-hero-other">
+      <summary>
+        Run another operation
+        <span className="td-hero-other-count">{other.length}</span>
+      </summary>
+      <ul className="td-hero-other-list">
+        {other.map((op) => {
+          const info = OPERATION_CATALOG[op];
+          const added = launcher?.inCart(op) ?? false;
+          const evidence = operationEvidence(op, stats, orphanBytes);
+          return (
+            <li key={op}>
+              <div>
+                <p className="td-hero-other-title">{info.title}</p>
+                <p className="td-hero-other-evidence">
+                  {evidence.value} {evidence.label}
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant={added ? "primary" : "secondary"}
+                aria-pressed={added}
+                disabled={blocked}
+                title={launcher?.blockedReason ?? undefined}
+                onClick={() => launcher?.toggle(op)}
+              >
+                {added ? "Added" : "Add to run"}
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+    </details>
   );
 }
 
@@ -373,6 +449,7 @@ function HistoryCard({
           <dd>{lastCommit ? relativeTime(lastCommit) : "—"}</dd>
         </div>
       </dl>
+      <MaintenanceImpact tableId={tableId} />
       <h3 className="td-history-subhead">Recent maintenance</h3>
       <QueryErrorAlert error={error} title="Couldn't load recent maintenance" />
       {loading ? (
@@ -382,7 +459,7 @@ function HistoryCard({
           {rows.map((row, index) => {
             const at = row.ts ?? row.created_at ?? "";
             const failed = isFailureStatus(row.status ?? "");
-            const title = OPERATION_CATALOG[row.action as keyof typeof OPERATION_CATALOG]?.title ?? (row.action ?? "Action").replaceAll("_", " ");
+            const title = actionTitle(row.action);
             return (
               <li key={`${row.id ?? index}`} data-state={failed ? "failed" : "ok"}>
                 <span className="td-timeline-dot" aria-hidden="true" />
@@ -410,6 +487,22 @@ function HistoryCard({
       </Link>
     </OverviewCard>
   );
+}
+
+const ACTION_TITLES: Record<string, string> = {
+  compute_statistics: "Compute statistics",
+  convert_deletes: "Convert deletes",
+  rewrite_position_deletes: "Merge position deletes",
+  "archive.archive": "Archive partitions",
+  "archive.restore": "Restore partitions"
+};
+
+function actionTitle(action: string | null | undefined): string {
+  if (!action) return "Action";
+  const known = OPERATION_CATALOG[action as keyof typeof OPERATION_CATALOG]?.title ?? ACTION_TITLES[action];
+  if (known) return known;
+  const words = action.replaceAll(/[._]/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /** Before → after as the engine reported it; nothing is inferred when a count is missing. */
@@ -450,7 +543,7 @@ function relevantFinding(
 ): { title: string; detail: string; href: string } | null {
   const fast = topBySeverity(findings.filter((item) => !item.table_id || item.table_id === tableId));
   if (fast) {
-    const href = fast.finding_type === "missing_target_file_size" ? `/tables/${tableId}?tab=files#files-properties` : `/tables/${tableId}?tab=quality`;
+    const href = fast.finding_type === "missing_target_file_size" ? `/tables/${tableId}?tab=config#config-properties` : `/tables/${tableId}?tab=quality`;
     return { title: fast.finding_type, detail: fast.reason, href };
   }
   const signal = topBySeverity(signals.filter((item) => item.triggered));
