@@ -7,6 +7,7 @@ from cryo.integrations import alerts
 
 def test_send_slack_table_breach_alert_without_ai_summary(monkeypatch):
     captured: dict = {}
+    monkeypatch.setattr(alerts, "validated_https_url", lambda url, **_kwargs: url)
     monkeypatch.setattr(alerts, "_post_json", lambda url, payload: captured.update(payload=payload))
 
     ok = alerts.send_slack_table_breach_alert(
@@ -21,6 +22,7 @@ def test_send_slack_table_breach_alert_without_ai_summary(monkeypatch):
 
 def test_send_slack_table_breach_alert_with_ai_summary_adds_extra_block(monkeypatch):
     captured: dict = {}
+    monkeypatch.setattr(alerts, "validated_https_url", lambda url, **_kwargs: url)
     monkeypatch.setattr(alerts, "_post_json", lambda url, payload: captured.update(payload=payload))
 
     ok = alerts.send_slack_table_breach_alert(

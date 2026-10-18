@@ -856,12 +856,13 @@ def test_destination(destination_id: uuid.UUID, session: SessionDep) -> dict[str
                 "used": snapshot.used,
                 "available": snapshot.available,
             }
-        except Exception as exc:
+        except Exception:
+            logger.exception("Destination probe failed for %s", destination_id)
             return {
                 "ok": False,
                 "engine": destination.engine,
                 "name": destination.name,
-                "message": str(exc),
+                "message": "Destination probe failed",
             }
     if destination.engine == EngineType.NATIVE.value:
         result = _test_native_destination(
@@ -2059,21 +2060,22 @@ def create_scan_trigger(
             "message": enqueue_result.message,
             "num_chunks": enqueue_result.num_chunks,
         }
-    except Exception as exc:
+    except Exception:
+        logger.exception("Failed to queue scan %s", result.get("run_id"))
         if hasattr(session, "get"):
             run = session.get(MaintenanceRun, result["run_id"])
             if run is not None:
                 run.summary = {
                     **dict(run.summary or {}),
                     "queued": False,
-                    "queue_error": str(exc),
+                    "queue_error": "queueing failed",
                     "placeholder": False,
                 }
                 session.commit()
         result = {
             **result,
             "queued": False,
-            "message": f"Scan request accepted, but queueing failed: {exc}",
+            "message": "Scan request accepted, but queueing failed.",
             "num_chunks": num_chunks,
         }
     return result
