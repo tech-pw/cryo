@@ -2300,6 +2300,60 @@ class PartitionLastAccess(TimestampMixin, Base):
     last_read_day: Mapped[date] = mapped_column(Date, nullable=False)
 
 
+class PartitionStorageClass(Base):
+    """Storage class Cryo last moved a partition's live data files to.
+
+    Written only by archive and restore jobs (``cryo.tiering.archive_jobs``). Absence means
+    Cryo never moved the partition, not that its files are in Standard.
+    """
+
+    __tablename__ = "partition_storage_classes"
+
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    partition_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    storage_class: Mapped[str] = mapped_column(Text, nullable=False)
+    objects: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ArchiveJob(Base):
+    """One archive or restore request: moving partitions' data files between S3 classes."""
+
+    __tablename__ = "archive_jobs"
+    __table_args__ = (Index("ix_archive_jobs_table_created", "table_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    target_class: Mapped[str] = mapped_column(Text, nullable=False)
+    partition_keys: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'queued'"))
+    objects_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    objects_moved: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    objects_skipped: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    objects_failed: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    bytes_moved: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    errors: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    actor: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
 class QueryCostAttributionDaily(Base):
     """Per-day, per-client, per-schema rollup of real Trino query scan bytes -- a "who/what is
     driving scan cost" report, built entirely from data Trino's own query-completion event

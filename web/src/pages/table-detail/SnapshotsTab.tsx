@@ -427,6 +427,13 @@ export const SnapshotsTab = () => {
           oldest={data.oldest_committed_at}
         />
       ) : null}
+      <Card className="td-snapshots-retention">
+        <ExcludedFromExpiry tableId={tableId} />
+        <p className="text-xs text-muted-foreground">
+          Tags and branches follow Iceberg's own retention rules. An expiry job that is already planning won't see a change
+          made after it started.
+        </p>
+      </Card>
       <SnapshotSelection
         snapshots={data?.snapshots ?? []}
         selectedId={searchParams.get("snapshot")}
@@ -455,7 +462,6 @@ export const SnapshotsTab = () => {
         }
       /> : null}
       </section>
-      <Card className="td-snapshots-retention"><ExcludedFromExpiry tableId={tableId} /><p className="text-xs text-muted-foreground">Tags and branches follow Iceberg retention rules. Spark expire keeps each recorded id with a tag. Trino expire cannot skip one id. A job already planning will not see a click made after it started.</p></Card>
     </div>
   );
 };

@@ -1850,6 +1850,8 @@ export interface ComplianceStatusRead {
   } | null;
   abac_policy_count: number;
   abac_enforcement_note: string | null;
+  abac_enforced?: boolean;
+  protected_snapshot_count?: number;
 }
 
 export const getComplianceStatus = (api: ApiOptions, tableId: UUID) =>

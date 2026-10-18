@@ -254,13 +254,14 @@ export const TimeSeries = ({
   const bodyAnswer = provided ?? (changeLine ? undefined : fallbackAnswer(points, unit));
   const measuredCount = measuredPoints(points).length;
   const hasGap = points.length > 0 && measuredCount < points.length;
+  const graded = points.some((point) => point.grade != null);
   const rows = points.map((point, index) => {
     const epoch = toEpochMs(point.at);
     return {
       id: `${point.at}-${index}`,
       at: epoch == null ? point.at : formatTimeTick(epoch, { timeZone: TIME_ZONE }),
       value: plotValue(point.value),
-      grade: point.grade ?? null
+      ...(graded ? { grade: point.grade ?? null } : {})
     };
   });
 
@@ -276,7 +277,7 @@ export const TimeSeries = ({
       columns={[
         { key: "at", header: "Time" },
         { key: "value", header: unit, align: "right" },
-        { key: "grade", header: "Grade" }
+        ...(graded ? [{ key: "grade", header: "Grade" }] : [])
       ]}
       events={chartEvents(markers, events)}
     >

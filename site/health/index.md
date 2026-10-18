@@ -75,9 +75,9 @@ Text description
 
 - Object storage is not read by Cost estimator
 
-Bytes, not money
+Bytes first, then a rate
 
-A modelled saving is not shown as money anywhere in Cryo or on this site. Projections are byte classes: live data, expirable, manifests and metadata, and orphan candidates.
+Projections are byte classes: live data, expirable, manifests and metadata, and orphan candidates. The bytes are what Cryo measures. The [Cost & Savings tab](https://tech-pw.github.io/cryo/table-detail/#cost) multiplies them by the AWS S3 Standard rate to show a monthly figure, labelled as modelled. For a table outside S3 it shows bytes only, because the rate wouldn't apply.
 
 ## What each operation projects
 

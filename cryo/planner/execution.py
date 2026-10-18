@@ -71,6 +71,7 @@ def build_execution_plan(
         has_shared_location=has_shared_location,
     )
     plan = gate_gc_disabled(plan, gc_disabled=gc_disabled_in_stats(stats))
+    plan = gate_engine_unsupported(plan, destination=destination)
     return gate_native_optimize_manifests(
         plan,
         operations=operations,
@@ -261,6 +262,42 @@ def gate_gc_disabled(plan: MaintenancePlan, *, gc_disabled: bool) -> Maintenance
             "Skipped expire_snapshots and remove_orphan_files: the table sets gc.enabled=false, "
             "which forbids deleting its files. Re-enable gc.enabled on the table to resume them.",
         ),
+    )
+
+
+_ENGINE_UNSUPPORTED: dict[str, dict[OperationType, str]] = {
+    EngineType.TRINO.value: {
+        OperationType.REWRITE_POSITION_DELETES: (
+            "Skipped rewrite_position_deletes: Trino has no procedure for it. Route the table to "
+            "a Spark destination to merge position deletes."
+        ),
+    },
+}
+
+
+def gate_engine_unsupported(
+    plan: MaintenancePlan,
+    *,
+    destination: ExecutionDestination,
+) -> MaintenancePlan:
+    """Drop operations the destination engine cannot run, with a plan note per operation.
+
+    The Trino renderer raises on rewrite_position_deletes rather than downgrading it to a full
+    OPTIMIZE, so leaving it in the plan failed the whole run at render time.
+    """
+    engine = destination.engine
+    engine_value = engine.value if isinstance(engine, EngineType) else str(engine).lower()
+    unsupported = _ENGINE_UNSUPPORTED.get(engine_value)
+    if not unsupported:
+        return plan
+    dropped = [op for op in plan.operations if op.type in unsupported]
+    if not dropped:
+        return plan
+    return MaintenancePlan(
+        table_ref=plan.table_ref,
+        mode=plan.mode,
+        operations=tuple(op for op in plan.operations if op.type not in unsupported),
+        notes=(*plan.notes, *dict.fromkeys(unsupported[op.type] for op in dropped)),
     )
 
 

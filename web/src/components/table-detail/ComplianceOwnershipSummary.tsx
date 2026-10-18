@@ -2,7 +2,6 @@ import { Settings } from "lucide-react";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
 import { AsyncBoundary } from "../AsyncBoundary";
 import { PendingDeletionTag } from "../status";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 
@@ -32,14 +31,14 @@ export const ComplianceOwnershipSummary = () => {
           error={compliance.error}
           isEmpty={complianceNotFound || !compliance.data}
           emptyTitle="No compliance data yet"
-          emptyDescription="ABAC and deletion-delay details appear after governance policies apply."
+          emptyDescription="Deleted-row and snapshot protection details appear after the first scan."
         >
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <SummaryStat label="ABAC policies">
-              <Badge variant="default">{compliance.data?.abac_policy_count ?? 0}</Badge>
-            </SummaryStat>
-            <SummaryStat label="Deletion delay">
+            <SummaryStat label="Deleted rows waiting">
               <PendingDeletionTag pending={Boolean(compliance.data?.pending_deletion)} />
+            </SummaryStat>
+            <SummaryStat label="Protected snapshots">
+              <span className="text-sm">{compliance.data?.protected_snapshot_count ?? 0}</span>
             </SummaryStat>
             <SummaryStat label="Owner">
               <span className="truncate text-sm">{row?.owner_email || "Unassigned"}</span>

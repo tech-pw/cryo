@@ -541,7 +541,9 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
       `POST /api/v1/routing/preview`; preset `engine_pool` / `adaptive_routing` guardrails.
 - [x] Data tiering candidates (`cryo/tiering/`, `tier_policies` table, S3 analyzer);
       `GET /tables/{id}/tier-candidates`; tier policy CRUD.
-- [ ] Tiering **execution** — move cold partitions to cheaper storage classes (candidates only today).
+- [x] Tiering **execution** — move cold partitions to cheaper storage classes. Done 2026-10-18:
+      `docs/ARCHIVE_EXECUTION_2026-10-18.md` (manual, instant classes only, preflight with IAM policy,
+      planner skips archived partitions). Realized savings still open.
       Researched 2026-10-01: `docs/ARCHIVE_TIERING_RESEARCH_2026-10-01.md` (instant-access classes
       only; Glacier Flexible/Deep Archive are unsafe on live Iceberg tables). Do the P0 items first:
   - [x] Fix the S3 tiering recommender: it reads only `QueryLog` (empty for the `cdp` source), so
@@ -556,7 +558,8 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
         last-read rollup (`PartitionAccessDaily` is pruned at 35 days, partition access is empty).
   - [x] Storage-class checklist: classify readable vs restore-required; scanner now stores one
         `sample_file_path` per partition so the check actually runs (needs a rescan).
-  - [ ] Advisory **Archive** section on the table page (Usage tab), then execution behind approval.
+  - [x] **Archive** section on the table page (now Cost & Savings), with execution behind operator
+        preflight and confirmation.
 - [x] Signal-driven maintenance triggers (`cryo/triggers/`); governor signal bypass of cooldown/off-peak.
 - [x] AutoComp benefit scoring (`cryo/planner/benefit_score.py`); partition ranking in planner.
 - [x] Compaction effectiveness ratio tracking in audit log.

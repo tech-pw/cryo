@@ -1,12 +1,12 @@
-import { X } from "lucide-react";
+import { CheckCircle2, Clock3, Lock, ShieldOff, X } from "lucide-react";
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
 import { useWriteControl } from "../../lib/useWriteControl";
 import { AsyncBoundary } from "../AsyncBoundary";
-import { Badge } from "../ui/badge";
+import { formatNumber, formatTime } from "../../lib/format";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { PendingDeletionTag } from "../status";
 import {
   Sheet,
   SheetContent,
@@ -14,6 +14,103 @@ import {
   SheetHeader,
   SheetTitle
 } from "../ui/sheet";
+
+const TONE_CLASS = {
+  ok: "text-[var(--color-status-success)]",
+  warn: "text-[var(--color-status-warning)]",
+  muted: "text-muted-foreground"
+} as const;
+
+const ComplianceRow = ({
+  icon,
+  tone,
+  title,
+  children
+}: {
+  icon: ReactNode;
+  tone: "ok" | "warn" | "muted";
+  title: ReactNode;
+  children?: ReactNode;
+}) => (
+  <li className="flex gap-3 rounded-[var(--radius-default)] border border-border p-3">
+    <span className={`mt-0.5 shrink-0 ${TONE_CLASS[tone]}`} aria-hidden="true">
+      {icon}
+    </span>
+    <div className="min-w-0">
+      <p className="text-sm font-medium">{title}</p>
+      {children ? <div className="mt-0.5 text-xs text-muted-foreground">{children}</div> : null}
+    </div>
+  </li>
+);
+
+interface ComplianceBlockProps {
+  tableId: string;
+  pendingRows: number;
+  blockedUntil: string | null;
+  protectedCount: number;
+  abacCount: number;
+  abacNote: string | null;
+  onNavigate: () => void;
+}
+
+const ComplianceBlock = ({
+  tableId,
+  pendingRows,
+  blockedUntil,
+  protectedCount,
+  abacCount,
+  abacNote,
+  onNavigate
+}: ComplianceBlockProps) => {
+  const snapshotsLink = (label: string) => (
+    <Link className="underline" to={`/tables/${tableId}?tab=snapshots#excluded-from-expiry`} onClick={onNavigate}>
+      {label}
+    </Link>
+  );
+  return (
+    <ul className="space-y-2">
+      {pendingRows > 0 ? (
+        <ComplianceRow
+          icon={<Clock3 className="size-4" />}
+          tone="warn"
+          title={`${formatNumber(pendingRows)} deleted row${pendingRows === 1 ? "" : "s"} still readable`}
+        >
+          Older snapshots still hold them. They are gone for good when snapshot expiry removes those snapshots
+          {blockedUntil ? <>, by {formatTime(blockedUntil)}</> : null}.
+          {protectedCount > 0 ? (
+            <> {formatNumber(protectedCount)} protected snapshot{protectedCount === 1 ? "" : "s"} may keep them longer. </>
+          ) : null}
+        </ComplianceRow>
+      ) : (
+        <ComplianceRow icon={<CheckCircle2 className="size-4" />} tone="ok" title="No deleted rows waiting">
+          Rows deleted from this table are not held by any snapshot Cryo knows about.
+        </ComplianceRow>
+      )}
+      <ComplianceRow
+        icon={<Lock className="size-4" />}
+        tone={protectedCount > 0 ? "warn" : "muted"}
+        title={
+          protectedCount > 0
+            ? `${formatNumber(protectedCount)} snapshot${protectedCount === 1 ? "" : "s"} protected from expiry`
+            : "No protected snapshots"
+        }
+      >
+        {protectedCount > 0
+          ? <>Expiry skips them, along with every file and deleted row they reference. {snapshotsLink("Review on Snapshots")}</>
+          : <>Protect a snapshot on the {snapshotsLink("Snapshots tab")} to keep it past expiry.</>}
+      </ComplianceRow>
+      <ComplianceRow
+        icon={<ShieldOff className="size-4" />}
+        tone={abacCount > 0 ? "warn" : "muted"}
+        title={abacCount > 0 ? `${formatNumber(abacCount)} access polic${abacCount === 1 ? "y" : "ies"} recorded, not enforced` : "No access policies"}
+      >
+        {abacCount > 0
+          ? abacNote
+          : "Row filters and column masks (ABAC) are enforced by your catalog or engine, not Cryo."}
+      </ComplianceRow>
+    </ul>
+  );
+};
 
 interface TableSettingsSheetProps {
   open: boolean;
@@ -44,49 +141,37 @@ export const TableSettingsSheet = ({ open, onOpenChange }: TableSettingsSheetPro
   } = useTableDetailContext();
 
   const ownerAccess = useWriteControl("patchTable");
+  const pendingRows = compliance.data?.pending_deletion?.pending_rows ?? 0;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Table settings</SheetTitle>
-          <SheetDescription>Compliance, protection, ownership, and alert subscribers.</SheetDescription>
+          <SheetDescription>Who owns this table, who hears about it, and what is holding deleted data.</SheetDescription>
         </SheetHeader>
 
         <div className="mt-6 space-y-6">
-          <section className="space-y-3">
-            <h4 className="text-sm font-semibold">Compliance &amp; protection</h4>
+          <section className="space-y-3" aria-labelledby="settings-compliance">
+            <h4 id="settings-compliance" className="text-sm font-semibold">Compliance &amp; protection</h4>
             <AsyncBoundary
               isLoading={compliance.isPending}
-              isError={Boolean(compliance.error)}
+              isError={Boolean(compliance.error) && !complianceNotFound}
               error={compliance.error}
-              isEmpty={compliance.isFetched && !compliance.data && !compliance.error}
-              emptyTitle="No deletion-tracking data yet"
-              emptyDescription="This table has no compliance events yet."
+              isEmpty={complianceNotFound}
+              emptyTitle="No compliance data yet"
+              emptyDescription="This appears after the first scan."
             >
-              <dl className="space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <dt className="text-muted-foreground">ABAC count</dt>
-                  <dd>
-                    <Badge variant="default">{compliance.data?.abac_policy_count ?? 0}</Badge>
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between">
-                  <dt className="text-muted-foreground">Deletion delay</dt>
-                  <dd>
-                    <PendingDeletionTag pending={Boolean(compliance.data?.pending_deletion)} />
-                  </dd>
-                </div>
-              </dl>
+              <ComplianceBlock
+                tableId={tableId}
+                pendingRows={pendingRows}
+                blockedUntil={compliance.data?.pending_deletion?.blocked_until ?? null}
+                protectedCount={compliance.data?.protected_snapshot_count ?? 0}
+                abacCount={compliance.data?.abac_policy_count ?? 0}
+                abacNote={compliance.data?.abac_enforcement_note ?? null}
+                onNavigate={() => onOpenChange(false)}
+              />
             </AsyncBoundary>
-
-            <p className="text-xs text-muted-foreground">
-              Snapshot exclusion lives on the{" "}
-              <Link className="underline" to={`/tables/${tableId}?tab=snapshots#excluded-from-expiry`} onClick={() => onOpenChange(false)}>
-                Snapshots
-              </Link>{" "}
-              tab. Spark expire keeps each recorded id. Trino expire cannot skip one id.
-            </p>
           </section>
 
           <section className="space-y-3 border-t border-border pt-6">

@@ -43,8 +43,8 @@ updated: 2026-10-06
 <h2 id="projection">Projection: from scan to stored cost</h2>
 <p>The cost estimator turns the scanner's stored statistics into a projected byte count for each operation and stores it. Nothing is read from object storage to produce it. Orphan-file precision is an opt-in scanner tier. Without it, the number is flagged as last-known.</p>
 <diagram name="projection" caption="Object storage is not an input to the projection." />
-<callout type="note" title="Bytes, not money">
-  <p>A modelled saving is not shown as money anywhere in Cryo or on this site. Projections are byte classes: live data, expirable, manifests and metadata, and orphan candidates.</p>
+<callout type="note" title="Bytes first, then a rate">
+  <p>Projections are byte classes: live data, expirable, manifests and metadata, and orphan candidates. The bytes are what Cryo measures. The <a href="@/table-detail/#cost">Cost &amp; Savings tab</a> multiplies them by the AWS S3 Standard rate to show a monthly figure, labelled as modelled. For a table outside S3 it shows bytes only, because the rate wouldn't apply.</p>
 </callout>
 
 <h2 id="operations">What each operation projects</h2>

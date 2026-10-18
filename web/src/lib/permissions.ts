@@ -34,7 +34,8 @@ export type WriteAction =
   | "refreshAnomalies"
   | "runDedup"
   | "editTableConfig"
-  | "editTableConfigAdmin";
+  | "editTableConfigAdmin"
+  | "archivePartitions";
 
 type MinRole = "operator" | "admin";
 
@@ -76,7 +77,8 @@ export const WRITE_MIN_ROLE: Record<WriteAction, MinRole> = {
   runDedup: "operator",
   editTableConfig: "operator",
   // Format upgrades and Cryo retention overrides: one-way or data-deleting.
-  editTableConfigAdmin: "admin"
+  editTableConfigAdmin: "admin",
+  archivePartitions: "operator"
 };
 
 const DESTRUCTIVE_ADMIN: ReadonlySet<WriteAction> = new Set([
@@ -95,7 +97,8 @@ const MAINTENANCE_WRITES: ReadonlySet<WriteAction> = new Set([
   "executeLayout",
   "protectSnapshot",
   "unprotectSnapshot",
-  "scheduleMaintenance"
+  "scheduleMaintenance",
+  "archivePartitions"
 ]);
 
 const RANK: Record<RoleToken, number> = { viewer: 0, operator: 1, admin: 2 };
