@@ -4,7 +4,15 @@
     "use strict";
 
     var doc = document;
-    var root = doc.body.getAttribute("data-root") || "./";
+    var root = siteRoot();
+
+    function siteRoot() {
+        var attr = doc.body.getAttribute("data-root");
+        if (attr === "./") return "./";
+        if (attr === "../") return "../";
+        if (attr === "https://tech-pw.github.io/cryo/") return "https://tech-pw.github.io/cryo/";
+        return "./";
+    }
     var $ = function(s, c) { return (c || doc).querySelector(s); };
     var $$ = function(s, c) { return Array.prototype.slice.call((c || doc).querySelectorAll(s)); };
     var isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -117,9 +125,11 @@
     }
 
     function safeDocUrl(url) {
-        var cleaned = String(url || "").replace(/[^a-z0-9/_-]/g, "");
-        if (!cleaned || cleaned !== url) return root || "./";
-        return (root || "./") + cleaned;
+        var cleaned = String(url || "");
+        if (!/^[a-z0-9/_-]*$/.test(cleaned)) return "./";
+        if (root === "../") return "../" + cleaned;
+        if (root === "https://tech-pw.github.io/cryo/") return "https://tech-pw.github.io/cryo/" + cleaned;
+        return "./" + cleaned;
     }
 
     function emptyResult(q) {

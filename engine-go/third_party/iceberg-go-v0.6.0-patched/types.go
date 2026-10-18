@@ -20,6 +20,7 @@ package iceberg
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -80,8 +81,8 @@ func PropUInt(p Properties, key string, defVal uint) uint {
 	if !ok {
 		return defVal
 	}
-	n, err := strconv.ParseUint(v, 10, 63)
-	if err != nil {
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil || n > uint64(math.MaxUint) {
 		return defVal
 	}
 
