@@ -74,7 +74,8 @@ export const NATIVE_UNSUPPORTED_OPS = [
   "convert_deletes",
   "optimize_manifests",
   "compute_statistics",
-  "rewrite_position_deletes"
+  "rewrite_position_deletes",
+  "expire_data"
 ] as const;
 
 export const nativeUnsupportedOpTooltip =

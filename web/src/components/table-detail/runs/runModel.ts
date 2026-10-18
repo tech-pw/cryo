@@ -9,6 +9,7 @@ export const GRID_OPERATIONS = [
   "optimize",
   "compute_statistics",
   "optimize_manifests",
+  "expire_data",
   "expire_snapshots",
   "remove_orphan_files"
 ] as const;
@@ -21,6 +22,7 @@ export const OPERATION_SHORT: Record<string, string> = {
   optimize: "Compact",
   compute_statistics: "Statistics",
   optimize_manifests: "Manifests",
+  expire_data: "Expire data",
   expire_snapshots: "Expire snapshots",
   remove_orphan_files: "Orphan files"
 };

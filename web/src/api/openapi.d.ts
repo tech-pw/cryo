@@ -9675,7 +9675,7 @@ export interface components {
          * OperationType
          * @enum {string}
          */
-        OperationType: "expire_snapshots" | "remove_orphan_files" | "convert_deletes" | "optimize" | "optimize_manifests" | "compute_statistics" | "rewrite_position_deletes";
+        OperationType: "expire_snapshots" | "remove_orphan_files" | "convert_deletes" | "optimize" | "optimize_manifests" | "compute_statistics" | "rewrite_position_deletes" | "expire_data";
         /** OrphanScanCostRead */
         OrphanScanCostRead: {
             /** Estimated List Requests */

@@ -32,6 +32,7 @@ _BYTES_MEASURABLE_VIA_FILES_DIFF = frozenset(
         OperationType.EXPIRE_SNAPSHOTS,
         OperationType.OPTIMIZE,
         OperationType.CONVERT_DELETES,
+        OperationType.EXPIRE_DATA,
     }
 )
 

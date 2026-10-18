@@ -15,6 +15,7 @@ from cryo.planner.partitions import (
     build_predicate,
     partition_fields_from_stats,
 )
+from cryo.planner.ttl import plan_expire_data
 
 # Tables just under detect_streaming_from_history's 24 commits/day cutoff still
 # take concurrent writes during rewrite_data_files. Treat that band
@@ -73,6 +74,15 @@ def build_plan(
                 ),
             )
         )
+        expire_data, expire_data_notes = plan_expire_data(
+            stats,
+            partitions,
+            params,
+            protected_snapshot_ids=list(protected_snapshot_ids or []),
+        )
+        notes.extend(expire_data_notes)
+        if expire_data is not None:
+            operations.append(expire_data)
 
     if resolved_mode is Mode.DEEP:
         operations.append(Operation(OperationType.REMOVE_ORPHAN_FILES, _orphan_params(params)))

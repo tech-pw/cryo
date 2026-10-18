@@ -22,6 +22,7 @@ CORRECT_ORDER: tuple[OperationType, ...] = (
     OperationType.OPTIMIZE,
     OperationType.COMPUTE_STATISTICS,
     OperationType.OPTIMIZE_MANIFESTS,
+    OperationType.EXPIRE_DATA,
     OperationType.EXPIRE_SNAPSHOTS,
     OperationType.REMOVE_ORPHAN_FILES,
 )

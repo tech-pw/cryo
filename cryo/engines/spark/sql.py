@@ -12,6 +12,7 @@ from cryo.domain.models import (
     PartitionPredicateTerm,
 )
 from cryo.engines.base import RenderedStatement
+from cryo.engines.expire_data_sql import expire_data_metadata, render_expire_data_delete
 from cryo.planner.partitions import DEFAULT_RENDERABLE_CAPABILITIES
 
 
@@ -49,6 +50,8 @@ def _render_operation(
         sql = _render_convert_deletes(catalog, table_name, operation)
     elif operation.type is OperationType.REWRITE_POSITION_DELETES:
         sql = _render_rewrite_position_deletes(catalog, table_name, operation)
+    elif operation.type is OperationType.EXPIRE_DATA:
+        sql = render_expire_data_delete(f"{catalog}.{table_name}", operation.params, quote="spark")
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
         sql = f"CALL {catalog}.system.rewrite_manifests(table => '{catalog}.{table_name}')"
     elif operation.type is OperationType.COMPUTE_STATISTICS:
@@ -59,7 +62,13 @@ def _render_operation(
     else:
         raise ValueError(f"Unsupported operation: {operation.type}")
     return RenderedStatement(
-        action=operation.type, sql=sql, engine=EngineType.SPARK_EMR, metadata={"catalog": catalog}
+        action=operation.type,
+        sql=sql,
+        engine=EngineType.SPARK_EMR,
+        metadata={
+            "catalog": catalog,
+            **expire_data_metadata(operation.type.value, operation.params),
+        },
     )
 
 

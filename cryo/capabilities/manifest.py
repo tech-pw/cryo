@@ -115,6 +115,12 @@ _FLINK_EVIDENCE = _evidence(
 
 _OPERATIONS = (
     OperationDefinition(
+        operation=OperationType.EXPIRE_DATA,
+        label="Expire data",
+        description="Delete partitions or rows older than a retention cutoff.",
+        destructive=True,
+    ),
+    OperationDefinition(
         operation=OperationType.EXPIRE_SNAPSHOTS,
         label="Expire snapshots",
         description="Remove snapshots older than the protected retention boundary.",
@@ -364,6 +370,24 @@ _TRINO_CELLS = (
     ),
     _cell(
         EngineType.TRINO,
+        OperationType.EXPIRE_DATA,
+        SupportStatus.SUPPORTED,
+        MaturityTier.BETA,
+        ExecutionMode.TRINO_SQL,
+        runtime_conditions=(
+            "expire_data is opt-in and requires an approval before it deletes rows.",
+            "Partition level only runs when the field is the partition column.",
+        ),
+        owner="engines/trino",
+        evidence=_evidence(
+            "cryo/engines/trino/sql.py",
+            "_render_operation",
+            "tests/test_expire_data.py",
+            "test_trino_renders_partition_expire_data",
+        ),
+    ),
+    _cell(
+        EngineType.TRINO,
         OperationType.REWRITE_POSITION_DELETES,
         SupportStatus.UNSUPPORTED,
         MaturityTier.BLOCKED,
@@ -485,6 +509,23 @@ _NATIVE_CELLS = (
         fallback_engines=(EngineType.TRINO, EngineType.SPARK_EMR),
         owner="engines/native",
         evidence=_NATIVE_EVIDENCE,
+    ),
+    _cell(
+        EngineType.NATIVE,
+        OperationType.EXPIRE_DATA,
+        SupportStatus.FALLBACK_REQUIRED,
+        MaturityTier.BETA,
+        ExecutionMode.SQL_FALLBACK,
+        runtime_conditions=("A Trino or Spark fallback destination must be configured.",),
+        limitations=("cryo-engine-go does not delete expired data files.",),
+        fallback_engines=(EngineType.TRINO, EngineType.SPARK_EMR),
+        owner="engines/native",
+        evidence=_evidence(
+            "cryo/engines/expire_data_sql.py",
+            "render_expire_data_delete",
+            "tests/test_expire_data.py",
+            "test_spark_renders_partition_expire_data",
+        ),
     ),
     _cell(
         EngineType.NATIVE,

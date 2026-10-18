@@ -117,7 +117,7 @@ When touching scanner/planner/governor/engines, keep all of these (ported from t
 - **Cooldown** (skip recently maintained), **off-peak** windows, **adaptive budget**, **deadlines**.
 - **Failure isolation** per table; **per-table lock** (no double maintenance).
 - Correct op order: `convert_deletes → rewrite_position_deletes → optimize → compute_statistics →
- optimize_manifests → expire_snapshots → remove_orphan_files`. Compact first, clean up after, so a
+ optimize_manifests → expire_data → expire_snapshots → remove_orphan_files`. Compact first, clean up after, so a
  single run reclaims the space its own compaction freed. `cryo/planner/guardrails.py::CORRECT_ORDER`
  is the only definition; `web/src/lib/operationOrder.ts` mirrors it.
 - **A–F health grade** + score deductions (WARN −8 / CRIT −20) and **S3 cost** heuristic, unchanged.

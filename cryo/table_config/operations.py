@@ -186,6 +186,33 @@ OPERATIONS: tuple[OperationSpec, ...] = (
         doc_url=f"{_ICEBERG_MAINTENANCE}#rewrite-manifests",
     ),
     OperationSpec(
+        operation=OperationType.EXPIRE_DATA,
+        label="Expire data",
+        phase="cleanup",
+        summary=(
+            "Deletes partitions or rows older than a retention cutoff. The default cutoff "
+            "is measured from the last commit, so a stalled pipeline does not wipe its tail."
+        ),
+        when_planned=(
+            "Light, standard and deep modes, only when the preset sets expire_data_enabled, "
+            "a field, and a retention such as 7d."
+        ),
+        exclude_consequence=(
+            "Old partitions stay in the table and keep costing storage and scan time. "
+            "Snapshot expiry does not remove live data."
+        ),
+        exclude_risk="high",
+        reasons_to_exclude=(
+            "Downstream jobs still read partitions older than the retention window.",
+            "The timestamp field is not the partition column and a row delete is too expensive.",
+        ),
+        engines=(
+            ("trino", "DELETE FROM, metadata-only when the predicate matches the partition spec."),
+            ("spark", "DELETE FROM, metadata-only when the predicate matches the partition spec."),
+        ),
+        doc_url=f"{_ICEBERG_MAINTENANCE}#delete",
+    ),
+    OperationSpec(
         operation=OperationType.EXPIRE_SNAPSHOTS,
         label="Expire snapshots",
         phase="cleanup",
@@ -239,10 +266,11 @@ OPERATIONS: tuple[OperationSpec, ...] = (
 SPECS: dict[str, OperationSpec] = {spec.operation.value: spec for spec in OPERATIONS}
 
 _MODE_OPERATIONS: dict[Mode, frozenset[OperationType]] = {
-    Mode.LIGHT: frozenset({OperationType.EXPIRE_SNAPSHOTS}),
+    Mode.LIGHT: frozenset({OperationType.EXPIRE_SNAPSHOTS, OperationType.EXPIRE_DATA}),
     Mode.STANDARD: frozenset(
         {
             OperationType.EXPIRE_SNAPSHOTS,
+            OperationType.EXPIRE_DATA,
             OperationType.OPTIMIZE,
             OperationType.CONVERT_DELETES,
             OperationType.REWRITE_POSITION_DELETES,
@@ -313,6 +341,8 @@ def operation_state(spec: OperationSpec, facts: TableOperationFacts) -> Operatio
             "not_in_mode",
             f"Not planned in {facts.mode.value} mode, which preset {facts.preset_name} uses.",
         )
+    if op is OperationType.EXPIRE_DATA and not bool(facts.params.get("expire_data_enabled")):
+        return OperationState("off", f"Preset {facts.preset_name} does not enable expire_data.")
     if op is OperationType.COMPUTE_STATISTICS and not bool(
         facts.params.get("compute_statistics", False)
     ):

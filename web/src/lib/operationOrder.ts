@@ -19,6 +19,7 @@ export const CORRECT_ORDER = [
   "optimize",
   "compute_statistics",
   "optimize_manifests",
+  "expire_data",
   "expire_snapshots",
   "remove_orphan_files"
 ] as const;
