@@ -10,7 +10,9 @@ def test_send_slack_table_breach_alert_without_ai_summary(monkeypatch):
     monkeypatch.setattr(alerts, "_post_json", lambda url, payload: captured.update(payload=payload))
 
     ok = alerts.send_slack_table_breach_alert(
-        "finance.orders", ["Freshness breached"], webhook_url="https://hooks.slack.com/services/T/B/x"
+        "finance.orders",
+        ["Freshness breached"],
+        webhook_url="https://hooks.slack.com/services/T/B/x",
     )
 
     assert ok is True
