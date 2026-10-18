@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _QUERY = re.compile(r"[A-Za-z0-9=&._-]{1,200}")
@@ -53,7 +53,7 @@ def azure_openai_url(url: str) -> str:
     raise OutboundURLError("Azure OpenAI API host is not allowed")
 
 
-def _https(url: str):
+def _https(url: str) -> SplitResult:
     parsed = urlsplit(url.strip())
     if (
         parsed.scheme != "https"
@@ -69,8 +69,9 @@ def _https(url: str):
     return parsed
 
 
-def _host(parsed) -> str:
-    return parsed.hostname.lower().rstrip(".")
+def _host(parsed: SplitResult) -> str:
+    hostname = parsed.hostname or ""
+    return hostname.lower().rstrip(".")
 
 
 def _path(path: str, *, prefix: str = "/") -> str:

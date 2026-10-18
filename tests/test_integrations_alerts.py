@@ -47,7 +47,10 @@ def test_send_slack_table_breach_alert_no_reasons_skips_send(monkeypatch):
     monkeypatch.setattr(alerts, "_post_json", _fake_post)
 
     ok = alerts.send_slack_table_breach_alert(
-        "finance.orders", [], webhook_url="https://hooks.slack.com/services/T/B/x", ai_summary="unused"
+        "finance.orders",
+        [],
+        webhook_url="https://hooks.slack.com/services/T/B/x",
+        ai_summary="unused",
     )
 
     assert ok is False
