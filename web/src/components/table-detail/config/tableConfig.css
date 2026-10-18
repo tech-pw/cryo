@@ -1065,7 +1065,8 @@ button.tc-tile { cursor: pointer; }
 .tc-suggestion-alert {
   margin-top: 0.75rem;
   padding: 0.5rem 0.75rem;
-  border-left: 3px solid var(--color-status-danger);
+  border: 1px solid color-mix(in srgb, var(--color-status-danger) 40%, var(--color-border));
+  border-radius: var(--radius-default);
   background: var(--color-surface-sunken);
   font-size: 0.8125rem;
 }

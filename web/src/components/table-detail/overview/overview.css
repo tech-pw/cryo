@@ -737,12 +737,13 @@
 .td-manifest-strip > div {
   padding: 8px 10px;
   border: 1px solid var(--color-border);
-  border-left-width: 3px;
   border-radius: var(--radius-default);
 }
 
-.td-manifest-strip > div[data-tone="ok"] { border-left-color: var(--color-status-success); }
-.td-manifest-strip > div[data-tone="warn"] { border-left-color: var(--color-status-warning); }
+.td-manifest-strip > div[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--color-status-warning) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-status-warning) 6%, transparent);
+}
 
 .td-manifest-strip dt {
   color: var(--color-muted);
