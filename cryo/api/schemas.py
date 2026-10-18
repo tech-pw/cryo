@@ -711,6 +711,78 @@ class TableRead(OrmModel):
     failure_category_actionable_from_cryo: bool = False
     owner_email: str | None = None
     stats: TableStatsRead | None = None
+    # Populated by GET /tables only (bounded to the page); detail views leave it null.
+    maintenance: TableMaintenanceRead | None = None
+
+
+TableMaintenanceState = Literal[
+    "running",
+    "queued",
+    "failed",
+    "held",
+    "excluded",
+    "scan_failing",
+    "not_scanned",
+    "skipped",
+    "needs_work",
+    "healthy",
+    "inactive",
+]
+
+
+class TableJobRef(BaseModel):
+    run_id: uuid.UUID
+    job_id: uuid.UUID
+    status: str
+    trigger: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class TableSelectionRef(BaseModel):
+    """The table's outcome in the latest nightly selection (skip_evaluations)."""
+
+    stage: str
+    reason: str | None = None
+    evaluated_at: datetime
+
+
+class TableMaintenanceRead(BaseModel):
+    state: TableMaintenanceState
+    reason: str | None = None
+    workflow_name: str | None = None
+    # False when the workflow came from a preset rule rather than an operator pin.
+    workflow_pinned: bool = False
+    active_run: TableJobRef | None = None
+    last_run: TableJobRef | None = None
+    last_selection: TableSelectionRef | None = None
+    score_delta_7d: int | None = None
+
+
+class FunnelNode(BaseModel):
+    id: str
+    label: str
+    count: int
+    # Explorer view that lists the tables currently in this state, when one exists.
+    view: str | None = None
+
+
+class FunnelLink(BaseModel):
+    source: str
+    target: str
+    value: int
+
+
+class TablesFunnelResponse(BaseModel):
+    """Where every active table landed in the latest nightly batch, from scan to outcome."""
+
+    run_id: uuid.UUID | None = None
+    run_status: str | None = None
+    run_started_at: datetime | None = None
+    run_finished_at: datetime | None = None
+    total_active: int
+    nodes: list[FunnelNode]
+    links: list[FunnelLink]
 
 
 class TablePatch(BaseModel):

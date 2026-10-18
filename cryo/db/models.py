@@ -889,7 +889,10 @@ class MaintenanceRun(Base):
 
 class MaintenanceJob(Base):
     __tablename__ = "jobs"
-    __table_args__ = (Index("ix_jobs_run_status", "run_id", "status"),)
+    __table_args__ = (
+        Index("ix_jobs_run_status", "run_id", "status"),
+        Index("ix_jobs_table_finished", "table_id", "finished_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")

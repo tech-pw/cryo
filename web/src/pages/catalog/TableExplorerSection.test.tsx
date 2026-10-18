@@ -80,7 +80,9 @@ const renderExplorer = (initialRoute: string) => {
 describe("SmallFileRatio", () => {
   it("shows small files over total files and the ratio", () => {
     render(<SmallFileRatio smallFiles={12} totalFiles={40} />);
-    expect(screen.getByText("12 / 40 files (30%)")).toBeInTheDocument();
+    expect(screen.getByText("30%")).toBeInTheDocument();
+    expect(screen.getByText("12 / 40")).toBeInTheDocument();
+    expect(screen.getByTitle("12 / 40 files (30%)")).toBeInTheDocument();
   });
 
   it("does not turn unknown file counts into 0", () => {
@@ -280,7 +282,7 @@ describe("TableExplorerSection filters", () => {
 
     renderExplorer("/tables");
 
-    const link = await screen.findByRole("link", { name: /analytics\.orders/i });
+    const link = await screen.findByRole("link", { name: "analytics.orders" });
     expect(link).toHaveAttribute("href", "/tables/tbl-1");
     const table = link.closest("table");
     expect(table).toBeInTheDocument();
@@ -295,5 +297,59 @@ describe("TableExplorerSection filters", () => {
     expect(headers.every((th) => th.style.width !== "")).toBe(true);
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
     expect(screen.queryByText(/0 \/ /)).not.toBeInTheDocument();
+  });
+
+  it("shows each table's maintenance status, reason and last run instead of folded subtitle facts", async () => {
+    vi.mocked(listTables).mockResolvedValue({
+      items: [
+        {
+          id: "tbl-2",
+          source_id: "src-1",
+          schema_name: "sales",
+          table_name: "events",
+          first_seen_at: "2026-01-01T00:00:00Z",
+          is_active: true,
+          consecutive_scan_failures: 0,
+          stats: { grade: "C", overall_score: 61.6, total_files: 100, small_files_count: 40, total_size_gb: 5 },
+          maintenance: {
+            state: "skipped",
+            reason: "Cooldown after a recent run",
+            workflow_pinned: false,
+            score_delta_7d: -12,
+            last_run: {
+              run_id: "run-9",
+              job_id: "job-9",
+              status: "succeeded",
+              trigger: "schedule",
+              finished_at: "2026-10-17T02:00:00Z"
+            }
+          }
+        }
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0
+    } as never);
+
+    renderExplorer("/tables");
+
+    expect(await screen.findByText("Skipped")).toBeInTheDocument();
+    expect(screen.getAllByText("Cooldown after a recent run").length).toBeGreaterThan(0);
+    expect(screen.getByText("62")).toBeInTheDocument();
+    expect(screen.getByTitle("Change in health score over the last 7 days")).toHaveTextContent("▼12");
+    expect(screen.getByRole("link", { name: /succeeded · nightly/i })).toHaveAttribute("href", "/runs/run-9");
+    expect(screen.queryByText(/Scan failures not measured/)).not.toBeInTheDocument();
+  });
+
+  it("switches quick views through the URL", async () => {
+    renderExplorer("/tables");
+    fireEvent.click(await screen.findByRole("button", { name: /Failed last run/ }));
+    await waitFor(() => expect(screen.getByTestId("location-probe").textContent).toContain("view=failed"));
+    fireEvent.click(screen.getByRole("button", { name: /^Savings/ }));
+    await waitFor(() => {
+      const location = screen.getByTestId("location-probe").textContent ?? "";
+      expect(location).toContain("view=savings");
+      expect(location).toContain("sort=-projected_savings_usd_month");
+    });
   });
 });

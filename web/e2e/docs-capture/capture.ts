@@ -27,6 +27,7 @@ import {
   demoScannerStatus,
   demoSources,
   demoTablesBody,
+  demoTablesFunnel,
   demoVitalsBody
 } from "./demo-data";
 import { demoTableDetail, demoTableHistory, demoTableRuns, demoTableTabResponse } from "./demo-table-detail";
@@ -179,6 +180,7 @@ async function installDemo(page: Page, unhandled: Set<string>): Promise<void> {
       if (route.request().method() === "OPTIONS") return route.fallback();
       if (p.endsWith("/api/v1/auth/token")) return json(route, { access_token: demoAccessToken(), token_type: "bearer", role: "operator" });
       if (p.endsWith("/api/v1/tables")) return json(route, demoTablesBody(url));
+      if (p.endsWith("/api/v1/tables/maintenance-funnel")) return json(route, demoTablesFunnel());
       if (/\/api\/v1\/tables\/[^/]+\/config\/preview$/.test(p)) return json(route, demoTableConfig.preview);
       const sub = p.match(/\/api\/v1\/tables\/([^/]+)\/([a-z-]+)$/);
       if (sub) {
