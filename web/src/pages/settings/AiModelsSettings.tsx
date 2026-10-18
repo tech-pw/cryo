@@ -20,10 +20,10 @@ import { useAuth } from "../../lib/auth";
 import { formatTime } from "../../lib/format";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { DataTable } from "../../components/ui/data-table";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
-import { PageHeader } from "../../components/ui/page-header";
 import { Select } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
 import { Textarea } from "../../components/ui/textarea";
@@ -102,26 +102,27 @@ export const AiModelsSettings = () => {
 
   if (role !== "admin") {
     return (
-      <PageHeader
-        title="AI models"
-        subtitle="Admin role is required to change Ask Cryo model settings."
-      />
+      <p className="settings-note text-sm text-muted-foreground">
+        Admin role is required to change Ask Cryo model settings.
+      </p>
     );
   }
 
   const tiers = new Set(draft?.enabled_tiers ?? []);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <PageHeader
-        title="AI models"
-        subtitle="Admin only. These settings apply to Ask Cryo for the whole install."
-        actions={
-          <Link to="/settings/ai" className="text-sm text-primary underline-offset-2 hover:underline">
-            AI settings
-          </Link>
-        }
-      />
+    <div className="mx-auto max-w-3xl space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-base font-medium tracking-[-0.01em]">AI models</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Admin only. These settings apply to Ask Cryo for the whole install.
+          </p>
+        </div>
+        <Link to="/settings/ai" className="text-sm text-primary underline-offset-2 hover:underline">
+          AI settings
+        </Link>
+      </div>
       <Alert
         variant="info"
         title="What is sent to the provider"
@@ -129,6 +130,11 @@ export const AiModelsSettings = () => {
       />
       {settings.isError ? <Alert variant="error" title="Could not load settings" description={assistantErrorMessage(settings.error)} /> : null}
       {draft ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-medium tracking-[-0.01em]">Ask Cryo</CardTitle>
+          </CardHeader>
+          <CardContent>
         <form
           className="space-y-4"
           onSubmit={(event) => {
@@ -195,10 +201,15 @@ export const AiModelsSettings = () => {
             Save
           </Button>
         </form>
+          </CardContent>
+        </Card>
       ) : null}
-      <section className="space-y-2">
-        <h2 className="text-sm font-semibold">Usage</h2>
-        <DataTable
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-semibold">Usage</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <DataTable
           columns={usageColumns}
           data={rows}
           density="compact"
@@ -206,11 +217,15 @@ export const AiModelsSettings = () => {
           getRowId={(row, index) => String(row.id ?? `${row.subject ?? "row"}-${row.day ?? index}`)}
           emptyTitle="No usage"
           emptyDescription="No Ask Cryo usage has been recorded."
-        />
-      </section>
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold">API keys</h2>
-        {secret ? (
+          />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-semibold">API keys</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {secret ? (
           <Alert
             variant="warning"
             title="Copy this key now. It will not be shown again."
@@ -236,7 +251,7 @@ export const AiModelsSettings = () => {
         {createKey.isError ? <Alert variant="error" title="Could not create key" description={assistantErrorMessage(createKey.error)} /> : null}
         <ul className="space-y-2">
           {(keys.data ?? []).map((item) => (
-            <li key={item.id} className="flex items-center justify-between gap-3 rounded-[var(--radius-default)] border border-border px-3 py-2 text-sm">
+            <li key={item.id} className="flex items-center justify-between gap-3 rounded-[var(--radius-default)] border border-border bg-[var(--color-surface-sunken)] px-3 py-2 text-sm">
               <span>
                 {item.name}
                 <span className="ml-2 text-xs text-muted-foreground">
@@ -256,7 +271,8 @@ export const AiModelsSettings = () => {
             </li>
           ))}
         </ul>
-      </section>
+          </CardContent>
+      </Card>
     </div>
   );
 };

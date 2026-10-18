@@ -27,6 +27,7 @@ export const ConnectionDrawers = () => {
       <SourceDrawer
         key={sourceDrawer && sourceDrawer !== "new" ? sourceDrawer.id : String(sourceDrawer)}
         value={sourceDrawer}
+        otherSources={sources.data ?? []}
         saving={saveSource.isPending}
         onClose={() => setSourceDrawer(null)}
         onSave={(body) => saveSource.mutate(body)}

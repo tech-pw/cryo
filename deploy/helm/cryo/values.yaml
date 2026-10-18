@@ -17,6 +17,20 @@ image:
 
 imagePullSecrets: []
 
+# ServiceAccount every Cryo pod runs as. On EKS, put the IRSA role here -- without it
+# pods fall back to the node instance role, which typically cannot read the warehouse
+# buckets, and scans fail with AccessDenied well after onboarding reported success.
+#
+#   serviceAccount:
+#     annotations:
+#       eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<cryo-role>
+serviceAccount:
+  create: true
+  # Defaults to the release fullname. Set this (with create: false) to reuse a
+  # ServiceAccount managed outside this chart.
+  name: ""
+  annotations: {}
+
 # Applied to every pod. UID/GID 10001 is the `cryo` user baked into the Cryo image; redis and
 # web override it to their own images' non-root users. fsGroup also lets the non-root user read
 # the projected IRSA web-identity token, which is otherwise root-only.
@@ -55,6 +69,9 @@ api:
   # Uvicorn processes per pod. Endpoints are mostly sync and CPU-bound on JSON
   # serialization, so one process lets a single heavy response stall every other request.
   workers: 2
+  probe:
+    livenessInitialDelaySeconds: 10
+    readinessInitialDelaySeconds: 5
   # Ask Cryo streams SSE on POST /api/v1/assistant/conversations/{id}/messages.
   # This chart has no Ingress. The ingress in front of the API Service must set
   # proxy-buffering off and a read timeout of at least 60s for that path.
@@ -86,6 +103,11 @@ worker:
 
 governor:
   replicas: 1
+  probe:
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    readinessFailureThreshold: 2
+    livenessFailureThreshold: 3
   resources:
     requests:
       cpu: 250m
@@ -231,6 +253,7 @@ backup:
   schedule: "0 2 * * *"
   s3Uri: ""
   retentionDays: 30
+  backoffLimit: 2
   serviceAccount: default
   resources:
     requests:
@@ -337,6 +360,10 @@ redis:
     tag: "7-alpine"
     digest: ""
     pullPolicy: IfNotPresent
+  port: 6379
+  probe:
+    readinessInitialDelaySeconds: 5
+    livenessInitialDelaySeconds: 10
   resources:
     requests:
       cpu: 100m
@@ -372,6 +399,10 @@ migration:
     tag: latest
     digest: ""
     pullPolicy: Always # see the comment on image.pullPolicy above
+  # Alembic occasionally needs more than one attempt against a cold/just-provisioned
+  # database (e.g. a connection racing the DB's own readiness) before the pre-install/
+  # pre-upgrade hook gives up and blocks the release.
+  backoffLimit: 2
 
 web:
   enabled: false
@@ -382,7 +413,14 @@ web:
     digest: ""
     pullPolicy: Always # see the comment on image.pullPolicy above
   # nginx-unprivileged's `nginx` user; it listens on 8080 (web/nginx.conf).
+  # The web Deployment injects CRYO_API_UPSTREAM as the API Service FQDN and
+  # NGINX_ENTRYPOINT_LOCAL_RESOLVERS so nginx uses the pod nameserver, not kube-dns.
   port: 8080
+  probe:
+    livenessInitialDelaySeconds: 5
+    readinessInitialDelaySeconds: 3
+  service:
+    port: 80
   podSecurityContext:
     runAsUser: 101
     runAsGroup: 101

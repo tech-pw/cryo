@@ -68,7 +68,9 @@ Enable `font-variant-numeric: tabular-nums` for metrics, durations, sizes, count
 Use a compact app shell: a fixed light sidebar for primary sections, a white topbar for environment, search, user, and global actions, and a scrollable frost content region. Keep navigation familiar and stable. The sidebar is not a dark rail (plan owner decision, 2026-09-28).
 
 Recommended frame:
-- Sidebar width: 224px desktop, collapsible to icons at tablet, drawer on mobile. Frost background (`--sidebar-bg`), 1px right border, active item as a frost pill with deep-blue text and icon, section labels in muted text without uppercase.
+- Sidebar width: 224px desktop, collapsible to icons at tablet, drawer on mobile. Frost background (`--sidebar-bg`), 1px right border, active item as a frost pill with a 2px Iceberg-blue leading rail, deep-blue text, and an accent icon. Inactive icons sit quieter than their labels. Section labels are muted sentence case, never uppercase. Home and Settings are pinned; Operate (Tables, Runs, Decisions) and Understand (Cost, Insights) group the rest. The brand lockup is larger than the nav (40px mark, 22px wordmark, 64px row) so the product owns the top of the rail; collapsed it keeps a 36px mark. Press scales a link to 0.97; hover changes the fill only, never the committed color. A scroll-edge fade replaces the brand divider, and only while nav content passes under the brand. A footer control collapses the rail; ⌘/Ctrl+B does the same.
+- Decisions is a root page: one h1, no breadcrumb that repeats it. The timestamp and the benefit-cost gate sit in the header actions; the gate is a warning only while enforcement is off. Recommendations, Approvals, and Skipped are one segmented control with counts. Skipped shows an em dash because no skip list is stored. A recommendation row shows one primary action for its state. Empty stored fields stay one sentence, not a column of "not recorded".
+- Insights is a root page: one h1, no breadcrumb that repeats it. The header rule is the only gap before the segmented control; do not add a second page gap under it. The page subtitle stays; the selected view owns its question. Duplicates, Shared paths, and Queries are one segmented control. A count is the stored list length; an em dash means not measured, including a missing harvest and a missing query log. Scan and harvest sit beside the view heading, not inside the empty state. Each duplicate rank is its own card on the frost page: white surface, 12px radius, faint shadow. Hover lifts it 1px and strengthens the border; reduced motion and touch keep it still. A duplicate group leads with drop-candidate size. Keep stays a quiet outline badge; Drop candidate uses the same outline with a stronger border and weight so the decision is scannable without a filled status chip. Query percentiles are a two-row metric grid: context on the first row, P50, P95, P99, and average data scanned on the second. Query text is 13px and wraps on word boundaries; duration, status, engine, and table stay on one line, with duration right-aligned. Tab changes do not fade.
 - Topbar height: 48px, white, 1px bottom border. In dark mode the topbar follows `--color-bg`, not a forced white.
 - Page background: frost (`--color-layout-bg` / `--primitive-page`), not `--primitive-neutral-150`.
 - Page padding: 20-24px desktop, 16px tablet, 12px mobile.
@@ -136,6 +138,25 @@ Connection secrets should never render back after save. Use health-check results
 Every invalid field uses a stable label/error relationship and `aria-invalid`. On failed submit,
 focus a summary whose links move to each invalid field without clearing entered values. Common tasks
 use structured controls; raw JSON remains an explicitly advanced mode.
+
+### Connection Lists
+
+Settings → Connections lists lakehouses, engines, AI providers, and Slack webhooks as a connection
+list (`web/src/pages/connections/ConnectionList.tsx`), not a `DataTable`. There are few rows and each
+carries several unrelated settings, so a config column overflowed the page. Each row shows a type
+mark, name, kind, an Enabled/Disabled dot with text, and a short summary of non-secret settings
+(endpoint, warehouse, region, S3 auth mode, coordinator, off-peak window). Never show secret
+values, and strip `user:pass@` from URIs. Edit and Test are secondary buttons, Enable/Disable is a
+ghost button, and Delete is a confirmed red icon button. Under 640px of container width, actions
+wrap below the details. Each tab has one section header holding its single primary action, and the
+empty state does not repeat that button.
+
+Engines are split in two. **Cryo engines** run inside the deployment: `native`, plus `spark_emr` with
+`submit_mode: "k8s"` (the seeded `native-datafusion` and `spark-k8s`). **Your engines** are
+Trino, EMR Serverless, and Flink clusters the operator connected. Cryo engines stay editable, but
+Edit and Disable first open a confirmation that names what depends on them, such as the nightly
+batch needing exactly one enabled Spark engine. A row shows a `Default preset` badge when the
+enabled default preset targets it.
 
 ### Filters
 

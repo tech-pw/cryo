@@ -83,6 +83,7 @@ def build_and_bind_job_intent(
         destination=_destination_config(destination),
         operations=job_record.operations,
         protected_snapshot_ids=protected_snapshots,
+        excluded_operations=job_record.excluded_operations,
     )
     return _bind_plan(
         session,

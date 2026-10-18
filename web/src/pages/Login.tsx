@@ -1,5 +1,5 @@
-import { Lock, User } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Eye, EyeOff, Lock, User } from "lucide-react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
 import type { RoleToken } from "../api/types";
 import { CryoMark } from "../components/brand/CryoMark";
@@ -8,12 +8,18 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { Segmented } from "../components/ui/segmented";
 import { useGoogleIdentityServices } from "../hooks/useGoogleIdentityServices";
 import { roleOptions, useAuth } from "../lib/auth";
 import { cn } from "../lib/cn";
 
 const SIGN_IN_RECOVERY_HINT =
   "Check your username and role, then try again. Contact your administrator if this continues.";
+
+const PANEL =
+  "login-panel relative w-full max-w-[400px] overflow-hidden border-white/40 bg-[color-mix(in_srgb,var(--primitive-surface)_72%,transparent)] shadow-[var(--shadow-card)] backdrop-blur-[20px] backdrop-saturate-[180%] motion-reduce:animate-none dark:border-white/10";
+
+const FIELD = "h-[var(--control-height-lg)]";
 
 export const Login = () => {
   const {
@@ -33,7 +39,9 @@ export const Login = () => {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<RoleToken>("operator");
   const [googleError, setGoogleError] = useState<string | null>(null);
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const errorRef = useRef<HTMLDivElement | null>(null);
+  const roleHintId = useId();
   const { requestIdToken } = useGoogleIdentityServices();
 
   useEffect(() => {
@@ -45,17 +53,15 @@ export const Login = () => {
   if (authMode === "oidc") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-layout-bg)] p-6">
-        <Card className="w-full max-w-[420px]">
-          <CardHeader>
-            <CryoMark className="mb-3 size-11" title="Cryo" />
-            <CardTitle>Sign in to Cryo</CardTitle>
+        <Card className={PANEL}>
+          <CardHeader className="items-center gap-3 px-6 pb-2 pt-8 text-center">
+            <CryoMark className="size-10" title="Cryo" />
+            <div className="flex flex-col gap-1.5">
+              <CardTitle className="text-xl font-semibold tracking-[-0.02em]">Sign in to Cryo</CardTitle>
+              <p className="text-sm leading-5 text-muted-foreground">Continue with your organization.</p>
+            </div>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <p className="text-sm text-muted-foreground">
-              {devTokenEnabledInProd
-                ? "Production sign-in uses your organization identity provider. Development sign-in is enabled on this production install."
-                : "Production sign-in uses your organization identity provider. Dev token issuance is disabled."}
-            </p>
+          <CardContent className="flex flex-col gap-4 px-6 pb-8">
             {error || googleError ? (
               <div ref={errorRef} tabIndex={-1} className="focus-visible:outline-none">
                 <Alert
@@ -75,7 +81,7 @@ export const Login = () => {
             {googleClientId ? (
               <Button
                 variant="secondary"
-                className="w-full"
+                className={cn(FIELD, "w-full")}
                 onClick={() => {
                   setGoogleError(null);
                   requestIdToken(googleClientId)
@@ -86,10 +92,15 @@ export const Login = () => {
                 Sign in with Google
               </Button>
             ) : null}
-            <Button variant="primary" loading={submitting} className="w-full" onClick={startOidcSignIn}>
+            <Button variant="primary" loading={submitting} className={cn(FIELD, "w-full")} onClick={startOidcSignIn}>
               <Lock aria-hidden="true" />
               Sign in with SSO
             </Button>
+            <p className="text-center text-xs leading-4 text-muted-foreground">
+              {devTokenEnabledInProd
+                ? "Production sign-in uses your organization identity provider. Development sign-in is enabled on this production install."
+                : "Production sign-in uses your organization identity provider. Dev token issuance is disabled."}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -109,18 +120,16 @@ export const Login = () => {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-layout-bg)] p-6">
-      <Card className="w-full max-w-[420px]">
-        <CardHeader>
-          <CryoMark className="mb-3 size-11" title="Cryo" />
-          <CardTitle>Sign in to Cryo</CardTitle>
+      <Card className={PANEL}>
+        <CardHeader className="items-center gap-3 px-6 pb-2 pt-8 text-center">
+          <CryoMark className="size-10" title="Cryo" />
+          <div className="flex flex-col gap-1.5">
+            <CardTitle className="text-xl font-semibold tracking-[-0.02em]">Sign in to Cryo</CardTitle>
+            <p className="text-sm leading-5 text-muted-foreground">Iceberg maintenance for this datalake.</p>
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-6 pb-8">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <p className="text-sm text-muted-foreground">
-              {devTokenEnabledInProd
-                ? "Development sign-in is enabled on this production install. Choose a role and sign in."
-                : "Cryo uses signed JWTs from the API. In dev, choose a role and sign in; production deployments disable the token endpoint and integrate your identity provider."}
-            </p>
             {!devTokenEnabled ? (
               <Alert
                 variant="warning"
@@ -165,7 +174,7 @@ export const Login = () => {
                 />
                 <Input
                   id="login-subject"
-                  className="pl-9"
+                  className={cn(FIELD, "pl-9")}
                   value={subject}
                   onChange={(event) => setSubject(event.target.value)}
                   placeholder="your.name"
@@ -175,32 +184,46 @@ export const Login = () => {
               </div>
             </div>
             {passwordLoginEnabled ? (
-              <>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="login-password">Password</Label>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="login-password">Password</Label>
+                <div className="relative">
                   <Input
                     id="login-password"
-                    type="password"
+                    className={cn(FIELD, "pr-10")}
+                    type={passwordVisible ? "text" : "password"}
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     autoComplete="current-password"
+                    placeholder="Password"
                   />
+                  <button
+                    type="button"
+                    className="absolute right-1 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-[var(--radius-default)] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-[var(--focus-ring-color)]"
+                    aria-label={passwordVisible ? "Hide password" : "Show password"}
+                    aria-pressed={passwordVisible}
+                    onClick={() => setPasswordVisible((visible) => !visible)}
+                  >
+                    {passwordVisible ? <EyeOff className="size-4" aria-hidden="true" /> : <Eye className="size-4" aria-hidden="true" />}
+                  </button>
                 </div>
-                <Button type="submit" variant="primary" className="w-full" loading={submitting}>
-                  Sign in with password
-                </Button>
-              </>
+              </div>
             ) : null}
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="login-role">Role</Label>
+              <Segmented
+                block
+                className="h-[var(--control-height-lg)] [&_button]:h-full"
+                value={role}
+                options={roleOptions}
+                onChange={(next) => setRole(next as RoleToken)}
+              />
               <select
                 id="login-role"
+                tabIndex={-1}
+                className="sr-only"
                 value={role}
+                aria-describedby={passwordLoginEnabled ? roleHintId : undefined}
                 onChange={(event) => setRole(event.target.value as RoleToken)}
-                className={cn(
-                  "flex h-[var(--control-height)] w-full rounded-[var(--radius-default)] border border-border bg-background px-3 py-2 text-sm text-foreground",
-                  "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-ring focus-visible:ring-offset-[var(--focus-ring-offset)]"
-                )}
                 required
               >
                 {roleOptions.map((option) => (
@@ -209,17 +232,27 @@ export const Login = () => {
                   </option>
                 ))}
               </select>
+              {passwordLoginEnabled ? (
+                <p id={roleHintId} className="text-xs leading-4 text-muted-foreground">
+                  Used only when signing in without a password.
+                </p>
+              ) : null}
             </div>
             <Button
               type="submit"
               variant="primary"
               loading={submitting}
               disabled={!devTokenEnabled}
-              className="w-full"
+              className={cn(FIELD, "w-full")}
             >
               <Lock aria-hidden="true" />
-              Sign in
+              {passwordLoginEnabled && password.trim() ? "Sign in with password" : "Sign in"}
             </Button>
+            <p className="text-center text-xs leading-4 text-muted-foreground">
+              {devTokenEnabledInProd
+                ? "Development sign-in is enabled on this production install. Choose a role and sign in."
+                : "Cryo uses signed JWTs from the API. In dev, choose a role and sign in; production deployments disable the token endpoint and integrate your identity provider."}
+            </p>
           </form>
         </CardContent>
       </Card>
