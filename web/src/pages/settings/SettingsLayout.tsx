@@ -26,13 +26,12 @@ export function SettingsLayout({
         title={title}
         subtitle={subtitle}
       />
-      <div className="mt-5 flex flex-col gap-6 md:flex-row md:items-start">
+      <div className="mt-5 flex flex-col gap-5 xl:flex-row xl:items-start xl:gap-8">
         <nav
           aria-label="Settings"
           className={cn(
-            "settings-nav flex w-full shrink-0 flex-row gap-1 overflow-x-auto p-1.5 md:w-56 md:flex-col md:overflow-visible",
-            "rounded-[var(--radius-lg)] border border-border",
-            "bg-[var(--color-surface-raised)] shadow-[var(--shadow-card)]"
+            "settings-nav flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-border",
+            "xl:sticky xl:top-0 xl:w-48 xl:flex-col xl:overflow-visible xl:border-b-0"
           )}
         >
           {sections.map((section) => {
@@ -43,13 +42,13 @@ export function SettingsLayout({
                 to={section.path}
                 aria-current={selected ? "page" : undefined}
                 className={cn(
-                  "relative shrink-0 rounded-[var(--radius-default)] px-3 py-2 text-left text-sm text-foreground",
-                  "transition-[background-color,color,transform,box-shadow] duration-[var(--motion-fast)] ease-[var(--ease-out)]",
-                  "active:scale-[0.97] motion-reduce:transition-none motion-reduce:active:scale-100",
+                  "relative -mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-left text-sm",
+                  "xl:mb-0 xl:rounded-[var(--radius-default)] xl:border-b-0",
+                  "transition-[background-color,color,border-color] duration-[var(--motion-fast)] ease-[var(--ease-out)] motion-reduce:transition-none",
                   "focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-[var(--focus-ring-color)]",
                   selected
-                    ? "bg-[var(--color-surface-raised)] font-medium text-foreground shadow-[inset_2px_0_0_var(--color-primary),0_1px_1px_rgb(0_0_0/0.04)]"
-                    : "text-muted-foreground hover:bg-[var(--color-surface-sunken)] hover:text-foreground"
+                    ? "border-[var(--color-primary)] font-medium text-[var(--color-on-tint)] xl:bg-[var(--color-primary-soft)] xl:shadow-[inset_2px_0_0_var(--color-primary)]"
+                    : "border-transparent text-muted-foreground hover:text-foreground xl:hover:bg-[var(--color-surface-sunken)]"
                 )}
               >
                 {section.label}

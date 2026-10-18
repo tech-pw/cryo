@@ -26,7 +26,7 @@ for (const theme of themes) {
       await page.goto("/operations");
       await settlePage(page);
 
-      await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByRole("heading", { name: "Runs", exact: true })).toBeVisible({ timeout: 15_000 });
       await expect(page).toHaveScreenshot(`operations-${theme}.png`, {
         fullPage: true,
         animations: "disabled"

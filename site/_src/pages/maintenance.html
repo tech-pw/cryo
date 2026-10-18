@@ -2,7 +2,7 @@
 title: Maintenance
 lede: A maintenance run compacts first, then cleans up, in one fixed order. The order is defined in code and no preset can change it.
 description: Why Iceberg tables need maintenance, the seven operations Cryo runs in a fixed order, how the planner chunks work, how admission works, and the guardrails that stay on.
-updated: 2026-10-06
+updated: 2026-10-16
 ---
 <h2 id="canonical-order">Canonical order</h2>
 <p>Seven operations, skipping the ones a table does not need. Expiry comes after compaction so one run reclaims the space its own compaction freed.</p>
@@ -91,8 +91,14 @@ updated: 2026-10-06
 <h2 id="admission">Admission: load-aware, never eager</h2>
 <p>A worker asks the governor for permission before it runs anything. The governor probes live load, from <code>system.runtime.queries</code> on Trino and from slots on Spark on EMR, and either admits the job or defers it. It also applies per-replica caps and round-robins across replicas.</p>
 <diagram name="admission" caption="Scaling workers does not raise the number of parallel rewrites. The governor does." />
-<p>You can watch admission in the Runs view. Engine load shows the slots the governor is using against the cap for each destination.</p>
-<screenshot name="runs" url="cryo.local/runs" alt="Runs page. Engine load shows demo-trino at 2 of 6 slots, admitting. Fleet health shows the scanner idle with 14 of 14 tables measured, and the run history lists last night's maintenance run as succeeded with 38.4 GB freed." caption="Runs: engine load at the top, the run history below. demo-trino is using 2 of its 6 slots, so the governor is still admitting." />
+<p>The Runs page shows what ran, what failed and what is held. It reads top to bottom:</p>
+<ul>
+  <li><strong>Pulse tiles.</strong> Running now, failed runs in the last 24 hours, succeeded in the last 24 hours, the 7-day success rate, and the scanner. The first three tiles filter the history when clicked.</li>
+  <li><strong>Run timeline.</strong> One bar per recent run, taller for longer runs and coloured by state. A running run is striped. As in Airflow's grid view, a run of failures or a slow night stands out before you read a row.</li>
+  <li><strong>History.</strong> Filter chips for <strong>All</strong>, <strong>Active</strong> and <strong>Failed · 24h</strong>, each with a count. Each row shows state, run, start time (relative, with the exact time under it), a duration bar scaled to the slowest run on the page, bytes freed, and the trigger.</li>
+  <li><strong>Engine load and the last nightly funnel</strong> sit at the bottom. Engine load shows the slots the governor is using against each destination's cap.</li>
+</ul>
+<screenshot name="runs" url="cryo.local/runs" alt="Runs page on the seeded demo lake. Pulse tiles: 1 running now, 0 failed in 24 hours, 1 succeeded in 24 hours, 71% success over 7 days, scanner idle. A timeline of the last 9 runs shows 6 succeeded, 1 partial, 1 failed and 1 running. The history lists each run with its start time, a duration bar, bytes freed and its trigger." caption="Seeded demo lake. The red bar is a failed nightly run, and the amber bar a partial one. The striped bar on the right is still running." />
 <callout type="important" title="Workers are not concurrency">
   <p>A worker runs one job at a time, so the fleet drains at roughly replicas divided by job duration. Engine headroom decides how much work is admitted, and worker count decides how fast it is picked up.</p>
 </callout>
@@ -109,6 +115,45 @@ updated: 2026-10-06
 <callout type="caution" title="Destructive operations are guarded">
   <p><code>expire_snapshots</code> and <code>remove_orphan_files</code> require the relevant tier in the scanner, and forcing them is audited. Cryo never touches snapshots the retention policy would keep.</p>
 </callout>
+
+<h2 id="pause">Pausing maintenance</h2>
+<p>A hold stops new maintenance without cancelling anything. It is the switch for an engine upgrade, an incident, or a change freeze. Set one from <strong>Runs → Holds</strong>:</p>
+<dl>
+  <dt>Hold destination</dt>
+  <dd>Pauses one engine. Every other engine keeps running. Operators and admins can set it, and the dialog lists each configured engine by name.</dd>
+  <dt>Hold all maintenance</dt>
+  <dd>Pauses every engine. Admin only.</dd>
+</dl>
+<p>Both need a reason of at least three characters, and resuming needs a verification note. Every change is recorded with who made it and a new control generation.</p>
+<screenshot name="runs-holds" url="cryo.local/runs?tab=holds" alt="Runs page, Holds tab. A red banner reads Maintenance held, with one active hold. The Active holds table lists demo-trino, held for a Trino upgrade window, at control generation 3, with a Resume button." caption="demo-trino is held for an upgrade window. Other engines keep running, and Resume asks what was checked first." />
+<p>While a hold is active:</p>
+<table>
+  <thead><tr><th>Path</th><th>Global hold</th><th>Destination hold</th></tr></thead>
+  <tbody>
+    <tr><td>Scheduled presets</td><td>Do not fire</td><td>Fire, and their jobs wait at the worker</td></tr>
+    <tr><td>Nightly batch</td><td>Recorded as a skipped run</td><td>Recorded as a skipped run if it targets the held engine</td></tr>
+    <tr><td>Queued and manual jobs</td><td>Deferred, retried after resume</td><td>Deferred if they target the held engine</td></tr>
+  </tbody>
+</table>
+<callout type="note" title="What a hold does not stop">
+  <p>A statement already submitted to an engine finishes. A batch already in progress finishes the lanes it started. A preset whose cron slot passed during the hold fires once after you resume.</p>
+</callout>
+
+<h2 id="exclusions">Excluding a schema or table</h2>
+<p>An exclusion keeps Cryo's maintenance away from part of the lake, for example a schema another team compacts itself, or a table under migration. Each rule names one lakehouse and one schema, optionally narrowed to one table, and needs a reason.</p>
+<ul>
+  <li>An excluded table is skipped by the nightly batch, by scheduled presets, by manual runs and by smart-maintenance layout changes. A manual run where every selected table is excluded returns <code>409</code> and nothing is queued.</li>
+  <li>The table's maintenance status reports it as blocked, with the reason <code>operator_excluded</code>.</li>
+  <li>Scans still read excluded tables, so their health and cost stay visible.</li>
+  <li>Removing the rule includes the table again from the next run. Adding and removing rules are both audited.</li>
+</ul>
+<p>Exclusions are managed through the API for now, at <code>/api/v1/maintenance/exclusions</code>:</p>
+<codeblock lang="bash" title="terminal">
+$ curl -X POST "$CRYO/api/v1/maintenance/exclusions" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d '{"source_id": "<lakehouse id>", "schema_name": "finance", "reason": "Compacted by the finance team"}'
+</codeblock>
+<p>Add <code>"table_name"</code> to exclude one table instead of the whole schema. <code>GET</code> lists the rules, with the number of tables each one covers, and <code>DELETE /api/v1/maintenance/exclusions/{id}</code> removes one. Viewers can list; operators can add and remove.</p>
 
 <h2 id="read-next">Where to go next</h2>
 <linkcards>

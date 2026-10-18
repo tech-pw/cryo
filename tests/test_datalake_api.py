@@ -44,10 +44,16 @@ def test_dashboard_endpoints_return_bounded_aggregates(monkeypatch: Any) -> None
     scan_at = datetime(2026, 1, 1, tzinfo=UTC)
 
     def datalake(
-        session: object, *, top_limit: int, drift_limit: int, settings: object = None
+        session: object,
+        *,
+        top_limit: int,
+        drift_limit: int,
+        hot_limit: int,
+        settings: object = None,
     ) -> dict[str, object]:
         assert top_limit == 5
         assert drift_limit == 7
+        assert hot_limit == 5
         return {
             "totals": {
                 "total_tables": 12,
@@ -795,6 +801,12 @@ def test_maintenance_run_accepts_filter_selection(monkeypatch: Any) -> None:
                     enabled=True,
                 )
             return None
+
+        def scalars(self, _statement: object) -> list[object]:
+            # excluded_table_ids() -- no MaintenanceExclusion rows exist in this test,
+            # so every selected table is unexcluded; this test asserts job_ids == [job_id]
+            # with no exclusions involved.
+            return []
 
         def add(self, model: object) -> None:
             if isinstance(model, MaintenanceJob):

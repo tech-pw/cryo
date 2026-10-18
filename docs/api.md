@@ -139,7 +139,53 @@ GET /api/v1/tables/{table_id}/audit
 GET /api/v1/tables/{table_id}/history
 GET /api/v1/tables/{table_id}/effective-preset
 GET /api/v1/tables/{table_id}/compatible-presets
+GET /api/v1/tables/maintenance-funnel
 ```
+
+Each `GET /tables` row includes a `maintenance` block: derived `state` (running, queued, failed,
+skipped, needs_work, healthy, held, excluded, scan_failing, not_scanned, inactive), a short
+`reason`, the assigned workflow, the active and last finished job, the latest nightly selection
+outcome, and `score_delta_7d`. The explorer filter grammar also accepts the computed fields
+`last_job_status`, `last_selection_stage`, `last_selection_reason`, `score_delta_7d` and `scan_at`
+(ISO timestamp). These are explorer-only and are not valid in preset rules. Sort also accepts
+`query_count_30d`, `scan_at` and `score_delta_7d`.
+
+`GET /tables/maintenance-funnel` returns the latest nightly batch as Sankey `nodes` and `links`:
+active, then scanned / scan failing / not scanned, then needs work / no work, then the skip
+reasons or selected, then succeeded / failed / in progress. It counts tables, not operations.
+Each node includes a `view` that names the explorer triage view listing those tables.
+See `docs/TABLES_PAGE_REDESIGN_2026-10-18.md`.
+
+Table configuration (the table detail Config tab):
+
+```http
+GET  /api/v1/tables/{table_id}/config?refresh=false
+POST /api/v1/tables/{table_id}/config/preview
+POST /api/v1/tables/{table_id}/config/apply
+PUT  /api/v1/tables/{table_id}/config/operations
+```
+
+- `PUT …/config/operations` (operator) replaces the set of maintenance operations no plan may
+  include for this table. It takes `{excluded, reason (≥ 8 chars), confirm}`. Excluding
+  `expire_snapshots` needs `confirm`, otherwise 409. Changes are audited as `operation_exclude` /
+  `operation_include`. The `GET` response carries the same `operations` block, with a status per
+  operation, plus `property_details` (kind, explanation and doc link for every raw property).
+
+- `GET` (viewer) returns the curated settings: current value and its source, Cryo's
+  recommendation, direction-aware risk, editor, and engine notes. It also returns table metadata
+  and every raw property.
+  - The live catalog read is bounded at 20 s and cached for 30 s; `refresh=true` bypasses the
+    cache.
+  - If the read fails, the response comes from the last scan with `read_from: "scan"` and is
+    read-only.
+- `preview` (viewer) assesses up to 50 changes against the live table.
+- `apply` (operator; admin for `min_role: "admin"` settings) writes the property changes in one
+  PyIceberg transaction on the Source catalog, saves `cryo.*` overrides, audits each change as
+  `table_config_change`, and re-reads the table.
+  - A high-risk batch needs `confirm: true` and a reason of at least 8 characters.
+  - A change whose `expected_value` no longer matches is rejected.
+
+See `docs/TABLE_CONFIG_INVENTORY_2026-10-17.md`.
 
 `compatible-presets` returns presets whose destination can maintain this table's catalog.
 Non-Trino destinations are always included. Trino destinations are included only when the
@@ -402,6 +448,40 @@ POST /api/v1/maintenance/safety/effects/{receipt_id}/resolve
 Control state is generation-stamped and scoped to `global`, `tenant`, or
 `destination`. Viewers can inspect visible controls; operators can control their
 tenant/destinations; global pause/resume requires admin.
+
+Pause body: `{"scope_type": "global" | "tenant" | "destination", "scope_id": "<id>", "reason": "..."}`.
+`scope_id` is omitted (or `"global"`) for a global pause, and the reason is 3–500 characters.
+
+A pause is enforced whether or not durable intents are enabled:
+
+- the scheduler fires no presets while a global pause is active;
+- the nightly batch records a `skipped` run when the global scope or its destination is paused;
+- a worker defers a non-intent job whose destination (or the global scope) is paused, and it is retried
+  after resume. Intent-bound jobs keep the existing pre-submit guard.
+
+Statements already submitted to an engine are not cancelled.
+
+### Maintenance exclusions
+
+```http
+GET    /api/v1/maintenance/exclusions          # viewer
+POST   /api/v1/maintenance/exclusions          # operator; 201, 409 duplicate, 404 unknown lakehouse
+DELETE /api/v1/maintenance/exclusions/{id}     # operator; 204
+```
+
+```json
+{"source_id": "<lakehouse uuid>", "schema_name": "finance", "table_name": "ledger", "reason": "Under migration"}
+```
+
+Omit `table_name` (or send `null`) to exclude the whole schema. One rule per
+`(source_id, schema_name, table_name)`. `GET` returns `source_name` and `table_count`
+(tables the rule currently covers). Create and delete write `maintenance_exclude` /
+`maintenance_include` audit rows.
+
+Excluded tables are skipped by the nightly batch, scheduled presets, `POST /maintenance/run`
+(409 when every selected table is excluded; the run summary reports `excluded_tables` otherwise),
+and smart-maintenance layout apply (409). `GET /tables/{id}/maintenance-status` reports the
+`operator_excluded` block. Scans are not affected.
 
 Safety reads are tenant-scoped. `effects` accepts `state`, `ambiguous_only`, and a
 bounded `limit`. Resolving an ambiguous effect requires an operator outcome
