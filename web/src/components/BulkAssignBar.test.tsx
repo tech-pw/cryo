@@ -108,7 +108,7 @@ describe("BulkAssignBar", () => {
     fireEvent.click(screen.getByText("Select all 120 matching"));
     expect(onSelectAllMatching).toHaveBeenCalledTimes(1);
     openRunDialog();
-    expect(screen.getByText(/1 of the selected tables are already running/)).toBeInTheDocument();
+    expect(screen.getByText(/1 of the selected tables is already running/)).toBeInTheDocument();
   });
 
   it("labels native engine destinations and blocks manifest-only runs on them", () => {

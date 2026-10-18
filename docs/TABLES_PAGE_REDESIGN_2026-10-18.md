@@ -71,4 +71,12 @@ and what needs me?**
 ## Mock data
 
 `web/e2e/docs-capture/demo-data.ts` carries maintenance blocks, reads, savings, owners and
-`demoTablesFunnel()`, so the page can be screenshotted without prod.
+`demoTablesFunnel()`, so the page can be screenshotted without prod. The demo Trino destination
+is bound to the demo catalog; without a binding, `filterPresetsForSources` hides every Trino
+workflow from the bulk bar.
+
+## Docs site
+
+`site/_src/pages/tables.html` (Operate → Tables) walks through the page section by section. Its
+`tables-*` shots come from `SHOTS` in `web/e2e/docs-capture/capture.ts`; regenerate with
+`npx playwright test -c e2e/docs-capture/playwright.config.ts -g tables`, then `make docs`.

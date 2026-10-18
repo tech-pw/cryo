@@ -392,7 +392,7 @@ export function demoDestinations() {
       id: VISUAL_TRINO_DESTINATION_ID,
       name: "demo-trino",
       engine: "trino",
-      config: { host: "trino", port: 8080, catalog: "lakehouse" },
+      config: { host: "trino", port: 8080, catalog: "lakehouse", catalog_bindings: [{ source_id: VISUAL_SOURCE_ID }] },
       secret_ref: null,
       offpeak_start: 1,
       offpeak_end: 7,

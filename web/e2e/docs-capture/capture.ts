@@ -79,6 +79,48 @@ const openTableSettings = async (page: Page): Promise<void> => {
   });
 };
 
+const EXPLORER = "#table-explorer";
+const EXPLORER_TOOLBAR = `${EXPLORER} > :nth-child(-n+2)`;
+const POPOVER = "[data-radix-popper-content-wrapper]";
+
+const clearPointer = async (page: Page): Promise<void> => {
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+};
+
+const waitForExplorer = (page: Page) => page.getByRole("link", { name: "analytics.events", exact: true }).waitFor();
+
+const openMoreFilters = async (page: Page): Promise<void> => {
+  await waitForExplorer(page);
+  await page.getByRole("button", { name: "More filters" }).click();
+  await page.locator(POPOVER).waitFor();
+  await clearPointer(page);
+};
+
+const openColumnsMenu = async (page: Page): Promise<void> => {
+  await waitForExplorer(page);
+  await page.getByRole("button", { name: /^Columns/ }).click();
+  await page.locator(POPOVER).waitFor();
+};
+
+const selectRows = async (page: Page, rowIndexes: number[]): Promise<void> => {
+  await waitForExplorer(page);
+  const rows = page.getByRole("checkbox", { name: "Select row" });
+  for (const i of rowIndexes) await rows.nth(i).check();
+  await page.getByTestId("bulk-assign-bar").waitFor();
+  await clearPointer(page);
+};
+
+const openRunDialog = async (page: Page): Promise<void> => {
+  // analytics.events (failed) and ops.metrics (running), so the likely-skipped note shows.
+  await selectRows(page, [0, 6]);
+  await page.getByRole("button", { name: "Run maintenance…" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Run workflow").selectOption({ index: 1 });
+  await dialog.getByLabel("Run engine").selectOption({ index: 1 });
+  await clearPointer(page);
+};
+
 const TABLE = `/tables/${DEMO_TABLES[0].id}`;
 const ACTIVE_PANEL = "[role='tabpanel'][data-state='active']";
 const tabShot = (tab: string, waitFor?: string, part?: { name: string; selector: string }) => ({
@@ -104,7 +146,20 @@ const SHOTS: Array<{
   act?: (page: Page) => Promise<void>;
 }> = [
   { name: "health", path: "/", waitFor: "Your lake at a glance", height: 1000 },
-  { name: "tables", path: "/tables", height: 1320 },
+  { name: "tables", path: "/tables", waitFor: "Last nightly run", height: 1320 },
+  {
+    name: "tables-triage",
+    path: "/tables",
+    waitFor: "Last nightly run",
+    height: 1000,
+    selector: "section[aria-label='Maintenance triage'], section[aria-label='Nightly maintenance and catalogs']"
+  },
+  { name: "tables-explorer", path: "/tables", height: 1320, act: waitForExplorer, selector: EXPLORER, maxHeight: 640 },
+  { name: "tables-filters", path: "/tables", height: 1320, act: openMoreFilters, selector: `${EXPLORER_TOOLBAR}, ${POPOVER}` },
+  { name: "tables-columns", path: "/tables", height: 1320, act: openColumnsMenu, selector: `${EXPLORER_TOOLBAR}, ${POPOVER}` },
+  { name: "tables-savings", path: "/tables?view=savings", height: 1320, act: waitForExplorer, selector: EXPLORER },
+  { name: "tables-bulk", path: "/tables", height: 1320, act: (page) => selectRows(page, [0, 1]), selector: EXPLORER, maxHeight: 420 },
+  { name: "tables-run-dialog", path: "/tables", height: 1000, act: openRunDialog, selector: "[role='dialog']" },
   { name: "table-detail", path: TABLE, height: 960 },
   { name: "table-header", path: TABLE, waitFor: "What's pulling the score down", height: 900, selector: ".table-detail-workspace", maxHeight: 400 },
   {

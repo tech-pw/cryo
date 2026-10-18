@@ -84,7 +84,7 @@ localhost:5173/
 
 localhost:5173/tables
 
-*Tables lists every table the scanner has seen. This view is sorted by small-file count, and each row shows the grade next to the counts that produced it.*
+*Tables opens on what needs you: last night's failures and skips, then every table the scanner has seen, sorted by small-file count with the grade next to the counts that produced it.*
 
 localhost:5173/runs/7f3c9a21
 

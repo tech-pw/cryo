@@ -47,11 +47,11 @@ Worked example: how a table reaches 64.
 
 | Final score and grade |  | **C** 64 |
 
-In the table list, every row carries its grade and the evidence behind it: small files out of total files, size, and when the scanner last looked. Sorting by grade puts the tables that need work first.
+On the [Tables page](https://tech-pw.github.io/cryo/tables/), every row carries its grade, its score change over 7 days and the evidence behind it: small files out of total files, size and reads. The **Health triage** view lists grade D and F tables first.
 
 cryo.local/tables
 
-*The table explorer. A grade is never shown without the counts that produced it.*
+*The Tables page. A grade is never shown without the counts that produced it, and every row says what maintenance last did.*
 
 Open a table to see its score and how it got there. This one scores 28: it has lost 72 points to two critical findings and four warnings.
 

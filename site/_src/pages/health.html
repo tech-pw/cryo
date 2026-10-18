@@ -35,8 +35,8 @@ updated: 2026-10-06
   <tfoot><tr><td>Final score and grade</td><td class="num"></td><td class="num"><span class="grade grade-c"><b>C</b>&nbsp;64</span></td></tr></tfoot>
 </table>
 </div>
-<p>In the table list, every row carries its grade and the evidence behind it: small files out of total files, size, and when the scanner last looked. Sorting by grade puts the tables that need work first.</p>
-<screenshot name="tables" url="cryo.local/tables" alt="Catalogs and tables page. One REST catalog with 14 tables and 8 needing compaction. The list shows analytics.events at grade F with 41,930 of 48,210 files small, and analytics.page_views at grade D." caption="The table explorer. A grade is never shown without the counts that produced it." />
+<p>On the <a href="@/tables/">Tables page</a>, every row carries its grade, its score change over 7 days and the evidence behind it: small files out of total files, size and reads. The <b>Health triage</b> view lists grade D and F tables first.</p>
+<screenshot name="tables" url="cryo.local/tables" alt="Tables page. Last nightly run partial. Triage cards: 1 failed last run, 2 queued or running, 2 skipped with work, 2 health dropped, 1 scan issue. A Sankey shows 14 active tables, 13 scanned, 7 needing work and 4 selected, of which 2 succeeded, 1 failed and 1 is in progress. Below, the table list sorted by small files: analytics.events at grade F, score 28, down 14 in 7 days, last run failed, 87% of 48.2K files small." caption="The Tables page. A grade is never shown without the counts that produced it, and every row says what maintenance last did." />
 <p>Open a table to see its score and how it got there. This one scores 28: it has lost 72 points to two critical findings and four warnings.</p>
 <screenshot name="table-detail" url="cryo.local/tables/analytics.events" alt="Table detail for analytics.events: 412.6 GB, 48,210 files, 41,930 compaction candidates, 1,284 snapshots, health score 28 of 100, grade F, Critical." caption="A grade F table. The score gauge, the compaction candidates and the snapshot count all come from the last scan." />
 

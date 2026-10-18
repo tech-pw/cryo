@@ -227,6 +227,7 @@ export const BulkAssignBar = ({
               <Label htmlFor="bulk-run-workflow">Workflow</Label>
               <Select
                 id="bulk-run-workflow"
+                className="w-full min-w-0"
                 aria-label="Run workflow"
                 placeholder="Choose a workflow"
                 value={runPresetId}
@@ -257,6 +258,7 @@ export const BulkAssignBar = ({
               <Label htmlFor="bulk-run-engine">Engine</Label>
               <Select
                 id="bulk-run-engine"
+                className="w-full min-w-0"
                 aria-label="Run engine"
                 placeholder="Choose an engine"
                 value={activeDestinationId}
@@ -271,8 +273,9 @@ export const BulkAssignBar = ({
             </div>
             {likelySkipped > 0 ? (
               <p className="rounded-[var(--radius-default)] bg-[var(--color-surface-sunken)] px-2.5 py-2 text-xs text-muted-foreground">
-                {likelySkipped.toLocaleString()} of the selected tables are already running, queued, held or excluded
-                and will likely be skipped.
+                {likelySkipped === 1
+                  ? "1 of the selected tables is already running, queued, held or excluded and will likely be skipped."
+                  : `${likelySkipped.toLocaleString()} of the selected tables are already running, queued, held or excluded and will likely be skipped.`}
               </p>
             ) : null}
           </div>

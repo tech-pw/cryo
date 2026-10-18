@@ -219,7 +219,7 @@ export const CatalogDashboard = () => {
     <>
       <ScannerLagBanner />
       <TriageCards />
-      <div className="mb-6 grid gap-4 xl:grid-cols-3">
+      <section aria-label="Nightly maintenance and catalogs" className="mb-6 grid gap-4 xl:grid-cols-3">
         <FunnelCard />
         <AsyncBoundary
           isLoading={isLoading}
@@ -236,7 +236,7 @@ export const CatalogDashboard = () => {
             </ChartCard>
           )}
         </AsyncBoundary>
-      </div>
+      </section>
     </>
   );
 };
