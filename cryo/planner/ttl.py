@@ -112,7 +112,8 @@ def plan_expire_data(
 def _last_commit(stats: Mapping[str, Any], params: Mapping[str, Any]) -> Any:
     if params.get("expire_data_last_commit_at"):
         return params.get("expire_data_last_commit_at")
-    raw = stats.get("raw") if isinstance(stats.get("raw"), Mapping) else {}
+    raw_value = stats.get("raw")
+    raw: Mapping[str, Any] = raw_value if isinstance(raw_value, Mapping) else {}
     return (
         stats.get("last_non_optimize_commit_at")
         or raw.get("last_non_optimize_commit_at")
@@ -125,8 +126,8 @@ def _estimate(partitions: Sequence[Mapping[str, Any]], cutoff: datetime) -> tupl
     count = 0
     nbytes = 0
     for row in partitions:
-        parsed = _parse_time(row.get("partition_value", row.get("partition_values")))
-        if parsed is None or _as_utc(parsed) >= cutoff:
+        parsed = _as_utc(_parse_time(row.get("partition_value", row.get("partition_values"))))
+        if parsed is None or parsed >= cutoff:
             continue
         count += 1
         nbytes += int(row.get("total_bytes") or row.get("data_bytes") or 0)
