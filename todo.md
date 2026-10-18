@@ -1,5 +1,39 @@
 # Cryo — TODO
 
+## Table detail insights — 2026-10-18
+
+See [docs/TABLE_DETAIL_INSIGHTS_2026-10-18.md](docs/TABLE_DETAIL_INSIGHTS_2026-10-18.md).
+
+- [x] Run grid shows passed-over nights with reason, work pending and next step (incl. `held`).
+- [x] Measured maintenance impact (30 days and lifetime) and per-step effect in run detail.
+- [x] Fix metadata cost accounting for manifests carried into later snapshots (spurious metadata
+  deduction, inflated expire-reclaim estimate).
+- [x] Snapshot summary: writer, rows, bytes, delete files by kind, changed partitions.
+- [x] Delete-file debt chip and trend using the health check's cut-offs.
+- [x] Manifests & metadata strip in Layout checks.
+- [x] Partition-evolution card and non-duplicate property suggestions staged through Config review.
+- [x] Column filter/join heatmap from `query_patterns`, honest empty state for `iceberg_table` sources.
+- [x] Maintenance hold with reason and expiry (≤ 90 days), audited, enforced in selection.
+- [ ] After deploy: `alembic upgrade head` (`20261018_1300`) before rolling API/worker/scheduler.
+- [ ] After deploy: compare fleet reclaimable before/after the first full scan (expected to drop).
+- [ ] Remove the unreferenced `PropertyRecommendations.tsx` / `HealthQualityTabPanel.tsx` and the
+  write-gate test that still imports them.
+
+## Table configuration inventory — 2026-10-17
+
+See [docs/TABLE_CONFIG_INVENTORY_2026-10-17.md](docs/TABLE_CONFIG_INVENTORY_2026-10-17.md).
+
+- [x] 34-setting catalogue with source, recommendation, direction-aware risk, typed editors, engine notes.
+- [x] Live catalog read with scan fallback; staged preview → review → one-transaction apply, audited.
+- [x] Scanner key fixes (real mode keys, sort order from metadata); planner GC gate.
+- [x] ⓘ explanation on every curated setting and every raw table property (`property_docs.py`).
+- [x] Per-table maintenance operation exclusions: table, planner drop on every plan path, audited
+  `PUT …/config/operations`, Config-tab section with live status per operation.
+- [x] Docs site "Table detail" page: header, every tab and every named section, 15 new light/dark shots.
+- [ ] After deploy: run `alembic upgrade head` (`20261017_1200`) before rolling the API/worker.
+- [ ] After deploy: confirm the live read stays under the 20 s bound on the largest REST/Glue tables.
+- [ ] After deploy: watch `table_config_change` audit rows and the GC-gate plan note on GC-off tables.
+
 ## Unused-cost investigation — 2026-09-29
 
 Evidence and rollout: [investigation](docs/CRYO_UNUSED_COST_DEBUG_2026-09-29.md).
@@ -526,7 +560,9 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
       `POST /api/v1/routing/preview`; preset `engine_pool` / `adaptive_routing` guardrails.
 - [x] Data tiering candidates (`cryo/tiering/`, `tier_policies` table, S3 analyzer);
       `GET /tables/{id}/tier-candidates`; tier policy CRUD.
-- [ ] Tiering **execution** — move cold partitions to cheaper storage classes (candidates only today).
+- [x] Tiering **execution** — move cold partitions to cheaper storage classes. Done 2026-10-18:
+      `docs/ARCHIVE_EXECUTION_2026-10-18.md` (manual, instant classes only, preflight with IAM policy,
+      planner skips archived partitions). Realized savings still open.
       Researched 2026-10-01: `docs/ARCHIVE_TIERING_RESEARCH_2026-10-01.md` (instant-access classes
       only; Glacier Flexible/Deep Archive are unsafe on live Iceberg tables). Do the P0 items first:
   - [x] Fix the S3 tiering recommender: it reads only `QueryLog` (empty for the `cdp` source), so
@@ -541,7 +577,8 @@ Per `docs/EXECUTION_PLAN.md` Phase 8 and `docs/COMPREHENSIVE_FEATURE_ROADMAP_202
         last-read rollup (`PartitionAccessDaily` is pruned at 35 days, partition access is empty).
   - [x] Storage-class checklist: classify readable vs restore-required; scanner now stores one
         `sample_file_path` per partition so the check actually runs (needs a rescan).
-  - [ ] Advisory **Archive** section on the table page (Usage tab), then execution behind approval.
+  - [x] **Archive** section on the table page (now Cost & Savings), with execution behind operator
+        preflight and confirmation.
 - [x] Signal-driven maintenance triggers (`cryo/triggers/`); governor signal bypass of cooldown/off-peak.
 - [x] AutoComp benefit scoring (`cryo/planner/benefit_score.py`); partition ranking in planner.
 - [x] Compaction effectiveness ratio tracking in audit log.
@@ -722,6 +759,9 @@ until real evidence exists.
       dangerous ops, job-owner Redis leases, Trino/Spark engine probes, governor reaper skips leased/
       started/active jobs. See `docs/WORKER_STEP_LEDGER.md`. Migration `20260727_0033`.
 - [x] Bundle IBM Plex fonts through `@fontsource` instead of a Google Fonts CDN.
+- [x] Tables page redesign: triage cards, nightly maintenance Sankey, per-row maintenance block,
+      triage views, facet filters, grouped column menu, bulk run dialog. See
+      `docs/TABLES_PAGE_REDESIGN_2026-10-18.md`. Migration `20261018_1200`.
 - [ ] Chart `aria-label` summaries for all Recharts instances (accessibility backlog).
 - [ ] Query-pattern-aware optimization at scale — blocked on query-history ingestion maturity.
 - [ ] Native engine production hardening — see `architecture.md` §1.5.

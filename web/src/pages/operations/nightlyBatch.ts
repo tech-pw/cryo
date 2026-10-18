@@ -1,7 +1,10 @@
 import type { RunRead } from "../../api/types";
 
 export const NIGHTLY_WORKFLOW_NAME = "Nightly maintenance";
-export const NIGHTLY_SCHEDULE_LABEL = "Nightly (CronJob)";
+// The batch CronJob's cron lives in Helm values (maintenance.schedule) and is not exposed
+// by any API, so this cannot be read live the way scanner and preset schedules are. Say
+// where it is configured instead of implying a time Cryo does not actually know.
+export const NIGHTLY_SCHEDULE_LABEL = "Kubernetes CronJob (set in Helm)";
 export const NO_PRESETS_COPY = "Maintenance is driven by the nightly batch.";
 
 export const isBatchRun = (run: Pick<RunRead, "summary">): boolean => {

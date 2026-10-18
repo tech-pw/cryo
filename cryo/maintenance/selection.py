@@ -39,11 +39,13 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import MaintenanceJob, Source, Table, TableStats
+from cryo.db.repositories.exclusions import table_is_excluded
 from cryo.domain.enums import JobStatus
 from cryo.maintenance.skip_history import (
     REASON_BACKOFF,
     REASON_COOLDOWN,
     REASON_EXCLUDED,
+    REASON_HELD,
     REASON_STALE_STATS,
     clear_pending,
     engine_id_for,
@@ -318,9 +320,9 @@ def load_candidates(
 
     Excluded up front: tables whose last scan could not read them (maintenance would fail the
     same way), tables in a maintenance back-off window, tables maintained successfully within
-    the cooldown, and schemas outside a source's maintenance allow-list when it has one.
-    An explicit ``table_ids`` list (ad-hoc runs) skips the cooldown but keeps every safety
-    exclusion.
+    the cooldown, schemas outside a source's maintenance allow-list when it has one, and
+    schemas/tables an operator excluded. An explicit ``table_ids`` list (ad-hoc runs) skips
+    the cooldown but keeps every safety exclusion.
     """
     recently_maintained = (
         select(MaintenanceJob.table_id)
@@ -359,6 +361,7 @@ def load_candidates(
             Table.last_scan_error_kind.is_(None),
             or_(Table.maintenance_retry_after.is_(None), Table.maintenance_retry_after <= now),
             TableStats.scan_at >= now - timedelta(days=max_stats_age_days),
+            ~table_is_excluded(now),
         )
     )
     if table_ids:
@@ -501,6 +504,7 @@ def _exclusion_rows(
             TableStats.scan_at,
             TableStats.needs_compaction,
             TableStats.delete_file_pct,
+            table_is_excluded(now).label("operator_excluded"),
         )
         .select_from(Table)
         .join(Source, Source.id == Table.source_id)
@@ -534,6 +538,7 @@ def _exclusion_rows(
             maintenance_retry_after=row.maintenance_retry_after,
             scan_at=row.scan_at,
             cooled=row.id in cooled,
+            operator_excluded=bool(row.operator_excluded),
             now=now,
             cutoff=cutoff,
         )
@@ -559,9 +564,12 @@ def _exclusion_reason(
     cooled: bool,
     now: datetime,
     cutoff: datetime,
+    operator_excluded: bool = False,
 ) -> str:
     if not is_active or not source_enabled or last_scan_error_kind is not None:
         return REASON_EXCLUDED
+    if operator_excluded:
+        return REASON_HELD
     if maintenance_retry_after is not None and _as_utc(maintenance_retry_after) > _as_utc(now):
         return REASON_BACKOFF
     if scan_at is None or _as_utc(scan_at) < cutoff:
@@ -606,6 +614,7 @@ class MaintenanceBlock(StrEnum):
     LAST_SCAN_ERROR = "last_scan_error"
     MAINTENANCE_RETRY_BACKOFF = "maintenance_retry_backoff"
     SCHEMA_NOT_ALLOWED = "schema_not_allowed"
+    OPERATOR_EXCLUDED = "operator_excluded"
 
 
 class MaintenancePredicate(StrEnum):
@@ -632,6 +641,7 @@ class MaintenanceEligibilityFacts:
     last_scan_error_at: datetime | None
     # Value from scan_retry_due_at. This helper does not reimplement the ladder.
     scan_retry_due_at: datetime | None
+    operator_excluded: bool = False
 
 
 @dataclass(frozen=True)
@@ -859,6 +869,16 @@ def maintenance_blocking_reasons(
                     "schema_name": facts.schema_name,
                     "maintenance_schema_names": allowed,
                 },
+            )
+        )
+
+    if facts.operator_excluded:
+        reasons.append(
+            _reason(
+                MaintenanceBlock.OPERATOR_EXCLUDED,
+                "An operator excluded this table or its schema from maintenance",
+                MaintenancePredicate.LOAD_CANDIDATES,
+                True,
             )
         )
 

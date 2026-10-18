@@ -68,3 +68,4 @@ export {
   type TimelineRead,
   type TimelineWrite
 } from "./TableTimeline";
+export { FlowSankey, type FlowLink, type FlowNode } from "./FlowSankey";

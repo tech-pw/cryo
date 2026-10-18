@@ -20,6 +20,7 @@ export type WriteAction =
   | "executeLayout"
   | "protectSnapshot"
   | "unprotectSnapshot"
+  | "rollbackSnapshot"
   | "scheduleMaintenance"
   | "silentLossDryRun"
   | "applyProperty"
@@ -31,7 +32,11 @@ export type WriteAction =
   | "editCompliance"
   | "dismissDarkTable"
   | "refreshAnomalies"
-  | "runDedup";
+  | "runDedup"
+  | "editTableConfig"
+  | "editTableConfigAdmin"
+  | "archivePartitions"
+  | "holdMaintenance";
 
 type MinRole = "operator" | "admin";
 
@@ -56,6 +61,9 @@ export const WRITE_MIN_ROLE: Record<WriteAction, MinRole> = {
   executeLayout: "operator",
   protectSnapshot: "operator",
   unprotectSnapshot: "operator",
+  // Moves the table's current pointer backwards -- every other write action here is
+  // additive or scoped to Cryo's own bookkeeping; this changes what every reader sees.
+  rollbackSnapshot: "admin",
   scheduleMaintenance: "operator",
   silentLossDryRun: "operator",
   applyProperty: "operator",
@@ -67,7 +75,12 @@ export const WRITE_MIN_ROLE: Record<WriteAction, MinRole> = {
   editCompliance: "operator",
   dismissDarkTable: "operator",
   refreshAnomalies: "operator",
-  runDedup: "operator"
+  runDedup: "operator",
+  editTableConfig: "operator",
+  // Format upgrades and Cryo retention overrides: one-way or data-deleting.
+  editTableConfigAdmin: "admin",
+  archivePartitions: "operator",
+  holdMaintenance: "operator"
 };
 
 const DESTRUCTIVE_ADMIN: ReadonlySet<WriteAction> = new Set([
@@ -86,7 +99,8 @@ const MAINTENANCE_WRITES: ReadonlySet<WriteAction> = new Set([
   "executeLayout",
   "protectSnapshot",
   "unprotectSnapshot",
-  "scheduleMaintenance"
+  "scheduleMaintenance",
+  "archivePartitions"
 ]);
 
 const RANK: Record<RoleToken, number> = { viewer: 0, operator: 1, admin: 2 };

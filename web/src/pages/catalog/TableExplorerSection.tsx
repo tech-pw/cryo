@@ -1,6 +1,6 @@
 import type { ColumnDef, RowSelectionState, VisibilityState } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, RefreshCw } from "lucide-react";
+import { ArrowDown, Download, RefreshCw, ScanLine, Sparkles, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -22,7 +22,15 @@ import {
   triggerScan,
   unassignTables
 } from "../../api/client";
-import type { ExplorerViewRead, JsonObject, Mode, TableGroupByField, TableRead, UUID } from "../../api/types";
+import type {
+  ExplorerViewRead,
+  JsonObject,
+  Mode,
+  TableGroupByField,
+  TableMaintenanceState,
+  TableRead,
+  UUID
+} from "../../api/types";
 import { BulkAssignBar } from "../../components/BulkAssignBar";
 import { FilterBar } from "../../components/FilterBar";
 import { HintLabel } from "../../components/common";
@@ -36,25 +44,28 @@ import { ColumnVisibilityMenu, DataTable, type ColumnVisibilityOption } from "..
 import { Input } from "../../components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { TruncationTooltip } from "../../components/ui/tooltip";
-import { Segmented } from "../../components/ui/segmented";
 import { Select } from "../../components/ui/select";
 import { useAuth } from "../../lib/auth";
 import { cn } from "../../lib/cn";
 import { filterPresetsForSources } from "../../lib/catalogBindings";
-import { buildFilterChips } from "../../lib/filterChips";
 import { isOrphanScanStale } from "../../lib/costStaleness";
 import { FRESHNESS_LABELS } from "../../lib/freshness";
-import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../../lib/format";
+import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatSavings, formatTime } from "../../lib/format";
 import { type TableFilterState } from "../../lib/predicate";
 import {
   EMPTY_TABLES_TITLE,
   EXPLICIT_QUERY_KEYS,
   HIDEABLE_COLUMN_IDS,
+  SAVINGS_COLUMN_IDS,
+  TRIAGE_VIEW_IDS,
+  isTriageView,
+  type HideableColumnId,
   clearFilterParams,
   allColumnVisibility,
   colsFromVisibility,
   explorerPredicate,
   operatorColumnVisibility,
+  savingsColumnVisibility,
   filtersToSearchParamEntries,
   readExplorerQuery,
   searchParamsForSavedView,
@@ -66,6 +77,9 @@ import {
 } from "../../lib/tableFilters";
 import { schemaTableName, tableTooltipName } from "../../lib/tableLabels";
 import { useTableExplorerSelection } from "../useTableExplorerSelection";
+import { formatRelative } from "../operations/runState";
+import { useExplorerViewParam } from "./CatalogDashboard";
+import { TRIAGE_VIEWS, useTriageCounts } from "./tablesTriage";
 
 const pageSize = 50;
 
@@ -101,7 +115,8 @@ const applyTranslatedFilter = (
 
 const CATALOG_VIEWS_STORAGE_KEY = "cryo.catalog.views.v1";
 const CATALOG_DEFAULT_VIEW_STORAGE_KEY = "cryo.catalog.defaultView.v1";
-const CATALOG_COLUMNS_STORAGE_KEY = "cryo.catalog.columnVisibility.v3";
+const CATALOG_COLUMNS_STORAGE_KEY = "cryo.catalog.columnVisibility.v4";
+const CATALOG_COLUMN_SIZING_STORAGE_KEY = "cryo.catalog.columnSizing.v2";
 
 interface CatalogSavedView {
   id?: string;
@@ -134,14 +149,20 @@ const viewFromServer = (view: ExplorerViewRead): CatalogSavedView => ({
 
 const BUILTIN_CATALOG_VIEWS: CatalogSavedView[] = [
   {
-    name: "Health triage",
+    name: "Health triage (grade D and F)",
     filters: { activeOnly: true, grades: ["D", "F"] },
     sort: "-small_files_count"
   },
   {
-    name: "Needs compaction",
-    filters: { activeOnly: true, needsCompaction: true },
-    sort: "-small_files_count"
+    name: "Biggest tables that need work",
+    filters: { activeOnly: true },
+    sort: "-total_size_gb",
+    view: "needs-work"
+  },
+  {
+    name: "Most-read tables",
+    filters: { activeOnly: true },
+    sort: "-query_count_30d"
   },
   {
     name: "Top savings opportunities",
@@ -149,11 +170,6 @@ const BUILTIN_CATALOG_VIEWS: CatalogSavedView[] = [
     sort: "-projected_savings_usd_month",
     savingsView: true,
     view: "savings"
-  },
-  {
-    name: "Scan failed",
-    filters: { activeOnly: true },
-    view: "scan-failed"
   }
 ];
 
@@ -186,52 +202,189 @@ const GROUP_BY_LABELS: Record<TableGroupByField, string> = {
 
 const groupByLabel = (field: TableGroupByField): string => GROUP_BY_LABELS[field];
 
+const SORT_LABELS: Record<string, string> = {
+  small_files_count: "small files",
+  total_size_gb: "size",
+  projected_savings_usd_month: "estimated savings",
+  overall_score: "health score",
+  score_delta_7d: "7-day health change",
+  query_count_30d: "reads",
+  scan_at: "last scan",
+  total_files: "files",
+  reclaimable_bytes: "reclaimable storage",
+  grade: "grade",
+  compaction_priority: "priority"
+};
+
+const sortCue = (sort: string): string | null => {
+  const field = sort.replace(/^-/, "");
+  const label = SORT_LABELS[field];
+  if (!label) return null;
+  return `Sorted by ${label}, ${sort.startsWith("-") ? "highest" : "lowest"} first`;
+};
+
 const ExplorerTableMeta = ({
   filters,
   matchingTotal,
-  filtered
+  sort,
+  note
 }: {
   filters: TableFilterState;
   matchingTotal: number;
-  filtered: boolean;
-}) => (
-  <div className="flex items-baseline justify-between gap-3 px-1 pb-1">
-    {filtered ? (
-      <p className="text-xs text-muted-foreground">
-        {filters.activeOnly === false ? "All tables" : "Active tables"}
+  sort?: string;
+  note?: string | null;
+}) => {
+  const cue = sort ? sortCue(sort) : null;
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-1 pb-1.5 pt-1">
+      <p className="text-xs tabular-nums text-muted-foreground">
+        <span className="font-medium text-foreground">{matchingTotal.toLocaleString()}</span>{" "}
+        {filters.activeOnly === false ? "" : "active "}
+        {matchingTotal === 1 ? "table" : "tables"}
+        {note ? <span> · {note}</span> : null}
       </p>
-    ) : (
-      <span />
-    )}
-    <p className="ml-auto text-xs tabular-nums text-muted-foreground">
-      {matchingTotal.toLocaleString()} {matchingTotal === 1 ? "table" : "tables"}
-    </p>
-  </div>
-);
-
-/** The "Table" identity column is intentionally excluded -- hiding it would leave rows unlabeled. */
-const COLUMN_LABELS: Record<(typeof HIDEABLE_COLUMN_IDS)[number], string> = {
-  catalog: "Catalog",
-  grade: "Grade",
-  compaction_priority: "Priority",
-  needs: "Compaction",
-  small_files: "Small / total files",
-  total_files: "Files",
-  total_size_gb: "Size",
-  last_scan: "Last scan",
-  projected_savings_usd_month: "Savings/mo",
-  reclaimable_bytes: "Reclaimable",
-  cost_precision: "Savings basis",
-  partition: "Partition",
-  freshness: "Last updated",
-  scan_failures: "Scan failures",
-  first_seen_at: "Seen"
+      {cue ? (
+        <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+          <ArrowDown className="size-3" aria-hidden="true" />
+          {cue}
+        </p>
+      ) : null}
+    </div>
+  );
 };
 
-const COLUMN_VISIBILITY_OPTIONS: ColumnVisibilityOption[] = HIDEABLE_COLUMN_IDS.map((id) => ({
-  id,
-  label: COLUMN_LABELS[id]
-}));
+/** The "Table" identity column is intentionally excluded -- hiding it would leave rows unlabeled. */
+const COLUMN_META: Record<HideableColumnId, { label: string; group: string }> = {
+  health: { label: "Health", group: "Health" },
+  grade: { label: "Grade only", group: "Health" },
+  compaction_priority: { label: "Priority", group: "Health" },
+  needs: { label: "Needs compaction", group: "Health" },
+  scan_failures: { label: "Scan failures", group: "Health" },
+  maintenance: { label: "Maintenance status", group: "Maintenance" },
+  last_run: { label: "Last run", group: "Maintenance" },
+  workflow: { label: "Workflow", group: "Maintenance" },
+  small_files: { label: "Small files", group: "Storage & cost" },
+  total_files: { label: "Total files", group: "Storage & cost" },
+  total_size_gb: { label: "Size", group: "Storage & cost" },
+  projected_savings_usd_month: { label: "Savings/mo", group: "Storage & cost" },
+  reclaimable_bytes: { label: "Reclaimable", group: "Storage & cost" },
+  cost_precision: { label: "Savings basis", group: "Storage & cost" },
+  reads_30d: { label: "Reads (30d)", group: "Usage & metadata" },
+  last_scan: { label: "Last scan", group: "Usage & metadata" },
+  freshness: { label: "Last commit", group: "Usage & metadata" },
+  catalog: { label: "Catalog", group: "Usage & metadata" },
+  owner: { label: "Owner", group: "Usage & metadata" },
+  partition: { label: "Partition", group: "Usage & metadata" },
+  first_seen_at: { label: "First seen", group: "Usage & metadata" }
+};
+
+const COLUMN_GROUP_ORDER = ["Health", "Maintenance", "Storage & cost", "Usage & metadata"];
+
+const COLUMN_VISIBILITY_OPTIONS: ColumnVisibilityOption[] = [...HIDEABLE_COLUMN_IDS]
+  .sort(
+    (a, b) =>
+      COLUMN_GROUP_ORDER.indexOf(COLUMN_META[a].group) - COLUMN_GROUP_ORDER.indexOf(COLUMN_META[b].group)
+  )
+  .map((id) => ({ id, label: COLUMN_META[id].label, group: COLUMN_META[id].group }));
+
+const STATE_META: Record<TableMaintenanceState, { label: string; dot: string }> = {
+  running: { label: "Running", dot: "bg-[var(--color-primary)] motion-safe:animate-pulse" },
+  queued: { label: "Queued", dot: "bg-[var(--color-primary)]" },
+  failed: { label: "Failed", dot: "bg-[var(--color-status-danger)]" },
+  held: { label: "Held", dot: "bg-[var(--color-status-warning)]" },
+  excluded: { label: "Excluded", dot: "bg-muted-foreground/50" },
+  scan_failing: { label: "Scan failing", dot: "bg-[var(--color-status-danger)]" },
+  not_scanned: { label: "Not scanned", dot: "bg-muted-foreground/50" },
+  skipped: { label: "Skipped", dot: "bg-[var(--color-status-warning)]" },
+  needs_work: { label: "Needs work", dot: "bg-[var(--color-status-warning)]" },
+  healthy: { label: "Up to date", dot: "bg-[var(--color-status-success)]" },
+  inactive: { label: "Dropped", dot: "bg-muted-foreground/50" }
+};
+
+/** Rows a manual run would most likely skip: already in flight, held back, or opted out. */
+export const LIKELY_SKIPPED_STATES = new Set<TableMaintenanceState>(["running", "queued", "held", "excluded", "inactive"]);
+
+export const MaintenanceStatusCell = ({ table }: { table: TableRead }) => {
+  const maintenance = table.maintenance;
+  if (!maintenance) return <span className="text-muted-foreground">-</span>;
+  const meta = STATE_META[maintenance.state];
+  return (
+    <TruncationTooltip content={maintenance.reason ?? meta.label}>
+      <span className="flex min-w-0 flex-col">
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-sm">
+          <span className={cn("size-2 shrink-0 rounded-full", meta.dot)} aria-hidden="true" />
+          {meta.label}
+        </span>
+        {maintenance.reason ? (
+          <span className="truncate pl-3.5 text-xs text-muted-foreground">{maintenance.reason}</span>
+        ) : null}
+      </span>
+    </TruncationTooltip>
+  );
+};
+
+const RUN_DOT: Record<string, string> = {
+  succeeded: "bg-[var(--color-status-success)]",
+  failed: "bg-[var(--color-status-danger)]",
+  partial: "bg-[var(--color-status-warning)]",
+  skipped: "bg-muted-foreground/50"
+};
+
+export const LastRunCell = ({ table }: { table: TableRead }) => {
+  const active = table.maintenance?.active_run;
+  const last = table.maintenance?.last_run;
+  if (active) {
+    return (
+      <Link to={`/runs/${active.run_id}`} className="block whitespace-nowrap text-sm hover:underline">
+        {active.status === "running" ? "Running now" : "Queued"}
+        <span className="block text-xs text-muted-foreground">
+          {active.started_at ? `started ${formatRelative(active.started_at)}` : "waiting for capacity"}
+        </span>
+      </Link>
+    );
+  }
+  if (!last) return <span className="text-sm text-muted-foreground">Never</span>;
+  return (
+    <Link
+      to={`/runs/${last.run_id}`}
+      className="flex min-w-0 flex-col whitespace-nowrap hover:underline"
+      title={last.finished_at ? formatTime(last.finished_at) : undefined}
+    >
+      <span className="inline-flex items-center gap-1.5 text-sm">
+        <span className={cn("size-2 rounded-full", RUN_DOT[last.status] ?? "bg-muted-foreground/50")} aria-hidden="true" />
+        {formatRelative(last.finished_at)}
+      </span>
+      <span className="pl-3.5 text-xs text-muted-foreground">
+        {last.status.charAt(0).toUpperCase() + last.status.slice(1)}
+        {last.trigger === "schedule" ? " · nightly" : last.trigger ? " · manual" : ""}
+      </span>
+    </Link>
+  );
+};
+
+export const HealthCell = ({ table }: { table: TableRead }) => {
+  const score = table.stats?.overall_score;
+  const delta = table.maintenance?.score_delta_7d;
+  if (score == null) return <span className="text-sm text-muted-foreground">Not scanned</span>;
+  return (
+    <span className="inline-flex items-center gap-2 whitespace-nowrap">
+      <GradePill grade={table.stats?.grade} />
+      <span className="text-sm tabular-nums">{Math.round(score)}</span>
+      {delta != null && Math.abs(delta) >= 1 ? (
+        <span
+          className={cn(
+            "text-xs tabular-nums",
+            delta < 0 ? "text-[var(--color-status-danger)]" : "text-[var(--color-status-success)]"
+          )}
+          title="Change in health score over the last 7 days"
+        >
+          {delta < 0 ? "▼" : "▲"}
+          {Math.abs(delta)}
+        </span>
+      ) : null}
+    </span>
+  );
+};
 
 export const smallFilesRatioText = (
   smallFiles: number | null | undefined,
@@ -251,9 +404,28 @@ export const SmallFileRatio = ({
 }: {
   smallFiles?: number | null;
   totalFiles?: number | null;
-}) => (
-  <span className="numeric-cell block whitespace-nowrap text-right">{smallFilesRatioText(smallFiles, totalFiles)}</span>
-);
+}) => {
+  if (smallFiles == null || totalFiles == null || Number.isNaN(smallFiles) || Number.isNaN(totalFiles)) {
+    return <span className="block text-right text-sm text-muted-foreground">Not measured</span>;
+  }
+  const pct = totalFiles > 0 ? Math.round((smallFiles / totalFiles) * 100) : 0;
+  return (
+    <span className="flex flex-col items-end gap-0.5" title={smallFilesRatioText(smallFiles, totalFiles)}>
+      <span className="numeric-cell whitespace-nowrap text-sm">
+        {pct}%
+        <span className="ml-1.5 text-xs text-muted-foreground">
+          {formatNumber(smallFiles, true)} / {formatNumber(totalFiles, true)}
+        </span>
+      </span>
+      <span className="h-1 w-20 overflow-hidden rounded-full bg-[var(--color-surface-sunken)]" aria-hidden="true">
+        <span
+          className="block h-full rounded-full bg-[var(--color-text-tertiary)]"
+          style={{ width: `${Math.min(100, pct)}%` }}
+        />
+      </span>
+    </span>
+  );
+};
 
 export const SlaBulletBar = ({
   label,
@@ -285,50 +457,6 @@ export const SlaBulletBar = ({
 };
 
 const SLA_VIEWS = new Set(["freshness", "maintenance-age", "p95-latency"]);
-
-const hiddenColumnFacts = (table: TableRead, visibility: VisibilityState): string | null => {
-  const hidden = (id: string) => visibility[id] === false;
-  const parts: string[] = [];
-  if (hidden("catalog")) {
-    const catalog = table.catalog_name ?? table.source_name;
-    if (catalog) parts.push(catalog);
-  }
-  if (hidden("grade")) parts.push(table.stats?.grade ? `Grade ${table.stats.grade}` : "Not graded");
-  if (hidden("compaction_priority") && table.stats?.compaction_priority) {
-    parts.push(table.stats.compaction_priority);
-  }
-  if (hidden("needs")) {
-    parts.push(
-      table.stats?.needs_compaction == null
-        ? "Compaction not measured"
-        : table.stats.needs_compaction
-          ? "Needs compaction"
-          : "Does not need compaction"
-    );
-  }
-  if (hidden("small_files") || hidden("total_files")) {
-    parts.push(smallFilesRatioText(table.stats?.small_files_count, table.stats?.total_files));
-  }
-  if (hidden("total_size_gb")) {
-    const size = table.stats?.total_size_gb;
-    parts.push(size == null || Number.isNaN(size) ? "Not measured" : formatGb(size));
-  }
-  if (hidden("last_scan")) {
-    parts.push(table.stats?.scan_at ? `Scanned ${formatTime(table.stats.scan_at)}` : "Not measured");
-  }
-  if (hidden("freshness")) {
-    parts.push(
-      table.stats?.last_snapshot_committed_at
-        ? `Updated ${formatTime(table.stats.last_snapshot_committed_at)}`
-        : "Not measured"
-    );
-  }
-  if (hidden("scan_failures")) {
-    const failures = table.consecutive_scan_failures;
-    parts.push(failures == null ? "Scan failures not measured" : `${failures} scan failures`);
-  }
-  return parts.length ? parts.join(" · ") : null;
-};
 
 const SortHeader = ({
   field,
@@ -364,6 +492,40 @@ const SortHeader = ({
   );
 };
 
+const QuickViews = ({ active, onChange }: { active: string | null; onChange: (view: string | null) => void }) => {
+  const { counts } = useTriageCounts();
+  const item = (id: string | null, label: string, count?: number) => {
+    const selected = id === null ? !isTriageView(active) : active === id;
+    return (
+      <button
+        key={id ?? "all"}
+        type="button"
+        aria-pressed={selected}
+        onClick={() => onChange(id)}
+        className={cn(
+          "inline-flex h-7 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-xs font-medium transition-colors duration-[var(--motion-fast)]",
+          selected
+            ? "bg-[var(--color-ink)] text-[var(--color-bg)]"
+            : "text-muted-foreground hover:bg-[var(--color-surface-sunken)] hover:text-foreground"
+        )}
+      >
+        {label}
+        {count != null ? (
+          <span className={cn("tabular-nums", selected ? "opacity-70" : "text-muted-foreground")}>
+            {formatNumber(count, true)}
+          </span>
+        ) : null}
+      </button>
+    );
+  };
+  return (
+    <nav aria-label="Quick views" className="-mx-1 flex max-w-full items-center gap-0.5 overflow-x-auto px-1">
+      {item(null, "All tables")}
+      {TRIAGE_VIEW_IDS.map((id) => item(id, TRIAGE_VIEWS[id].label, counts[id]))}
+    </nav>
+  );
+};
+
 type GroupRow = {
   group_value: string | null;
   count: number;
@@ -392,6 +554,7 @@ export const TableExplorerSection = () => {
     );
   };
 
+  const { setView: setQuickView } = useExplorerViewParam();
   const query = useMemo(() => readExplorerQuery(searchParams), [searchParams]);
   const filters = query.filters;
   const schema = query.schema;
@@ -415,6 +578,7 @@ export const TableExplorerSection = () => {
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [nlQuery, setNlQuery] = useState("");
+  const [nlOpen, setNlOpen] = useState(false);
   const [exportingCsv, setExportingCsv] = useState(false);
 
   const [storedVisibility, setStoredVisibility] = useState<VisibilityState | null>(() =>
@@ -423,6 +587,7 @@ export const TableExplorerSection = () => {
   const columnVisibility = query.cols
     ? visibilityFromCols(query.cols)
     : (storedVisibility ?? operatorColumnVisibility());
+  const shownVisibility = savingsView ? savingsColumnVisibility() : columnVisibility;
   useEffect(() => {
     writeJson(CATALOG_COLUMNS_STORAGE_KEY, columnVisibility);
   }, [columnVisibility]);
@@ -605,7 +770,6 @@ export const TableExplorerSection = () => {
 
   const pageItems = tables.data?.items ?? [];
   const matchingTotal = tables.data?.total ?? 0;
-  const filtersActive = buildFilterChips(filters, catalogOptions, () => undefined, presetOptions).length > 0;
 
   const {
     selectedRowKeys,
@@ -744,6 +908,16 @@ export const TableExplorerSection = () => {
     onError: (error) => toast.error((error as Error).message)
   });
 
+  const scanOne = useMutation({
+    mutationFn: (tableId: UUID) =>
+      triggerScan(api, { scope: "tables", table_ids: [tableId], full_scan: true, trigger: "web-table-row" }),
+    onSuccess: (result) => {
+      toastScanResult(result);
+      void queryClient.invalidateQueries({ queryKey: ["scan-runs"] });
+    },
+    onError: (error) => toast.error((error as Error).message)
+  });
+
   const translator = useMutation({
     mutationFn: (query: string) => translateTableFilter(api, { query, use_llm: true }),
     onSuccess: (result) => {
@@ -853,21 +1027,77 @@ export const TableExplorerSection = () => {
       {
         id: "table",
         header: "Table",
-        size: 168,
-        minSize: 96,
-        maxSize: 480,
+        size: 220,
+        minSize: 160,
+        maxSize: 640,
         cell: ({ row }) => {
           const name = schemaTableName(row.original);
-          const facts = hiddenColumnFacts(row.original, columnVisibility);
-          const tooltip = [tableTooltipName(row.original), facts].filter(Boolean).join(" · ");
           return (
-            <TruncationTooltip content={tooltip}>
-              <Link to={`/tables/${row.original.id}`} className="table-name-link block min-w-0">
-                <span className="table-name-cell block min-w-0 truncate font-medium">{name}</span>
-                {facts ? (
-                  <span className="block min-w-0 truncate text-xs text-muted-foreground">{facts}</span>
-                ) : null}
-              </Link>
+            <div className="flex min-w-0 items-center gap-1">
+              <TruncationTooltip content={tableTooltipName(row.original)}>
+                <Link to={`/tables/${row.original.id}`} className="table-name-link block min-w-0 flex-1">
+                  <span className="table-name-cell block min-w-0 truncate font-medium">{name}</span>
+                </Link>
+              </TruncationTooltip>
+              <span className="hidden shrink-0 items-center group-focus-within:flex group-hover:flex">
+                <button
+                  type="button"
+                  className="inline-flex size-6 cursor-pointer items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground hover:bg-[var(--color-panel)] hover:text-foreground"
+                  aria-label={`Scan ${name} now`}
+                  title="Scan now"
+                  onClick={() => scanOne.mutate(row.original.id)}
+                >
+                  <ScanLine className="size-3.5" aria-hidden="true" />
+                </button>
+                <Link
+                  to={`/tables/${row.original.id}?tab=maintenance`}
+                  className="inline-flex size-6 items-center justify-center rounded-[var(--radius-sm)] text-muted-foreground hover:bg-[var(--color-panel)] hover:text-foreground"
+                  aria-label={`Maintenance for ${name}`}
+                  title="Maintenance history"
+                >
+                  <Wrench className="size-3.5" aria-hidden="true" />
+                </Link>
+              </span>
+            </div>
+          );
+        }
+      },
+      {
+        id: "health",
+        header: () => <SortHeader field="overall_score" label="Health" sort={sort} onSort={applySort} />,
+        size: 132,
+        cell: ({ row }) => <HealthCell table={row.original} />
+      },
+      {
+        id: "maintenance",
+        header: "Maintenance",
+        size: 210,
+        minSize: 120,
+        cell: ({ row }) => <MaintenanceStatusCell table={row.original} />
+      },
+      {
+        id: "last_run",
+        header: "Last run",
+        size: 136,
+        cell: ({ row }) => <LastRunCell table={row.original} />
+      },
+      {
+        id: "workflow",
+        header: "Workflow",
+        size: 150,
+        minSize: 96,
+        cell: ({ row }) => {
+          const maintenance = row.original.maintenance;
+          if (!maintenance?.workflow_name) {
+            return (
+              <span className="text-sm text-muted-foreground" title="No pin. Preset rules pick the workflow at run time.">
+                By rule
+              </span>
+            );
+          }
+          return (
+            <TruncationTooltip content={maintenance.workflow_name}>
+              <span className="block min-w-0 truncate text-sm">{maintenance.workflow_name}</span>
             </TruncationTooltip>
           );
         }
@@ -900,16 +1130,16 @@ export const TableExplorerSection = () => {
       },
       {
         id: "needs",
-        header: "Compaction",
+        header: "Needs compaction",
         size: 168,
         cell: ({ row }) => <CompactionTag needsCompaction={row.original.stats?.needs_compaction} />
       },
       {
         id: "small_files",
         header: () => (
-          <SortHeader field="small_files_count" label="Small / total files" sort={sort} onSort={applySort} align="right" />
+          <SortHeader field="small_files_count" label="Small files" sort={sort} onSort={applySort} align="right" />
         ),
-        size: 220,
+        size: 136,
         cell: ({ row }) => (
           <SmallFileRatio
             smallFiles={row.original.stats?.small_files_count}
@@ -932,7 +1162,7 @@ export const TableExplorerSection = () => {
       {
         id: "total_size_gb",
         header: () => <SortHeader field="total_size_gb" label="Size" sort={sort} onSort={applySort} align="right" />,
-        size: 96,
+        size: 88,
         cell: ({ row }) => (
           <span className="numeric-cell block whitespace-nowrap text-right">
             {formatGb(row.original.stats?.total_size_gb)}
@@ -940,13 +1170,47 @@ export const TableExplorerSection = () => {
         )
       },
       {
-        id: "last_scan",
-        header: () => <span className="block whitespace-nowrap text-right">Last scan</span>,
-        size: 152,
+        id: "reads_30d",
+        header: () => <SortHeader field="query_count_30d" label="Reads 30d" sort={sort} onSort={applySort} align="right" />,
+        size: 96,
         cell: ({ row }) => (
-          <span className="table-date-cell block whitespace-nowrap text-right">
-            {row.original.stats?.scan_at ? formatTime(row.original.stats.scan_at) : "Not measured"}
+          <span className="numeric-cell block whitespace-nowrap text-right">
+            {formatNumber(row.original.stats?.query_count_30d, true)}
           </span>
+        )
+      },
+      {
+        id: "last_scan",
+        header: () => <SortHeader field="scan_at" label="Last scan" sort={sort} onSort={applySort} align="right" />,
+        size: 112,
+        cell: ({ row }) => {
+          const failing = (row.original.consecutive_scan_failures ?? 0) > 0;
+          return (
+            <span
+              className={cn(
+                "table-date-cell block whitespace-nowrap text-right text-sm",
+                failing && "text-[var(--color-status-danger)]"
+              )}
+              title={row.original.stats?.scan_at ? formatTime(row.original.stats.scan_at) : undefined}
+            >
+              {failing
+                ? `Failing ×${row.original.consecutive_scan_failures}`
+                : row.original.stats?.scan_at
+                  ? formatRelative(row.original.stats.scan_at)
+                  : "Never"}
+            </span>
+          );
+        }
+      },
+      {
+        id: "owner",
+        header: "Owner",
+        size: 160,
+        minSize: 96,
+        cell: ({ row }) => (
+          <TruncationTooltip content={row.original.owner_email}>
+            <span className="block min-w-0 truncate text-sm">{row.original.owner_email ?? "-"}</span>
+          </TruncationTooltip>
         )
       },
       {
@@ -960,10 +1224,13 @@ export const TableExplorerSection = () => {
             align="right"
           />
         ),
-        size: 120,
+        size: 104,
         cell: ({ row }) => (
-          <span className="numeric-cell block whitespace-nowrap text-right">
-            {formatCurrency(row.original.stats?.projected_savings_usd_month)}
+          <span
+            className="numeric-cell block whitespace-nowrap text-right"
+            title={row.original.stats?.projected_savings_usd_month == null ? "No savings estimate yet" : undefined}
+          >
+            {formatSavings(row.original.stats?.projected_savings_usd_month)}
           </span>
         )
       },
@@ -1012,7 +1279,9 @@ export const TableExplorerSection = () => {
       },
       {
         id: "freshness",
-        header: () => <span className="block whitespace-nowrap text-right">Last updated</span>,
+        header: () => (
+          <HintLabel label="Last commit" tooltip="When a writer last committed a snapshot to this table." />
+        ),
         size: 152,
         cell: ({ row }) => (
           <span className="table-date-cell block whitespace-nowrap text-right">
@@ -1034,7 +1303,7 @@ export const TableExplorerSection = () => {
       },
       {
         accessorKey: "first_seen_at",
-        header: () => <span className="block whitespace-nowrap text-right">Seen</span>,
+        header: () => <span className="block whitespace-nowrap text-right">First seen</span>,
         size: 152,
         cell: ({ getValue }) => (
           <span className="table-date-cell block whitespace-nowrap text-right">{formatTime(getValue() as string)}</span>
@@ -1061,131 +1330,215 @@ export const TableExplorerSection = () => {
           ]
         : [])
     ],
-    [sort, columnVisibility, view]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sort, view]
   );
 
-  return (
-    <div id="table-explorer">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={tables.isFetching || grouped.isFetching ? "Refreshing tables" : "Refresh tables"}
-            onClick={() => void (groupByField ? grouped.refetch() : tables.refetch())}
+  const orderedColumns = useMemo(() => {
+    if (!savingsView) return tableColumns;
+    const rank = (id: string | undefined) => {
+      if (id === "table") return -1;
+      const index = (SAVINGS_COLUMN_IDS as readonly string[]).indexOf(id ?? "");
+      return index === -1 ? SAVINGS_COLUMN_IDS.length : index;
+    };
+    return [...tableColumns].sort((a, b) => rank(a.id) - rank(b.id));
+  }, [savingsView, tableColumns]);
+
+  const savedViewsMenu = (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button size="sm" variant="secondary">
+          Saved views
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72 p-1.5">
+        <p className="px-2 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
+          Views
+        </p>
+        <ul className="flex max-h-64 flex-col gap-0.5 overflow-y-auto">
+          {allViews.map((saved) => {
+            const own = userViews.some((candidate) => candidate.name === saved.name);
+            return (
+              <li key={saved.name} className="group/view flex items-center gap-1">
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 cursor-pointer truncate rounded-[var(--radius-sm)] px-2 py-1.5 text-left text-sm hover:bg-[var(--color-surface-sunken)]"
+                  onClick={() => applyView(saved)}
+                >
+                  {saved.name}
+                </button>
+                <button
+                  type="button"
+                  className="hidden cursor-pointer rounded-[var(--radius-sm)] px-1.5 py-1 text-xs text-muted-foreground hover:bg-[var(--color-surface-sunken)] hover:text-foreground group-hover/view:block"
+                  onClick={() => setCurrentAsDefaultView(saved.name)}
+                >
+                  Default
+                </button>
+                {own ? (
+                  <button
+                    type="button"
+                    aria-label={`Delete view ${saved.name}`}
+                    className="hidden cursor-pointer rounded-[var(--radius-sm)] px-1.5 py-1 text-xs text-[var(--color-status-danger)] hover:bg-[var(--color-surface-sunken)] group-hover/view:block"
+                    onClick={() => deleteSavedView(saved.name)}
+                  >
+                    Delete
+                  </button>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+        <div className="mt-1 border-t border-border pt-1">
+          <button
+            type="button"
+            className="w-full cursor-pointer rounded-[var(--radius-sm)] px-2 py-1.5 text-left text-sm font-medium hover:bg-[var(--color-surface-sunken)]"
+            onClick={saveCurrentAsView}
           >
-            <RefreshCw
-              size={16}
-              aria-hidden="true"
-              className={tables.isFetching || grouped.isFetching ? "motion-safe:animate-spin" : ""}
-            />
-          </Button>
-          <Segmented
-            size="small"
-            aria-label="Table view"
-            value={savingsView ? "savings" : "all"}
-            onChange={(next) => {
-              const nextSavings = next === "savings";
-              if (nextSavings === savingsView) return;
-              updateParams({
-                view: nextSavings ? "savings" : null,
-                sort: nextSavings ? "-projected_savings_usd_month" : sort,
-                page: null
-              });
-            }}
-            options={[
-              { label: "All tables", value: "all" },
-              { label: "Savings", value: "savings" }
-            ]}
-          />
+            Save current view…
+          </button>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-        <ColumnVisibilityMenu
-          options={COLUMN_VISIBILITY_OPTIONS}
-          visibility={columnVisibility}
-          onChange={setColumnVisibility}
-          onReset={() => setColumnVisibility(allColumnVisibility())}
-        />
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="secondary">Views</Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-72 space-y-2.5">
+      </PopoverContent>
+    </Popover>
+  );
+
+  const likelySkipped = allMatching
+    ? 0
+    : pageItems.filter(
+        (table) =>
+          selectedRowKeys.includes(table.id) &&
+          table.maintenance != null &&
+          LIKELY_SKIPPED_STATES.has(table.maintenance.state)
+      ).length;
+
+  return (
+    <div id="table-explorer" className="scroll-mt-4">
+      <div className="mb-2">
+        <QuickViews active={view} onChange={(next) => setQuickView(next)} />
+      </div>
+      <FilterBar
+        value={{ ...filters, ...(schema ? { schema } : {}) } as TableFilterState}
+        catalogOptions={catalogOptions}
+        presetOptions={presetOptions}
+        matchingTotal={matchingTotal}
+        hideSummary
+        hideNeedsToggle
+        onReset={clearFilters}
+        actions={
+          <>
             <Select
               aria-label="Group tables by"
+              className="h-[var(--control-height-sm)] w-[8.5rem] text-xs"
               value={groupByField ?? ""}
               onChange={(next) => updateParams({ groupBy: (next as string) || null, page: null })}
               allowClear
               placeholder="No grouping"
               options={[
-                { label: "Group by catalog", value: "catalog" },
-                { label: "Group by schema", value: "schema_name" },
-                { label: "Group by grade", value: "grade" },
-                { label: "Group by priority", value: "compaction_priority" },
-                { label: "Group by compaction", value: "needs_compaction" },
-                { label: "Group by size", value: "size_bucket" }
+                { label: "Group: catalog", value: "catalog" },
+                { label: "Group: schema", value: "schema_name" },
+                { label: "Group: grade", value: "grade" },
+                { label: "Group: priority", value: "compaction_priority" },
+                { label: "Group: compaction", value: "needs_compaction" },
+                { label: "Group: size", value: "size_bucket" }
               ]}
             />
-            <Select
-              aria-label="Catalog view"
-              value=""
-              placeholder="Load a view..."
-              onChange={(next) => {
-                const saved = allViews.find((candidate) => candidate.name === next);
-                if (saved) applyView(saved);
-              }}
-              options={allViews.map((saved) => ({ label: saved.name, value: saved.name }))}
+            <ColumnVisibilityMenu
+              options={COLUMN_VISIBILITY_OPTIONS}
+              visibility={shownVisibility}
+              onChange={setColumnVisibility}
+              onReset={() => setColumnVisibility(operatorColumnVisibility())}
+              onShowAll={() => setColumnVisibility(allColumnVisibility())}
+              disabledReason={
+                savingsView ? "The savings view pins its own columns. Switch to another view to customise them." : undefined
+              }
             />
-            <Button type="button" variant="secondary" onClick={saveCurrentAsView}>
-              Save view
+            {savedViewsMenu}
+            {matchingTotal > 0 ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label="Export CSV"
+                onClick={() => void exportMatchingTablesCsv()}
+                disabled={Boolean(groupByField) || exportingCsv}
+              >
+                <Download size={14} aria-hidden="true" />
+                {exportingCsv ? "Exporting..." : "Export"}
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              aria-label={tables.isFetching || grouped.isFetching ? "Refreshing tables" : "Refresh tables"}
+              onClick={() => void (groupByField ? grouped.refetch() : tables.refetch())}
+            >
+              <RefreshCw
+                size={14}
+                aria-hidden="true"
+                className={tables.isFetching || grouped.isFetching ? "motion-safe:animate-spin" : ""}
+              />
             </Button>
-            {userViews.length ? (
-              <Select
-                aria-label="Delete saved view"
-                value=""
-                placeholder="Delete view..."
-                onChange={(next) => next && deleteSavedView(next)}
-                options={userViews.map((saved) => ({ label: saved.name, value: saved.name }))}
-              />
-            ) : null}
-            {userViews.length ? (
-              <Select
-                aria-label="Set default catalog view"
-                value=""
-                placeholder="Set default..."
-                onChange={(next) => next && setCurrentAsDefaultView(next)}
-                options={allViews.map((saved) => ({ label: saved.name, value: saved.name }))}
-              />
-            ) : null}
-          </PopoverContent>
-        </Popover>
-        {matchingTotal > 0 ? (
+          </>
+        }
+        trailing={
           <Button
-            variant="ghost"
-            aria-label="Export CSV"
-            onClick={() => void exportMatchingTablesCsv()}
-            disabled={Boolean(groupByField) || exportingCsv}
+            size="sm"
+            variant={nlOpen ? "outline" : "ghost"}
+            className="gap-1.5"
+            aria-expanded={nlOpen}
+            onClick={() => setNlOpen((open) => !open)}
           >
-            <Download size={16} aria-hidden="true" />
-            {exportingCsv ? "Exporting..." : "Export"}
+            <Sparkles className="size-3.5" aria-hidden="true" />
+            Ask in plain English
           </Button>
-        ) : null}
-        </div>
-      </div>
+        }
+        onChange={(next) => {
+          const nextSchema = (next as TableFilterState & { schema?: string }).schema;
+          applyFilters(next, typeof nextSchema === "string" ? nextSchema : undefined);
+          resetSelectionForFilterChange();
+        }}
+      />
+      {nlOpen ? (
+        <form
+          className="mb-2 mt-2 flex flex-col gap-2 rounded-[var(--radius-lg)] border border-border bg-[var(--color-surface-sunken)] p-2.5 sm:flex-row sm:items-center"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const queryText = nlQuery.trim();
+            if (!queryText) return;
+            translator.mutate(queryText);
+          }}
+        >
+          <Input
+            autoFocus
+            aria-label="Describe the tables you want"
+            value={nlQuery}
+            placeholder="e.g. grade D tables over 100 GB that need compaction"
+            onChange={(event) => setNlQuery(event.target.value)}
+            className="flex-1 bg-background"
+          />
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" variant="primary" loading={translator.isPending}>
+              Apply as filters
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setNlOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </form>
+      ) : null}
       {translator.data?.chips.length ? (
-        <p className="mb-2 text-sm text-muted-foreground">Applied: {translator.data.chips.join(" · ")}</p>
+        <p className="mb-2 mt-1 text-xs text-muted-foreground">Applied: {translator.data.chips.join(" · ")}</p>
       ) : null}
       {translator.data?.errors.length ? (
         <Alert
           className="mb-2"
           variant="warning"
-          title="Translation issues"
+          title="Some of that couldn't be turned into filters"
           description={translator.data.errors.join(" · ")}
         />
       ) : null}
       {filters.freshnessBucket ? (
         <Alert
-          className="mb-3"
+          className="mb-3 mt-2"
           variant={filters.freshnessBucket === "failed" ? "error" : "info"}
           title={`Freshness view: ${FRESHNESS_LABELS[filters.freshnessBucket]}`}
           description="Showing the complete server-filtered table set for this freshness bucket. CSV export includes every match, not only this page."
@@ -1193,7 +1546,7 @@ export const TableExplorerSection = () => {
       ) : null}
       {view === "scan-failed" ? (
         <Alert
-          className="mb-3"
+          className="mb-3 mt-2"
           variant="error"
           title="Scan failed"
           description="Tables with repeated scan failures. Filtered on the server."
@@ -1201,7 +1554,7 @@ export const TableExplorerSection = () => {
       ) : null}
       {view === "unused" ? (
         <Alert
-          className="mb-3"
+          className="mb-3 mt-2"
           variant="info"
           title={`No reads in the last ${viewSpec?.no_reads_days ?? 30} days`}
           description="This is the unused-tables view, not the full catalog. Coverage gaps are excluded. Export uses the same filter."
@@ -1229,49 +1582,16 @@ export const TableExplorerSection = () => {
           )}
         </div>
       ) : null}
-      <FilterBar
-        value={{ ...filters, ...(schema ? { schema } : {}) } as TableFilterState}
-        catalogOptions={catalogOptions}
-        presetOptions={presetOptions}
-        matchingTotal={matchingTotal}
-        hideSummary
-        hasSelection={hasSelection}
-        filterSelectionActive={filterSelectionActive}
-        onSelectAllMatching={viewSpec ? undefined : selectAllMatching}
-        onClearSelection={clearSelection}
-        leading={
-          <form
-            className="flex gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const queryText = nlQuery.trim();
-              if (!queryText) return;
-              translator.mutate(queryText);
-            }}
-          >
-            <Input
-              value={nlQuery}
-              placeholder='Find tables like... e.g. "grade D needs compaction savings above $200"'
-              onChange={(event) => setNlQuery(event.target.value)}
-            />
-            <Button type="submit" loading={translator.isPending}>
-              Translate
-            </Button>
-          </form>
-        }
-        onChange={(next) => {
-          const nextSchema = (next as TableFilterState & { schema?: string }).schema;
-          applyFilters(next, typeof nextSchema === "string" ? nextSchema : undefined);
-          resetSelectionForFilterChange();
-        }}
-      />
       <BulkAssignBar
         selection={selection}
         presets={assignablePresets}
         destinations={destinations.data ?? []}
-        assigning={assign.isPending}
+        assigning={assign.isPending || unassign.isPending}
         running={run.isPending || manifestRewrite.isPending}
         scanning={scan.isPending}
+        matchingTotal={matchingTotal}
+        onSelectAllMatching={viewSpec ? undefined : selectAllMatching}
+        likelySkipped={likelySkipped}
         onClear={clearSelection}
         onAssign={(presetId) => assign.mutate(presetId)}
         onPreview={() => setPreviewOpen(true)}
@@ -1284,7 +1604,7 @@ export const TableExplorerSection = () => {
         <QueryErrorAlert error={tables.error ?? grouped.error} title="Failed to load tables" />
       ) : groupByField ? (
         <>
-          <ExplorerTableMeta filters={filters} matchingTotal={matchingTotal} filtered={filtersActive} />
+          <ExplorerTableMeta filters={filters} matchingTotal={matchingTotal} />
         <DataTable
           className="datalake-table"
           fillAvailableWidth
@@ -1303,12 +1623,17 @@ export const TableExplorerSection = () => {
         </>
       ) : (
         <>
-          <ExplorerTableMeta filters={filters} matchingTotal={matchingTotal} filtered={filtersActive} />
+          <ExplorerTableMeta
+            filters={filters}
+            matchingTotal={matchingTotal}
+            sort={sort}
+            note={isTriageView(view) ? TRIAGE_VIEWS[view].hint : null}
+          />
           <DataTable
             className="datalake-table"
             enableColumnResizing
-            columnSizingStorageKey="cryo.catalog.columnSizing.v1"
-            columns={tableColumns}
+            columnSizingStorageKey={CATALOG_COLUMN_SIZING_STORAGE_KEY}
+            columns={orderedColumns}
             data={pageItems}
             density="compact"
             loading={tables.isLoading || isDemotingSelection}
@@ -1321,8 +1646,9 @@ export const TableExplorerSection = () => {
               const keys = Object.keys(next).filter((key) => next[key]);
               void handleRowSelectionChange(keys);
             }}
-            columnVisibility={columnVisibility}
+            columnVisibility={shownVisibility}
             onColumnVisibilityChange={(updater) => {
+              if (savingsView) return;
               setColumnVisibility(typeof updater === "function" ? updater(columnVisibility) : updater);
             }}
             emptyTitle={EMPTY_TABLES_TITLE}

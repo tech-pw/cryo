@@ -2,7 +2,7 @@
 title: How Cryo fits
 lede: A source answers where an Apache Iceberg table lives. A destination answers where maintenance runs. Cryo holds the plan, the admission decision, the locks and the evidence between them.
 description: The three parts of Cryo (source, preset, destination), the metadata-only scan path, and how a maintenance wave moves from scheduler to engine.
-updated: 2026-10-05
+updated: 2026-10-16
 ---
 <h2 id="three-parts">Three parts, never collapsed</h2>
 <p>Cryo keeps reading and writing apart, down to separate database tables, configs and code. A catalog connection never carries engine credentials, and an engine never learns how to read a catalog.</p>
@@ -15,8 +15,8 @@ updated: 2026-10-05
   <dd>Answers where to submit maintenance work. Trino and Spark execute. Native Go executes when enabled. Flink generates a config and does not submit a job.</dd>
 </dl>
 <diagram name="readbindwrite" caption="Sources feed the scanner. Presets bind tables to destinations. Cryo schedules and admits the work." />
-<p>The split shows up in the UI too. Under <strong>Settings → Connections</strong>, catalogs live on the <strong>Lakehouses</strong> tab and engines on the <strong>Engines</strong> tab, each with its own credentials.</p>
-<screenshot name="connections" url="cryo.local/settings/connections" alt="Settings, Connections, Lakehouses tab. One REST catalog named demo-rest-catalog is enabled. Separate tabs exist for Engines, Capabilities, AI providers and Slack." caption="Sources are added as lakehouses. Engines are a separate tab and never share credentials with a catalog." />
+<p>The split shows up in the UI too. Under <strong>Settings → Connections</strong>, catalogs live on the <strong>Lakehouses</strong> tab and engines on the <strong>Engines</strong> tab, each with its own credentials. Each lakehouse is one row that shows its catalog type, whether it is enabled, its endpoint and how it authenticates to S3. Credentials embedded in an endpoint URI are never shown.</p>
+<screenshot name="connections" url="cryo.local/settings/connections" alt="Settings, Connections, Lakehouses tab. One REST catalog named demo-rest-catalog, enabled, endpoint http://iceberg-rest:8181, S3 auth default credentials, AWS integration off. Tabs show counts: Lakehouses 1, Engines 2, then Capabilities, AI Providers and Slack." caption="Sources are added as lakehouses. A lakehouse only reads; engines are a separate tab and never share credentials with a catalog." />
 
 <h2 id="scan-path">Scan path: metadata only, no live data files</h2>
 <p>The scanner is the single source of truth for what shape every table is in. It reads catalog and manifest metadata and stores the result in PostgreSQL. It never reads a data file and never starts an <code>OPTIMIZE</code>.</p>

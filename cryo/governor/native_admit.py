@@ -923,6 +923,7 @@ def admit_native_k8s_jobs(
                         prepared_item.table_data.partitions,
                         prepared_item.mode,
                         plan_params,
+                        excluded_operations=prepared_item.job.excluded_operations,
                     )
                     plan = gate_native_optimize_manifests(
                         plan, operations=prepared_item.job.operations, destination=destination

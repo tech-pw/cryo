@@ -1,31 +1,81 @@
-import { ArrowRight, CheckCheck, FileCheck2, Layers, TriangleAlert } from "lucide-react";
+import type { ReactNode } from "react";
+import { ArrowRight, CheckCircle2, Flame, FileCheck2, Layers, OctagonPause, Radar, ScanSearch, ShieldAlert, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
+import type { MaintenanceControlRead } from "../../api/types";
 import { Skeleton } from "../../components/ui/skeleton";
 import { formatNumber } from "../../lib/format";
 import { HomeCard } from "./HomeCard";
 
-export const AttentionCard = ({ approvals, approvalsLoading, approvalsError, needsCompaction, failed, runHref, dashboardLoading, showScanner }: {
+type Tone = "danger" | "warning" | "neutral";
+
+interface Step {
+  key: string;
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  href: string;
+  tone: Tone;
+}
+
+export interface AttentionCardProps {
+  pauses: readonly MaintenanceControlRead[] | null;
+  platformCritical: string | null;
   approvals: number | null;
   approvalsLoading: boolean;
   approvalsError: boolean;
   needsCompaction: number | null;
+  hotAtRisk: number | null;
   failed: number | null;
   runHref: string | null;
   dashboardLoading: boolean;
-  showScanner: boolean;
-}) => (
-  <HomeCard title="Your next steps" description="Review the work that needs an operator." className="home-attention">
-    <ul className="home-attention-list">
-      {approvalsLoading ? <li><Skeleton className="my-4 h-12 w-full" /></li> : approvalsError || approvals == null ? <li className="py-3"><p className="home-caption">Approval status unavailable. <Link className="home-text-link" to="/decisions?tab=approvals#operation-approvals">Check decisions</Link></p></li> : <li><Link to="/decisions?tab=approvals#operation-approvals">
-        <span className="home-attention-icon"><FileCheck2 size={17} aria-hidden="true" /></span><div><strong>{approvals > 0 ? `${formatNumber(approvals)} operation ${approvals === 1 ? "approval" : "approvals"} awaiting review` : "No pending operation approvals"}</strong><p>{approvals > 0 ? "Review proposed actions before they run." : "View maintenance decisions and their audit trail."}</p></div><ArrowRight size={16} aria-hidden="true" />
-      </Link></li>}
-      {dashboardLoading ? <li><Skeleton className="my-4 h-12 w-full" /></li> : needsCompaction != null ? <li><Link to="/tables?needs=compaction">
-        <span className="home-attention-icon"><Layers size={17} aria-hidden="true" /></span><div><strong>{needsCompaction === 0 ? "No tables currently flagged" : `${formatNumber(needsCompaction)} ${needsCompaction === 1 ? "table needs" : "tables need"} compaction`}</strong><p>{needsCompaction === 0 ? "Nothing is waiting on a compaction plan." : "Inspect small files and choose a maintenance plan."}</p></div><ArrowRight size={16} aria-hidden="true" />
-      </Link></li> : <li className="py-3"><p className="home-caption">Compaction need is not measured.</p></li>}
-      {failed != null && failed > 0 && runHref ? <li><Link to={runHref}>
-        <span className="home-attention-icon"><TriangleAlert size={17} aria-hidden="true" /></span><div><strong>{formatNumber(failed)} failed in the latest nightly run</strong><p>Read the failure details before retrying.</p></div><ArrowRight size={16} aria-hidden="true" />
-      </Link></li> : null}
-      {showScanner ? <li><Link to="/runs/scanner"><span className="home-attention-icon"><CheckCheck size={17} aria-hidden="true" /></span><div><strong>Keep the lake in view</strong><p>The scanner is off, a scan failed, or tables are waiting.</p></div><ArrowRight size={16} aria-hidden="true" /></Link></li> : null}
-    </ul>
-  </HomeCard>
-);
+  scannerProblem: string | null;
+  flaggedTables: number;
+}
+
+const plural = (count: number, one: string, many: string) => `${formatNumber(count)} ${count === 1 ? one : many}`;
+
+export const AttentionCard = ({ pauses, platformCritical, approvals, approvalsLoading, approvalsError, needsCompaction, hotAtRisk, failed, runHref, dashboardLoading, scannerProblem, flaggedTables }: AttentionCardProps) => {
+  const steps: Step[] = [];
+  const global = pauses?.find((pause) => pause.scope_type === "global");
+  const scoped = pauses?.filter((pause) => pause.scope_type !== "global") ?? [];
+  if (global) steps.push({ key: "global-pause", icon: <OctagonPause size={17} />, title: "Maintenance is paused globally", detail: global.reason ? `${global.reason} — ${global.changed_by}` : `Paused by ${global.changed_by}. Nothing is admitted until it resumes.`, href: "/runs?tab=holds", tone: "danger" });
+  if (platformCritical) steps.push({ key: "platform", icon: <ShieldAlert size={17} />, title: "Cryo platform is critical", detail: platformCritical, href: "#home-platform", tone: "danger" });
+  if (failed != null && failed > 0 && runHref) steps.push({ key: "failed", icon: <TriangleAlert size={17} />, title: `${plural(failed, "table", "tables")} failed in the latest nightly run`, detail: "Read the failure details before retrying.", href: runHref, tone: "danger" });
+  if (scoped.length > 0) steps.push({ key: "scoped-pause", icon: <OctagonPause size={17} />, title: `${plural(scoped.length, "maintenance hold", "maintenance holds")} active`, detail: scoped[0].reason ?? `${scoped[0].scope_type} ${scoped[0].scope_id} is on hold.`, href: "/runs?tab=holds", tone: "warning" });
+  if (approvals != null && approvals > 0) steps.push({ key: "approvals", icon: <FileCheck2 size={17} />, title: `${plural(approvals, "operation approval", "operation approvals")} awaiting review`, detail: "Review proposed actions before they run.", href: "/decisions?tab=approvals#operation-approvals", tone: "warning" });
+  if (scannerProblem) steps.push({ key: "scanner", icon: <ScanSearch size={17} />, title: "The scanner needs a look", detail: scannerProblem, href: "/runs/scanner", tone: "warning" });
+  if (hotAtRisk != null && hotAtRisk > 0) steps.push({ key: "hot", icon: <Flame size={17} />, title: `${plural(hotAtRisk, "queried table is", "queried tables are")} at D or F`, detail: "These cost query time every day. Fix them first.", href: "#home-hot", tone: "warning" });
+  if (needsCompaction != null && needsCompaction > 0) steps.push({ key: "compaction", icon: <Layers size={17} />, title: `${plural(needsCompaction, "table needs", "tables need")} compaction`, detail: "Inspect small files and choose a maintenance plan.", href: "/tables?needs=compaction", tone: "neutral" });
+  if (flaggedTables > 0) steps.push({ key: "flags", icon: <Radar size={17} />, title: `${plural(flaggedTables, "new table", "new tables")} flagged early`, detail: "Fast-path checks found small files or a missing target size.", href: "#home-discovered", tone: "neutral" });
+
+  const loading = approvalsLoading || dashboardLoading;
+  return (
+    <HomeCard title="Your next steps" description="What needs an operator, most urgent first." className="home-attention">
+      <ul className="home-attention-list">
+        {steps.map((step) => {
+          const body = <>
+            <span className="home-attention-icon" aria-hidden="true">{step.icon}</span>
+            <div><strong>{step.title}</strong><p>{step.detail}</p></div>
+            <ArrowRight size={16} aria-hidden="true" />
+          </>;
+          return (
+            <li key={step.key}>
+              {step.href.startsWith("#")
+                ? <a href={step.href} className={`home-attention-${step.tone}`}>{body}</a>
+                : <Link to={step.href} className={`home-attention-${step.tone}`}>{body}</Link>}
+            </li>
+          );
+        })}
+        {approvalsError ? <li className="py-3"><p className="home-caption">Approval status unavailable. <Link className="home-text-link" to="/decisions?tab=approvals#operation-approvals">Check decisions</Link></p></li> : null}
+        {!dashboardLoading && needsCompaction == null ? <li className="py-3"><p className="home-caption">Compaction need is not measured.</p></li> : null}
+        {loading ? <li><Skeleton className="my-4 h-12 w-full" /></li> : null}
+        {!loading && steps.length === 0 && !approvalsError ? (
+          <li className="home-all-clear">
+            <CheckCircle2 size={18} aria-hidden="true" />
+            <div><strong>All clear</strong><p>Nothing needs you right now. Cryo keeps maintaining on schedule.</p></div>
+          </li>
+        ) : null}
+      </ul>
+    </HomeCard>
+  );
+};

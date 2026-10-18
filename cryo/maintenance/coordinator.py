@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from cryo.config import Settings
 from cryo.db.models import AuditLog, Destination, MaintenanceJob, MaintenanceRun, TableStats
+from cryo.db.repositories.operation_exclusions import excluded_operations_by_table
 from cryo.domain.enums import EngineType, JobStatus, OperationType
 from cryo.engines.spark.k8s import SparkK8sConfig
 from cryo.engines.spark.procedure_metrics import bytes_freed_from_procedure
@@ -134,6 +135,7 @@ class RunReport:
     over_budget: int = 0
     rewrite_seconds: float = 0.0
     autocomp: dict[str, Any] | None = None
+    paused: bool = False
     # Per rewrite statement (gib, cores, seconds): the duration model's training data.
     duration_samples: list[dict[str, float]] = field(default_factory=list)
 
@@ -151,6 +153,7 @@ class RunReport:
         return {
             "pipeline": "batch",
             "trigger": self.trigger,
+            "paused": self.paused,
             "selected": self.selected,
             "nothing_to_do": self.nothing_to_do,
             "planning_failed": self.planning_failed,
@@ -381,6 +384,12 @@ class BatchMaintenance:
         catalog = str(destination.config.get("catalog") or "")
         if not catalog:
             raise RuntimeError(f"Spark destination {destination.id} has no `catalog` configured")
+        if not dry_run and self._is_paused(destination.id):
+            logger.warning("Maintenance is paused; skipping batch run (trigger=%s)", trigger)
+            report.paused = True
+            report.finished_at = self._clock()
+            self._record_empty_run(report, trigger, status="skipped")
+            return report
 
         params = dict(DEFAULT_PARAMS)
         # Spark rewrites only the files the scanner counted as small (see
@@ -393,6 +402,10 @@ class BatchMaintenance:
 
         ranked = self._select(table_ids=table_ids, limit=limit, now=started, report=report)
         report.selected = len(ranked)
+        with self._session_factory() as session:
+            excluded_ops = excluded_operations_by_table(
+                session, [item.candidate.table_id for item in ranked]
+            )
 
         work: list[tuple[RankedCandidate, TableWork]] = []
         for item in ranked:
@@ -405,6 +418,7 @@ class BatchMaintenance:
                     params=self._table_params(params, item),
                     protected_snapshot_ids=self._protected,
                     has_shared_location=lambda tid: tid in shared_ids,
+                    excluded_operations=excluded_ops.get(table_id, ()),
                 )
             except Exception as exc:
                 logger.warning("Planning failed for %s", item.candidate.display_name, exc_info=True)
@@ -1032,13 +1046,20 @@ class BatchMaintenance:
             run.summary = report.to_summary()
             session.commit()
 
-    def _record_empty_run(self, report: RunReport, trigger: str) -> None:
+    def _is_paused(self, destination_id: uuid.UUID) -> bool:
+        from cryo.db.repositories.intents import IntentStore
+
+        return IntentStore(self._session_factory).is_paused(destination_id=str(destination_id))
+
+    def _record_empty_run(
+        self, report: RunReport, trigger: str, *, status: str = "succeeded"
+    ) -> None:
         with self._session_factory() as session:
             run = MaintenanceRun(
                 id=uuid.uuid4(),
                 kind=_run_kind(trigger),
                 trigger=trigger,
-                status="succeeded",
+                status=status,
                 scheduled_at=report.started_at,
                 finished_at=report.finished_at,
                 summary=report.to_summary(),

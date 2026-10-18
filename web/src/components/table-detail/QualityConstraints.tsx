@@ -26,6 +26,7 @@ import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { SimpleTable, type SimpleTableColumn } from "../ui/simple-table";
 import { Switch } from "../ui/switch";
+import { formatTime } from "../../lib/format";
 
 type Kind = QualityConstraintCreate["kind"];
 
@@ -299,9 +300,7 @@ export const QualityConstraints = () => {
       title: "As of scan",
       key: "scanned",
       render: (_, rule) => (
-        <span className="font-mono text-xs tabular-nums">
-          {rule.latest?.scanned_at ? new Date(rule.latest.scanned_at).toLocaleString() : "—"}
-        </span>
+        <span className="text-xs tabular-nums">{rule.latest?.scanned_at ? formatTime(rule.latest.scanned_at) : "—"}</span>
       )
     },
     {

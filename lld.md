@@ -609,6 +609,14 @@ The canonical sequence lives in exactly one place — `CORRECT_ORDER` in
 `cryo/planner/guardrails.py`. `build_plan` sorts by it rather than hand-appending, presets are
 normalised into it on write and read, and `web/src/lib/operationOrder.ts` mirrors it for the UI.
 
+**GC gate.** `build_execution_plan` drops `expire_snapshots` and `remove_orphan_files` when the
+scan shows `gc.enabled` is false, and records a note on the plan. It reads
+`raw.iceberg_properties["gc.enabled"]` with Java `Boolean.parseBoolean` semantics (only `true`,
+case-insensitive, keeps GC on), and falls back to `raw.gc_enabled`. Compaction and manifest rewrite
+are unaffected. GC off signals that the table's files may be shared, so deleting them is never
+safe. Iceberg's own expire and orphan actions refuse such tables, and the gate keeps every engine
+path consistent with that.
+
 ---
 
 ## 7. Engines (write side) — `cryo/engines`
@@ -830,6 +838,31 @@ Migration `20260804_0036` adds:
 - `effect_receipts`: write-ahead per-effect identity, submission reference, result, and probe state;
 - `maintenance_control_state`: generation-stamped global/tenant/destination pause state.
 
+Pause state is also enforced when durable intents are disabled:
+the scheduler fires no presets under a global pause, the batch coordinator records a `skipped`
+run when the global scope or its destination is paused, and the Worker defers a non-intent job
+whose destination or the global scope is paused (`MaintenancePausedError` → `deferred`).
+
+### 11.3 Operator exclusions
+
+Migration `20261016_1200` adds `maintenance_exclusions(id, source_id → sources ON DELETE CASCADE,
+schema_name, table_name NULL, reason, created_by, created_at)`, unique on
+`(source_id, schema_name, coalesce(table_name, ''))`. `table_name IS NULL` covers the whole
+schema. `cryo.db.repositories.exclusions.table_is_excluded()` is a correlated `EXISTS` over
+`Table` and is applied in `selection.load_candidates` (including explicit `table_ids`), the
+scheduler's table query, `MaintenanceRunService` (409 when nothing remains), and smart-maintenance
+layout apply. `MaintenanceBlock.OPERATOR_EXCLUDED` surfaces it in maintenance status. Scans and
+preset assignment ignore exclusions.
+
+Per-operation exclusions are narrower. Migration `20261017_1200` adds
+`table_operation_exclusions(table_id → tables ON DELETE CASCADE, operation, reason, created_by,
+created_at)`, primary key `(table_id, operation)`. The table stays selected; `build_plan(...,
+excluded_operations=...)` drops the named operations and notes it. `optimize` is dropped before the
+`convert_deletes` and `compute_statistics` decisions. Every plan path passes them:
+`build_execution_plan` (worker, intent binder), governor native admission, and the batch
+coordinator's `build_table_work`. `MaintenanceJobRecord.excluded_operations` is loaded in
+`_job_record` at plan time.
+
 Intent idempotency covers the full non-temporal execution contract; expiry is deliberately excluded so
 retrying the same scheduled job does not silently renew authority. A new scheduled job is the renewal
 boundary. Receipt reuse verifies intent step, operation, destination, and effect strategy.
@@ -858,13 +891,26 @@ POST                   /api/v1/destinations/{id}/test         # health check / p
 GET                    /api/v1/capabilities                   # canonical support contract
 
 # Datalake & health
-GET   /api/v1/tables                                          # ?filter=<predicate>&sort=&page=
+GET   /api/v1/tables                                          # ?filter=<predicate>&sort=&page=; rows carry a `maintenance` block
+GET   /api/v1/tables/maintenance-funnel                       # latest nightly batch as Sankey nodes/links (per table)
 GET   /api/v1/tables/{id}                                     # detail: stats, partitions, audit, cost
 GET   /api/v1/tables/{id}/partitions
 GET   /api/v1/tables/{id}/audit
 GET   /api/v1/tables/{id}/history
 GET   /api/v1/tables/{id}/cost                               # breakdown + projected savings by op
+GET   /api/v1/tables/{id}/config                             # curated settings (value, source, reco,
+        # direction-aware risk, editor, engine notes) + metadata; scan fallback is read-only
+POST  /api/v1/tables/{id}/config/preview                     # risk/warnings/blocks per staged change
+POST  /api/v1/tables/{id}/config/apply                       # operator (admin for min_role=admin);
+        # one PyIceberg txn on the Source catalog + cryo.* overrides; audited; high risk needs
+        # confirm + reason; stale expected_value rejected. See docs/TABLE_CONFIG_INVENTORY_2026-10-17.md
+PUT   /api/v1/tables/{id}/config/operations                  # operator; per-table operation exclusions
+        # (§11.3); audited; excluding a high-risk op needs confirm
 GET   /api/v1/dashboards/datalake                             # grade dist, cost, drift, totals
+        # ?hot_limit=1..20 (default 5): hot_at_risk = D/F tables by query_count_30d (fed by
+        # table_query_activity, so iceberg_table query-log sources rank too); recently_improved =
+        # grade rose after a succeeded job (runs in last 36h -> jobs finished in 24h, capped at 2000
+        # tables, rescanned after the job); totals.running_jobs = admitted + running jobs
 GET   /api/v1/dashboards/schema-cost
 GET   /api/v1/dashboards/cost                                 # datalake current vs projected, savings
         # by operation + by schema, top savings opportunities, precision coverage
@@ -901,6 +947,9 @@ POST  /api/v1/maintenance/run                                 # create adhoc run
 GET   /api/v1/maintenance/control                             # visible global/tenant/destination controls
 POST  /api/v1/maintenance/control/pause                       # operator; global requires admin
 POST  /api/v1/maintenance/control/resume
+GET   /api/v1/maintenance/exclusions                          # viewer; with source_name, table_count
+POST  /api/v1/maintenance/exclusions                          # operator; {source_id, schema_name, table_name?, reason}
+DELETE /api/v1/maintenance/exclusions/{id}                    # operator; audited
 GET   /api/v1/maintenance/duration-model                      # Ernest fit vs rate model, held-out MAPE
 GET   /api/v1/maintenance/safety/summary
 GET   /api/v1/maintenance/safety/intents
@@ -909,6 +958,7 @@ POST  /api/v1/maintenance/safety/effects/{receipt_id}/resolve # audited operator
 
 # Runs & live monitoring
 GET   /api/v1/runs                  GET /api/v1/runs/{id}      GET /api/v1/runs/{id}/jobs
+        # /runs?pipeline=batch filters on summary.pipeline (Home reads the last 14 nightly runs)
                                     GET /api/v1/runs/{id}/dispatches  # native K8s Job packs
 GET   /api/v1/jobs/{id}
 POST  /api/v1/runs/{id}/cancel
