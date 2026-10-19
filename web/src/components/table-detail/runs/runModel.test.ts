@@ -40,7 +40,7 @@ describe("mergeSkipColumns", () => {
       skip("4", "2026-10-06T23:00:00Z", "cooldown"),
       skip("5", "2026-10-07T23:00:00Z", null, "selected")
     ]);
-    expect(merged.map((column) => (column.kind === "run" ? column.run.run_id : `${column.reason}x${column.count}`))).toEqual([
+    expect(merged.map((column) => (column.kind === "run" ? column.run.run_id : column.kind === "skip" ? `${column.reason}x${column.count}` : column.label))).toEqual([
       "ra",
       "cooldownx2",
       "budget_capx1",
