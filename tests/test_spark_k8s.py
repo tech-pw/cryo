@@ -178,6 +178,11 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     assert "spark.kubernetes.driver.label.cryo-engine=spark" in command
     script_idx = command.index("local:///opt/cryo/cryo_spark_runner.py")
     assert command.index("spark.kubernetes.driver.label.eks-workload-name=cryo-spark") < script_idx
+    # Spark 4.1.2 does not read spark.kubernetes.*.limit.memory. Pin the overhead it adds.
+    assert "spark.driver.memoryOverhead=384m" in command
+    assert "spark.executor.memoryOverhead=384m" in command
+    assert "spark.kubernetes.driver.limit.memory" not in " ".join(command)
+    assert "spark.kubernetes.executor.limit.memory" not in " ".join(command)
     # S3FileIO tuning for the catalog the SQL runs against, as spark-submit confs that must
     # precede the script path to reach Spark rather than the runner's argv.
     for conf in (
@@ -186,6 +191,62 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     ):
         assert command.index(conf) < script_idx
         assert command[command.index(conf) - 1] == "--conf"
+
+
+def test_expire_submit_disables_broadcast_and_sizes_the_driver_from_file_count() -> None:
+    """179020 data files start at 3072, not the 1024 the cgroup killed. Broadcast stays off."""
+    batch_api = MagicMock()
+    client = SparkK8sClient(SparkK8sConfig(namespace="cryo"))
+    with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
+        client.submit_spark_sql(
+            "CALL cdp.system.expire_snapshots(table => 'cdp.unified_bq.gold_dbt_pw_bq')",
+            catalog="cdp",
+            operation="expire_snapshots",
+            total_files=179_020,
+        )
+    command = batch_api.create_namespaced_job.call_args.kwargs["body"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]["command"]
+    assert "spark.driver.memory=3072m" in command
+    assert "spark.executor.instances=1" in command
+    assert "spark.sql.autoBroadcastJoinThreshold=-1" in command
+    assert "spark.driver.maxResultSize=2816m" in command
+
+
+def test_get_job_run_prefixes_oomkilled_from_container_status() -> None:
+    """Exit 137 without reason OOMKilled is an eviction, not a license to grow the driver."""
+    from cryo.engines.spark.k8s import _container_termination_reason, _prefix_oomkilled
+
+    class _Terminated:
+        def __init__(self, reason: str | None, exit_code: int) -> None:
+            self.reason = reason
+            self.exit_code = exit_code
+
+    class _State:
+        def __init__(self, terminated: _Terminated) -> None:
+            self.terminated = terminated
+
+    class _Status:
+        def __init__(self, terminated: _Terminated) -> None:
+            self.state = _State(terminated)
+
+    class _PodStatus:
+        def __init__(self, terminated: _Terminated) -> None:
+            self.container_statuses = [_Status(terminated)]
+
+    class _Pod:
+        def __init__(self, terminated: _Terminated) -> None:
+            self.status = _PodStatus(terminated)
+
+    assert (
+        _container_termination_reason(_Pod(_Terminated("OOMKilled", 137))) == "OOMKilled exit 137"
+    )
+    assert _container_termination_reason(_Pod(_Terminated("Error", 137))) is None
+    assert _prefix_oomkilled("termination reason: OOMKilled\nINFO") == (
+        "OOMKilled exit 137\ntermination reason: OOMKilled\nINFO"
+    )
+    assert _prefix_oomkilled("OOMKilled\nINFO").startswith("OOMKilled exit 137")
+    assert _prefix_oomkilled("AnalysisException: boom") == "AnalysisException: boom"
 
 
 def test_submit_spark_sql_labels_default_destination_when_none_given() -> None:
