@@ -1,9 +1,8 @@
-import { BarChart3, Database, LineChart, ScanSearch } from "lucide-react";
+import { BarChart3, Database, ScanSearch } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/common";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Impact } from "./Impact";
 import { ScanCost } from "./ScanCost";
 import { CostOverviewTab } from "./cost/CostOverviewTab";
 import { S3RequestsTab } from "./cost/S3RequestsTab";
@@ -23,7 +22,7 @@ import { S3RequestsTab } from "./cost/S3RequestsTab";
  * own KPI strip, charts, and tables. Tab keys map to URL `?tab=` so the active tab is
  * shareable (matches the existing pattern in web/src/components/common/Tabs.tsx).
  */
-type CostTabKey = "storage" | "requests" | "impact" | "reads";
+type CostTabKey = "storage" | "requests" | "reads";
 
 const DEFAULT_TAB: CostTabKey = "storage";
 
@@ -32,7 +31,7 @@ const TAB_ALIASES: Record<string, CostTabKey> = {
   storage: "storage",
   "s3-requests": "requests",
   requests: "requests",
-  impact: "impact",
+  impact: "storage",
   reads: "reads",
   // The connection form moved to Connections. Old links land on Storage, which is
   // where the price those credentials produce is shown.
@@ -57,12 +56,6 @@ const TABS: Array<{
     label: "Requests",
     subtitle: "What S3 API calls cost.",
     icon: <Database className="size-3.5" aria-hidden="true" />
-  },
-  {
-    key: "impact",
-    label: "Impact",
-    subtitle: "What maintenance already changed.",
-    icon: <LineChart className="size-3.5" aria-hidden="true" />
   },
   {
     key: "reads",
@@ -120,9 +113,6 @@ export const Cost = () => {
         </TabsContent>
         <TabsContent value="requests">
           <S3RequestsTab />
-        </TabsContent>
-        <TabsContent value="impact">
-          <Impact embedded />
         </TabsContent>
         <TabsContent value="reads">
           <ScanCost embedded />

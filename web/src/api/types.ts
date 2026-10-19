@@ -1365,6 +1365,7 @@ export interface ScanCostAttributionRow {
   failed_query_count: number;
   physical_bytes_scanned: number;
   physical_gb_scanned: number;
+  estimated_scan_cost_usd?: number | null;
 }
 
 export interface ScanCostAttributionByClient {
@@ -1372,6 +1373,7 @@ export interface ScanCostAttributionByClient {
   query_count: number;
   physical_bytes_scanned: number;
   physical_gb_scanned: number;
+  estimated_scan_cost_usd?: number | null;
 }
 
 export interface ScanCostAttributionResponse {
@@ -1380,6 +1382,8 @@ export interface ScanCostAttributionResponse {
   by_client: ScanCostAttributionByClient[];
   total_query_count: number;
   total_physical_gb_scanned: number;
+  total_estimated_scan_cost_usd?: number | null;
+  scan_cost_priced_days?: number;
 }
 
 // ============================================================================

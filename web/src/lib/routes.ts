@@ -282,7 +282,7 @@ const COST_TABS: Record<string, string> = {
   storage: "storage",
   "s3-requests": "requests",
   requests: "requests",
-  impact: "impact",
+  impact: "storage",
   reads: "reads",
   "aws-integrations": "storage",
   aws: "storage"
@@ -454,7 +454,7 @@ export const resolveLegacyRedirect = (location: AppLocation): AppLocation | null
   }
   if (pathname === "/impact") {
     dropTab(params);
-    params.set("tab", "impact");
+    params.set("tab", "storage");
     return finish("/cost", params, hash, input);
   }
   if (pathname === "/scan-cost") {

@@ -1,6 +1,6 @@
 import type { ColumnDef, RowSelectionState } from "@tanstack/react-table";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowRight, Info } from "lucide-react";
+import { Info } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bar,
@@ -18,7 +18,7 @@ import { toast } from "sonner";
 import {
   assignTables,
   getCostDashboard,
-  getCostModelEvaluate,
+  getDarkTables,
   getSchemaCost,
   listDestinations,
   listPresets,
@@ -30,6 +30,7 @@ import {
   triggerScan
 } from "../../api/client";
 import type { CostDashboard, CostTrendPoint, Mode, TableRead, UUID } from "../../api/types";
+import { getImpactHistory } from "../../api/impact";
 import { BulkAssignBar, type BulkSelection } from "../../components/BulkAssignBar";
 import { EmptyState } from "../../components/common";
 import { CostPrecisionBadge } from "../../components/CostPrecisionBadge";
@@ -49,6 +50,7 @@ import { MetricTile } from "../../components/ui/stat";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { useAuth } from "../../lib/auth";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../../lib/format";
+import { fullyMeasuredSummary, impactChartGb, type ImpactDay } from "../../lib/impactHistory";
 import { toastScanResult } from "../../lib/operations";
 import { qualifiedTableName } from "../../lib/tableLabels";
 import type { Predicate } from "../../lib/predicate";
@@ -81,16 +83,6 @@ const MetricHint = ({ label }: { label: string }) => (
     </TooltipTrigger>
     <TooltipContent>{label}</TooltipContent>
   </Tooltip>
-);
-
-const ModelStat = ({ label, value, detail }: { label: string; value: string; detail?: string }) => (
-  <div className="min-w-[7.5rem]">
-    <p className="text-[11px] font-medium leading-4 text-muted-foreground">{label}</p>
-    <p className="mt-0.5 text-sm font-semibold leading-5 tracking-[-0.01em] text-foreground [font-variant-numeric:tabular-nums]">
-      {value}
-      {detail ? <span className="ml-1 text-xs font-normal text-muted-foreground">{detail}</span> : null}
-    </p>
-  </div>
 );
 
 const offsetFromSearch = (raw: string | null): number => {
@@ -197,14 +189,25 @@ export const CostOverviewTab = ({
   });
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
   const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
-  const costModel = useQuery({
-    queryKey: ["cost-model-evaluate", token],
-    queryFn: () => getCostModelEvaluate(api),
-    retry: false
-  });
   const schemaCost = useQuery({
     queryKey: ["schema-cost", token],
     queryFn: () => getSchemaCost(api),
+    retry: false
+  });
+  const impactSince = useMemo(() => {
+    const end = new Date();
+    const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
+    start.setUTCDate(start.getUTCDate() - 29);
+    return start.toISOString().slice(0, 10);
+  }, []);
+  const impact = useQuery({
+    queryKey: ["impact-history", token, impactSince],
+    queryFn: () => getImpactHistory(api, impactSince, new Date().toISOString().slice(0, 10)),
+    retry: false
+  });
+  const darkTables = useQuery({
+    queryKey: ["dark-tables", token],
+    queryFn: () => getDarkTables(api),
     retry: false
   });
 
@@ -488,47 +491,16 @@ export const CostOverviewTab = ({
               hint={<MetricHint label="Share of tables with metadata or storage-truth cost figures." />}
             />
           </MetricGrid>
-          {costModel.data ? (
-            <Card className="mb-3">
-              <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold leading-5 tracking-tight">Learned cost model</p>
-                    <Badge variant={costModel.data.beats_heuristic ? "success" : "secondary"}>
-                      {costModel.data.beats_heuristic ? "Learned wins" : "Heuristic competitive"}
-                    </Badge>
-                  </div>
-                  <div className="hidden h-8 w-px bg-border lg:block" aria-hidden="true" />
-                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-                    <ModelStat
-                      label="Error, learned"
-                      value={`${formatCurrency(costModel.data.mae_learned)}/mo`}
-                      detail={`vs ${formatCurrency(costModel.data.mae_heuristic)}`}
-                    />
-                    <ModelStat
-                      label="Holdout"
-                      value={`${costModel.data.n_evaluated}/${costModel.data.n_samples}`}
-                      detail={`${(costModel.data.band_coverage * 100).toFixed(0)}% coverage`}
-                    />
-                    <ModelStat
-                      label="Lineage"
-                      value={`${(costModel.data.lineage_completeness * 100).toFixed(0)}%`}
-                    />
-                    <ModelStat
-                      label="Outside domain"
-                      value={`${(costModel.data.abstention_rate * 100).toFixed(0)}%`}
-                    />
-                  </div>
-                </div>
-                <Link
-                  to="/ai"
-                  className="inline-flex h-8 shrink-0 items-center gap-1 self-start rounded-[var(--radius-default)] px-2 text-xs font-medium text-primary transition-colors duration-[var(--motion-fast)] ease-[var(--ease-out)] hover:bg-[var(--color-surface-sunken)] active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 lg:self-center"
-                >
-                  Governor & copilot
-                  <ArrowRight className="size-3.5" aria-hidden="true" />
-                </Link>
-              </div>
-            </Card>
+          {darkTables.data && darkTables.data.total_candidates > 0 ? (
+            <p className="mb-3 text-sm text-muted-foreground">
+              <Link to="/tables?view=unused" className="font-medium text-foreground underline-offset-2 hover:underline">
+                {darkTables.data.total_candidates} unused{" "}
+                {darkTables.data.total_candidates === 1 ? "table" : "tables"}
+              </Link>
+              {darkTables.data.candidates.some((row) => row.estimated_monthly_cost_usd == null)
+                ? " hold storage with no reader. Some have no cost figure, so no dollar total is shown."
+                : ` hold ${formatCurrency(darkTables.data.total_estimated_monthly_cost_usd)}/month of storage and no reader.`}
+            </p>
           ) : null}
           <div className="mb-3 grid gap-3 xl:grid-cols-12">
             <Card className="xl:col-span-12">
@@ -571,6 +543,71 @@ export const CostOverviewTab = ({
               </CardContent>
             </Card>
             <Card className="xl:col-span-7">
+              <CardHeader className="pb-2">
+                <CardTitle>What maintenance already changed</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  {impact.data?.rows.length
+                    ? `${fullyMeasuredSummary(impact.data.rows)} Unmeasured days are gaps, not zero.`
+                    : "The ledger starts after the first reporter day. A scan does not record one."}
+                </p>
+              </CardHeader>
+              <CardContent>
+                {(impact.data?.rows.length ?? 0) > 0 ? (
+                  <>
+                    <div
+                      role="img"
+                      aria-label="Bytes freed by day. Unmeasured days are gaps."
+                    >
+                      <ResponsiveContainer width="100%" height={180}>
+                        <LineChart
+                          data={(impact.data?.rows ?? []).map((row) => ({
+                            day: row.report_date,
+                            gb: impactChartGb(row as ImpactDay)
+                          }))}
+                          margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
+                        >
+                          <CartesianGrid stroke={cryoColors.chartGrid} />
+                          <XAxis dataKey="day" stroke={cryoColors.inkFaint} tick={chartAxisTick} interval="preserveStartEnd" />
+                          <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
+                          <RechartsTooltip {...chartTooltipProps} />
+                          <Line
+                            type="monotone"
+                            dataKey="gb"
+                            stroke={cryoColors.savings}
+                            strokeWidth={2}
+                            dot={false}
+                            name="GB freed"
+                            connectNulls={false}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <details className="mt-2 text-xs text-muted-foreground">
+                      <summary className="cursor-pointer">Day ledger</summary>
+                      <ul className="mt-2 space-y-1">
+                        {(impact.data?.rows ?? []).map((row) => (
+                          <li key={row.report_date} className="flex justify-between gap-3">
+                            <span>{row.report_date}</span>
+                            <span className="tabular-nums">
+                              {row.measurement_state === "unmeasured" || row.measurement_state === "no_actions"
+                                ? "Not measured"
+                                : `${(row.bytes_freed / 1024 ** 3).toFixed(2)} GB`}
+                              {row.infra_cost_usd == null ? "" : ` · infra ${formatCurrency(row.infra_cost_usd)}`}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  </>
+                ) : (
+                  <EmptyState
+                    title="No ledger yet"
+                    description="Days appear after the reporter records them. Running a scan does not write a day."
+                  />
+                )}
+              </CardContent>
+            </Card>
+            <Card className="xl:col-span-5">
               <CardHeader className="pb-2">
                 <CardTitle>Monthly trend</CardTitle>
               </CardHeader>

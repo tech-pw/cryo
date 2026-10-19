@@ -1731,6 +1731,9 @@ class CostAttributionRow(BaseModel):
     failed_query_count: int
     physical_bytes_scanned: int
     physical_gb_scanned: float
+    # Derived only for days that had both namespace spend and bytes scanned. None means
+    # that pair was not priced — callers must not treat it as $0.
+    estimated_scan_cost_usd: float | None = None
 
 
 class CostAttributionByClient(BaseModel):
@@ -1738,6 +1741,7 @@ class CostAttributionByClient(BaseModel):
     query_count: int
     physical_bytes_scanned: int
     physical_gb_scanned: float
+    estimated_scan_cost_usd: float | None = None
 
 
 class CostAttributionResponse(BaseModel):
@@ -1746,6 +1750,9 @@ class CostAttributionResponse(BaseModel):
     by_client: list[CostAttributionByClient]
     total_query_count: int = 0
     total_physical_gb_scanned: float = 0
+    # None when no day in the window was priced. A stored 0 would be a real zero.
+    total_estimated_scan_cost_usd: float | None = None
+    scan_cost_priced_days: int = 0
 
 
 class PartitionAccessPoint(BaseModel):

@@ -119,6 +119,32 @@ describe("ScanCost page", () => {
     });
   });
 
+  it("says not priced when no day had both spend and bytes", async () => {
+    vi.mocked(getScanCostAttribution).mockResolvedValue(POPULATED);
+
+    renderPage();
+
+    expect(await screen.findByText("Scan compute")).toBeInTheDocument();
+    expect(screen.getAllByText("Not priced").length).toBeGreaterThan(0);
+  });
+
+  it("shows a stored scan-compute dollar and leaves an unpriced client out", async () => {
+    vi.mocked(getScanCostAttribution).mockResolvedValue({
+      ...POPULATED,
+      total_estimated_scan_cost_usd: 40,
+      scan_cost_priced_days: 2,
+      by_client: POPULATED.by_client.map((client, index) => ({
+        ...client,
+        estimated_scan_cost_usd: index === 0 ? 40 : null
+      }))
+    });
+
+    renderPage();
+
+    expect(await screen.findAllByText("$40")).not.toHaveLength(0);
+    expect(screen.getAllByText("Not priced").length).toBeGreaterThan(0);
+  });
+
   it("requests a 7-day window by default", async () => {
     vi.mocked(getScanCostAttribution).mockResolvedValue(EMPTY);
 

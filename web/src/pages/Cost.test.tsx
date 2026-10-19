@@ -107,7 +107,7 @@ describe("Consolidated Cost page", () => {
 
     expect(await screen.findByRole("tab", { name: /^Storage$/ })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /^Requests$/ })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /^Impact$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^Impact$/ })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /^Reads$/ })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: /^AWS$/ })).not.toBeInTheDocument();
 
