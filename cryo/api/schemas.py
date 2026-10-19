@@ -1148,6 +1148,11 @@ class CostDashboardTotals(BaseModel):
     # All-time cumulative $ saved from completed maintenance runs -- "saved to date," not
     # bounded to the trend chart's recent window.
     total_realized_savings_usd: float = 0.0
+    # GET-cost reduction from compaction, summed over tables that have a TableCost row.
+    # None means no table has one, so the UI must not render $0. The table count says how
+    # much of the fleet the sum covers.
+    query_request_savings_usd_month: float | None = None
+    query_request_savings_tables: int = 0
 
 
 class CostSchemaItem(BaseModel):
@@ -1852,6 +1857,10 @@ class CostAttributionRow(BaseModel):
     failed_query_count: int
     physical_bytes_scanned: int
     physical_gb_scanned: float
+    # Derived only when every day in the window had both namespace spend and bytes
+    # scanned. None means at least one day was not priced — callers must not treat it as $0,
+    # and must not show a priced subset as the price of the bytes beside it.
+    estimated_scan_cost_usd: float | None = None
 
 
 class CostAttributionByClient(BaseModel):
@@ -1859,6 +1868,7 @@ class CostAttributionByClient(BaseModel):
     query_count: int
     physical_bytes_scanned: int
     physical_gb_scanned: float
+    estimated_scan_cost_usd: float | None = None
 
 
 class CostAttributionResponse(BaseModel):
@@ -1867,6 +1877,9 @@ class CostAttributionResponse(BaseModel):
     by_client: list[CostAttributionByClient]
     total_query_count: int = 0
     total_physical_gb_scanned: float = 0
+    # None when no day in the window was priced. A stored 0 would be a real zero.
+    total_estimated_scan_cost_usd: float | None = None
+    scan_cost_priced_days: int = 0
 
 
 class PartitionAccessPoint(BaseModel):

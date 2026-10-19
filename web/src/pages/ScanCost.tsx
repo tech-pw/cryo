@@ -9,7 +9,7 @@ import { PageHeader } from "../components/ui/page-header";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { useAuth } from "../lib/auth";
-import { formatGb, formatNumber } from "../lib/format";
+import { formatCurrency, formatGb, formatNumber } from "../lib/format";
 
 const DAY_OPTIONS = [
   { value: "7", label: "Last 7 days" },
@@ -32,12 +32,18 @@ export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
   const byClient = query.data?.by_client ?? [];
   const rows = query.data?.rows ?? [];
   const maxClientGb = byClient[0]?.physical_gb_scanned ?? 0;
+  const scanCost = query.data?.total_estimated_scan_cost_usd;
+  const pricedDays = query.data?.scan_cost_priced_days ?? 0;
+  const displayScanCost = (value: number | null | undefined): string =>
+    value == null ? "Not priced" : formatCurrency(value);
 
   return (
     <div className="flex flex-col gap-6">
       {embedded ? (
         <div className="mb-3 flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">Bytes scanned, not dollars.</p>
+          <p className="text-sm text-muted-foreground">
+            Bytes scanned. Dollars only for days that had both cluster spend and bytes scanned.
+          </p>
           <Select
             className="w-40"
             value={days}
@@ -54,7 +60,7 @@ export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
       ) : (
         <PageHeader
           title="Reads"
-          subtitle="Bytes scanned, not dollars."
+          subtitle="Bytes scanned. Dollars only for days that had both cluster spend and bytes scanned."
           actions={
           <Select
             className="w-40"
@@ -75,7 +81,7 @@ export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
       {query.isError ? <QueryErrorAlert error={query.error} /> : null}
 
       {isLoading || byClient.length > 0 || rows.length > 0 ? (
-      <MetricGrid columns={2}>
+      <MetricGrid columns={3}>
         <MetricTile
           label="Total queries"
           value={isLoading ? undefined : formatNumber(query.data?.total_query_count ?? 0)}
@@ -85,6 +91,16 @@ export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
           label="Total scanned"
           value={isLoading ? undefined : formatGb(query.data?.total_physical_gb_scanned ?? 0)}
           emphasis
+          loading={isLoading}
+        />
+        <MetricTile
+          label="Scan compute"
+          value={isLoading ? undefined : displayScanCost(scanCost)}
+          hint={
+            pricedDays
+              ? `Priced on ${pricedDays} day${pricedDays === 1 ? "" : "s"} that had both cluster spend and bytes scanned. Other days are left out, not counted as $0.`
+              : "Not priced. A day needs both cluster spend and bytes scanned."
+          }
           loading={isLoading}
         />
       </MetricGrid>
@@ -122,6 +138,9 @@ export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
                 </div>
                 <span className="w-24 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
                   {formatGb(client.physical_gb_scanned)}
+                </span>
+                <span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                  {displayScanCost(client.estimated_scan_cost_usd)}
                 </span>
                 <span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
                   {formatNumber(client.query_count)} qry
@@ -162,6 +181,9 @@ export const ScanCost = ({ embedded = false }: { embedded?: boolean }) => {
                   </div>
                   <Badge variant="secondary" className="tabular-nums shrink-0">
                     {formatGb(row.physical_gb_scanned)}
+                    {row.estimated_scan_cost_usd == null
+                      ? ""
+                      : ` · ${formatCurrency(row.estimated_scan_cost_usd)}`}
                   </Badge>
                 </div>
               ))}

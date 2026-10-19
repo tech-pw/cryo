@@ -940,6 +940,10 @@ export interface CostDashboard {
     orphan_scan_stale?: boolean;
     last_full_cost_scan_at?: string | null;
     total_realized_savings_usd?: number;
+    // GET-cost reduction from compaction. null means no table has a TableCost row,
+    // so the UI must not render $0. The table count says how much of the fleet the sum covers.
+    query_request_savings_usd_month?: number | null;
+    query_request_savings_tables?: number;
   };
   savings_by_operation: CostByOperation[];
   cost_by_schema: Array<{
@@ -1400,6 +1404,7 @@ export interface ScanCostAttributionRow {
   failed_query_count: number;
   physical_bytes_scanned: number;
   physical_gb_scanned: number;
+  estimated_scan_cost_usd?: number | null;
 }
 
 export interface ScanCostAttributionByClient {
@@ -1407,6 +1412,7 @@ export interface ScanCostAttributionByClient {
   query_count: number;
   physical_bytes_scanned: number;
   physical_gb_scanned: number;
+  estimated_scan_cost_usd?: number | null;
 }
 
 export interface ScanCostAttributionResponse {
@@ -1415,6 +1421,8 @@ export interface ScanCostAttributionResponse {
   by_client: ScanCostAttributionByClient[];
   total_query_count: number;
   total_physical_gb_scanned: number;
+  total_estimated_scan_cost_usd?: number | null;
+  scan_cost_priced_days?: number;
 }
 
 // ============================================================================

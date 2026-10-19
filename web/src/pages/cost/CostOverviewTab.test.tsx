@@ -143,6 +143,30 @@ describe("CostOverviewTab", () => {
     expect(screen.queryByText("$0")).not.toBeInTheDocument();
   });
 
+  it("shows a stored GET-savings zero as $0, and names how many tables the sum covers", async () => {
+    vi.mocked(getCostDashboard).mockResolvedValue({
+      totals: {
+        current_monthly_cost_usd: 80,
+        projected_monthly_cost_usd: 50,
+        projected_savings_usd_month: 30,
+        current_storage_bytes: 1000,
+        reclaimable_bytes: 100,
+        total_realized_savings_usd: 4,
+        query_request_savings_usd_month: 0,
+        query_request_savings_tables: 3
+      },
+      savings_by_operation: [],
+      cost_by_schema: [],
+      top_opportunities: [],
+      trend: []
+    });
+    renderTab();
+
+    expect(await screen.findByText("Fewer GET requests")).toBeInTheDocument();
+    expect(screen.getAllByText("$0").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText(/only 3 tables have the figure/i)).toBeInTheDocument();
+  });
+
   it("renders the opportunity page from the same filter as the candidate count", async () => {
     vi.mocked(getCostDashboard).mockResolvedValue(dashboard);
     vi.mocked(listTables).mockResolvedValue({

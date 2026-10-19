@@ -282,10 +282,10 @@ const COST_TABS: Record<string, string> = {
   storage: "storage",
   "s3-requests": "requests",
   requests: "requests",
-  impact: "impact",
+  impact: "storage",
   reads: "reads",
-  "aws-integrations": "aws",
-  aws: "aws"
+  "aws-integrations": "storage",
+  aws: "storage"
 };
 
 const normalizeCost = (params: URLSearchParams, hash: string, input: AppLocation): AppLocation | null => {
@@ -454,7 +454,7 @@ export const resolveLegacyRedirect = (location: AppLocation): AppLocation | null
   }
   if (pathname === "/impact") {
     dropTab(params);
-    params.set("tab", "impact");
+    params.set("tab", "storage");
     return finish("/cost", params, hash, input);
   }
   if (pathname === "/scan-cost") {
@@ -464,8 +464,8 @@ export const resolveLegacyRedirect = (location: AppLocation): AppLocation | null
   }
   if (pathname === "/cost/aws" || pathname === "/aws") {
     dropTab(params);
-    params.set("tab", "aws");
-    return finish("/cost", params, hash, input);
+    params.set("tab", "lakehouses");
+    return finish("/settings/connections", params, hash, input);
   }
   if (pathname === "/similarity") return applyInsights(params, hash, input, "duplicates");
   if (pathname === "/anomalies") return applyInsights(params, hash, input, "shared-paths");
@@ -521,7 +521,7 @@ const PATH_ALIASES: Array<{ prefix: string; href: string }> = [
   { prefix: "/cost", href: "/cost" },
   { prefix: "/impact", href: "/cost" },
   { prefix: "/scan-cost", href: "/cost" },
-  { prefix: "/aws", href: "/cost" },
+  { prefix: "/aws", href: "/settings" },
   { prefix: "/insights", href: "/insights" },
   { prefix: "/similarity", href: "/insights" },
   { prefix: "/anomalies", href: "/insights" },
@@ -542,13 +542,6 @@ export const runsChildTab = (canonicalTab: string | null): string | null => {
   if (canonicalTab === "workflows") return null;
   if (canonicalTab === "holds") return null;
   return "runs";
-};
-
-export const costChildTab = (canonicalTab: string | null): "overview" | "s3-requests" | "aws-integrations" | null => {
-  if (canonicalTab === "requests") return "s3-requests";
-  if (canonicalTab === "aws") return "aws-integrations";
-  if (canonicalTab === "impact" || canonicalTab === "reads") return null;
-  return "overview";
 };
 
 export const connectionsChildTab = (canonicalTab: string | null): string => {

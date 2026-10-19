@@ -521,6 +521,9 @@ def test_dashboard_cost_response_matches_api_schema(session, monkeypatch) -> Non
     CostDashboardResponse.model_validate(payload)
     assert payload["totals"]["current_monthly_cost_usd"] == 30.0
     assert payload["totals"]["projected_savings_usd_month"] == 12.0
+    # A stored 0 is a real zero, not "no figure".
+    assert payload["totals"]["query_request_savings_usd_month"] == 0.0
+    assert payload["totals"]["query_request_savings_tables"] == 1
     assert payload["cost_by_schema"][0]["schema_name"] == "billing"
     assert len(payload["top_opportunities"]) == 1
     top = payload["top_opportunities"][0]
@@ -588,6 +591,81 @@ def test_dashboard_cost_total_realized_savings_is_all_time_not_trend_bounded(
 
     expected_usd = round(3 * settings.cost_price_per_gb_month, 4)
     assert payload["totals"]["total_realized_savings_usd"] == expected_usd
+
+
+def test_dashboard_cost_request_savings_sum_only_tables_with_a_cost_row(
+    session, monkeypatch
+) -> None:
+    """A table with stats but no TableCost must not turn a partial sum into a fleet $0."""
+    from cryo.db.repositories import datalake as datalake_repo
+    from cryo.db.repositories.datalake import dashboard_cost
+
+    monkeypatch.setattr(datalake_repo, "_cost_trend", lambda *args, **kwargs: [])
+
+    source = _seed_source(session)
+    scan_at = datetime(2026, 7, 10, tzinfo=UTC)
+    measured_id = uuid.uuid4()
+    unmeasured_id = uuid.uuid4()
+    session.add_all(
+        [
+            Table(
+                id=measured_id,
+                source_id=source.id,
+                schema_name="billing",
+                table_name="measured",
+                first_seen_at=scan_at,
+                is_active=True,
+            ),
+            Table(
+                id=unmeasured_id,
+                source_id=source.id,
+                schema_name="billing",
+                table_name="unmeasured",
+                first_seen_at=scan_at,
+                is_active=True,
+            ),
+        ]
+    )
+    session.add_all(
+        [
+            TableStats(
+                table_id=table_id,
+                scan_at=scan_at,
+                needs_compaction=False,
+                compaction_priority="LOW",
+                grade="B",
+                overall_score=80,
+                total_files=10,
+                small_files_count=1,
+                total_size_gb=1.0,
+                query_count_30d=4,
+                estimated_monthly_s3_cost_usd=1.0,
+            )
+            for table_id in (measured_id, unmeasured_id)
+        ]
+    )
+    session.add(
+        TableCost(
+            table_id=measured_id,
+            scan_at=scan_at,
+            precision="metadata",
+            price_per_gb_month=0.023,
+            live_bytes=1000,
+            dead_bytes=0,
+            metadata_bytes=10,
+            orphan_bytes=0,
+            listed_bytes=1010,
+            current_monthly_cost_usd=2.5,
+            projected_monthly_cost_usd=2.0,
+            projected_savings_usd_month=0.5,
+            query_request_savings_usd_month=1.25,
+        )
+    )
+    session.commit()
+
+    payload = dashboard_cost(session, top_limit=5, trend_limit=5)
+    assert payload["totals"]["query_request_savings_usd_month"] == 1.25
+    assert payload["totals"]["query_request_savings_tables"] == 1
 
 
 def _seed_graded_table(

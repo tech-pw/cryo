@@ -58,6 +58,20 @@ reclaim_expire_bytes = Σ size(f)  # data + delete + manifest + manifest-list
 
 `bytes_to_usd(b) = b / (1024³ if cost_use_gib else 1e9) * price_per_gb_month`
 
+## What the Cost page shows
+
+Storage is the home. The AWS connection form lives on Connections; `/aws` and `/cost/aws` redirect there, and `?tab=aws` on `/cost` opens Storage.
+
+The Storage tab reports four different numbers, and they must not be read as one bill:
+
+- **Modelled savings** are storage dollars. Compaction's share is delete-file bytes, not the size of the small files it rewrites.
+- **Fewer GET requests** is the compaction GET-cost estimate, summed only over tables that have a `TableCost` row. `null` means no table has one — the page says unavailable, not `$0`. The table count says how much of the fleet the sum covers. A stored `0` is a real zero.
+- **Saved to date** prices `AuditLog.actual_bytes_freed` at the default storage rate. It is not a measured drop in the AWS bill, and it does not subtract what the maintenance itself cost.
+- The monthly trend draws the storage-cost line as soon as a scan records one. What maintenance already changed is a separate series, by day, from the impact ledger. Unmeasured days are gaps. `/impact` opens Storage. A scan does not record a ledger day.
+- Reads shows a scan-compute dollar only for days that already have `estimated_scan_cost_usd`. No priced day means "Not priced", not `$0`. A client or schema that mixes a priced day with an unpriced day is "Not priced" too — the priced slice is not a price for the bytes beside it. `scan_cost_priced_days` still counts the days that were priced.
+- Unused tables are a line on Storage, linking to the unused view. If any of them has no cost figure, no dollar total is shown.
+- The learned-cost-model strip is not on this page. It belongs with the model, on `/ai`.
+
 - `expire` = `bytes_to_usd(reclaim_expire_bytes)`
 - `remove_orphan_files` = `bytes_to_usd(orphan_bytes)` (0/unknown until Tier 2)
 - `optimize` (storage) = `bytes_to_usd(delete_bytes merged)` — data bytes are rewrite-neutral; small-file

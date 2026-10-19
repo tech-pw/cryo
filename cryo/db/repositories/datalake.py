@@ -585,6 +585,12 @@ def _sql_aggregate_cost_totals(session: Session, *, settings: Settings) -> dict[
         else_=func.coalesce(TableStats.total_size_gb, 0.0) * (1024**3),
     )
 
+    # Only a TableCost row carries the GET-reduction estimate. Summing it and reporting the
+    # count keeps a partial fleet from reading as a fleet total of $0.
+    request_savings_expr = case(
+        (TableCost.table_id.isnot(None), TableCost.query_request_savings_usd_month),
+        else_=None,
+    )
     row = session.execute(
         select(
             func.coalesce(func.sum(current_expr), 0.0),
@@ -592,6 +598,8 @@ def _sql_aggregate_cost_totals(session: Session, *, settings: Settings) -> dict[
             func.coalesce(func.sum(savings_expr), 0.0),
             func.coalesce(func.sum(reclaim_expr), 0),
             func.coalesce(func.sum(storage_expr), 0),
+            func.sum(request_savings_expr),
+            func.count(request_savings_expr),
         )
         .select_from(Table)
         .outerjoin(TableStats, TableStats.table_id == Table.id)
@@ -647,6 +655,8 @@ def _sql_aggregate_cost_totals(session: Session, *, settings: Settings) -> dict[
         "precision_coverage": precision_coverage,
         "orphan_scan_stale": orphan_scan_stale,
         "last_full_cost_scan_at": last_full_scan,
+        "query_request_savings_usd_month": (None if row[5] is None else round(float(row[5]), 4)),
+        "query_request_savings_tables": int(row[6] or 0),
     }
 
 

@@ -98,7 +98,7 @@ const renderPage = (initialRoute = "/cost") => {
 };
 
 describe("Consolidated Cost page", () => {
-  it("renders five tabs and starts on Storage by default", async () => {
+  it("renders four tabs and starts on Storage by default", async () => {
     mockDefaultOverview();
     vi.mocked(listSources).mockResolvedValue([]);
     vi.mocked(listSourceS3LogConfigs).mockResolvedValue([]);
@@ -107,9 +107,9 @@ describe("Consolidated Cost page", () => {
 
     expect(await screen.findByRole("tab", { name: /^Storage$/ })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /^Requests$/ })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /^Impact$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^Impact$/ })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /^Reads$/ })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /^AWS$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^AWS$/ })).not.toBeInTheDocument();
 
     // Overview tab is selected by default — hero MetricTile for total monthly cost.
     expect(await screen.findByText(/Estimated storage cost/i)).toBeInTheDocument();
@@ -155,7 +155,7 @@ describe("Consolidated Cost page", () => {
     // default, but its rows are present in the DOM so assistive tech / find-in-page can reach
     // them without needing to open the disclosure first).
     expect(await screen.findByText(/Cost waterfall from current monthly cost/i)).toBeInTheDocument();
-    expect(screen.getByText(/Monthly trend of projected vs realized savings/i)).toBeInTheDocument();
+    expect(screen.getByText(/Storage cost, projected savings and realized savings by scan date/i)).toBeInTheDocument();
     expect(screen.getByText(/Estimated monthly S3 cost by schema/i)).toBeInTheDocument();
 
     // The schema chart's paired table exposes the real row data (schema, cost, size).
@@ -376,30 +376,14 @@ name: "sample-lakehouse",
     expect(await screen.findByRole("alert")).toHaveTextContent(/default rate/i);
   });
 
-  it("?tab=aws-integrations opens the AWS tab and renders the per-source card", async () => {
+  it("?tab=aws-integrations aliases to Storage; the connection form lives on Connections", async () => {
     mockDefaultOverview();
-    const source = {
-      id: "src-3",
-      name: "prod_data",
-      type: "hive",
-      enabled: true,
-      config: {},
-      maintenance_schema_names: [],
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z"
-    };
-    vi.mocked(listSources).mockResolvedValue([source]);
-    vi.mocked(getAwsIntegration).mockImplementation(async () => {
-      const err = new Error("not found") as Error & { status?: number };
-      err.status = 404;
-      throw err;
-    });
-    vi.mocked(getAwsUsage).mockResolvedValue({} as never);
+    vi.mocked(listSources).mockResolvedValue([]);
     renderPage("/cost?tab=aws-integrations");
 
-    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/^AWS$/);
-    expect(await screen.findByText("prod_data")).toBeInTheDocument();
-    expect(await screen.findAllByRole("button", { name: /connect aws/i })).toHaveLength(1);
+    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/^Storage$/);
+    expect(screen.queryByRole("button", { name: /connect aws/i })).not.toBeInTheDocument();
+    expect(await screen.findByText(/Estimated storage cost/i)).toBeInTheDocument();
   });
 
   it("URL ?tab= is replaced with the Overview tab on switch", async () => {
@@ -419,16 +403,13 @@ name: "sample-lakehouse",
   });
 
   it("uses useSearchParams to pick the active tab -- the URL ?tab= query wins over the default", async () => {
-    // The /aws -> /cost?tab=aws-integrations redirect lives in App.tsx, not in Cost.tsx.
-    // What Cost.tsx itself owns is "if ?tab=aws-integrations is set, open the AWS tab on
-    // mount" -- so this test exercises just that contract, without the App-level redirect.
     mockDefaultOverview();
     vi.mocked(listSources).mockResolvedValue([]);
-    vi.mocked(getAwsIntegration).mockRejectedValue(new Error("404"));
-    vi.mocked(getAwsUsage).mockResolvedValue({} as never);
+    vi.mocked(listSourceS3LogConfigs).mockResolvedValue([]);
+    vi.mocked(getSourceS3RequestCostRollup).mockResolvedValue(null as never);
 
-    renderPage("/cost?tab=aws-integrations");
+    renderPage("/cost?tab=requests");
 
-    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/^AWS$/);
+    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent(/^Requests$/);
   });
 });
