@@ -160,7 +160,7 @@ fn object_meta_to_listed(bucket: &str, meta: ObjectMeta) -> Result<ListedObject>
     let path = format!("s3://{}/{}", bucket, meta.location.as_ref());
     Ok(ListedObject {
         path,
-        size: meta.size as u64,
+        size: meta.size,
         last_modified_ms: Some(meta.last_modified.timestamp_millis()),
     })
 }

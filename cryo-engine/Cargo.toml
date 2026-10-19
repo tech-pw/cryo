@@ -28,7 +28,7 @@ parquet = { version = "59", default-features = false, features = ["arrow"] }
 bytes = "1"
 
 # Object storage
-object_store = { version = "0.11", features = ["aws"] }
+object_store = { version = "0.14", features = ["aws"] }
 futures = "0.3"
 async-trait = "0.1"
 
