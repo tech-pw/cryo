@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TableRunRead } from "../../../api/types";
-import { buildRunColumns, gradeChange, gridRows, isManualTrigger, mergeSkipColumns, statChanges, toneFor } from "./runModel";
+import { buildRunColumns, changeColumns, gradeChange, gridRows, isManualTrigger, mergeSkipColumns, statChanges, toneFor } from "./runModel";
 
 const run = (overrides: Partial<TableRunRead>): TableRunRead => ({
   job_id: "job-1",
@@ -40,7 +40,7 @@ describe("mergeSkipColumns", () => {
       skip("4", "2026-10-06T23:00:00Z", "cooldown"),
       skip("5", "2026-10-07T23:00:00Z", null, "selected")
     ]);
-    expect(merged.map((column) => (column.kind === "run" ? column.run.run_id : `${column.reason}x${column.count}`))).toEqual([
+    expect(merged.map((column) => (column.kind === "run" ? column.run.run_id : column.kind === "skip" ? `${column.reason}x${column.count}` : column.label))).toEqual([
       "ra",
       "cooldownx2",
       "budget_capx1",
@@ -60,6 +60,32 @@ describe("mergeSkipColumns", () => {
     const merged = mergeSkipColumns(runs, evaluations, 2);
     expect(merged.filter((column) => column.kind === "skip")).toHaveLength(2);
     expect(merged.some((column) => column.key === "skip-old")).toBe(false);
+  });
+
+  it("places a jobless config change on the timeline and never drops it for the skip cap", () => {
+    const runs = buildRunColumns(
+      [
+        run({ job_id: "a", run_id: "ra", started_at: "2026-10-01T23:00:00Z" }),
+        run({ job_id: "b", run_id: "rb", started_at: "2026-10-05T23:00:00Z" })
+      ],
+      []
+    );
+    const changes = changeColumns([
+      { id: "c1", action: "table_config_change", status: "recorded", ts: "2026-10-03T12:00:00Z", detail: "cooldown_hours: 12 -> 20", actor: "aamir" },
+      { id: "c2", action: "optimize", status: "succeeded", ts: "2026-10-04T12:00:00Z", detail: "CALL x", job_id: "b" }
+    ] as never);
+    expect(changes.map((column) => column.label)).toEqual(["Config change"]);
+    const merged = mergeSkipColumns(
+      runs,
+      ["1", "2", "3", "4"].map((id, index) => skip(id, `2026-10-0${index + 6}T23:00:00Z`, `reason-${id}`)),
+      1,
+      changes
+    );
+    expect(merged.some((column) => column.kind === "change" && column.detail === "cooldown_hours: 12 -> 20")).toBe(true);
+    expect(merged.filter((column) => column.kind === "skip")).toHaveLength(1);
+    const changeIndex = merged.findIndex((column) => column.kind === "change");
+    expect(changeIndex).toBeGreaterThan(merged.findIndex((column) => column.kind === "run" && column.run.run_id === "ra"));
+    expect(changeIndex).toBeLessThan(merged.findIndex((column) => column.kind === "run" && column.run.run_id === "rb"));
   });
 });
 

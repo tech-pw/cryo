@@ -14,9 +14,11 @@ import { QueryErrorAlert } from "../../components/common";
 import { Badge } from "../../components/ui/badge";
 import { useAuth } from "../../lib/auth";
 import { auditBytesLabel } from "../../lib/auditFeed";
-import { formatTime } from "../../lib/format";
+import { formatTime, humanizeInstants } from "../../lib/format";
 import { tableKeys } from "./tableKeys";
 import "./maintenanceTab.css";
+
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/;
 
 const BYTE_KEYS = new Set([
   "actual_bytes_freed",
@@ -31,7 +33,7 @@ export const formatMaintenanceValue = (key: string, value: unknown): string => {
   if (BYTE_KEYS.has(key)) return typeof value === "number" ? auditBytesLabel(value) : "Unknown";
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "Unknown";
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return ISO_INSTANT.test(value) ? formatTime(value) : value;
   if (Array.isArray(value)) {
     if (value.length === 0) return "(empty)";
     return value.map((item) => (item == null || item === "" ? "Unknown" : String(item))).join(", ");
@@ -71,7 +73,7 @@ const EligibilityChecklist = ({ reasons }: { reasons: BlockingReasonRead[] }) =>
       {reasons.map((reason, index) => (
         <li key={`${reason.code}-${index}`} className="rounded-[var(--radius-default)] border border-border p-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
-            <p className="text-sm font-medium text-foreground">{reason.summary}</p>
+            <p className="text-sm font-medium text-foreground">{humanizeInstants(reason.summary)}</p>
             <Badge variant={reason.blocks_nightly_selection ? "warning" : "secondary"}>
               {reason.blocks_nightly_selection ? "Blocks nightly selection" : "Does not block nightly selection"}
             </Badge>
