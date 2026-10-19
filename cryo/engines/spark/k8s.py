@@ -126,16 +126,13 @@ class SparkK8sConfig:
         elif isinstance(_node_sel_raw, Mapping):
             node_selector = dict(_node_sel_raw)
         else:
-            # Default to on-demand capacity-type for Spark workloads. Pinned to amd64 since
-            # the dispatch image (Dockerfile.spark, built via Kaniko with no --platform flag)
-            # is single-architecture -- an arm64 landing fails immediately with "exec
-            # /opt/spark/bin/spark-submit: exec format error" (confirmed live 2026-10-05,
-            # job e3aa32fd and again after a same-arch rebuild, job b6569a7d). Drop this once
-            # the dispatch image is built multi-arch.
-            node_selector = {
-                "karpenter.sh/capacity-type": "on-demand",
-                "kubernetes.io/arch": "amd64",
-            }
+            node_selector = {"karpenter.sh/capacity-type": "on-demand"}
+        # The dispatch image (Dockerfile.spark, built via Kaniko with no --platform flag) is
+        # single-architecture amd64; an arm64 landing fails immediately with "exec
+        # /opt/spark/bin/spark-submit: exec format error". Applied on top of any configured
+        # selector because the chart's CRYO_SPARK_K8S_NODE_SELECTOR replaces the default
+        # wholesale. Drop this once the dispatch image is built multi-arch.
+        node_selector.setdefault("kubernetes.io/arch", "amd64")
 
         return cls(
             # Confirmed live 2026-10-01: a destination.config with no explicit "namespace"
