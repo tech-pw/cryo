@@ -351,7 +351,7 @@ spark:
     activeDeadlineSeconds: 7200
     ttlSecondsAfterFinished: 3600
     slotCap: 2
-    nodeSelector: "karpenter.sh/capacity-type=on-demand"
+    nodeSelector: "karpenter.sh/capacity-type=on-demand,kubernetes.io/arch=amd64"
 
 redis:
   enabled: true
