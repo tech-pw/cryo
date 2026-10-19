@@ -9,15 +9,15 @@ COPY . .
 RUN npm run build
 
 # Runs as UID 101 and cannot bind privileged ports, so nginx.conf listens on 8080.
-# 1.27-alpine (alpine 3.21.3) hadn't had a fresh Alpine base rebuild since 2025-06-23 --
-# confirmed live, 2026-10-12: Trivy found 41 fixable OS-package CVEs (2 critical).
-# 1.29-alpine's current digest turned out to resolve to alpine 3.23.4 with MORE
-# findings (43, 0 critical) -- a newer nginx minor doesn't guarantee a fresher Alpine
-# rebuild. stable-alpine (pushed hours before this pin, 2026-10-12) had the fewest.
-# Pinned by digest, not the mutable tag, same as elsewhere in this repo -- re-verify
-# with `trivy image` before bumping this again; "newest tag" isn't a reliable proxy
-# for "fewest CVEs" for this particular upstream image.
-FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:0f5f7068c5f5bf7046dbf649a08810ec1693967a9f488b8ff3998be6dd34bf6c
+# Pinned by digest, not the mutable tag. The previous pin
+# (sha256:0f5f7068…, 2026-10-12) fell behind Alpine: Trivy on the release pipeline
+# blocked the image on 2026-10-19 with two fixable HIGH OS CVEs, libexpat
+# CVE-2026-77214 (2.8.5-r0, fixed 2.9.0-r0) and libx11 CVE-2026-88806 (1.8.13-r0,
+# fixed 1.8.14-r0). This digest is the stable-alpine tag resolved 2026-10-19;
+# trivy 0.70.0 reports it clean (alpine 3.24.2, zero fixable HIGH/CRITICAL).
+# Re-scan before bumping again -- a newer tag is not a reliable proxy for fewer
+# CVEs for this upstream image.
+FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
 
 COPY --from=build /app/dist /usr/share/nginx/html
 # envsubst at start: NGINX_LOCAL_RESOLVERS from the pod's /etc/resolv.conf, and
