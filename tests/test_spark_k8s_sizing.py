@@ -102,12 +102,39 @@ def test_dispatch_cap_refuses_the_live_24_executor_destination() -> None:
     )
 
 
-def test_expire_and_orphan_dispatch_as_one_small_executor() -> None:
+def test_expire_and_orphan_keep_one_executor_and_size_the_driver_from_files() -> None:
+    """Executors stay at 1. The 2026-10-19 expire kill was the driver, not the data plane.
+
+    A 12-file table must not inherit a 24-executor destination. A 179k-file expire must
+    not start on the same 1024MiB heap that the cgroup killed. Unknown file count stays
+    small: an unscanned table is not a license to reserve the ceiling.
+    """
     huge = ExecutorProfile(24, 3000, 6144, 4000, 16384)
-    for operation in ("expire_snapshots", "remove_orphan_files", "optimize_manifests"):
-        profile = cap_dispatch_profile(huge, operation=operation)
-        assert profile.executor_instances == 1
-        assert profile.executor_mem_mib == 1024
+    for operation in ("expire_snapshots", "remove_orphan_files"):
+        small = cap_dispatch_profile(huge, operation=operation, total_files=12)
+        assert small.executor_instances == 1
+        assert small.executor_mem_mib == 1024
+        assert small.driver_mem_mib == 1024
+        large = cap_dispatch_profile(huge, operation=operation, total_files=179_020)
+        assert large.executor_instances == 1
+        assert large.executor_mem_mib == 1024
+        assert large.driver_mem_mib == 3072
+        unknown = cap_dispatch_profile(huge, operation=operation, total_files=None)
+        assert unknown.driver_mem_mib == 1024
+    manifests = cap_dispatch_profile(huge, operation="optimize_manifests", total_files=179_020)
+    assert manifests.executor_instances == 1
+    assert manifests.driver_mem_mib == 1024
+
+
+def test_oom_step_adds_a_fixed_heap_and_stops_at_the_ceiling() -> None:
+    from cryo.engines.spark.sizing import lightweight_driver_heap_mib
+
+    assert lightweight_driver_heap_mib(total_files=179_020, oom_steps=0) == 3072
+    assert lightweight_driver_heap_mib(total_files=179_020, oom_steps=1) == 4096
+    # A second kill is not a third pod. 16GiB lane headroom is a different runtime.
+    assert lightweight_driver_heap_mib(total_files=179_020, oom_steps=2) == 4096
+    assert lightweight_driver_heap_mib(total_files=12, oom_steps=1) == 3072
+    assert lightweight_driver_heap_mib(total_files=250_000, oom_steps=0) == 4096
 
 
 def test_slot_ceiling_is_a_no_op_without_the_env(monkeypatch) -> None:

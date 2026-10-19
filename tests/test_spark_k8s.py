@@ -147,6 +147,12 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     assert "spark.kubernetes.node.selector.karpenter.sh/capacity-type=on-demand" in command
     # Same for do-not-disrupt: wrapper Job annotation alone does not protect driver/executor.
     assert "spark.kubernetes.driver.annotation.karpenter.sh/do-not-disrupt=true" in command
+    # Heap plus Spark's documented overhead. The old limit conf equalled the heap and
+    # is not read by Spark 4.1.2. Do not put it back.
+    assert "spark.driver.memoryOverhead=384m" in command
+    assert "spark.executor.memoryOverhead=384m" in command
+    assert "spark.kubernetes.driver.limit.memory" not in " ".join(command)
+    assert "spark.kubernetes.driver.request.memory" not in " ".join(command)
     assert "spark.kubernetes.executor.annotation.karpenter.sh/do-not-disrupt=true" in command
     pod_labels = manifest["spec"]["template"]["metadata"]["labels"]
     assert pod_labels["eks-workload-name"] == "cryo-spark"
@@ -167,6 +173,62 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     ):
         assert command.index(conf) < script_idx
         assert command[command.index(conf) - 1] == "--conf"
+
+
+def test_expire_submit_disables_broadcast_and_sizes_the_driver_from_file_count() -> None:
+    batch_api = MagicMock()
+    cfg = SparkK8sConfig(namespace="cryo", catalog_warehouse="s3://warehouse/")
+    client = SparkK8sClient(cfg)
+
+    with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
+        client.submit_spark_sql(
+            "CALL cdp.system.expire_snapshots(table => 'cdp.unified_bq.gold_dbt_pw_bq')",
+            catalog="cdp",
+            operation="expire_snapshots",
+            total_files=179_020,
+        )
+
+    command = batch_api.create_namespaced_job.call_args.kwargs["body"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]["command"]
+    assert "spark.driver.memory=3072m" in command
+    assert "spark.executor.instances=1" in command
+    assert "spark.executor.memory=1024m" in command
+    assert "spark.sql.autoBroadcastJoinThreshold=-1" in command
+    assert "spark.driver.maxResultSize=2816m" in command
+    script_idx = command.index("local:///opt/cryo/cryo_spark_runner.py")
+    assert command.index("spark.sql.autoBroadcastJoinThreshold=-1") < script_idx
+
+
+def test_get_job_run_prefixes_oomkilled_from_container_status() -> None:
+    """The driver log of a cgroup kill is INFO. The reason is on the container status.
+
+    Confirmed live, 2026-10-19: cryo-spark-069a3d881f-driver exit 137, reason OOMKilled,
+    and the stored error was 272k of broadcast INFO with no exception.
+    """
+    cfg = SparkK8sConfig(namespace="cryo")
+    client = SparkK8sClient(cfg)
+    core_api = MagicMock()
+    terminated = SimpleNamespace(reason="OOMKilled", exit_code=137)
+    core_api.read_namespaced_pod.return_value = SimpleNamespace(
+        status=SimpleNamespace(
+            phase="Failed",
+            container_statuses=[
+                SimpleNamespace(state=SimpleNamespace(terminated=terminated)),
+            ],
+        )
+    )
+    with (
+        patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api),
+        patch(
+            "cryo.engines.spark.k8s._read_pod_log_tail",
+            return_value="INFO BroadcastExchangeExec",
+        ),
+    ):
+        result = client.get_job_run("cryo-spark-069a3d881f")
+    assert result.state is JobRunState.FAILED
+    assert result.state_details is not None
+    assert result.state_details.startswith("OOMKilled exit 137\n")
 
 
 def test_submit_spark_sql_labels_default_destination_when_none_given() -> None:

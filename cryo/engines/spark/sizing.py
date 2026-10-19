@@ -128,6 +128,11 @@ _LIGHTWEIGHT_OPS = frozenset(
         "compute_statistics",
     }
 )
+# Expire and orphan die on the driver, not the executors. Iceberg's expire anti-joins every
+# file still reachable from a retained snapshot against the delete candidates
+# (ExpireSnapshotsSparkAction.expireFiles, Iceberg 1.11.0). remove_orphan_files lists the
+# warehouse on the driver via Hadoop FileSystem. Executor count stays 1 either way.
+_DRIVER_PRESSURE_OPS = frozenset({"expire_snapshots", "remove_orphan_files"})
 _LIGHTWEIGHT_PROFILE = ExecutorProfile(
     executor_instances=1,
     executor_cpu_milli=500,
@@ -135,12 +140,82 @@ _LIGHTWEIGHT_PROFILE = ExecutorProfile(
     driver_cpu_milli=500,
     driver_mem_mib=1024,
 )
+# Spark 4.1.2 sets the driver container to heap + memoryOverhead (default max(10%, 384MiB)).
+# A cgroup limit equal to the heap is what OOMKilled cryo-spark-069a3d881f-driver (exit 137,
+# 2026-10-19) before the JVM could throw. The limit conf we used to set is not a Spark
+# config; BasicDriverFeatureStep never reads it. Leave 384MiB beside the heap so the
+# documented container size is what Kubernetes actually reserves.
+DRIVER_MEMORY_OVERHEAD_MIB = 384
+# spark.driver.maxResultSize default is 1g and must stay under the heap. A 1024MiB heap
+# with a 1g result cap fails the next way (a silent abort) once the cgroup kill is fixed.
+_MAX_RESULT_SIZE_HEADROOM_MIB = 256
+# A kernel SIGKILL does not contain a peak-heap sample. One measured step, then stop.
+# 4096MiB is the largest driver heap this path will request. Lane runs that used 7-12.7GiB
+# of 16GiB (docs/SPARK_ENGINE_OPTIMIZATION_2026-09-25.md) were a different runtime, and that
+# note's own gate failed before raising lane memory. Do not copy 16GiB onto every expire.
+_DRIVER_OOM_STEP_MIB = 2048
+_DRIVER_HEAP_CEILING_MIB = 4096
+# ~150 bytes of path + manifest metadata per file is the planning input, not a measured
+# peak. Tiers exist so a 179k-file expire does not start on the same 1024MiB heap as a
+# 12-file table. A kill still cannot be inverted into an exact next heap.
+_DRIVER_FILE_TIERS: tuple[tuple[int, int], ...] = (
+    (10_000, 1024),
+    (50_000, 2048),
+    (200_000, 3072),
+)
+
+
+def lightweight_driver_heap_mib(
+    *,
+    total_files: int | None,
+    oom_steps: int = 0,
+) -> int:
+    """Driver heap for expire/orphan. Unknown file count stays on the small pod.
+
+    ``oom_steps`` is how many times this attempt already died with OOMKilled. Each step
+    adds a fixed 2048MiB. Past the ceiling the caller must stop, not invent a larger pod.
+    """
+    heap = _LIGHTWEIGHT_PROFILE.driver_mem_mib
+    if total_files is not None and total_files > 0:
+        heap = _DRIVER_FILE_TIERS[-1][1]
+        for upper_bound, tier_heap in _DRIVER_FILE_TIERS:
+            if total_files < upper_bound:
+                heap = tier_heap
+                break
+        if total_files >= _DRIVER_FILE_TIERS[-1][0]:
+            heap = _DRIVER_HEAP_CEILING_MIB
+    stepped = heap + max(0, oom_steps) * _DRIVER_OOM_STEP_MIB
+    return min(stepped, _DRIVER_HEAP_CEILING_MIB)
+
+
+def driver_container_mem_mib(heap_mib: int) -> int:
+    """Kubernetes request/limit: Spark's heap plus its documented non-heap overhead."""
+    return heap_mib + DRIVER_MEMORY_OVERHEAD_MIB
+
+
+def driver_max_result_size_mib(heap_mib: int) -> int:
+    """Stay under the heap. Spark's 1g default is not safe on a 1024MiB driver."""
+    return max(256, heap_mib - _MAX_RESULT_SIZE_HEADROOM_MIB)
 
 
 def cap_dispatch_profile(
-    profile: ExecutorProfile, *, operation: str | None = None
+    profile: ExecutorProfile,
+    *,
+    operation: str | None = None,
+    total_files: int | None = None,
+    oom_steps: int = 0,
 ) -> ExecutorProfile:
     """Bound what a cryo-spark submit is allowed to reserve, whatever the destination says."""
+    if operation in _DRIVER_PRESSURE_OPS:
+        return ExecutorProfile(
+            executor_instances=_LIGHTWEIGHT_PROFILE.executor_instances,
+            executor_cpu_milli=_LIGHTWEIGHT_PROFILE.executor_cpu_milli,
+            executor_mem_mib=_LIGHTWEIGHT_PROFILE.executor_mem_mib,
+            driver_cpu_milli=DISPATCH_DRIVER_CPU_MILLI,
+            driver_mem_mib=lightweight_driver_heap_mib(
+                total_files=total_files, oom_steps=oom_steps
+            ),
+        )
     if operation in _LIGHTWEIGHT_OPS:
         return _LIGHTWEIGHT_PROFILE
     return ExecutorProfile(

@@ -46,6 +46,9 @@ logger = logging.getLogger(__name__)
 # CommitFailedException / Iceberg ValidationException get the same treatment. Dropped-table
 # signatures must *not* retry (worker deactivates those).
 _SPARK_CATALOG_RETRY_ATTEMPTS = 3
+# One measured step. A cgroup kill has no peak-heap sample, so a second kill at the
+# ceiling is a stop, not another pod. Catalog retries stay on the same size.
+_SPARK_OOM_RETRY_ATTEMPTS = 1
 _SPARK_CATALOG_RETRY_BACKOFF_SECONDS = 10
 _SPARK_RETRYABLE_SIGNATURES = (
     "BaseMetastoreTableOperations",
@@ -59,6 +62,19 @@ _SPARK_NON_RETRYABLE_SIGNATURES = (
     "TableNotFoundException",
     TABLE_NOT_FOUND_MARKER,
 )
+
+
+def is_spark_driver_oom(message: str | None) -> bool:
+    """True only for the kernel kill. A JVM OutOfMemoryError in a SQL stack is not this.
+
+    The driver log of an OOMKilled pod is INFO. ``_container_termination_reason`` puts
+    ``OOMKilled exit 137`` at the front. Matching the bare words anywhere in a 2000-line
+    tail would step up a SQL error that happened to mention the watcher line.
+    """
+    if not message:
+        return False
+    head = message.split("\n", 1)[0]
+    return head.startswith("OOMKilled exit ")
 
 
 def is_spark_retryable_catalog_error(message: str | None) -> bool:
@@ -237,14 +253,15 @@ class SparkK8sEngine:
                 duration_ms=_elapsed_ms(start),
             )
         try:
-            table_size_gb = (self._table_stats or {}).get("total_size_gb")
+            table_size_gb, total_files = _table_size_and_files(self._table_stats)
             job_id = self.k8s_client.submit_spark_sql(
                 stmt.sql,
                 job_name=job_name,
                 catalog=str(catalog),
                 destination_id=self._destination_id,
                 operation=stmt.action.value,
-                total_size_gb=float(table_size_gb) if table_size_gb is not None else None,
+                total_size_gb=table_size_gb,
+                total_files=total_files,
             )
             if ctx is not None and ctx.on_engine_ref is not None:
                 ctx.on_engine_ref(job_id)
@@ -291,17 +308,21 @@ class SparkK8sEngine:
                 duration_ms=_elapsed_ms(start),
             )
         try:
-            for attempt in range(_SPARK_CATALOG_RETRY_ATTEMPTS):
+            oom_steps = 0
+            catalog_attempts = 0
+            max_attempts = _SPARK_CATALOG_RETRY_ATTEMPTS + _SPARK_OOM_RETRY_ATTEMPTS
+            for attempt in range(max_attempts):
                 attempt_name = job_name if attempt == 0 else f"{job_name}-r{attempt}"
                 logger.info(
-                    "spark-k8s execute submit action=%s sql_bytes=%d rss=%s MiB attempt=%d",
+                    "spark-k8s execute submit action=%s sql_bytes=%d rss=%s MiB "
+                    "attempt=%d oom_steps=%d",
                     stmt.action.value,
                     len(stmt.sql),
                     process_rss_mib(),
                     attempt + 1,
+                    oom_steps,
                 )
-                raw_table_size_gb = (self._table_stats or {}).get("total_size_gb")
-                table_size_gb = float(raw_table_size_gb) if raw_table_size_gb is not None else None
+                table_size_gb, total_files = _table_size_and_files(self._table_stats)
                 job_id = self.k8s_client.submit_spark_sql(
                     stmt.sql,
                     job_name=attempt_name,
@@ -309,6 +330,8 @@ class SparkK8sEngine:
                     destination_id=self._destination_id,
                     operation=stmt.action.value,
                     total_size_gb=table_size_gb,
+                    total_files=total_files,
+                    oom_steps=oom_steps,
                 )
                 if ctx is not None and ctx.on_engine_ref is not None:
                     ctx.on_engine_ref(job_id)
@@ -341,15 +364,34 @@ class SparkK8sEngine:
                 # original text it actually occurred.
                 if is_table_not_found_error(state_details):
                     state_details = f"{TABLE_NOT_FOUND_MARKER} {state_details}"
-                can_retry = (
-                    attempt < _SPARK_CATALOG_RETRY_ATTEMPTS - 1
+                catalog_attempts += 1
+                catalog_retry = (
+                    catalog_attempts < _SPARK_CATALOG_RETRY_ATTEMPTS
                     and is_spark_retryable_catalog_error(state_details)
                 )
-                if can_retry:
+                # File-count sizing already ran on the first submit. One more heap step
+                # only when the kernel killed the driver and the ceiling has not been hit.
+                # A SQL error, a timeout, or a second kill stops.
+                oom_retry = (
+                    oom_steps < _SPARK_OOM_RETRY_ATTEMPTS
+                    and is_spark_driver_oom(state_details)
+                    and _oom_step_would_grow(stmt.action.value, total_files, oom_steps)
+                )
+                if catalog_retry or oom_retry:
+                    if oom_retry:
+                        oom_steps += 1
                     self.k8s_client.cleanup_after_run(job_id)
                     job_id = None
-                    time.sleep(_SPARK_CATALOG_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                    if catalog_retry:
+                        time.sleep(_SPARK_CATALOG_RETRY_BACKOFF_SECONDS * (attempt + 1))
                     continue
+                if is_spark_driver_oom(state_details):
+                    state_details = (
+                        f"{state_details.split(chr(10), 1)[0]} at driver heap ceiling; "
+                        "not splitting the CALL — Iceberg still anti-joins every retained "
+                        f"file, and scan stats have no snapshot ids (total_files={total_files})\n"
+                        f"{state_details}"
+                    )
                 return ExecResult(
                     ok=False,
                     engine_ref=job_id,
@@ -384,6 +426,24 @@ class SparkK8sEngine:
             # once the run is terminal (or timed out/raised).
             if job_id is not None:
                 self.k8s_client.cleanup_after_run(job_id)
+
+
+def _table_size_and_files(
+    stats: Mapping[str, Any] | None,
+) -> tuple[float | None, int | None]:
+    raw_size = (stats or {}).get("total_size_gb")
+    raw_files = (stats or {}).get("total_files")
+    size = float(raw_size) if raw_size is not None else None
+    files = int(raw_files) if raw_files is not None else None
+    return size, files
+
+
+def _oom_step_would_grow(operation: str, total_files: int | None, oom_steps: int) -> bool:
+    from cryo.engines.spark.sizing import lightweight_driver_heap_mib
+
+    current = lightweight_driver_heap_mib(total_files=total_files, oom_steps=oom_steps)
+    nxt = lightweight_driver_heap_mib(total_files=total_files, oom_steps=oom_steps + 1)
+    return nxt > current and operation in {"expire_snapshots", "remove_orphan_files"}
 
 
 def _build_job_name(stmt: RenderedStatement, ctx: ExecCtx | None) -> str:

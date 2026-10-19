@@ -349,6 +349,46 @@ it's the only item in §6 that changes *which* tables get selected rather than h
 selected table is processed — worth scoping as its own doc once there's a clean baseline to
 measure it against.
 
+## 8. Expire driver kill, 2026-10-19
+
+`cdp.unified_bq.gold_dbt_pw_bq` (28,400 GB, 179,020 files) ran `expire_snapshots` as
+`cryo-spark-069a3d881f`. The driver pod exited 137, reason `OOMKilled`, after 12m 51s.
+The wrapper Job succeeded. The stored error was broadcast INFO because a cgroup SIGKILL
+does not print a JVM exception, and `get_job_run` was reading the driver log only.
+
+That pod was the lightweight profile: 1 executor, `spark.driver.memory=1024m`, and
+`spark.kubernetes.driver.limit.memory=1024m`. Spark 4.1.2
+([`BasicDriverFeatureStep`](https://github.com/apache/spark/blob/v4.1.2/resource-managers/kubernetes/core/src/main/scala/org/apache/spark/deploy/k8s/features/BasicDriverFeatureStep.scala))
+does not read that limit conf. Container memory is heap plus `memoryOverhead`
+(default `max(10%, 384MiB)`). The limit line did not reserve the overhead. It is gone.
+`spark.driver.memoryOverhead=384m` is what Spark actually adds
+([Kubernetes docs](https://spark.apache.org/docs/latest/running-on-kubernetes.html)).
+
+Iceberg 1.11 `ExpireSnapshotsSparkAction.expireFiles` anti-joins every file still
+reachable from a retained snapshot against the delete candidates. `stream_results`
+only changes how delete paths are collected. `snapshot_ids` does not shrink the
+valid-file side. Scan stats have `total_files`, not snapshot ids, and the planner
+does not read the catalog. So this is not a batched CALL.
+
+What ships instead, for `expire_snapshots` and `remove_orphan_files` only:
+
+- Executor count stays 1. The data plane did not die.
+- Driver heap comes from file count: under 10k files 1024MiB, under 50k 2048MiB,
+  under 200k 3072MiB, at or above 200k 4096MiB. Unknown file count stays at 1024MiB.
+  179,020 files starts at 3072MiB, not at the pod that was killed.
+- One retry, only when the container status says `OOMKilled`, adds 2048MiB and stops
+  at 4096MiB. A SQL error, a timeout, or a second kill does not submit another pod.
+  Exit 137 is not a peak-heap sample, so the next size is not "the exact GB".
+- `spark.sql.autoBroadcastJoinThreshold=-1` and `spark.driver.maxResultSize` under
+  the heap. The broadcast disable is the workaround Iceberg users needed
+  ([ICEBERG-3703](https://github.com/apache/iceberg/issues/3703)); it does not shrink
+  the anti-join.
+- The stored error starts with `OOMKilled exit 137`. At the ceiling it says the CALL
+  was not split, and why.
+
+The 7–12.7 GiB lane figure above is a different runtime. That gate failed. It is not
+a reason to put 16GiB on every expire.
+
 ## Appendix: competitor survey
 
 | Platform | How it runs maintenance | What Cryo takes from it |
