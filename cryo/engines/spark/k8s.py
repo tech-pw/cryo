@@ -114,7 +114,17 @@ class SparkK8sConfig:
         else:
             pull_secrets = ()
 
-        # node_selector: allow CRYO_SPARK_K8S_NODE_SELECTOR env as comma-separated key=val pairs
+        # node_selector: allow CRYO_SPARK_K8S_NODE_SELECTOR env as comma-separated key=val pairs.
+        # A caller-supplied selector used to replace the default entirely. The chart default is
+        # only `karpenter.sh/capacity-type=on-demand`, so on a mixed amd64/arm64 cluster the
+        # wrapper Job landed on Graviton and died before Spark started: "exec
+        # /opt/spark/bin/spark-submit: exec format error" (data-platform, 2026-10-19,
+        # cryo-spark-f7c80a2012 on an r8g node; same failure 2026-10-05, job e3aa32fd).
+        # ghcr.io/tech-pw/cryo-spark is amd64-only until the release workflow publishes a
+        # manifest list. Merge the arch pin back unless the caller set the key itself —
+        # an explicit arm64 is the escape hatch for an install that built its own image.
+        # Do not default the Karpenter capacity label here: a cluster without that label
+        # could not schedule. Installs that want it set spark.k8s.nodeSelector.
         _node_sel_raw = _get("node_selector")
         if isinstance(_node_sel_raw, str):
             pairs = [p.strip() for p in _node_sel_raw.split(",") if p.strip()]
@@ -126,16 +136,8 @@ class SparkK8sConfig:
         elif isinstance(_node_sel_raw, Mapping):
             node_selector = dict(_node_sel_raw)
         else:
-            # Default to on-demand capacity-type for Spark workloads. Pinned to amd64 since
-            # the dispatch image (Dockerfile.spark, built via Kaniko with no --platform flag)
-            # is single-architecture -- an arm64 landing fails immediately with "exec
-            # /opt/spark/bin/spark-submit: exec format error" (confirmed live 2026-10-05,
-            # job e3aa32fd and again after a same-arch rebuild, job b6569a7d). Drop this once
-            # the dispatch image is built multi-arch.
-            node_selector = {
-                "karpenter.sh/capacity-type": "on-demand",
-                "kubernetes.io/arch": "amd64",
-            }
+            node_selector = {}
+        node_selector.setdefault("kubernetes.io/arch", "amd64")
 
         return cls(
             # Confirmed live 2026-10-01: a destination.config with no explicit "namespace"
