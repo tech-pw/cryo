@@ -12,6 +12,7 @@ from typing import Any, Literal
 import httpx
 
 from cryo.config import get_settings
+from cryo.security.outbound import azure_openai_url, openai_chat_url
 
 logger = logging.getLogger(__name__)
 
@@ -255,9 +256,17 @@ class OpenAIClient(LLMClient):
 
     supports_tools = True
 
-    def __init__(self, api_key: str, model: str | None = None, *, api_base: str | None = None):
+    def __init__(
+        self,
+        api_key: str,
+        model: str | None = None,
+        *,
+        api_base: str | None = None,
+        allowed_origins: str | tuple[str, ...] = (),
+    ):
         self.api_key = api_key
         self.model = model or _default_models()["openai"]
+        self.allowed_origins = allowed_origins
         if api_base:
             base = api_base.rstrip("/")
             self.api_url = (
@@ -295,9 +304,10 @@ class OpenAIClient(LLMClient):
             ],
         }
 
+        api_url = openai_chat_url(self.api_url, allowed_origins=self.allowed_origins)
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                self.api_url,
+                api_url,
                 headers=headers,
                 json={**base_payload, "max_tokens": max_tokens},
             )
@@ -308,7 +318,7 @@ class OpenAIClient(LLMClient):
                     error_msg = error_data.get("error", {}).get("message", "")
                     if "max_completion_tokens" in error_msg:
                         response = await client.post(
-                            self.api_url,
+                            api_url,
                             headers=headers,
                             json={**base_payload, "max_completion_tokens": max_tokens},
                         )
@@ -338,7 +348,7 @@ class OpenAIClient(LLMClient):
         from cryo.ai.llm_chat import openai_compatible_chat
 
         return await openai_compatible_chat(
-            url=self.api_url,
+            url=openai_chat_url(self.api_url, allowed_origins=self.allowed_origins),
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
@@ -411,7 +421,7 @@ class AzureOpenAIClient(LLMClient):
         if context:
             system_prompt += f"\n\nContext:\n```json\n{json.dumps(context, indent=2)}\n```"
 
-        url = self._build_url()
+        url = azure_openai_url(self._build_url())
 
         headers = {
             "api-key": self.api_key,
@@ -630,7 +640,12 @@ def create_llm_client(
             raise ValueError("API key required for OpenAI")
         settings = get_settings()
         api_base = config.get("api_base") or settings.llm_openai_base_url
-        return OpenAIClient(api_key, model, api_base=api_base)
+        return OpenAIClient(
+            api_key,
+            model,
+            api_base=api_base,
+            allowed_origins=settings.llm_allowed_origins,
+        )
     elif provider_type == "azure_openai":
         if not api_key:
             raise ValueError("API key required for Azure OpenAI")
@@ -675,6 +690,7 @@ SUPPORTED_PROVIDERS = [
                 "name": "api_base",
                 "label": "OpenAI-compatible API Base",
                 "placeholder": "https://api.openai.com/v1",
+                "description": ("Local gateways must match an origin in CRYO_LLM_ALLOWED_ORIGINS."),
                 "required": False,
             },
             {
