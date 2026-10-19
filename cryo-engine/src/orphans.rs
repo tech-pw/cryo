@@ -34,7 +34,6 @@ pub fn normalize_storage_path(path: &str) -> String {
 pub async fn collect_referenced_paths(table: &Table) -> Result<HashSet<String>> {
     let mut referenced = HashSet::new();
     let metadata = table.metadata();
-    let file_io = table.file_io().clone();
 
     referenced.insert(normalize_storage_path(metadata.location()));
 
@@ -62,8 +61,9 @@ pub async fn collect_referenced_paths(table: &Table) -> Result<HashSet<String>> 
 
         for manifest_file in manifest_list.entries() {
             referenced.insert(normalize_storage_path(&manifest_file.manifest_path));
-            let manifest = manifest_file
-                .load_manifest(&file_io)
+            let manifest = table
+                .manifest_reader()
+                .read(manifest_file)
                 .await
                 .with_context(|| {
                     format!("failed to load manifest {}", manifest_file.manifest_path)

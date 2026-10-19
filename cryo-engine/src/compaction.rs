@@ -47,7 +47,6 @@ pub async fn collect_candidates(
         None => return Ok(Vec::new()),
     };
 
-    let file_io = table.file_io().clone();
     let manifest_list = table
         .manifest_list_reader(current_snapshot)
         .load()
@@ -58,8 +57,9 @@ pub async fn collect_candidates(
     let mut candidates = Vec::new();
 
     for manifest_file in manifest_list.entries() {
-        let manifest = manifest_file
-            .load_manifest(&file_io)
+        let manifest = table
+            .manifest_reader()
+            .read(manifest_file)
             .await
             .with_context(|| format!("failed to load manifest {}", manifest_file.manifest_path))?;
 
@@ -103,7 +103,6 @@ pub async fn scan_candidates(
         None => return Ok(CompactionScanSummary::default()),
     };
 
-    let file_io = table.file_io().clone();
     let manifest_list = table
         .manifest_list_reader(current_snapshot)
         .load()
@@ -114,8 +113,9 @@ pub async fn scan_candidates(
     let mut summary = CompactionScanSummary::default();
 
     for manifest_file in manifest_list.entries() {
-        let manifest = manifest_file
-            .load_manifest(&file_io)
+        let manifest = table
+            .manifest_reader()
+            .read(manifest_file)
             .await
             .with_context(|| format!("failed to load manifest {}", manifest_file.manifest_path))?;
 
