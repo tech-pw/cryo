@@ -133,6 +133,12 @@ _OPERATIONS = (
         destructive=True,
     ),
     OperationDefinition(
+        operation=OperationType.CONVERT_EQUALITY_DELETES,
+        label="Convert equality deletes",
+        description="Replace equality-delete files with position deletes. Data files stay put.",
+        destructive=False,
+    ),
+    OperationDefinition(
         operation=OperationType.CONVERT_DELETES,
         label="Convert deletes",
         description="Rewrite data files to absorb accumulated delete files.",
@@ -318,6 +324,24 @@ _TRINO_CELLS = (
     ),
     _cell(
         EngineType.TRINO,
+        OperationType.CONVERT_EQUALITY_DELETES,
+        SupportStatus.UNSUPPORTED,
+        MaturityTier.BLOCKED,
+        ExecutionMode.NONE,
+        limitations=(
+            "Trino has no equality-delete to position-delete procedure. "
+            "OPTIMIZE rewrites data files and is not a substitute.",
+        ),
+        owner="engines/trino",
+        evidence=_evidence(
+            "cryo/engines/trino/sql.py",
+            "_render_operation",
+            "tests/test_convert_equality_deletes.py",
+            "test_trino_refuses_to_rewrite_data_files",
+        ),
+    ),
+    _cell(
+        EngineType.TRINO,
         OperationType.CONVERT_DELETES,
         SupportStatus.CONDITIONAL,
         MaturityTier.BETA,
@@ -404,8 +428,28 @@ _TRINO_CELLS = (
     ),
 )
 
-_SPARK_CELLS = tuple(
-    _cell(
+
+def _spark_cell(operation: OperationType) -> OperationCapability:
+    if operation is OperationType.CONVERT_EQUALITY_DELETES:
+        return _cell(
+            EngineType.SPARK_EMR,
+            operation,
+            SupportStatus.UNSUPPORTED,
+            MaturityTier.BLOCKED,
+            ExecutionMode.NONE,
+            limitations=(
+                "Iceberg Spark has no equality-delete to position-delete procedure. "
+                "rewrite_data_files rewrites data files and is not a substitute.",
+            ),
+            owner="engines/spark",
+            evidence=_evidence(
+                "cryo/engines/spark/sql.py",
+                "_render_operation",
+                "tests/test_convert_equality_deletes.py",
+                "test_spark_refuses_to_rewrite_data_files",
+            ),
+        )
+    return _cell(
         EngineType.SPARK_EMR,
         operation,
         SupportStatus.SUPPORTED,
@@ -434,8 +478,9 @@ _SPARK_CELLS = tuple(
             else _SPARK_EVIDENCE
         ),
     )
-    for operation in OperationType
-)
+
+
+_SPARK_CELLS = tuple(_spark_cell(operation) for operation in OperationType)
 
 _NATIVE_CELLS = (
     _cell(
@@ -456,6 +501,21 @@ _NATIVE_CELLS = (
         runtime_conditions=("The orphan minimum-age guard remains enforced.",),
         owner="engines/native",
         evidence=_NATIVE_EVIDENCE,
+    ),
+    _cell(
+        EngineType.NATIVE,
+        OperationType.CONVERT_EQUALITY_DELETES,
+        SupportStatus.UNSUPPORTED,
+        MaturityTier.BLOCKED,
+        ExecutionMode.NONE,
+        limitations=("cryo-engine-go does not yet write the position-delete replacement.",),
+        owner="engines/native",
+        evidence=_evidence(
+            "cryo/planner/equality_deletes.py",
+            "plan_convert_equality_deletes",
+            "tests/test_convert_equality_deletes.py",
+            "test_planner_emits_conversion_before_optimize",
+        ),
     ),
     _cell(
         EngineType.NATIVE,

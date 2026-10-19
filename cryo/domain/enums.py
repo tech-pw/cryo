@@ -6,6 +6,7 @@ from enum import StrEnum
 class OperationType(StrEnum):
     EXPIRE_SNAPSHOTS = "expire_snapshots"
     REMOVE_ORPHAN_FILES = "remove_orphan_files"
+    CONVERT_EQUALITY_DELETES = "convert_equality_deletes"
     CONVERT_DELETES = "convert_deletes"
     OPTIMIZE = "optimize"
     OPTIMIZE_MANIFESTS = "optimize_manifests"

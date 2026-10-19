@@ -466,6 +466,7 @@ vs `Operations › {preset name} › Run …`).
 class OperationType(str, Enum):
     EXPIRE_SNAPSHOTS = "expire_snapshots"
     REMOVE_ORPHAN_FILES = "remove_orphan_files"
+    CONVERT_EQUALITY_DELETES = "convert_equality_deletes"
     CONVERT_DELETES = "convert_deletes"
     OPTIMIZE = "optimize"                 # = rewrite_data_files
     OPTIMIZE_MANIFESTS = "optimize_manifests"  # = rewrite_manifests

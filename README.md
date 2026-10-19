@@ -162,7 +162,10 @@ workers never adds parallel `OPTIMIZE`s.
   <tr>
     <td width="50%" valign="top">
       <b>Compact first, then clean up.</b> The order is defined once, in
-      <code>cryo/planner/guardrails.py</code>.<br><br>
+      <code>cryo/planner/guardrails.py</code>.
+      <code>convert_equality_deletes</code> is opt-in and currently blocked on every
+      engine: it must replace equality deletes with position deletes without rewriting
+      data files, and no Trino or Spark procedure does that.<br><br>
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/img/operation-order-dark.png">
         <img src="docs/img/operation-order-light.png" alt="The seven operations in order. Compact: convert_deletes, rewrite_position_deletes (Spark only), optimize. Measure: compute_statistics. Clean up: optimize_manifests, expire_snapshots, remove_orphan_files.">

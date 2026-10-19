@@ -71,6 +71,7 @@ export const engineVirtualOptions = (
 };
 
 export const NATIVE_UNSUPPORTED_OPS = [
+  "convert_equality_deletes",
   "convert_deletes",
   "optimize_manifests",
   "compute_statistics",

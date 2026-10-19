@@ -125,6 +125,8 @@ class _PartitionAccum:
     small: int = 0
     size_bytes: int = 0
     delete_files: int = 0
+    equality_delete_files: int = 0
+    equality_delete_bytes: int = 0
     last_write_ms: int | None = None
     sample_path: str | None = None
 
@@ -275,6 +277,9 @@ def analyze_table(
                 ),
             )
             accum.delete_files += 1
+            if delete_kind == "equality":
+                accum.equality_delete_files += 1
+                accum.equality_delete_bytes += file_size
             _note_last_write(accum, write_ms)
             continue
         total_files += 1
@@ -729,6 +734,8 @@ def _partition_raw(accum: _PartitionAccum) -> dict[str, Any]:
     raw: dict[str, Any] = {
         "partition_values": dict(accum.values),
         "delete_files": accum.delete_files,
+        "equality_delete_files": accum.equality_delete_files,
+        "equality_delete_bytes": accum.equality_delete_bytes,
     }
     if accum.last_write_ms is not None:
         raw["last_write_at"] = _format_last_write_at(accum.last_write_ms)

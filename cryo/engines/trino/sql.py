@@ -48,6 +48,11 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
         sql = _render_orphan(table_ref, operation.params)
     elif operation.type is OperationType.OPTIMIZE:
         sql = _render_optimize(table_ref, operation)
+    elif operation.type is OperationType.CONVERT_EQUALITY_DELETES:
+        raise UnsupportedPredicateError(
+            "convert_equality_deletes is not a Trino procedure. "
+            "It must not be rewritten as OPTIMIZE, which would rewrite data files."
+        )
     elif operation.type is OperationType.CONVERT_DELETES:
         # Trino does not expose Spark's delete-file-threshold options; OPTIMIZE is the closest
         # equivalent and rewrites data files to compact delete fragments.

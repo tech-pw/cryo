@@ -17,6 +17,7 @@ from cryo.domain.predicates import LEAF_OPERATORS, SUPPORTED_FIELDS
 # hand-appending in sequence, and ``web/src/lib/operationOrder.ts`` mirrors it for the UI --
 # keep the two in sync.
 CORRECT_ORDER: tuple[OperationType, ...] = (
+    OperationType.CONVERT_EQUALITY_DELETES,
     OperationType.CONVERT_DELETES,
     OperationType.REWRITE_POSITION_DELETES,
     OperationType.OPTIMIZE,
