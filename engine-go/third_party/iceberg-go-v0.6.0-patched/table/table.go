@@ -26,6 +26,7 @@ import (
 	"io"
 	"iter"
 	"log"
+	"math"
 	"math/rand/v2"
 	"runtime"
 	"slices"
@@ -381,7 +382,11 @@ func (t Table) doCommit(ctx context.Context, updates []Update, reqs []Requiremen
 
 	// Bound total retry time with a derived context so both the wait loop
 	// and the CommitTable call itself respect the deadline uniformly.
-	retryCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.totalTimeoutMs)*time.Millisecond)
+	timeoutMs, ok := uintToInt64(cfg.totalTimeoutMs)
+	if !ok {
+		return nil, fmt.Errorf("commit retry timeout overflows int64")
+	}
+	retryCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
 
 	fs, err := t.fsF(ctx)
@@ -667,6 +672,13 @@ func readRetryConfig(props iceberg.Properties) retryConfig {
 //
 // Inputs are trusted: readRetryConfig is responsible for normalizing
 // user-supplied properties (negatives, zero, min > max).
+func uintToInt64(v uint) (int64, bool) {
+	if uint64(v) > uint64(math.MaxInt64) {
+		return 0, false
+	}
+	return int64(v), true
+}
+
 func backoffDuration(attempt, minMs, maxMs uint) time.Duration {
 	if minMs == 0 {
 		minMs = CommitMinRetryWaitMsDefault
@@ -684,15 +696,24 @@ func backoffDuration(attempt, minMs, maxMs uint) time.Duration {
 		attempt = 62
 	}
 
-	ceiling := int64(minMs) << attempt
-	if ceiling <= 0 || ceiling > int64(maxMs) {
-		ceiling = int64(maxMs)
+	minMs64, minOK := uintToInt64(minMs)
+	maxMs64, maxOK := uintToInt64(maxMs)
+	if !minOK {
+		minMs64 = math.MaxInt64
+	}
+	if !maxOK {
+		maxMs64 = math.MaxInt64
+	}
+
+	ceiling := minMs64 << attempt
+	if ceiling <= 0 || ceiling > maxMs64 {
+		ceiling = maxMs64
 	}
 
 	// Jitter in [minMs, ceiling]: keeps a non-zero floor so concurrent
 	// writers don't all sample 0 and retry in lockstep.
 	//nolint:gosec // non-security randomness, jitter for retry spread
-	wait := int64(minMs) + rand.Int64N(ceiling-int64(minMs)+1)
+	wait := minMs64 + rand.Int64N(ceiling-minMs64+1)
 
 	return time.Duration(wait) * time.Millisecond
 }
