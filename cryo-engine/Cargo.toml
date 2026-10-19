@@ -23,7 +23,7 @@ iceberg-catalog-rest = { git = "https://github.com/apache/iceberg-rust", rev = "
 iceberg-storage-opendal = { git = "https://github.com/apache/iceberg-rust", rev = "665c64e4", features = ["opendal-s3"] }
 
 # Arrow/Parquet — align with that iceberg revision. Parquet 59 does not depend on thrift.
-arrow = { version = "59", default-features = false, features = ["ipc"] }
+arrow = { version = "60", default-features = false, features = ["ipc"] }
 parquet = { version = "59", default-features = false, features = ["arrow"] }
 bytes = "1"
 
