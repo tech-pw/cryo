@@ -200,7 +200,8 @@ untested against it.
 ### 4.2 The engine landscape includes one very relevant prior-art project Cryo hadn't been compared against
 
 **Apache Amoro (AMS)** — a purpose-built, self-hostable lakehouse *management* service that
-dispatches actual rewrite work to pluggable "Optimizer" workers (Flink/Spark/Trino today). Its
+dispatches actual rewrite work to its own optimizer processes (`local`, `kubernetes`,
+`flink`, `spark`, `external`). Trino is query-only. Its
 architecture is explicitly split into an always-on lightweight "brain" (scheduling/decisioning) and
 ephemeral, horizontally-scaled execution workers — **structurally identical to what §5 below
 recommends Cryo build**, and it's a real, existing, maintained OSS project claiming ~10x speedup

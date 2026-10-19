@@ -311,9 +311,9 @@ and it does not bring its own compute.
 | | Cryo | DIY (Airflow + dbt) | Apache Amoro | LakeOps | Managed clouds |
 |---|---|---|---|---|---|
 | Deployment | Self-hosted (Kubernetes) | Hand-rolled | Self-hosted | SaaS | Fully managed |
-| Engines | Trino, Spark/EMR, native Go (beta) | Whatever you wired | Flink/Spark | Own Rust engine | Locked to platform |
-| Load-aware admission | Yes, live engine load | If you built it | Limited | Yes | N/A |
-| A–F health grade + cost projection | Built in | Usually a script | No | Partial | Varies |
+| Engines | Trino, Spark/EMR, native Go (beta) | Whatever you wired | Own optimizers (local, Kubernetes, Flink, Spark, external). Trino is query-only | Own Rust engine | Locked to platform |
+| Load-aware admission | Yes, live engine load | If you built it | No (quota and optimizer groups) | Yes | N/A |
+| A–F health grade + cost projection | Built in | Usually a script | Numeric score only; no A–F grade or cost projection | Partial | Varies |
 | Data leaves your infra | No | No | No | Telemetry does | Yes |
 | Cost | Free | Free, you own it all | Free | Paid | Usage-based |
 
@@ -323,21 +323,22 @@ and it does not bring its own compute.
 | | Cryo | DIY (Airflow + dbt) | Apache Amoro | LakeOps | Granica Crunch | Managed cloud (Databricks / S3 Tables / Snowflake) |
 |---|---|---|---|---|---|---|
 | Deployment | Self-hosted (Kubernetes) | Self-hosted, hand-rolled | Self-hosted | SaaS | SaaS, hybrid, or on-prem/air-gapped | Fully managed |
-| Engines | Trino, Spark/EMR, and a beta native Go compactor | Whatever you wired up | Flink/Spark, Mixed-Iceberg | Own Rust engine + telemetry from Trino/Spark/Snowflake/DuckDB/Flink | Own engine; coexists with Trino/Spark/Airflow/dbt | Locked to the platform |
+| Engines | Trino, Spark/EMR, and a beta native Go compactor | Whatever you wired up | Own optimizer processes (local, Kubernetes, Flink, Spark, external). Trino is query-only. Mixed-Iceberg is a format, not an engine | Own Rust engine + telemetry from Trino/Spark/Snowflake/DuckDB/Flink | Own engine; coexists with Trino/Spark/Airflow/dbt | Locked to the platform |
 | Table formats | Iceberg | Whatever you wired up | Iceberg, Mixed-Iceberg | Iceberg, Delta | Iceberg, Delta, Hive | Varies by platform |
 | Maintenance ops (compaction, snapshot expiry, orphan cleanup) | Yes | Only if you built it | Yes | Yes | Yes | Yes |
-| Sorting / curve clustering | Sort + Z-order (Spark only; Hilbert capability-gated) | Only if you built it | Sort + Z-order | Yes | Sort, Z-order, Hilbert | Varies by platform |
+| Sorting / curve clustering | Sort + Z-order (Spark only; Hilbert capability-gated) | Only if you built it | Partial: honours table sort order; no Z-order | Yes | Sort, Z-order, Hilbert | Varies by platform |
 | Parquet re-compression below ZSTD | No; reports measured codec/level gains instead | No | No | No | Yes, its core differentiator | No |
-| Load-aware admission control | Yes, reads live engine load before admitting work | Only if you built it | Limited | Yes | Not documented | N/A (fully managed) |
-| Table health grading (A–F) + cost projection | Yes, built in | No, usually a one-off script | No | Partial | Savings-focused, not a fleet health grade | Varies by platform |
+| Load-aware admission control | Yes, reads live engine load before admitting work | Only if you built it | No. Quota and optimizer groups, not live engine load | Yes | Not documented | N/A (fully managed) |
+| Table health grading (A–F) + cost projection | Yes, built in | No, usually a one-off script | Numeric health score (small-file, equality-delete, position-delete). No A–F grade, no cost projection | Partial | Savings-focused, not a fleet health grade | Varies by platform |
 | Data leaves your infra | No | No | No | Yes, telemetry goes to LakeOps | Depends on tier: hybrid sends metadata; on-prem sends nothing | Yes, data lives on the platform |
 | UI for fleet-wide assignment | Yes | No | Limited | Yes | Yes | Yes |
 | Cost | Free, self-hosted | Free, but you build and own everything | Free, self-hosted | Paid SaaS | Commercial, outcome-based pricing | Usage-based, platform lock-in |
 
 Cryo sits where **LakeOps** does, as a dedicated control plane rather than a managed platform, but
 keeps telemetry on your infrastructure and treats Trino as a first-class engine. Against **Apache
-Amoro**, Cryo is lighter to operate (no Mixed-Iceberg coupling, no JVM sidecar) and Trino-first
-rather than Flink-first. Cryo's committed Helm defaults request 3.35 CPU cores and 6.00 GiB of
+Amoro**, Cryo is lighter to operate (no optimizer fleet, no Mixed-Iceberg coupling) and maintains
+through the Trino or Spark you already run. Amoro never maintains a table via Trino. Maintenance
+runs on Amoro's own optimizer processes. Cryo's committed Helm defaults request 3.35 CPU cores and 6.00 GiB of
 memory at idle across the always-on control plane; reproduce it with `make deployment-footprint`,
 which reads `deploy/helm/cryo/values.yaml` live. No document here cites an Amoro figure, so none is
 compared (see `scripts/deployment_footprint.py` to add one honestly). Against the managed clouds
@@ -358,6 +359,23 @@ table: for a table already on ZSTD-3 with sensible row groups, the cheap residua
 across 301,949 files averaging ~1.45 MB) that changes file size, row-group size, sort order and
 encoding together, so it can't be credited to a codec alone. Neither vendor publishes a
 reproducible benchmark; Cryo's inputs are in [CryoBench](./docs/CRYOBENCH.md).
+
+Amoro cells were checked against `apache/amoro` commit `6d3cd42` (2026-10-17). The latest
+release then was v0.8.1-incubating (2025-09-11). `dynamic-allocation.*` is on `main` and the
+latest docs, not part of that release.
+
+- Engines: [Managing Optimizers](https://amoro.apache.org/docs/latest/managing-optimizers/) —
+  containers `local`, `kubernetes`, `flink`, `spark`, `external`.
+- Trino: [Trino](https://amoro.apache.org/docs/latest/trino/) — Iceberg connector and
+  `amoro-mixed-trino` are query paths only.
+- Sorting: [Self-optimizing](https://amoro.apache.org/docs/latest/self-optimizing/) mentions
+  sorting; `IcebergRewriteExecutor.java` at `6d3cd42` honours table sort order. No Z-order
+  implementation in the Java sources at that commit.
+- Health score: `table_summary_health_score` in `TableSummaryMetrics.java`; `getHealthScore`,
+  `getSmallFileScore`, `getEqualityDeleteScore`, and `getPositionalDeleteScore` in
+  `AbstractOptimizingEvaluator.java` at `6d3cd42`.
+- Admission: quota and optimizer groups in the self-optimizing and managing-optimizers docs.
+  No admission against live query-engine load.
 
 </details>
 

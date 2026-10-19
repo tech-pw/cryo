@@ -653,7 +653,7 @@ contact with the repo's own internal docs.
 The README grants LakeOps "Yes" on the same row. (Interestingly, the internal matrix in
 `research-and-roadmap.md` §4 says ❓/unverified for LakeOps — the README is *more* generous
 to the competitor than the research supports; fine, but reconcile the two.) The claim
-differentiates only vs Amoro ("Limited") and DIY.
+differentiates only vs Amoro (quota-based, not live engine load) and DIY.
 
 Worse: per `native-engine-scoping-research.md` §1, the governor's native-path probe
 (`cryo/governor/capacity.py::_probe_native`) returns a static configured `slot_cap` with
@@ -669,7 +669,8 @@ before promoting native.
 explicitly recommends the README "say so plainly rather than presenting both engines as
 equally mature." The bolded "**and**" in the table does the opposite.
 
-The dual-engine claim is still *differentiated* — Amoro is Flink-first, LakeOps executes on
+The dual-engine claim is still *differentiated* — Amoro maintains on its own optimizer
+processes (Trino is query-only), LakeOps executes on
 its own Rust engine — but the honest version is "Trino first-class, Spark/EMR functional but
 younger." Honesty is the stated trust strategy (`OSS_READINESS.md` §4: "a visibly honest gap
 list is itself a trust signal").
@@ -694,8 +695,10 @@ the truth about itself.
 
 ### 3.4 Still fully intact
 
-- **Health grading A–F + cost projection** — LakeOps "Partial", Amoro ❌; Cryo's strongest
-  unique row.
+- **Health grading A–F + cost projection** — LakeOps "Partial". Amoro has a numeric health
+  score (small-file, equality-delete, position-delete sub-scores, exported as
+  `table_summary_health_score` at `6d3cd42`) but no explained A–F grade and no cost
+  projection. Cryo's letter grade plus cost projection is still the differentiator.
 - **Telemetry stays on your infra vs LakeOps** — verified SaaS-only in
   `research-and-roadmap.md`'s verification notes.
 - **Self-hosted vs managed cloud** — unchanged.
