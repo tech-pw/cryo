@@ -471,6 +471,7 @@ class OperationType(str, Enum):
     OPTIMIZE_MANIFESTS = "optimize_manifests"  # = rewrite_manifests
     COMPUTE_STATISTICS = "compute_statistics"
     REWRITE_POSITION_DELETES = "rewrite_position_deletes"
+    EXPIRE_DATA = "expire_data"
 
 class EngineType(str, Enum):
     TRINO = "trino"

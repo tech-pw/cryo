@@ -14,6 +14,7 @@ class OperationType(StrEnum):
     # position-delete files, cheap relative to a full data rewrite (CONVERT_DELETES / OPTIMIZE
     # is the "major" path for this same problem -- distinct type for audit-log clarity).
     REWRITE_POSITION_DELETES = "rewrite_position_deletes"
+    EXPIRE_DATA = "expire_data"
 
 
 class EngineType(StrEnum):

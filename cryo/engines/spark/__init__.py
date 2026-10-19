@@ -22,6 +22,7 @@ SUPPORTED_OPS: frozenset[OperationType] = frozenset(
         # (confirmed live, 2026-07-22, testing a preset built specifically to shrink a
         # MOR table's position-delete-dominated small-file count).
         OperationType.REWRITE_POSITION_DELETES,
+        OperationType.EXPIRE_DATA,
     }
 )
 

@@ -11,6 +11,7 @@ from cryo.domain.models import (
     PartitionPredicateTerm,
 )
 from cryo.engines.base import RenderedStatement
+from cryo.engines.expire_data_sql import expire_data_metadata, render_expire_data_delete
 from cryo.planner.partitions import DEFAULT_RENDERABLE_CAPABILITIES
 
 
@@ -55,6 +56,8 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
         sql = f"ALTER TABLE {table_ref} EXECUTE optimize_manifests"
     elif operation.type is OperationType.COMPUTE_STATISTICS:
         sql = _render_compute_statistics(table_ref, operation.params)
+    elif operation.type is OperationType.EXPIRE_DATA:
+        sql = render_expire_data_delete(table_ref, operation.params, quote="trino")
     elif operation.type is OperationType.REWRITE_POSITION_DELETES:
         # Trino has no ALTER TABLE EXECUTE equivalent of Iceberg's rewrite_position_delete_files
         # procedure (Spark-only as of the connectors this renderer targets). Route this
@@ -70,7 +73,10 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
         action=operation.type,
         sql=sql,
         engine=EngineType.TRINO,
-        metadata={"table_ref": table_ref},
+        metadata={
+            "table_ref": table_ref,
+            **expire_data_metadata(operation.type.value, operation.params),
+        },
     )
 
 

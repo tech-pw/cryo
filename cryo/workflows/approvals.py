@@ -347,6 +347,7 @@ def requires_approval(
         # Default: require approval for destructive operations
         config_require_approval = {
             OperationType.EXPIRE_SNAPSHOTS: True,
+            OperationType.EXPIRE_DATA: True,
             OperationType.REMOVE_ORPHAN_FILES: True,
         }
 
@@ -377,6 +378,14 @@ def _is_parameter_safe(
     app_retention = int(app.get("retention_days", 7))
     if req_retention < app_retention:
         return False
+
+    req_cutoff = req.get("cutoff")
+    app_cutoff = app.get("cutoff")
+    if req_cutoff is not None or app_cutoff is not None:
+        if req_cutoff is None or app_cutoff is None or str(req_cutoff) > str(app_cutoff):
+            return False
+        if req.get("field") != app.get("field") or req.get("level") != app.get("level"):
+            return False
 
     app_retain_last = app.get("retain_last")
     if app_retain_last is not None:
@@ -492,6 +501,24 @@ def estimate_impact(
             if snapshots_to_delete > 0
             else 0,  # Rough estimate
             "warning": "This operation is irreversible. Old snapshots will be permanently deleted.",
+        }
+
+    elif operation_type == OperationType.EXPIRE_DATA:
+        estimated_bytes = int(operation_params.get("estimated_bytes") or 0)
+        return {
+            "operation": "Expire data",
+            "table_name": table_name,
+            "field": operation_params.get("field"),
+            "level": operation_params.get("level", "partition"),
+            "cutoff": operation_params.get("cutoff"),
+            "estimated_partitions": operation_params.get("estimated_partitions"),
+            "estimated_bytes": estimated_bytes,
+            "estimated_data_freed_gb": estimated_bytes / (1024**3),
+            "row_level": bool(operation_params.get("row_level")),
+            "warning": (
+                "This permanently deletes rows older than the cutoff. "
+                "Protected snapshots still show them via time travel until those snapshots expire."
+            ),
         }
 
     elif operation_type == OperationType.REMOVE_ORPHAN_FILES:
