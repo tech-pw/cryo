@@ -43,7 +43,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "d3-force": "^3.0.0",
-    "lucide-react": "^1.27.0",
+    "lucide-react": "^1.55.0",
     "openapi-fetch": "^0.15.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
