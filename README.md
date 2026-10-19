@@ -408,6 +408,7 @@ contribution.
 | [`docs/CAPABILITIES.md`](./docs/CAPABILITIES.md) | Generated catalog, engine and operation matrix: what ships today |
 | [`plan.md`](./plan.md) · [`hld.md`](./hld.md) · [`lld.md`](./lld.md) | Vision and scope · components and data flow · schemas, interfaces and planner algorithm |
 | [`AGENTS.md`](./AGENTS.md) | Guardrails for contributors and AI agents, including the parity checklist |
+| [`docs/operator/`](./docs/operator/README.md) | Operator procedures for install and debug. They explain; they do not install or run maintenance |
 | [`docs/`](./docs/) | Execution plan, research and operational notes. Index: [`docs/README.md`](./docs/README.md) |
 | [`docs/operator-guide.md`](./docs/operator-guide.md) · [`docs/api.md`](./docs/api.md) | Local operator notes · API and auth |
 | [`docs/SUPPORT_POLICY.md`](./docs/SUPPORT_POLICY.md) · [`docs/VERSIONING.md`](./docs/VERSIONING.md) | Supported releases and triage · what pre-1.0 promises |

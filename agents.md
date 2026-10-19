@@ -179,7 +179,16 @@ Use the specialized editor tools for files; reserve the shell for git/build/test
 
 ---
 
-## 8. Gotchas / footguns
+## 8. Operator help
+
+Day-to-day install and debug help for people using Cryo lives in [`docs/operator/`](./docs/operator/README.md),
+with a read-only debug agent at [`.agents/agents/cryo-debug.md`](./.agents/agents/cryo-debug.md).
+Those files are procedures. This file stays the contributor guardrails. Do not paste a runbook
+here. `.claude/` and `.agents/skills/` are gitignored local state. Do not put a shared procedure there.
+
+---
+
+## 9. Gotchas / footguns
 - **Don't** issue full-table OPTIMIZE on large tables without partition filters — it hammers Trino.
   The Planner exists precisely to prevent this; route everything through it.
 - **Don't** rely on worker replica count for concurrency — the **Governor** bounds real concurrency
