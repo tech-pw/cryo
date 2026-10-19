@@ -89,7 +89,7 @@ cryo.local/tables
 
 | Size, Reads 30d | Table size and the number of queries that read it in 30 days. |
 
-| Savings/mo | Modelled monthly saving from maintenance. `-` means none, `
+| Savings/mo | Modelled monthly saving from maintenance. `-` means none, `<$1` means under a dollar. |
 
 Hover a row for **Scan now** and a shortcut to the table's Maintenance tab.
 

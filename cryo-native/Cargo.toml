@@ -20,7 +20,7 @@ datafusion = "43"
 parquet = { version = "53", features = ["arrow", "async"] }
 
 # PyO3 for Python bindings
-pyo3 = { version = "0.22", features = ["extension-module"] }
+pyo3 = { version = "0.29", features = ["extension-module"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

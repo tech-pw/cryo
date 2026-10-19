@@ -19,7 +19,7 @@ fn cryo_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 /// Compaction configuration exposed to Python
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyCompactionConfig {
     /// Target file size in bytes
@@ -99,7 +99,7 @@ impl Default for PyCompactionConfig {
 }
 
 /// Result of a compaction operation
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyCompactionResult {
     /// Whether the operation succeeded
@@ -234,12 +234,12 @@ impl PyCompactionEngine {
     ) -> PyResult<pyo3::Py<pyo3::types::PyDict>> {
         use pyo3::types::PyDict;
         
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let result = self.runtime.block_on(async {
                 compaction::analyze_files(&input_paths).await
             }).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             
-            let dict = PyDict::new_bound(py);
+            let dict = PyDict::new(py);
             dict.set_item("total_files", result.total_files)?;
             dict.set_item("total_bytes", result.total_bytes)?;
             dict.set_item("avg_file_size", result.avg_file_size)?;
