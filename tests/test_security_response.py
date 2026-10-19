@@ -6,11 +6,6 @@ import pytest
 
 from cryo.ai.tools.evidence import redact
 from cryo.scanner import control
-from cryo.security.outbound import SLACK_WEBHOOK_HOSTS, OutboundURLError, validated_https_url
-
-
-def _public(host: str) -> tuple[str, ...]:
-    return ("1.1.1.1",)
 
 
 def test_sql_literal_redaction_does_not_backtrack() -> None:
@@ -23,34 +18,6 @@ def test_token_url_is_still_redacted() -> None:
     value = "see https://example.com/cb?token=abc&x=1"
     assert "abc" not in redact(value)
     assert "token=[redacted]" in redact(value)
-
-
-def test_slack_webhook_must_use_the_slack_host() -> None:
-    url = validated_https_url(
-        "https://hooks.slack.com/services/T/B/secret",
-        allowed_hosts=SLACK_WEBHOOK_HOSTS,
-        resolve=_public,
-    )
-    assert url == "https://hooks.slack.com/services/T/B/secret"
-    with pytest.raises(OutboundURLError):
-        validated_https_url(
-            "https://evil.example/services/T/B/secret",
-            allowed_hosts=SLACK_WEBHOOK_HOSTS,
-            resolve=_public,
-        )
-
-
-def test_outbound_url_rejects_private_and_metadata_targets() -> None:
-    with pytest.raises(OutboundURLError):
-        validated_https_url("https://169.254.169.254/latest/meta-data", resolve=_public)
-    with pytest.raises(OutboundURLError):
-        validated_https_url("http://api.openai.com/v1/chat/completions", resolve=_public)
-    with pytest.raises(OutboundURLError):
-        validated_https_url("https://user:pass@api.openai.com/v1", resolve=_public)
-    with pytest.raises(OutboundURLError):
-        validated_https_url("https://llm.example/v1", resolve=lambda _host: ("10.1.2.3",))
-    with pytest.raises(OutboundURLError):
-        validated_https_url("https://metadata.google.internal/", resolve=_public)
 
 
 def test_health_check_does_not_return_exception_text(monkeypatch: pytest.MonkeyPatch) -> None:

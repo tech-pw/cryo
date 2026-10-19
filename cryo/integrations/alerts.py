@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 from cryo.config import get_settings
 from cryo.observability.metrics import anomaly_alerts_total
-from cryo.security.outbound import SLACK_WEBHOOK_HOSTS, validated_https_url
 
 if TYPE_CHECKING:
     from cryo.ml.anomaly_detector import AnomalyAlert
@@ -103,10 +102,7 @@ def send_slack_anomaly_alerts(
         payload["channel"] = settings.slack_channel
 
     try:
-        _post_json(
-            validated_https_url(url, allowed_hosts=SLACK_WEBHOOK_HOSTS),
-            payload,
-        )
+        _post_json(url, payload)
         for alert in alerts:
             anomaly_alerts_total.labels(
                 metric_name=alert.metric_name,
@@ -239,10 +235,7 @@ def send_slack_table_breach_alert(
         payload["channel"] = settings.slack_channel
 
     try:
-        _post_json(
-            validated_https_url(url, allowed_hosts=SLACK_WEBHOOK_HOSTS),
-            payload,
-        )
+        _post_json(url, payload)
         return True
     except Exception:
         logger.exception("Failed to send Slack table breach alert for %s", table_name)

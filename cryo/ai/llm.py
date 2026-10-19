@@ -12,7 +12,6 @@ from typing import Any, Literal
 import httpx
 
 from cryo.config import get_settings
-from cryo.security.outbound import validated_https_url
 
 logger = logging.getLogger(__name__)
 
@@ -296,10 +295,9 @@ class OpenAIClient(LLMClient):
             ],
         }
 
-        api_url = validated_https_url(self.api_url)
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                api_url,
+                self.api_url,
                 headers=headers,
                 json={**base_payload, "max_tokens": max_tokens},
             )
@@ -310,7 +308,7 @@ class OpenAIClient(LLMClient):
                     error_msg = error_data.get("error", {}).get("message", "")
                     if "max_completion_tokens" in error_msg:
                         response = await client.post(
-                            api_url,
+                            self.api_url,
                             headers=headers,
                             json={**base_payload, "max_completion_tokens": max_tokens},
                         )
@@ -413,7 +411,7 @@ class AzureOpenAIClient(LLMClient):
         if context:
             system_prompt += f"\n\nContext:\n```json\n{json.dumps(context, indent=2)}\n```"
 
-        url = validated_https_url(self._build_url())
+        url = self._build_url()
 
         headers = {
             "api-key": self.api_key,

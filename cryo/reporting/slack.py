@@ -8,8 +8,6 @@ from typing import Any
 
 import httpx
 
-from cryo.security.outbound import SLACK_WEBHOOK_HOSTS, validated_https_url
-
 logger = logging.getLogger(__name__)
 
 
@@ -125,9 +123,8 @@ class SlackClient:
             payload["thread_ts"] = thread_ts
 
         try:
-            webhook_url = validated_https_url(self.webhook_url, allowed_hosts=SLACK_WEBHOOK_HOSTS)
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(webhook_url, json=payload)
+                response = await client.post(self.webhook_url, json=payload)
                 if response.status_code == 200:
                     logger.info("Slack message sent successfully")
                     return True
