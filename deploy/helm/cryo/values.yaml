@@ -351,6 +351,11 @@ spark:
     activeDeadlineSeconds: 7200
     ttlSecondsAfterFinished: 3600
     slotCap: 2
+    # Arch is required, not a capacity preference. ghcr.io/tech-pw/cryo-spark is
+    # amd64-only; a selector that omits kubernetes.io/arch lands the wrapper Job on
+    # Graviton and spark-submit dies with "exec format error" before Spark starts.
+    # The app merges this pin back if a destination selector drops it. Remove the
+    # arch pin only after the published image is a multi-arch manifest list.
     nodeSelector: "karpenter.sh/capacity-type=on-demand,kubernetes.io/arch=amd64"
 
 redis:

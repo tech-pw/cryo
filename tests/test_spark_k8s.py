@@ -64,6 +64,22 @@ def test_config_from_config_env_fallback(monkeypatch: pytest.MonkeyPatch) -> Non
     assert cfg.image_pull_secrets == ("cryo-registry", "other")
 
 
+def test_config_keeps_amd64_when_a_selector_omits_arch() -> None:
+    # The chart injects a capacity pin and no arch. That used to replace the default and
+    # schedule the amd64-only Spark image onto arm64 nodes.
+    cfg = SparkK8sConfig.from_config(
+        {"spark_k8s": {"node_selector": "karpenter.sh/capacity-type=on-demand"}}
+    )
+    assert cfg.node_selector == {
+        "karpenter.sh/capacity-type": "on-demand",
+        "kubernetes.io/arch": "amd64",
+    }
+    explicit = SparkK8sConfig.from_config(
+        {"spark_k8s": {"node_selector": {"kubernetes.io/arch": "arm64"}}}
+    )
+    assert explicit.node_selector == {"kubernetes.io/arch": "arm64"}
+
+
 def test_config_from_config_defaults() -> None:
     cfg = SparkK8sConfig.from_config({})
     # Not a hardcoded "default": confirmed live 2026-10-01, a destination.config with no
@@ -77,6 +93,9 @@ def test_config_from_config_defaults() -> None:
     assert cfg.image_pull_secrets == ()
     assert cfg.driver_mem_mib == 2048
     assert cfg.executor_instances == 2
+    # No Karpenter label in the code default: a cluster without that label could not
+    # schedule. Arch stays, because the published Spark image is amd64-only.
+    assert cfg.node_selector == {"kubernetes.io/arch": "amd64"}
 
 
 def test_config_from_config_namespace_falls_back_to_pod_namespace(
