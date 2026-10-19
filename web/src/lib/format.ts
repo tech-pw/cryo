@@ -51,6 +51,8 @@ export const formatDuration = (ms?: number | null): string => {
   return `${hours}h ${minutes % 60}m`;
 };
 
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/;
+
 export const formatTime = (value?: string | null): string => {
   if (!value) return "-";
   const date = new Date(value);
@@ -64,6 +66,14 @@ export const formatTime = (value?: string | null): string => {
     year: includeYear ? "numeric" : undefined
   }).format(date);
 };
+
+/** Rewrite embedded ISO-8601 instants (the form the API stores) into the readable clock. */
+export const humanizeInstants = (text: string): string =>
+  text.replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/g, (match) => {
+    if (!ISO_INSTANT.test(match)) return match;
+    const formatted = formatTime(match);
+    return formatted === "-" ? match : formatted;
+  });
 
 export const bytesToGb = (bytes?: number | null): number =>
   bytes && Number.isFinite(bytes) ? bytes / 1024 ** 3 : 0;

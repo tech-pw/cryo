@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TableRunRead } from "../../../api/types";
-import { buildRunColumns, gradeChange, gridRows, isManualTrigger, statChanges, toneFor } from "./runModel";
+import { buildRunColumns, changeColumns, gradeChange, gridRows, isManualTrigger, mergeChangeColumns, statChanges, toneFor } from "./runModel";
 
 const run = (overrides: Partial<TableRunRead>): TableRunRead => ({
   job_id: "job-1",
@@ -13,6 +13,26 @@ const run = (overrides: Partial<TableRunRead>): TableRunRead => ({
   duration_seconds: 656,
   steps: [],
   ...overrides
+});
+
+describe("changeColumns", () => {
+  it("puts a jobless config change on the timeline and ignores engine receipts", () => {
+    const runs = buildRunColumns(
+      [
+        run({ job_id: "a", run_id: "ra", started_at: "2026-10-01T23:00:00Z" }),
+        run({ job_id: "b", run_id: "rb", started_at: "2026-10-05T23:00:00Z" })
+      ],
+      []
+    );
+    const changes = changeColumns([
+      { id: "c1", action: "table_config_change", status: "recorded", ts: "2026-10-03T12:00:00Z", detail: "cooldown_hours: 12 -> 20", actor: "aamir" },
+      { id: "c2", action: "optimize", status: "succeeded", ts: "2026-10-04T12:00:00Z", detail: "CALL x", job_id: "b" }
+    ] as never);
+    expect(changes.map((column) => column.label)).toEqual(["Config change"]);
+    const merged = mergeChangeColumns(runs, changes);
+    expect(merged.map((column) => ("kind" in column ? column.label : column.run.run_id))).toEqual(["ra", "Config change", "rb"]);
+    expect(merged[1]).toMatchObject({ detail: "cooldown_hours: 12 -> 20", actor: "aamir" });
+  });
 });
 
 describe("runModel", () => {

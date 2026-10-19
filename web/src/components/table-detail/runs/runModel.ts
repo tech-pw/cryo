@@ -15,6 +15,32 @@ export const GRID_OPERATIONS = [
 
 export const CORE_GRID_OPERATIONS = new Set(["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"]);
 
+/**
+ * Audit actions that are operator changes, not engine work. They have no job, so the run
+ * grid would otherwise drop them. Shown on their own column instead of as a fake run.
+ */
+export const CHANGE_ACTIONS = new Set([
+  "table_config_change",
+  "apply_table_properties",
+  "maintenance_exclude",
+  "maintenance_include",
+  "maintenance_pause",
+  "maintenance_resume",
+  "pause",
+  "resume"
+]);
+
+export const CHANGE_LABEL: Record<string, string> = {
+  table_config_change: "Config change",
+  apply_table_properties: "Property change",
+  maintenance_exclude: "Excluded",
+  maintenance_include: "Included",
+  maintenance_pause: "Paused",
+  maintenance_resume: "Resumed",
+  pause: "Paused",
+  resume: "Resumed"
+};
+
 export const OPERATION_SHORT: Record<string, string> = {
   convert_deletes: "Convert deletes",
   rewrite_position_deletes: "Rewrite deletes",
@@ -143,9 +169,55 @@ export const buildRunColumns = (runs: TableRunRead[], audit: AuditEntry[]): RunC
     });
 };
 
+/** An operator change (config, exclusion, hold) that happened between runs. */
+export interface ChangeColumn {
+  kind: "change";
+  key: string;
+  action: string;
+  label: string;
+  status: string;
+  detail: string | null;
+  actor: string | null;
+  startedAt: string;
+}
+
+export type GridColumn = RunColumn | ChangeColumn;
+
+/** Jobless operator changes, oldest first. Engine receipts are excluded — they belong to a run. */
+export const changeColumns = (audit: AuditEntry[]): ChangeColumn[] =>
+  audit
+    .filter((entry) => CHANGE_ACTIONS.has(entry.action ?? ""))
+    .map((entry) => {
+      const action = entry.action ?? "";
+      const at = entry.ts ?? entry.created_at ?? "";
+      return {
+        kind: "change" as const,
+        key: `change-${entry.id ?? at}`,
+        action,
+        label: CHANGE_LABEL[action] ?? action.replaceAll("_", " "),
+        status: entry.status ?? "recorded",
+        detail: detailText(entry.detail),
+        actor: entry.actor ?? null,
+        startedAt: at
+      };
+    })
+    .filter((column) => column.startedAt.length > 0)
+    .sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
+
+/** Runs and operator changes on one timeline, oldest first. */
+export const mergeChangeColumns = (runs: RunColumn[], changes: ChangeColumn[]): GridColumn[] =>
+  [
+    ...runs.map((run) => ({ at: Date.parse(run.startedAt ?? ""), column: run as GridColumn })),
+    ...changes.map((change) => ({ at: Date.parse(change.startedAt), column: change as GridColumn }))
+  ]
+    .sort((a, b) => (a.at || 0) - (b.at || 0))
+    .map((item) => item.column);
+
 /** Grid rows: the four core operations always, extras only if some shown run used them. */
-export const gridRows = (columns: RunColumn[]): string[] =>
-  GRID_OPERATIONS.filter((op) => CORE_GRID_OPERATIONS.has(op) || columns.some((column) => column.cells.has(op)));
+export const gridRows = (columns: GridColumn[]): string[] =>
+  GRID_OPERATIONS.filter(
+    (op) => CORE_GRID_OPERATIONS.has(op) || columns.some((column) => !("kind" in column) && column.cells.has(op))
+  );
 
 export interface StatChange {
   label: string;

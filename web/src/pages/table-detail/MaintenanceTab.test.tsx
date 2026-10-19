@@ -165,6 +165,8 @@ describe("MaintenanceTab", () => {
     expect(await screen.findByRole("heading", { name: "Runs" })).toBeInTheDocument();
     expect(await screen.findByText("1 in progress")).toBeInTheDocument();
     expect(document.querySelector(".td-grid-bar")?.getAttribute("data-tone")).toBe("queued");
+    const runGrid = document.querySelector<HTMLElement>(".td-grid");
+    expect(runGrid?.style.gridTemplateColumns).toBe("minmax(112px, max-content) repeat(1, 16px)");
     expect(document.querySelector(".td-run-status")?.textContent).toContain("Waiting");
     expect(screen.queryByText("Running", { selector: ".td-run-status" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open full run/ })).toHaveAttribute("href", "/runs/run-9");
@@ -216,6 +218,7 @@ describe("MaintenanceTab", () => {
     expect(scanAt?.textContent).toContain("Unknown");
     expect(scanAt?.textContent).not.toMatch(/0 GB|\b0\b/);
     expect(screen.getByText("max_stats_age_days").closest("div")?.textContent).toContain("3");
+    expect(screen.getByText("cutoff").closest("div")?.textContent).not.toContain("2026-09-25T12:00:00");
     expect(screen.getAllByText("Unknown").length).toBeGreaterThan(0);
     expect(screen.queryByText("0 GB")).not.toBeInTheDocument();
     expect(screen.getByText("2 gates must clear first.", { exact: false })).toBeInTheDocument();
