@@ -316,6 +316,12 @@ describe("Consolidated Catalog page", () => {
       const explorerTable = document.querySelector(".datalake-table");
       expect(within(explorerTable as HTMLElement).getByText("Catalog")).toBeInTheDocument();
     });
+    // The choice is persisted by an effect, which React may not have flushed
+    // yet. Unmounting first drops it, and the fresh mount below then reads
+    // nothing and waits out the test timeout.
+    await waitFor(() => {
+      expect(window.localStorage.getItem("cryo.catalog.columnVisibility.v4")).not.toBeNull();
+    });
     first.unmount();
 
     renderPage();

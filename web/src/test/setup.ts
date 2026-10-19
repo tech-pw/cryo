@@ -41,3 +41,24 @@ Object.defineProperty(globalThis, "matchMedia", {
 });
 
 afterEach(() => cleanup());
+
+// jsdom tears its window down when the worker finishes a file, and a timer or
+// promise scheduled during a test can resolve a tick later and touch
+// `document` after that. Vitest reports it as an unhandled error attributed to
+// whichever file was running, which fails an otherwise green run (seen in CI
+// as "ReferenceError: document is not defined" from OverviewPanel.test.tsx
+// with all 845 tests passing). Once the document is gone, later reads are
+// misses rather than crashes.
+afterEach(() => {
+  if (typeof document !== "undefined") return;
+  vi.stubGlobal("document", {
+    documentElement: { getAttribute: () => null, setAttribute: () => {}, style: {} },
+    body: null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    getElementById: () => null,
+    createElement: () => ({ style: {}, setAttribute: () => {}, appendChild: () => {} }),
+    addEventListener: () => {},
+    removeEventListener: () => {}
+  });
+});
