@@ -20,7 +20,6 @@ package iceberg
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -73,16 +72,19 @@ func (p Properties) GetInt(key string, defVal int) int {
 }
 
 // PropUInt reads an unsigned-integer property by key. A missing key,
-// an unparseable value, or a negative value returns defVal — PropUInt
-// uses strconv.ParseUint, which rejects negatives rather than silently
-// wrapping them to a large positive number.
+// an unparseable value, a negative value, or a value above 2^32-1 returns
+// defVal. ParseUint rejects negatives rather than wrapping them, and the
+// bound is a constant literal so the narrowing from uint64 is checked
+// before the conversion. 2^32-1 is the largest value that fits in a uint
+// on every platform Go targets; the only callers read commit-retry counts
+// and millisecond waits, all far below it.
 func PropUInt(p Properties, key string, defVal uint) uint {
 	v, ok := p[key]
 	if !ok {
 		return defVal
 	}
 	n, err := strconv.ParseUint(v, 10, 64)
-	if err != nil || n > uint64(math.MaxUint) {
+	if err != nil || n > 4294967295 {
 		return defVal
 	}
 
