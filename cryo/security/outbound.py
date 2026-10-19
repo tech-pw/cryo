@@ -26,17 +26,75 @@ def slack_webhook_url(url: str) -> str:
     raise OutboundURLError("Slack webhook host is not allowed")
 
 
-def openai_chat_url(url: str) -> str:
-    parsed = _https(url)
+def openai_chat_url(url: str, *, allowed_origins: str | tuple[str, ...] = ()) -> str:
+    """Rebuild a chat URL from a pinned host or an operator-set origin.
+
+    ``allowed_origins`` is ``CRYO_LLM_ALLOWED_ORIGINS``: comma-separated exact
+    origins such as ``http://localhost:11434``. A saved base URL may select one
+    of those origins, but the request URL is rebuilt from the allowlist entry,
+    not from the saved host.
+    """
+    parsed = urlsplit(url.strip())
+    if parsed.username or parsed.password:
+        raise OutboundURLError(
+            "outbound URL must be https on port 443 and must not embed credentials"
+        )
+    if parsed.scheme == "https" and parsed.port in (None, 443) and parsed.hostname:
+        path = _path(parsed.path or "/v1/chat/completions")
+        suffix = _with_query(path, parsed.query)
+        host = _host(parsed)
+        if host == "api.openai.com":
+            return "https://api.openai.com" + suffix
+        label = _suffix_label(host, ".openai.azure.com")
+        if label is not None:
+            return f"https://{label}.openai.azure.com{suffix}"
+    return _url_from_allowed_origin(parsed, allowed_origins)
+
+
+def _url_from_allowed_origin(parsed: SplitResult, allowed_origins: str | tuple[str, ...]) -> str:
+    if not parsed.hostname or parsed.scheme not in {"http", "https"}:
+        raise OutboundURLError("OpenAI API host is not allowed")
     path = _path(parsed.path or "/v1/chat/completions")
     suffix = _with_query(path, parsed.query)
-    host = _host(parsed)
-    if host == "api.openai.com":
-        return "https://api.openai.com" + suffix
-    label = _suffix_label(host, ".openai.azure.com")
-    if label is not None:
-        return f"https://{label}.openai.azure.com{suffix}"
+    wanted = _origin_key(parsed)
+    for origin in _origin_entries(allowed_origins):
+        allowed = _allowed_origin(origin)
+        if _origin_key(allowed) != wanted:
+            continue
+        return f"{allowed.scheme}://{allowed.netloc}{suffix}"
     raise OutboundURLError("OpenAI API host is not allowed")
+
+
+def _origin_entries(allowed_origins: str | tuple[str, ...]) -> tuple[str, ...]:
+    if isinstance(allowed_origins, str):
+        return tuple(part.strip() for part in allowed_origins.split(",") if part.strip())
+    return tuple(part.strip() for part in allowed_origins if part.strip())
+
+
+def _allowed_origin(origin: str) -> SplitResult:
+    parsed = urlsplit(origin)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise OutboundURLError("allowed origin must be scheme://host[:port]")
+    return parsed
+
+
+def _origin_key(parsed: SplitResult) -> str:
+    host = (parsed.hostname or "").lower().rstrip(".")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise OutboundURLError("OpenAI API host is not allowed") from exc
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    return f"{parsed.scheme}://{host}:{port}"
 
 
 def azure_openai_url(url: str) -> str:
