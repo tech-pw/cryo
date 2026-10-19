@@ -16,7 +16,7 @@ harness = false
 [dependencies]
 # Apache Arrow and DataFusion for columnar processing
 arrow = { version = "53", features = ["prettyprint"] }
-datafusion = "43"
+datafusion = "46"
 parquet = { version = "53", features = ["arrow", "async"] }
 
 # PyO3 for Python bindings
