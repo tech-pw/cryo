@@ -1,11 +1,10 @@
-import { BarChart3, Cloud, Database, LineChart, ScanSearch } from "lucide-react";
+import { BarChart3, Database, LineChart, ScanSearch } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/common";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Impact } from "./Impact";
 import { ScanCost } from "./ScanCost";
-import { AwsIntegrationsTab } from "./cost/AwsIntegrationsTab";
 import { CostOverviewTab } from "./cost/CostOverviewTab";
 import { S3RequestsTab } from "./cost/S3RequestsTab";
 
@@ -14,7 +13,7 @@ import { S3RequestsTab } from "./cost/S3RequestsTab";
  *
  * Replaces:
  *   - `/cost`        (was CostSavings)        -> "Overview" tab
- *   - `/aws`         (was AwsIntegrations)    -> "AWS integrations" tab
+ *   - `/aws`         (was AwsIntegrations)    -> Connections, which owns the form
  *   - `/cost-insights`                         -> "S3 requests" tab
  *
  * `/attribution` stays hidden and intentionally out of nav until tag-based team
@@ -24,7 +23,7 @@ import { S3RequestsTab } from "./cost/S3RequestsTab";
  * own KPI strip, charts, and tables. Tab keys map to URL `?tab=` so the active tab is
  * shareable (matches the existing pattern in web/src/components/common/Tabs.tsx).
  */
-type CostTabKey = "storage" | "requests" | "impact" | "reads" | "aws";
+type CostTabKey = "storage" | "requests" | "impact" | "reads";
 
 const DEFAULT_TAB: CostTabKey = "storage";
 
@@ -35,8 +34,10 @@ const TAB_ALIASES: Record<string, CostTabKey> = {
   requests: "requests",
   impact: "impact",
   reads: "reads",
-  "aws-integrations": "aws",
-  aws: "aws"
+  // The connection form moved to Connections. Old links land on Storage, which is
+  // where the price those credentials produce is shown.
+  "aws-integrations": "storage",
+  aws: "storage"
 };
 
 const TABS: Array<{
@@ -68,12 +69,6 @@ const TABS: Array<{
     label: "Reads",
     subtitle: "Who is scanning data. Bytes, not dollars.",
     icon: <ScanSearch className="size-3.5" aria-hidden="true" />
-  },
-  {
-    key: "aws",
-    label: "AWS",
-    subtitle: "Which lakehouses have a storage-metrics connection.",
-    icon: <Cloud className="size-3.5" aria-hidden="true" />
   }
 ];
 
@@ -131,9 +126,6 @@ export const Cost = () => {
         </TabsContent>
         <TabsContent value="reads">
           <ScanCost embedded />
-        </TabsContent>
-        <TabsContent value="aws">
-          <AwsIntegrationsTab active={activeTab === "aws"} onHeaderActions={setHeaderActions} />
         </TabsContent>
       </Tabs>
     </div>

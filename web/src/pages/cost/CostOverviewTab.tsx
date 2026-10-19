@@ -35,7 +35,6 @@ import { EmptyState } from "../../components/common";
 import { CostPrecisionBadge } from "../../components/CostPrecisionBadge";
 import { CostSavingsWaterfall, buildWaterfallRows } from "../../components/CostSavingsWaterfall";
 import { PlanPreview } from "../../components/PlanPreview";
-import { SavingsByOperation } from "../../components/SavingsByOperation";
 import { GradePill } from "../../components/status";
 import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
@@ -210,7 +209,9 @@ export const CostOverviewTab = ({
   });
 
   const data: CostDashboard | undefined = cost.data;
-  const hasRealizedTrend = (data?.trend ?? []).some((point) => (point.realized_usd_month ?? 0) > 0);
+  const hasTrend = (data?.trend ?? []).some(
+    (point) => point.current_monthly_cost_usd != null || point.projected_savings_usd_month != null
+  );
   const precisionCoverage = data?.totals?.precision_coverage;
   const precisionTotal = useMemo(
     () => Object.values(precisionCoverage ?? {}).reduce((sum, count) => sum + count, 0),
@@ -445,16 +446,37 @@ export const CostOverviewTab = ({
             <MetricTile
               label="After maintenance"
               value={displayCost(data.totals.projected_monthly_cost_usd)}
-              hint={<MetricHint label="Projected S3 storage cost if all recommended maintenance ran today." />}
+              hint={<MetricHint label="Projected S3 storage cost if all recommended maintenance ran today. Storage only — compaction's effect on GET requests is the tile beside this one." />}
             />
-            <MetricTile metricId="modeled_savings" value={displayCost(data.totals.projected_savings_usd_month)} />
+            <MetricTile
+              metricId="modeled_savings"
+              value={displayCost(data.totals.projected_savings_usd_month)}
+              hint={<MetricHint label="Storage dollars only. Compaction rewrites data, so its storage saving is delete-file bytes, not the size of the small files." />}
+            />
             <MetricTile
               label="Saved to date"
               value={displayCost(data.totals.total_realized_savings_usd)}
-              hint={<MetricHint label="Cumulative savings from completed maintenance runs." />}
+              hint={<MetricHint label="Bytes maintenance freed, priced at the default storage rate. Not a measured drop in the AWS bill, and it does not subtract what the maintenance itself cost." />}
             />
           </MetricGrid>
-          <MetricGrid columns={2} className="mb-4">
+          <MetricGrid columns={3} className="mb-3">
+            <MetricTile
+              label="Fewer GET requests"
+              value={
+                data.totals.query_request_savings_usd_month == null
+                  ? COST_UNAVAILABLE
+                  : formatCurrency(data.totals.query_request_savings_usd_month)
+              }
+              hint={
+                <MetricHint
+                  label={
+                    data.totals.query_request_savings_tables
+                      ? `What compaction would save in S3 GET charges, from fewer files read per query. Estimated, and only ${data.totals.query_request_savings_tables} tables have the figure.`
+                      : "What compaction would save in S3 GET charges. No table has the figure yet."
+                  }
+                />
+              }
+            />
             <MetricTile
               label="Reclaimable storage"
               value={displayBytes(data.totals.reclaimable_bytes)}
@@ -509,7 +531,7 @@ export const CostOverviewTab = ({
             </Card>
           ) : null}
           <div className="mb-3 grid gap-3 xl:grid-cols-12">
-            <Card className="xl:col-span-8">
+            <Card className="xl:col-span-12">
               <CardHeader className="pb-2">
                 <CardTitle>Current to projected</CardTitle>
                 <p className="text-xs text-muted-foreground">
@@ -548,25 +570,16 @@ export const CostOverviewTab = ({
                 />
               </CardContent>
             </Card>
-            <Card className="xl:col-span-4">
-              <CardHeader className="pb-2">
-                <CardTitle>Savings by operation</CardTitle>
-                <p className="text-xs text-muted-foreground">Same steps, ranked by dollars.</p>
-              </CardHeader>
-              <CardContent>
-                <SavingsByOperation items={data.savings_by_operation} />
-              </CardContent>
-            </Card>
             <Card className="xl:col-span-7">
               <CardHeader className="pb-2">
                 <CardTitle>Monthly trend</CardTitle>
               </CardHeader>
               <CardContent>
-                {hasRealizedTrend ? (
+                {hasTrend ? (
                   <>
                     <div
                       role="img"
-                      aria-label={`Projected versus realized monthly savings across ${(data.trend ?? []).length} scans.`}
+                      aria-label={`Storage cost, projected savings and realized savings across ${(data.trend ?? []).length} scans.`}
                     >
                     <ResponsiveContainer width="100%" height={220}>
                     <LineChart
@@ -583,6 +596,15 @@ export const CostOverviewTab = ({
                       />
                       <YAxis stroke={cryoColors.inkFaint} tick={chartAxisTick} />
                       <RechartsTooltip {...chartTooltipProps} labelFormatter={(value) => formatTime(String(value))} />
+                      <Line
+                        type="monotone"
+                        dataKey="current_monthly_cost_usd"
+                        stroke={cryoColors.ink}
+                        strokeWidth={2}
+                        dot={false}
+                        name="Storage cost"
+                        connectNulls={false}
+                      />
                       <Line
                         type="monotone"
                         dataKey="projected_savings_usd_month"
@@ -603,9 +625,15 @@ export const CostOverviewTab = ({
                     </ResponsiveContainer>
                     </div>
                     <ChartDataTable
-                      caption="Monthly trend of projected vs realized savings by scan date."
+                      caption="Storage cost, projected savings and realized savings by scan date."
                       columns={[
                         { key: "scan_at", header: "Scan date", render: (row) => formatTime(row.scan_at) },
+                        {
+                          key: "current",
+                          header: "Storage cost",
+                          align: "right",
+                          render: (row) => displayCost(row.current_monthly_cost_usd)
+                        },
                         {
                           key: "projected",
                           header: "Projected savings",
@@ -625,8 +653,8 @@ export const CostOverviewTab = ({
                   </>
                 ) : (
                     <EmptyState
-                      title="No realized savings history yet"
-                      description="Realized savings appear here after maintenance runs complete."
+                      title="No cost history yet"
+                      description="The storage-cost line appears after the first cost scan. Realized savings join it once a maintenance run records bytes freed."
                     />
                 )}
               </CardContent>

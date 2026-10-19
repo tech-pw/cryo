@@ -901,6 +901,10 @@ export interface CostDashboard {
     orphan_scan_stale?: boolean;
     last_full_cost_scan_at?: string | null;
     total_realized_savings_usd?: number;
+    // GET-cost reduction from compaction. null means no table has a TableCost row,
+    // so the UI must not render $0. The table count says how much of the fleet the sum covers.
+    query_request_savings_usd_month?: number | null;
+    query_request_savings_tables?: number;
   };
   savings_by_operation: CostByOperation[];
   cost_by_schema: Array<{

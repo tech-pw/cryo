@@ -58,6 +58,17 @@ reclaim_expire_bytes = Σ size(f)  # data + delete + manifest + manifest-list
 
 `bytes_to_usd(b) = b / (1024³ if cost_use_gib else 1e9) * price_per_gb_month`
 
+## What the Cost page shows
+
+Storage is the home. The AWS connection form lives on Connections; `/aws` and `/cost/aws` redirect there, and `?tab=aws` on `/cost` opens Storage.
+
+The Storage tab reports four different numbers, and they must not be read as one bill:
+
+- **Modelled savings** are storage dollars. Compaction's share is delete-file bytes, not the size of the small files it rewrites.
+- **Fewer GET requests** is the compaction GET-cost estimate, summed only over tables that have a `TableCost` row. `null` means no table has one — the page says unavailable, not `$0`. The table count says how much of the fleet the sum covers. A stored `0` is a real zero.
+- **Saved to date** prices `AuditLog.actual_bytes_freed` at the default storage rate. It is not a measured drop in the AWS bill, and it does not subtract what the maintenance itself cost.
+- The monthly trend draws the storage-cost line as soon as a scan records one. Realized savings are a second line, not the condition for showing the chart.
+
 - `expire` = `bytes_to_usd(reclaim_expire_bytes)`
 - `remove_orphan_files` = `bytes_to_usd(orphan_bytes)` (0/unknown until Tier 2)
 - `optimize` (storage) = `bytes_to_usd(delete_bytes merged)` — data bytes are rewrite-neutral; small-file
