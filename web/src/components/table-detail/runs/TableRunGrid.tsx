@@ -13,6 +13,7 @@ import { Skeleton } from "../../ui/skeleton";
 import {
   OPERATION_SHORT,
   buildRunColumns,
+  changeColumns,
   formatMs,
   gradeChange,
   gridRows,
@@ -22,6 +23,7 @@ import {
   statChanges,
   toneFor,
   type CellTone,
+  type ChangeColumn,
   type GridColumn,
   type OpCell,
   type RunColumn,
@@ -91,10 +93,13 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
   });
 
   const allColumns = useMemo(() => buildRunColumns(runs.data ?? [], audit.data ?? []), [runs.data, audit.data]);
+  const changes = useMemo(() => changeColumns(audit.data ?? []), [audit.data]);
   const columns: GridColumn[] = useMemo(() => {
     const shownRuns = allColumns.filter((column) => filter === "all" || (filter === "manual" ? column.manual : !column.manual));
-    return filter === "manual" ? shownRuns : mergeSkipColumns(shownRuns, skips.data?.items ?? []);
-  }, [filter, allColumns, skips.data]);
+    const shownChanges = filter === "nightly" ? [] : changes;
+    const evaluations = filter === "manual" ? [] : (skips.data?.items ?? []);
+    return mergeSkipColumns(shownRuns, evaluations, 12, shownChanges);
+  }, [filter, allColumns, changes, skips.data]);
   const runColumns = columns.filter((column): column is RunColumn => column.kind === "run");
   const rows = gridRows(columns);
   const peak = Math.max(1, ...runColumns.map((column) => column.durationMs ?? 0));
@@ -114,6 +119,7 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
     failed: allColumns.filter((column) => column.tone === "failed").length,
     active: allColumns.filter((column) => isActiveTone(column.tone)).length
   };
+  const shownChanges = columns.filter((column): column is ChangeColumn => column.kind === "change");
   const shownSkips = columns.filter((column): column is SkipColumn => column.kind === "skip");
   const skippedWithWork = shownSkips.filter((column) => column.hadWork).reduce((sum, column) => sum + column.count, 0);
 
@@ -135,6 +141,7 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
                 </span>
               </>
             ) : null}
+            {shownChanges.length ? <> · {shownChanges.length} config change{shownChanges.length === 1 ? "" : "s"}</> : null}
           </p>
         </div>
         <div className="td-runs-tools">
@@ -162,16 +169,22 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
       ) : (
         <>
           <div className="td-grid-scroll">
-            <div
-              className="td-grid"
-              style={{
-                gridTemplateColumns: `minmax(112px, max-content) repeat(${columns.length}, minmax(40px, 1fr))`,
-                minWidth: `${112 + columns.length * 45}px`
-              }}
-            >
+            <div className="td-grid" style={{ gridTemplateColumns: `minmax(112px, max-content) repeat(${columns.length}, 20px)` }}>
               <div className="td-grid-label td-grid-label--bars">Duration</div>
               {columns.map((column) =>
-                column.kind === "skip" ? (
+                column.kind === "change" ? (
+                  <button
+                    key={`bar-${column.key}`}
+                    type="button"
+                    className="td-grid-bar td-grid-bar--change"
+                    data-selected={selected?.key === column.key || undefined}
+                    aria-label={`${column.label} on ${shortDate(column.startedAt)}`}
+                    title={`${formatTime(column.startedAt)} · ${column.label}`}
+                    onClick={() => select(column)}
+                  >
+                    <span />
+                  </button>
+                ) : column.kind === "skip" ? (
                   <button
                     key={`bar-${column.key}`}
                     type="button"
@@ -195,14 +208,7 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
                   title={`${formatTime(column.startedAt)} · ${TONE_LABEL[column.tone]} · ${formatMs(column.durationMs)} · ${column.manual ? "manual" : "nightly"}`}
                   onClick={() => select(column)}
                 >
-                  <span
-                    style={{
-                      width:
-                        column.durationMs == null
-                          ? "8px"
-                          : `${Math.max(2, (column.durationMs / peak) * 100)}%`
-                    }}
-                  />
+                  <span style={{ height: `${Math.max(8, ((column.durationMs ?? 0) / peak) * 100)}%` }} />
                   {column.manual ? <i className="td-grid-manual" aria-hidden="true" /> : null}
                 </button>
                 )
@@ -229,6 +235,12 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
               <i aria-hidden="true" />
               Manual run
             </li>
+            {shownChanges.length ? (
+              <li className="td-grid-legend-change">
+                <i aria-hidden="true" />
+                Config change
+              </li>
+            ) : null}
             {shownSkips.length ? (
               <li className="td-grid-legend-passed">
                 <i aria-hidden="true" />
@@ -236,7 +248,13 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
               </li>
             ) : null}
           </ul>
-          {selected?.kind === "skip" ? <SkipDetailPanel column={selected} /> : selected ? <RunDetailPanel column={selected} /> : null}
+          {selected?.kind === "skip" ? (
+            <SkipDetailPanel column={selected} />
+          ) : selected?.kind === "change" ? (
+            <ChangeDetailPanel column={selected} />
+          ) : selected ? (
+            <RunDetailPanel column={selected} />
+          ) : null}
         </>
       )}
     </section>
@@ -257,6 +275,19 @@ const GridRow = ({
   <>
     <div className="td-grid-label">{OPERATION_SHORT[op] ?? op.replaceAll("_", " ")}</div>
     {columns.map((column) => {
+      if (column.kind === "change") {
+        return (
+          <button
+            key={`${op}-${column.key}`}
+            type="button"
+            className="td-grid-cell td-grid-cell--change"
+            data-selected={selectedKey === column.key || undefined}
+            aria-label={`${column.label} on ${shortDate(column.startedAt)}`}
+            title={`${formatTime(column.startedAt)} · ${column.label}`}
+            onClick={() => onSelect(column)}
+          />
+        );
+      }
       if (column.kind === "skip") {
         return (
           <button
@@ -338,6 +369,28 @@ const SkipDetailPanel = ({ column }: { column: SkipColumn }) => {
     </div>
   );
 };
+
+const ChangeDetailPanel = ({ column }: { column: ChangeColumn }) => (
+  <div className="td-run-detail td-run-detail--change">
+    <div className="td-run-summary">
+      <p className="td-run-status">
+        <Circle size={14} aria-hidden="true" /> {column.label}
+        {column.status && column.status !== "recorded" ? ` · ${column.status}` : ""}
+      </p>
+      <dl>
+        <div>
+          <dt>When</dt>
+          <dd>{formatTime(column.startedAt)}</dd>
+        </div>
+        <div>
+          <dt>By</dt>
+          <dd>{column.actor ?? "Not recorded"}</dd>
+        </div>
+      </dl>
+      {column.detail ? <pre className="td-run-statement">{column.detail}</pre> : null}
+    </div>
+  </div>
+);
 
 const RunDetailPanel = ({ column }: { column: RunColumn }) => {
   const [tab, setTab] = useState<"steps" | "live">("steps");

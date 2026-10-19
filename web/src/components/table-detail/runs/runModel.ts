@@ -17,6 +17,32 @@ export const GRID_OPERATIONS = [
 
 export const CORE_GRID_OPERATIONS = new Set(["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"]);
 
+/**
+ * Audit actions that are operator changes, not engine work. They have no job, so the run
+ * grid would otherwise drop them. Shown on their own column instead of as a fake run.
+ */
+export const CHANGE_ACTIONS = new Set([
+  "table_config_change",
+  "apply_table_properties",
+  "maintenance_exclude",
+  "maintenance_include",
+  "maintenance_pause",
+  "maintenance_resume",
+  "pause",
+  "resume"
+]);
+
+export const CHANGE_LABEL: Record<string, string> = {
+  table_config_change: "Config change",
+  apply_table_properties: "Property change",
+  maintenance_exclude: "Excluded",
+  maintenance_include: "Included",
+  maintenance_pause: "Paused",
+  maintenance_resume: "Resumed",
+  pause: "Paused",
+  resume: "Resumed"
+};
+
 export const OPERATION_SHORT: Record<string, string> = {
   convert_equality_deletes: "Equality deletes",
   convert_deletes: "Convert deletes",
@@ -173,7 +199,19 @@ export interface SkipColumn {
   startedAt: string;
 }
 
-export type GridColumn = RunColumn | SkipColumn;
+/** An operator change (config, exclusion, hold) that happened between runs. */
+export interface ChangeColumn {
+  kind: "change";
+  key: string;
+  action: string;
+  label: string;
+  status: string;
+  detail: string | null;
+  actor: string | null;
+  startedAt: string;
+}
+
+export type GridColumn = RunColumn | SkipColumn | ChangeColumn;
 
 const WORK_STAGES = new Set(["needs_work", "eligible"]);
 
@@ -217,21 +255,52 @@ export const skipReasonText = (reason: string | null) =>
  * the shown runs' time span are kept (or the latest ones when there are no runs), and a streak of
  * nights with the same reason and no run between them becomes one column.
  */
-export const mergeSkipColumns = (runs: RunColumn[], evaluations: SkipEvaluationRead[], maxSkipColumns = 12): GridColumn[] => {
+/** Jobless operator changes, oldest first. Engine receipts are excluded — they belong to a run. */
+export const changeColumns = (audit: AuditEntry[]): ChangeColumn[] =>
+  audit
+    .filter((entry) => CHANGE_ACTIONS.has(entry.action ?? ""))
+    .map((entry) => {
+      const action = entry.action ?? "";
+      const at = entry.ts ?? entry.created_at ?? "";
+      return {
+        kind: "change" as const,
+        key: `change-${entry.id ?? at}`,
+        action,
+        label: CHANGE_LABEL[action] ?? action.replaceAll("_", " "),
+        status: entry.status ?? "recorded",
+        detail: detailText(entry.detail),
+        actor: entry.actor ?? null,
+        startedAt: at
+      };
+    })
+    .filter((column) => column.startedAt.length > 0)
+    .sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
+
+export const mergeSkipColumns = (
+  runs: RunColumn[],
+  evaluations: SkipEvaluationRead[],
+  maxSkipColumns = 12,
+  changes: ChangeColumn[] = []
+): GridColumn[] => {
   const oldestRun = runs.length ? Date.parse(runs[0].startedAt ?? "") : Number.NaN;
   const skipped = evaluations
     .filter((row) => row.stage !== "selected")
     .filter((row) => !Number.isFinite(oldestRun) || Date.parse(row.evaluated_at) >= oldestRun)
     .sort((a, b) => Date.parse(a.evaluated_at) - Date.parse(b.evaluated_at));
-  const timeline: Array<{ at: number; run?: RunColumn; skip?: SkipEvaluationRead }> = [
+  const timeline: Array<{ at: number; run?: RunColumn; skip?: SkipEvaluationRead; change?: ChangeColumn }> = [
     ...runs.map((run) => ({ at: Date.parse(run.startedAt ?? ""), run })),
-    ...skipped.map((skip) => ({ at: Date.parse(skip.evaluated_at), skip }))
+    ...skipped.map((skip) => ({ at: Date.parse(skip.evaluated_at), skip })),
+    ...changes.map((change) => ({ at: Date.parse(change.startedAt), change }))
   ].sort((a, b) => (a.at || 0) - (b.at || 0));
 
   const merged: GridColumn[] = [];
   for (const item of timeline) {
     if (item.run) {
       merged.push(item.run);
+      continue;
+    }
+    if (item.change) {
+      merged.push(item.change);
       continue;
     }
     const skip = item.skip as SkipEvaluationRead;
@@ -262,6 +331,7 @@ export const mergeSkipColumns = (runs: RunColumn[], evaluations: SkipEvaluationR
       if (skipBudget === 0) continue;
       skipBudget -= 1;
     }
+    // Operator changes are the point of this row; never drop one to make room for a skip.
     kept.unshift(column);
   }
   return kept;

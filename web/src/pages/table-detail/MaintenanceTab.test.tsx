@@ -167,9 +167,9 @@ describe("MaintenanceTab", () => {
     expect(document.querySelector(".td-grid-bar")?.getAttribute("data-tone")).toBe("queued");
     const runGrid = document.querySelector<HTMLElement>(".td-grid");
     expect(runGrid).toHaveClass("td-grid");
-    expect(runGrid?.style.minWidth).toBe("157px");
-    expect(runGrid?.style.gridTemplateColumns).toContain("minmax(40px, 1fr)");
-    expect(document.querySelector(".td-grid-bar span")?.getAttribute("style")).toContain("width:");
+    expect(runGrid?.style.gridTemplateColumns).toBe("minmax(112px, max-content) repeat(1, 20px)");
+    expect(runGrid?.style.gridTemplateColumns).not.toContain("1fr");
+    expect(document.querySelector(".td-grid-bar span")?.getAttribute("style")).toContain("height:");
     expect(document.querySelector(".td-run-status")?.textContent).toContain("Waiting");
     expect(screen.queryByText("Running", { selector: ".td-run-status" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open full run/ })).toHaveAttribute("href", "/runs/run-9");
@@ -221,6 +221,7 @@ describe("MaintenanceTab", () => {
     expect(scanAt?.textContent).toContain("Unknown");
     expect(scanAt?.textContent).not.toMatch(/0 GB|\b0\b/);
     expect(screen.getByText("max_stats_age_days").closest("div")?.textContent).toContain("3");
+    expect(screen.getByText("cutoff").closest("div")?.textContent).not.toContain("2026-09-25T12:00:00");
     expect(screen.getAllByText("Unknown").length).toBeGreaterThan(0);
     expect(screen.queryByText("0 GB")).not.toBeInTheDocument();
     expect(screen.getByText("2 gates must clear first.", { exact: false })).toBeInTheDocument();

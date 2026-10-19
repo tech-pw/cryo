@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bytesToGb, formatBytesGb, formatGb, formatPercent, formatTime } from "./format";
+import { bytesToGb, formatBytesGb, formatGb, formatPercent, formatTime, humanizeInstants } from "./format";
 
 describe("format helpers", () => {
   it("converts bytes to GB", () => {
@@ -24,6 +24,16 @@ describe("format helpers", () => {
     expect(formatBytesGb(40 * 1024 * 1024)).toBe("40 MB");
     expect(formatGb(40 / 1024)).toBe("40 MB");
     expect(formatBytesGb(0)).toBe("0 GB");
+  });
+
+  it("rewrites embedded ISO instants and leaves the surrounding words", () => {
+    const text = humanizeInstants(
+      "Cooldown until 2026-10-20T07:45:49.679306+00:00 (last finish 2026-10-19T11:45:49.679306+00:00, cooldown_hours=20.0)"
+    );
+    expect(text).not.toContain("T07:45:49");
+    expect(text).not.toContain("+00:00");
+    expect(text).toContain("cooldown_hours=20.0");
+    expect(text.startsWith("Cooldown until ")).toBe(true);
   });
 
   it("includes the year when the date is not in the current year", () => {
