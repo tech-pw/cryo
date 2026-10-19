@@ -157,7 +157,7 @@ describe("maintenanceBatch", () => {
         version: 1,
         identity: { ...identity, principalId: "someone-else" },
         revision: 2,
-        tables: [table("secret")],
+        tables: [table("foreign-row")],
         receipts: [],
         exclusions: [],
         recipe: "compact",
@@ -166,7 +166,7 @@ describe("maintenanceBatch", () => {
     );
     const reset = loadDraft(identity);
     expect(reset.tables).toEqual([]);
-    expect(JSON.stringify(reset)).not.toContain("secret");
+    expect(JSON.stringify(reset)).not.toContain("foreign-row");
   });
 
   it("swallows storage failures", () => {

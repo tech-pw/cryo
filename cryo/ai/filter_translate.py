@@ -108,7 +108,10 @@ def deterministic_translate(query: str) -> TranslationResult:
         else:
             warnings.append("Could not parse size threshold.")
 
-    reclaim = re.search(r"reclaim(?:able)?[^\d]*([\d,]+(?:\.\d+)?)\s*gb", lower)
+    reclaim = re.search(
+        r"reclaim(?:able)?[^0-9]{0,40}([0-9,]{1,12}(?:\.[0-9]{1,3})?)[ \t]{0,4}gb",
+        lower,
+    )
     if reclaim:
         try:
             filt["minReclaimableGb"] = float(reclaim.group(1).replace(",", ""))

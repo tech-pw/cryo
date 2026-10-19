@@ -20,6 +20,7 @@ package iceberg
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -60,7 +61,7 @@ func (p Properties) GetBool(key string, defVal bool) bool {
 
 func (p Properties) GetInt(key string, defVal int) int {
 	if v, ok := p[key]; ok {
-		i, err := strconv.ParseInt(v, 10, 64)
+		i, err := strconv.ParseInt(v, 10, strconv.IntSize)
 		if err != nil {
 			return defVal
 		}
@@ -81,7 +82,7 @@ func PropUInt(p Properties, key string, defVal uint) uint {
 		return defVal
 	}
 	n, err := strconv.ParseUint(v, 10, 64)
-	if err != nil {
+	if err != nil || n > uint64(math.MaxUint) {
 		return defVal
 	}
 

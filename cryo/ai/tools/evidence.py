@@ -27,7 +27,35 @@ _TOKEN_URL = re.compile(
     r"(https?://[^\s]*?(?:token|sig|signature|key|password)=)[^&\s]+",
     re.IGNORECASE,
 )
-_SQL_LITERAL = re.compile(r"(['\"])(?:\\.|(?!\1).)*\1")
+
+
+def _mask_sql_literals(value: str) -> str:
+    """Replace quoted SQL literals without a backtracking regex."""
+    parts: list[str] = []
+    index = 0
+    size = len(value)
+    while index < size:
+        quote = value[index]
+        if quote not in {"'", '"'}:
+            parts.append(quote)
+            index += 1
+            continue
+        cursor = index + 1
+        closed = False
+        while cursor < size:
+            if value[cursor] == "\\":
+                cursor += 2
+                continue
+            if value[cursor] == quote:
+                parts.append("'[literal]'")
+                index = cursor + 1
+                closed = True
+                break
+            cursor += 1
+        if not closed:
+            parts.append(value[index:])
+            break
+    return "".join(parts)
 
 
 def redact(value: Any) -> Any:
@@ -44,7 +72,7 @@ def redact(value: Any) -> Any:
         return [redact(item) for item in value]
     if isinstance(value, str):
         masked = _TOKEN_URL.sub(r"\1[redacted]", value)
-        return _SQL_LITERAL.sub("'[literal]'", masked)
+        return _mask_sql_literals(masked)
     return value
 
 

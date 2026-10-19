@@ -10,7 +10,8 @@ import { qualifiedTableName } from "../../lib/tableLabels";
 const SEARCH_DEBOUNCE_MS = 250;
 const SEARCH_RESULT_LIMIT = 25;
 
-const escapeGlob = (value: string): string => value.replace(/([?*])/g, "\\$1");
+const escapeGlob = (value: string): string =>
+  value.replace(/\\/g, "\\\\").replace(/[?*[\]]/g, "\\$&");
 
 export interface TableSearchSelectProps {
   id?: string;

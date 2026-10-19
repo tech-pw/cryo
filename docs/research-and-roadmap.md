@@ -210,7 +210,7 @@ Independently re-checked 2026-07-03 against primary sources:
 | Platform | Status | Key differentiator |
 |----------|--------|-------------------|
 | **LakeOps** | Active, well-funded (2026) | Rust compaction engine claiming 20x speed / 98% cheaper than Spark. Multi-engine telemetry (Trino, Spark, Snowflake, DuckDB, Flink). Signal-driven triggers on latency/cost spikes. |
-| **Apache Amoro (incubating)** | Apache project, active | Self-optimizing with Flink/Spark. Mixed-Iceberg for CDC. |
+| **Apache Amoro (incubating)** | Apache project, active | Self-optimizing on its own optimizer processes (local, Kubernetes, Flink, Spark, external). Trino is query-only. Mixed-Iceberg for CDC. |
 | **Ryft** | **Acquired by Cyera, April 2026. Discontinued.** | Was query-aware, full lifecycle, data reordering. Customers are now in-market. |
 | **Floe** | Early stage, pre-GA | Python-native, lightweight |
 

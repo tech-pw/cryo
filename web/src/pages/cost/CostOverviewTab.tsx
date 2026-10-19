@@ -50,7 +50,12 @@ import { MetricTile } from "../../components/ui/stat";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { useAuth } from "../../lib/auth";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatTime } from "../../lib/format";
-import { fullyMeasuredSummary, impactChartGb, type ImpactDay } from "../../lib/impactHistory";
+import {
+  fullyMeasuredSummary,
+  impactBytesLabel,
+  impactChartGb,
+  type ImpactDay
+} from "../../lib/impactHistory";
 import { toastScanResult } from "../../lib/operations";
 import { qualifiedTableName } from "../../lib/tableLabels";
 import type { Predicate } from "../../lib/predicate";
@@ -499,7 +504,12 @@ export const CostOverviewTab = ({
               </Link>
               {darkTables.data.candidates.some((row) => row.estimated_monthly_cost_usd == null)
                 ? " hold storage with no reader. Some have no cost figure, so no dollar total is shown."
-                : ` hold ${formatCurrency(darkTables.data.total_estimated_monthly_cost_usd)}/month of storage and no reader.`}
+                : ` hold ${formatCurrency(
+                    darkTables.data.candidates.reduce(
+                      (sum, row) => sum + (row.estimated_monthly_cost_usd ?? 0),
+                      0
+                    )
+                  )}/month of storage and no reader.`}
             </p>
           ) : null}
           <div className="mb-3 grid gap-3 xl:grid-cols-12">
@@ -589,9 +599,7 @@ export const CostOverviewTab = ({
                           <li key={row.report_date} className="flex justify-between gap-3">
                             <span>{row.report_date}</span>
                             <span className="tabular-nums">
-                              {row.measurement_state === "unmeasured" || row.measurement_state === "no_actions"
-                                ? "Not measured"
-                                : `${(row.bytes_freed / 1024 ** 3).toFixed(2)} GB`}
+                              {impactBytesLabel(row)}
                               {row.infra_cost_usd == null ? "" : ` · infra ${formatCurrency(row.infra_cost_usd)}`}
                             </span>
                           </li>
@@ -649,6 +657,7 @@ export const CostOverviewTab = ({
                         strokeWidth={2}
                         dot={false}
                         name="Projected savings"
+                        connectNulls={false}
                       />
                       <Line
                         type="monotone"
@@ -657,6 +666,7 @@ export const CostOverviewTab = ({
                         strokeWidth={2}
                         dot={false}
                         name="Realized savings"
+                        connectNulls={false}
                       />
                     </LineChart>
                     </ResponsiveContainer>
@@ -696,7 +706,7 @@ export const CostOverviewTab = ({
                 )}
               </CardContent>
             </Card>
-            <Card className="xl:col-span-5">
+            <Card className="xl:col-span-7">
               <CardHeader className="pb-2">
                 <CardTitle>Cost by schema</CardTitle>
               </CardHeader>

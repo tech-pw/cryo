@@ -290,5 +290,5 @@ def _partition_value(field: PartitionFieldSpec, partition_row: Mapping[str, Any]
 def _extract_bucket_count(transform: Any) -> int | None:
     if transform is None:
         return None
-    match = re.search(r"bucket\D+(\d+)", str(transform).lower())
+    match = re.search(r"bucket[^0-9]{0,16}([0-9]{1,9})", str(transform).lower())
     return int(match.group(1)) if match else None

@@ -1,11 +1,8 @@
 import { apiFetch, type ApiOptions } from "./client";
+import type { components } from "./openapi";
 
-export interface SnapshotSummary {
-  total_records: number | null;
-  total_files_size: number | null;
-  added_data_files: number | null;
-  deleted_data_files: number | null;
-}
+export type SnapshotSummary = components["schemas"]["SnapshotSummaryRead"];
+export type SnapshotWriter = components["schemas"]["SnapshotWriterRead"];
 
 export interface SnapshotRef {
   name: string;
@@ -76,4 +73,21 @@ export const unprotectTableSnapshot = (api: ApiOptions, tableId: string, snapsho
     `/tables/${tableId}/protected-snapshots/${encodeURIComponent(snapshotId)}`,
     api,
     { method: "DELETE" }
+  );
+
+export interface RollbackSnapshotResponse {
+  table_id: string;
+  snapshot_id: string;
+  previous_snapshot_id: string | null;
+}
+
+/** Moves the table's current pointer back to `snapshotId`. Admin-gated; requires confirm: true. */
+export const rollbackTableSnapshot = (api: ApiOptions, tableId: string, snapshotId: string) =>
+  apiFetch<RollbackSnapshotResponse>(
+    `/tables/${tableId}/snapshots/${encodeURIComponent(snapshotId)}/rollback`,
+    api,
+    {
+      method: "POST",
+      body: { snapshot_id: snapshotId, confirm: true }
+    }
   );

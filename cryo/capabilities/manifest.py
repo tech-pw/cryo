@@ -115,6 +115,12 @@ _FLINK_EVIDENCE = _evidence(
 
 _OPERATIONS = (
     OperationDefinition(
+        operation=OperationType.EXPIRE_DATA,
+        label="Expire data",
+        description="Delete partitions or rows older than a retention cutoff.",
+        destructive=True,
+    ),
+    OperationDefinition(
         operation=OperationType.EXPIRE_SNAPSHOTS,
         label="Expire snapshots",
         description="Remove snapshots older than the protected retention boundary.",
@@ -125,6 +131,12 @@ _OPERATIONS = (
         label="Remove orphan files",
         description="Delete unreferenced files after the configured safety interval.",
         destructive=True,
+    ),
+    OperationDefinition(
+        operation=OperationType.CONVERT_EQUALITY_DELETES,
+        label="Convert equality deletes",
+        description="Replace equality-delete files with position deletes. Data files stay put.",
+        destructive=False,
     ),
     OperationDefinition(
         operation=OperationType.CONVERT_DELETES,
@@ -312,6 +324,24 @@ _TRINO_CELLS = (
     ),
     _cell(
         EngineType.TRINO,
+        OperationType.CONVERT_EQUALITY_DELETES,
+        SupportStatus.UNSUPPORTED,
+        MaturityTier.BLOCKED,
+        ExecutionMode.NONE,
+        limitations=(
+            "Trino has no equality-delete to position-delete procedure. "
+            "OPTIMIZE rewrites data files and is not a substitute.",
+        ),
+        owner="engines/trino",
+        evidence=_evidence(
+            "cryo/engines/trino/sql.py",
+            "_render_operation",
+            "tests/test_convert_equality_deletes.py",
+            "test_trino_refuses_to_rewrite_data_files",
+        ),
+    ),
+    _cell(
+        EngineType.TRINO,
         OperationType.CONVERT_DELETES,
         SupportStatus.CONDITIONAL,
         MaturityTier.BETA,
@@ -364,6 +394,24 @@ _TRINO_CELLS = (
     ),
     _cell(
         EngineType.TRINO,
+        OperationType.EXPIRE_DATA,
+        SupportStatus.SUPPORTED,
+        MaturityTier.BETA,
+        ExecutionMode.TRINO_SQL,
+        runtime_conditions=(
+            "expire_data is opt-in and requires an approval before it deletes rows.",
+            "Partition level only runs when the field is the partition column.",
+        ),
+        owner="engines/trino",
+        evidence=_evidence(
+            "cryo/engines/trino/sql.py",
+            "_render_operation",
+            "tests/test_expire_data.py",
+            "test_trino_renders_partition_expire_data",
+        ),
+    ),
+    _cell(
+        EngineType.TRINO,
         OperationType.REWRITE_POSITION_DELETES,
         SupportStatus.UNSUPPORTED,
         MaturityTier.BLOCKED,
@@ -380,8 +428,28 @@ _TRINO_CELLS = (
     ),
 )
 
-_SPARK_CELLS = tuple(
-    _cell(
+
+def _spark_cell(operation: OperationType) -> OperationCapability:
+    if operation is OperationType.CONVERT_EQUALITY_DELETES:
+        return _cell(
+            EngineType.SPARK_EMR,
+            operation,
+            SupportStatus.UNSUPPORTED,
+            MaturityTier.BLOCKED,
+            ExecutionMode.NONE,
+            limitations=(
+                "Iceberg Spark has no equality-delete to position-delete procedure. "
+                "rewrite_data_files rewrites data files and is not a substitute.",
+            ),
+            owner="engines/spark",
+            evidence=_evidence(
+                "cryo/engines/spark/sql.py",
+                "_render_operation",
+                "tests/test_convert_equality_deletes.py",
+                "test_spark_refuses_to_rewrite_data_files",
+            ),
+        )
+    return _cell(
         EngineType.SPARK_EMR,
         operation,
         SupportStatus.SUPPORTED,
@@ -410,8 +478,9 @@ _SPARK_CELLS = tuple(
             else _SPARK_EVIDENCE
         ),
     )
-    for operation in OperationType
-)
+
+
+_SPARK_CELLS = tuple(_spark_cell(operation) for operation in OperationType)
 
 _NATIVE_CELLS = (
     _cell(
@@ -432,6 +501,21 @@ _NATIVE_CELLS = (
         runtime_conditions=("The orphan minimum-age guard remains enforced.",),
         owner="engines/native",
         evidence=_NATIVE_EVIDENCE,
+    ),
+    _cell(
+        EngineType.NATIVE,
+        OperationType.CONVERT_EQUALITY_DELETES,
+        SupportStatus.UNSUPPORTED,
+        MaturityTier.BLOCKED,
+        ExecutionMode.NONE,
+        limitations=("cryo-engine-go does not yet write the position-delete replacement.",),
+        owner="engines/native",
+        evidence=_evidence(
+            "cryo/planner/equality_deletes.py",
+            "plan_convert_equality_deletes",
+            "tests/test_convert_equality_deletes.py",
+            "test_planner_emits_conversion_before_optimize",
+        ),
     ),
     _cell(
         EngineType.NATIVE,
@@ -485,6 +569,23 @@ _NATIVE_CELLS = (
         fallback_engines=(EngineType.TRINO, EngineType.SPARK_EMR),
         owner="engines/native",
         evidence=_NATIVE_EVIDENCE,
+    ),
+    _cell(
+        EngineType.NATIVE,
+        OperationType.EXPIRE_DATA,
+        SupportStatus.FALLBACK_REQUIRED,
+        MaturityTier.BETA,
+        ExecutionMode.SQL_FALLBACK,
+        runtime_conditions=("A Trino or Spark fallback destination must be configured.",),
+        limitations=("cryo-engine-go does not delete expired data files.",),
+        fallback_engines=(EngineType.TRINO, EngineType.SPARK_EMR),
+        owner="engines/native",
+        evidence=_evidence(
+            "cryo/engines/expire_data_sql.py",
+            "render_expire_data_delete",
+            "tests/test_expire_data.py",
+            "test_spark_renders_partition_expire_data",
+        ),
     ),
     _cell(
         EngineType.NATIVE,

@@ -171,10 +171,9 @@ def handle_git_webhook(
             updated = apply_policy_to_tables(session, policy, preset)
             synced += 1
             tables_updated += updated
-        except Exception as exc:
-            message = f"{policy.table_pattern}: {exc}"
-            logger.error("Failed to sync policy %s", message)
-            errors.append(message)
+        except Exception:
+            logger.exception("Failed to sync policy %s", policy.table_pattern)
+            errors.append(policy.table_pattern)
 
     return {
         "status": "ok" if not errors else "partial",

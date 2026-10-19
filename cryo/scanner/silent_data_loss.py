@@ -136,6 +136,18 @@ def detect_silent_data_loss(
     )
 
 
+def _contained_dir(base: Path, table_key: str, data_subdir: str) -> Path | None:
+    root = base.expanduser().resolve()
+    candidate = root / table_key / data_subdir
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        return None
+    if not resolved.is_relative_to(root):
+        return None
+    return resolved
+
+
 def list_local_storage_files(
     table_id: str,
     *,
@@ -153,8 +165,11 @@ def list_local_storage_files(
 
     settings = get_settings()
     base = Path(root or settings.silent_loss_local_root or ".local/tables")
-    table_dir = base / str(table_id).replace("-", "") / data_subdir
-    if not table_dir.exists():
+    table_key = str(table_id).replace("-", "")
+    if not table_key.isalnum() or data_subdir not in {"data", "metadata"}:
+        return []
+    table_dir = _contained_dir(base, table_key, data_subdir)
+    if table_dir is None or not table_dir.exists():
         return []
     files: list[StorageFile] = []
     for entry in sorted(table_dir.rglob("*")):

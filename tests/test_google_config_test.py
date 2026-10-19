@@ -87,7 +87,7 @@ def test_not_ok_when_hosted_domain_does_not_match() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is False
-    assert "company.com" in body["message"]
+    assert "account is on" in body["message"]
 
 
 def test_does_not_touch_saved_auth_settings() -> None:

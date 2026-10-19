@@ -66,18 +66,28 @@ def get_cost_attribution(
         bucket[2] += bytes_scanned
         if scan_cost is not None:
             bucket[3] += scan_cost
-            bucket[4] = 1
+            if bucket[4] == 0:
+                bucket[4] = 1
             priced_days.add(day)
+        else:
+            # A later priced day must not hide this unpriced one. Mixing them and
+            # reporting the priced sum would price bytes that were never priced.
+            bucket[4] = -1
 
         client_bucket = by_client.setdefault(client, [0, 0, 0, 0])
         client_bucket[0] += query_count
         client_bucket[1] += bytes_scanned
         if scan_cost is not None:
             client_bucket[2] += scan_cost
-            client_bucket[3] = 1
+            if client_bucket[3] == 0:
+                client_bucket[3] = 1
+        else:
+            client_bucket[3] = -1
 
     def _priced(total: float, seen: float) -> float | None:
-        return round(total, 4) if seen else None
+        # seen > 0: every contributing day was priced. seen < 0: at least one day was not,
+        # so the sum is not a price for the bytes beside it. seen == 0: nothing was priced.
+        return round(total, 4) if seen > 0 else None
 
     rows = [
         CostAttributionRow(

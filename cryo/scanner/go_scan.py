@@ -31,7 +31,7 @@ from cryo.scanner.cost import (
     estimate_storage_cost,
 )
 from cryo.scanner.health import compute_health_score
-from cryo.scanner.signals import enrich_stats_signals
+from cryo.scanner.signals import enrich_stats_signals, manifest_stats
 
 logger = logging.getLogger(__name__)
 
@@ -375,10 +375,7 @@ def table_analysis_from_go_payload(
         "iceberg_properties": dict(payload.get("iceberg_properties") or {}),
         "gc_enabled": payload.get("gc_enabled"),
         "file_size_bins": _file_size_bins(payload),
-        "manifest_stats": {
-            "manifest_count": manifest_count,
-            "avg_files_per_manifest": round(total_files / max(manifest_count, 1), 2),
-        },
+        "manifest_stats": manifest_stats(manifest_count, manifest_total_bytes, total_files),
         "scan_engine": "go",
         "wair_file_sample": list(payload.get("wair_file_sample") or []),
         "wair_file_sample_complete": total_files == 0
@@ -467,7 +464,12 @@ def _partition_from_go(part: Mapping[str, Any], fields: list[dict[str, Any]]) ->
         partition_size_gb=round(size_bytes / GB, 6),
         compaction_status="F" if small > 1 and files > 1 else "T",
         raw=_partition_raw_from_go(
-            values, delete_files, part.get("last_write_at"), part.get("sample_file_path")
+            values,
+            delete_files,
+            part.get("last_write_at"),
+            part.get("sample_file_path"),
+            equality_delete_files=int(part.get("equality_delete_files") or 0),
+            equality_delete_bytes=int(part.get("equality_delete_bytes") or 0),
         ),
     )
 
@@ -562,8 +564,16 @@ def _partition_raw_from_go(
     delete_files: int,
     last_write_at: Any,
     sample_file_path: Any = None,
+    *,
+    equality_delete_files: int = 0,
+    equality_delete_bytes: int = 0,
 ) -> dict[str, Any]:
-    raw: dict[str, Any] = {"partition_values": dict(values), "delete_files": delete_files}
+    raw: dict[str, Any] = {
+        "partition_values": dict(values),
+        "delete_files": delete_files,
+        "equality_delete_files": equality_delete_files,
+        "equality_delete_bytes": equality_delete_bytes,
+    }
     if isinstance(sample_file_path, str) and sample_file_path:
         raw["sample_file_path"] = sample_file_path
     if isinstance(last_write_at, str) and last_write_at:

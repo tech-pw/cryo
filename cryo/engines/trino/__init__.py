@@ -23,6 +23,7 @@ SUPPORTED_OPS: frozenset[OperationType] = frozenset(
         OperationType.CONVERT_DELETES,
         OperationType.OPTIMIZE,
         OperationType.OPTIMIZE_MANIFESTS,
+        OperationType.EXPIRE_DATA,
     }
 )
 

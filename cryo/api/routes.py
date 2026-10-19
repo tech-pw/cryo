@@ -70,6 +70,7 @@ from cryo.api.schemas import (
     MaintenancePreviewResponse,
     MaintenanceRunRequest,
     MaintenanceRunResponse,
+    OffPeakWindowResponse,
     OrphanScanCostRead,
     PaginatedTables,
     PresetCreate,
@@ -113,11 +114,13 @@ from cryo.api.schemas import (
     TablePreviewRead,
     TableRead,
     TableRunsResponse,
+    TablesFunnelResponse,
     TableStatsHistoryResponse,
     validate_destination_config,
 )
 from cryo.api.security import Principal, Role, principal_from_token
 from cryo.api.serializers import table_to_read
+from cryo.api.table_maintenance import maintenance_summaries, score_delta_expr, tables_funnel
 from cryo.api.table_view_filters import build_table_view_filter
 from cryo.api.validators import validate_cron_field
 from cryo.config import Settings, get_settings
@@ -207,7 +210,11 @@ SORT_FIELDS = {
     "projected_monthly_s3_cost_usd": TableStats.projected_monthly_s3_cost_usd,
     "reclaimable_bytes": TableStats.reclaimable_bytes,
     "estimated_monthly_s3_cost_usd": TableStats.estimated_monthly_s3_cost_usd,
+    "query_count_30d": TableStats.query_count_30d,
+    "scan_at": TableStats.scan_at,
 }
+
+COMPUTED_SORT_FIELDS = {"score_delta_7d": score_delta_expr}
 
 
 @router.get(
@@ -220,9 +227,38 @@ def get_datalake_dashboard(
     session: SessionDep,
     top_limit: Annotated[int, Query(ge=1, le=50)] = 10,
     drift_limit: Annotated[int, Query(ge=1, le=365)] = 30,
+    hot_limit: Annotated[int, Query(ge=1, le=20)] = 5,
 ) -> dict[str, object]:
     return datalake.dashboard_datalake(
-        session, top_limit=top_limit, drift_limit=drift_limit, settings=Settings()
+        session,
+        top_limit=top_limit,
+        drift_limit=drift_limit,
+        hot_limit=hot_limit,
+        settings=Settings(),
+    )
+
+
+@router.get(
+    "/governor/offpeak-window",
+    response_model=OffPeakWindowResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["governor"],
+)
+def get_governor_offpeak_window() -> OffPeakWindowResponse:
+    """Report the off-peak window the admission path gates heavy modes on.
+
+    Read-only on purpose. The window is a Governor process setting, so the
+    table Config tab shows it as inherited context rather than an editable
+    per-table field.
+    """
+    settings = get_settings()
+    start = settings.offpeak_start_ist
+    end = settings.offpeak_end_ist
+    return OffPeakWindowResponse(
+        start_hour_ist=start,
+        end_hour_ist=end,
+        # Mirrors is_offpeak()'s own short-circuit: equal bounds mean no gate.
+        enabled=start != end,
     )
 
 
@@ -820,12 +856,13 @@ def test_destination(destination_id: uuid.UUID, session: SessionDep) -> dict[str
                 "used": snapshot.used,
                 "available": snapshot.available,
             }
-        except Exception as exc:
+        except Exception:
+            logger.exception("Destination probe failed for %s", destination_id)
             return {
                 "ok": False,
                 "engine": destination.engine,
                 "name": destination.name,
-                "message": str(exc),
+                "message": "Destination probe failed",
             }
     if destination.engine == EngineType.NATIVE.value:
         result = _test_native_destination(
@@ -1135,8 +1172,14 @@ def list_tables(
         ).encode()
 
     view_fields = view.response_fields(view_metrics)
+    maintenance = maintenance_summaries(session, items)
     return PaginatedTables(
-        items=[table_to_read(item, include_raw=False) for item in items],
+        items=[
+            table_to_read(item, include_raw=False).model_copy(
+                update={"maintenance": maintenance.get(item.id)}
+            )
+            for item in items
+        ],
         total=total,
         limit=limit,
         offset=actual_offset,
@@ -1281,6 +1324,16 @@ _GROUP_BY_FIELDS = {
     "needs_compaction": TableStats.needs_compaction,
     "size_bucket": _SIZE_BUCKET_EXPR,
 }
+
+
+@router.get(
+    "/tables/maintenance-funnel",
+    response_model=TablesFunnelResponse,
+    dependencies=[Depends(require_viewer)],
+    tags=["tables"],
+)
+def get_tables_maintenance_funnel(session: SessionDep) -> TablesFunnelResponse:
+    return tables_funnel(session, tenant_id=require_tenant(session))
 
 
 @router.get(
@@ -1597,10 +1650,8 @@ def get_effective_params(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
         raise HTTPException(status_code=404, detail="Table not found")
     effective = presets.resolve_effective_preset(session, table)
     assignment = session.get(TableAssignment, table_id)
-    overrides = (
-        dict(assignment.param_overrides) if assignment and assignment.param_overrides else {}
-    )
-    preset_params = dict(effective.preset.params) if effective else {}
+    overrides = _json_object(assignment.param_overrides if assignment else None)
+    preset_params = _json_object(effective.preset.params if effective else None)
     return EffectiveParamsResponse(
         table_id=table_id,
         preset_id=uuid.UUID(effective.preset.id) if effective else None,
@@ -1609,6 +1660,11 @@ def get_effective_params(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
         param_overrides=overrides,
         effective_params={**preset_params, **overrides},
     )
+
+
+def _json_object(value: object) -> dict[str, Any]:
+    """JSONB columns can hold any JSON value; a non-object must not 500 the settings panel."""
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 @router.patch(
@@ -2004,21 +2060,22 @@ def create_scan_trigger(
             "message": enqueue_result.message,
             "num_chunks": enqueue_result.num_chunks,
         }
-    except Exception as exc:
+    except Exception:
+        logger.exception("Failed to queue scan %s", result.get("run_id"))
         if hasattr(session, "get"):
             run = session.get(MaintenanceRun, result["run_id"])
             if run is not None:
                 run.summary = {
                     **dict(run.summary or {}),
                     "queued": False,
-                    "queue_error": str(exc),
+                    "queue_error": "queueing failed",
                     "placeholder": False,
                 }
                 session.commit()
         result = {
             **result,
             "queued": False,
-            "message": f"Scan request accepted, but queueing failed: {exc}",
+            "message": "Scan request accepted, but queueing failed.",
             "num_chunks": num_chunks,
         }
     return result
@@ -2097,6 +2154,7 @@ def list_runs(
     kind: str | None = Query(default=None),
     source_id: uuid.UUID | None = Query(default=None),  # noqa: B008 - uuid.UUID isn't in ruff's immutable-type allowlist; default is always None
     preset_id: uuid.UUID | None = Query(default=None),  # noqa: B008
+    pipeline: str | None = Query(default=None, max_length=32),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[RunRead]:
@@ -2108,6 +2166,8 @@ def list_runs(
     )
     if kind:
         stmt = stmt.where(MaintenanceRun.kind == kind)
+    if pipeline:
+        stmt = stmt.where(MaintenanceRun.summary["pipeline"].astext == pipeline)
     if preset_id is not None:
         stmt = stmt.where(MaintenanceRun.preset_id == preset_id)
     if source_id is not None:
@@ -2570,7 +2630,8 @@ def _sort_clauses(sort: str | None) -> tuple[Any, ...]:
             continue
         descending = field.startswith("-")
         field_name = field[1:] if descending else field
-        column = SORT_FIELDS.get(field_name)
+        computed = COMPUTED_SORT_FIELDS.get(field_name)
+        column = computed() if computed is not None else SORT_FIELDS.get(field_name)
         if column is None:
             raise HTTPException(status_code=400, detail=f"Unsupported sort field: {field_name}")
         if descending:

@@ -6,6 +6,7 @@ from enum import StrEnum
 class OperationType(StrEnum):
     EXPIRE_SNAPSHOTS = "expire_snapshots"
     REMOVE_ORPHAN_FILES = "remove_orphan_files"
+    CONVERT_EQUALITY_DELETES = "convert_equality_deletes"
     CONVERT_DELETES = "convert_deletes"
     OPTIMIZE = "optimize"
     OPTIMIZE_MANIFESTS = "optimize_manifests"
@@ -14,6 +15,7 @@ class OperationType(StrEnum):
     # position-delete files, cheap relative to a full data rewrite (CONVERT_DELETES / OPTIMIZE
     # is the "major" path for this same problem -- distinct type for audit-log clarity).
     REWRITE_POSITION_DELETES = "rewrite_position_deletes"
+    EXPIRE_DATA = "expire_data"
 
 
 class EngineType(StrEnum):

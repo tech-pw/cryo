@@ -4,7 +4,15 @@
     "use strict";
 
     var doc = document;
-    var root = doc.body.getAttribute("data-root") || "./";
+    var root = siteRoot();
+
+    function siteRoot() {
+        var attr = doc.body.getAttribute("data-root");
+        if (attr === "./") return "./";
+        if (attr === "../") return "../";
+        if (attr === "https://tech-pw.github.io/cryo/") return "https://tech-pw.github.io/cryo/";
+        return "./";
+    }
     var $ = function(s, c) { return (c || doc).querySelector(s); };
     var $$ = function(s, c) { return Array.prototype.slice.call((c || doc).querySelectorAll(s)); };
     var isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -52,6 +60,8 @@
     }
 
     function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+    function escapePipes(s) { return String(s).replace(/\\/g, "\\\\").replace(/\|/g, "\\|"); }
 
     function mark(text, terms) {
         var out = esc(text);
@@ -108,18 +118,69 @@
         }
         sel = 0;
         if (!results.length) {
-            list.innerHTML = '<li class="sr-empty">No results for \u201c' + esc(q) + '\u201d</li>';
+            list.replaceChildren(emptyResult(q));
             return;
         }
-        list.innerHTML = results.map(function(r, i) {
-            var d = r.d;
-            var title = d.h ? d.h : d.t;
-            var path = d.h ? (d.g === d.t ? d.t : d.g + " \u203a " + d.t) : d.g;
-            var sn = terms.length ? snippet(d, terms) : esc(d.x.slice(0, 110));
-            return '<li role="presentation"><a role="option" id="sr-' + i + '" href="' + root + d.u + '" aria-selected="' + (i === 0) + '">' +
-                '<span class="sr-t">' + mark(title, terms) + '</span><span class="sr-p">' + esc(path) + '</span>' +
-                (sn ? '<span class="sr-x">' + (terms.length ? mark(sn, terms) : sn) + '</span>' : "") + "</a></li>";
-        }).join("");
+        list.replaceChildren.apply(list, results.map(function(r, i) { return resultItem(r.d, terms, i); }));
+    }
+
+    function safeDocUrl(url) {
+        var cleaned = String(url || "");
+        if (!/^[a-z0-9/_-]*$/.test(cleaned)) return "./";
+        if (root === "../") return "../" + cleaned;
+        if (root === "https://tech-pw.github.io/cryo/") return "https://tech-pw.github.io/cryo/" + cleaned;
+        return "./" + cleaned;
+    }
+
+    function emptyResult(q) {
+        var item = document.createElement("li");
+        item.className = "sr-empty";
+        item.textContent = "No results for \u201c" + q + "\u201d";
+        return item;
+    }
+
+    function resultItem(d, terms, i) {
+        var title = d.h ? d.h : d.t;
+        var path = d.h ? (d.g === d.t ? d.t : d.g + " \u203a " + d.t) : d.g;
+        var item = document.createElement("li");
+        item.setAttribute("role", "presentation");
+        var link = document.createElement("a");
+        link.setAttribute("role", "option");
+        link.id = "sr-" + i;
+        link.href = safeDocUrl(d.u);
+        link.setAttribute("aria-selected", String(i === 0));
+        link.appendChild(marked("span", "sr-t", title, terms));
+        link.appendChild(plain("span", "sr-p", path));
+        var sn = terms.length ? snippet(d, terms) : String(d.x || "").slice(0, 110);
+        if (sn) link.appendChild(terms.length ? marked("span", "sr-x", sn, terms) : plain("span", "sr-x", sn));
+        item.appendChild(link);
+        return item;
+    }
+
+    function plain(tag, className, text) {
+        var el = document.createElement(tag);
+        el.className = className;
+        el.textContent = text || "";
+        return el;
+    }
+
+    function marked(tag, className, text, terms) {
+        var el = plain(tag, className, "");
+        var source = String(text || "");
+        var lower = source.toLowerCase();
+        var cursor = 0;
+        terms.forEach(function(term) {
+            if (!term) return;
+            var at = lower.indexOf(term, cursor);
+            if (at < 0) return;
+            el.appendChild(document.createTextNode(source.slice(cursor, at)));
+            var hit = document.createElement("mark");
+            hit.textContent = source.slice(at, at + term.length);
+            el.appendChild(hit);
+            cursor = at + term.length;
+        });
+        el.appendChild(document.createTextNode(source.slice(cursor)));
+        return el;
     }
 
     function select(i) {
@@ -151,7 +212,7 @@
         dlg.querySelector("form").addEventListener("submit", function(e) {
             e.preventDefault();
             var r = results[sel];
-            if (r) window.location.href = root + r.d.u;
+            if (r) window.location.href = safeDocUrl(r.d.u);
         });
         dlg.addEventListener("click", function(e) {
             if (e.target === dlg) dlg.close();
@@ -368,7 +429,7 @@
                 return;
             }
             if (tag === "table") {
-                var rows = $$("tr", c).map(function(tr) { return $$("th,td", tr).map(function(cell) { return inline(cell).trim().replace(/\|/g, "\\|"); }); });
+                var rows = $$("tr", c).map(function(tr) { return $$("th,td", tr).map(function(cell) { return escapePipes(inline(cell).trim()); }); });
                 if (rows.length) {
                     out += "\n\n| " + rows[0].join(" | ") + " |\n| " + rows[0].map(function() { return "---"; }).join(" | ") + " |\n";
                     rows.slice(1).forEach(function(r) { out += "| " + r.join(" | ") + " |\n"; });

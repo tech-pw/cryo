@@ -47,9 +47,34 @@ describe("ColumnVisibilityMenu", () => {
       />
     );
 
-    // Trigger reports how many columns are currently hidden.
-    expect(screen.getByRole("button", { name: /columns/i })).toHaveTextContent("(1 hidden)");
+    // Trigger reports how many columns are shown out of the total.
+    expect(screen.getByRole("button", { name: /columns/i })).toHaveTextContent("1/2");
     expect(screen.queryByRole("grid")).not.toBeInTheDocument();
+  });
+
+  it("groups options under headings and offers reset and show-all", () => {
+    const onReset = vi.fn();
+    const onShowAll = vi.fn();
+    render(
+      <ColumnVisibilityMenu
+        options={[
+          { id: "name", label: "Name", group: "Identity" },
+          { id: "amount", label: "Amount", group: "Money" }
+        ]}
+        visibility={{ amount: false }}
+        onChange={vi.fn()}
+        onReset={onReset}
+        onShowAll={onShowAll}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /columns/i }));
+    expect(screen.getByRole("group", { name: "Money" })).toBeInTheDocument();
+    expect(screen.getByText("1 of 2 shown")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Reset to default"));
+    fireEvent.click(screen.getByText("Show all"));
+    expect(onReset).toHaveBeenCalledTimes(1);
+    expect(onShowAll).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -12,7 +12,7 @@ import (
 const (
 	zorderUnavailableMsg = "z-order compaction is not supported in cryo-engine-go; route OPTIMIZE to Trino/Spark"
 	sortOrderRequiredMsg = "native sort compaction requires a non-unsorted table sort order " +
-		"(set write.sort-order on the table) or route OPTIMIZE with sort_columns to Trino/Spark"
+		"(Spark WRITE ORDERED BY or Trino sorted_by) or route OPTIMIZE with sort_columns to Trino/Spark"
 )
 
 func validateCompactionSortMode(tbl *table.Table, raw json.RawMessage) error {

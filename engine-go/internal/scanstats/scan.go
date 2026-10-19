@@ -319,20 +319,34 @@ type propInfo struct {
 var trackedIcebergPropertyKeys = []string{
 	"write.target-file-size-bytes",
 	"write.distribution-mode",
-	"write.sort-order",
 	"write.metadata.delete-after-commit.enabled",
 	"write.metadata.previous-versions-max",
 	"commit.retry.num-retries",
 	"commit.retry.min-wait-ms",
 	"commit.retry.max-wait-ms",
 	"write.parquet.compression-codec",
-	"write.delete-mode",
-	"write.update-mode",
-	"write.merge-mode",
+	"write.delete.mode",
+	"write.update.mode",
+	"write.merge.mode",
 	"history.expire.max-snapshot-age-ms",
 	"history.expire.min-snapshots-to-keep",
 	"gc.enabled",
 	"format-version",
+	"write.delete.target-file-size-bytes",
+	"write.format.default",
+	"write.parquet.row-group-size-bytes",
+	"write.object-storage.enabled",
+	"write.data.path",
+	"write.delete.granularity",
+	"write.upsert.enabled",
+	"commit.retry.total-timeout-ms",
+	"commit.manifest-merge.enabled",
+	"commit.manifest.target-size-bytes",
+	"commit.manifest.min-count-to-merge",
+	"write.metadata.metrics.default",
+	"write.metadata.metrics.max-inferred-column-defaults",
+	"history.expire.max-ref-age-ms",
+	"comment",
 }
 
 func tableProps(tbl *table.Table) propInfo {
@@ -351,13 +365,9 @@ func tableProps(tbl *table.Table) propInfo {
 	if v, ok := props["write.distribution-mode"]; ok && v != "" {
 		out.writeDistributionMode = &v
 	}
-	if v, ok := props["write.sort-order"]; ok && v != "" {
-		t := true
-		out.hasSortOrder = &t
-	} else {
-		t := false
-		out.hasSortOrder = &t
-	}
+	// Sort order is table metadata (sort-orders + default-sort-order-id), not a property.
+	sorted := !tbl.SortOrder().IsUnsorted()
+	out.hasSortOrder = &sorted
 	if v, ok := props["write.target-file-size-bytes"]; ok && v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			out.targetFileSizeBytes = &n
@@ -490,15 +500,17 @@ func transformParam(transformRaw string) *int {
 }
 
 type partAccum struct {
-	values       map[string]any
-	specID       *int32
-	files        int
-	small        int
-	sizeBytes    int64
-	deleteFiles  int
-	lastWriteMs  int64
-	hasLastWrite bool
-	samplePath   string
+	values              map[string]any
+	specID              *int32
+	files               int
+	small               int
+	sizeBytes           int64
+	deleteFiles         int
+	equalityDeleteFiles int
+	equalityDeleteBytes int64
+	lastWriteMs         int64
+	hasLastWrite        bool
+	samplePath          string
 }
 
 type columnAccum struct {
@@ -613,6 +625,10 @@ func (a *accumulator) addRecord(rec FileRecord) {
 			a.partitions[key] = acc
 		}
 		acc.deleteFiles++
+		if kind == "equality" {
+			acc.equalityDeleteFiles++
+			acc.equalityDeleteBytes += rec.SizeBytes
+		}
 		if rec.SnapshotTimestampMs != nil {
 			acc.observeWrite(*rec.SnapshotTimestampMs, true)
 		}
@@ -736,6 +752,10 @@ func (a *accumulator) addDataFile(
 			a.partitions[key] = acc
 		}
 		acc.deleteFiles++
+		if kind == "equality" {
+			acc.equalityDeleteFiles++
+			acc.equalityDeleteBytes += size
+		}
 		acc.observeWrite(writeMs, hasWrite)
 		return
 	}
@@ -1066,16 +1086,18 @@ func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) p
 			samplePath = &sp
 		}
 		parts = append(parts, protocol.ScanStatsPartitionAccum{
-			PartitionKey:    key,
-			PartitionValue:  partitionValue,
-			PartitionValues: acc.values,
-			PartitionSpecID: acc.specID,
-			Files:           acc.files,
-			Small:           acc.small,
-			SizeBytes:       acc.sizeBytes,
-			DeleteFiles:     acc.deleteFiles,
-			LastWriteAt:     lastWrite,
-			SampleFilePath:  samplePath,
+			PartitionKey:        key,
+			PartitionValue:      partitionValue,
+			PartitionValues:     acc.values,
+			PartitionSpecID:     acc.specID,
+			Files:               acc.files,
+			Small:               acc.small,
+			SizeBytes:           acc.sizeBytes,
+			DeleteFiles:         acc.deleteFiles,
+			EqualityDeleteFiles: acc.equalityDeleteFiles,
+			EqualityDeleteBytes: acc.equalityDeleteBytes,
+			LastWriteAt:         lastWrite,
+			SampleFilePath:      samplePath,
 		})
 	}
 	sort.Slice(parts, func(i, j int) bool {

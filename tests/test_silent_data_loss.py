@@ -153,6 +153,7 @@ class TestListLocalStorageFiles:
     def test_empty_table_dir(self, tmp_path: pytest.ChdirFixture) -> None:
         files = list_local_storage_files("nonexistent-table", root=str(tmp_path))
         assert files == []
+        assert list_local_storage_files("../etc", root=str(tmp_path)) == []
 
     def test_finds_parquet_and_avro_files(self, tmp_path: pytest.ChdirFixture) -> None:
         table_id = "test-table-123"

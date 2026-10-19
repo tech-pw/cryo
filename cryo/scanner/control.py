@@ -32,22 +32,23 @@ def enqueue_scan_run(
 ) -> ScanEnqueueResult:
     try:
         queue.enqueue_chunks(str(run_id), payload, num_chunks=num_chunks)
-    except Exception as exc:
+    except Exception:
+        logger.exception("Failed to queue scan %s", run_id)
         run = scanner_repo.initialize_scan_chunks(
             session, run_id, num_chunks=num_chunks, queued=False
         )
         if run is not None:
             run.summary = {
                 **dict(run.summary or {}),
-                "queue_error": str(exc),
+                "queue_error": "queueing failed",
                 "placeholder": False,
             }
             session.commit()
         return ScanEnqueueResult(
             queued=False,
-            message=f"Scan request accepted, but queueing failed: {exc}",
+            message="Scan request accepted, but queueing failed.",
             num_chunks=num_chunks,
-            error=str(exc),
+            error="queueing failed",
         )
 
     scanner_repo.initialize_scan_chunks(session, run_id, num_chunks=num_chunks, queued=True)

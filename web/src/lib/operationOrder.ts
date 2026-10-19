@@ -14,11 +14,13 @@ backend, update CORRECT_ORDER here too.
 */
 
 export const CORRECT_ORDER = [
+  "convert_equality_deletes",
   "convert_deletes",
   "rewrite_position_deletes",
   "optimize",
   "compute_statistics",
   "optimize_manifests",
+  "expire_data",
   "expire_snapshots",
   "remove_orphan_files"
 ] as const;

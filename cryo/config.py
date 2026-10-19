@@ -1261,7 +1261,18 @@ class Settings(BaseSettings):
         default=None,
         description=(
             "Optional OpenAI-compatible API base override (vLLM/Ollama/local gateways). "
-            "When set, OpenAI provider calls are routed through this endpoint."
+            "When set, OpenAI provider calls are routed through this endpoint. "
+            "A non-OpenAI/Azure origin is used only if it is listed in "
+            "CRYO_LLM_ALLOWED_ORIGINS."
+        ),
+    )
+    llm_allowed_origins: str = Field(
+        default="",
+        description=(
+            "Comma-separated exact origins that a saved OpenAI-compatible base URL "
+            "may select, such as http://localhost:11434. The request URL is rebuilt "
+            "from the matching origin. api.openai.com and *.openai.azure.com stay "
+            "allowed without an entry here. Set CRYO_LLM_ALLOWED_ORIGINS."
         ),
     )
     llm_per_call_max_tokens_default: int = Field(

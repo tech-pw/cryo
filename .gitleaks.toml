@@ -48,3 +48,5 @@ description = "Upstream iceberg-go vendored code, not our secrets"
 paths = [
   '''(?i)(?:^|/)engine-go/third_party/.*''',
 ]
+
+# CI trigger for docs-only comparison fix. Safe to delete after #81 merges.

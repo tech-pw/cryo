@@ -110,8 +110,8 @@ No SQL yet: the plan holds this predicate.
 
 Admit · live Trino slots
 
-trino-a  full
-trino-b  this job
+trino-a full
+trino-b this job
 
 Counted from `system.runtime.queries`
 

@@ -32,8 +32,57 @@ const LOGO_MARK_INNER = readFileSync(join(SITE, "assets/svg/cryo-mark.svg"), "ut
   .replace(/<title[\s\S]*?<\/title>\s*/g, "")
   .trim();
 
-const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-const stripTags = (s) => s.replace(/<script[\s\S]*?<\/script>/g, " ").replace(/<style[\s\S]*?<\/style>/g, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, " ").trim();
+const esc = (s) => {
+  let out = "";
+  for (const ch of String(s)) {
+    if (ch === "&") out += "&amp;";
+    else if (ch === "<") out += "&lt;";
+    else if (ch === ">") out += "&gt;";
+    else if (ch === '"') out += "&quot;";
+    else out += ch;
+  }
+  return out;
+};
+const dropNamedElement = (html, name) => {
+  const lower = html.toLowerCase();
+  const open = `<${name}`;
+  const close = `</${name}>`;
+  let out = "";
+  let cursor = 0;
+  while (cursor < html.length) {
+    const start = lower.indexOf(open, cursor);
+    if (start < 0 || !isTagBoundary(lower, start + open.length)) return out + html.slice(cursor);
+    const end = lower.indexOf(close, start + open.length);
+    if (end < 0) return out + html.slice(cursor);
+    out += html.slice(cursor, start);
+    cursor = end + close.length;
+  }
+  return out;
+};
+const isTagBoundary = (lower, index) => {
+  const next = lower[index];
+  return next === ">" || next === " " || next === "/" || next === "\n" || next === "\t";
+};
+const dropHtmlTags = (html, replacement = "") => {
+  let out = "";
+  let cursor = 0;
+  while (cursor < html.length) {
+    const start = html.indexOf("<", cursor);
+    if (start < 0) return out + html.slice(cursor);
+    const next = html[start + 1];
+    const named = next === "/" || (next >= "A" && next <= "Z") || (next >= "a" && next <= "z") || next === "!";
+    const end = named ? html.indexOf(">", start + 1) : -1;
+    if (end < 0) {
+      out += html.slice(cursor, start + 1);
+      cursor = start + 1;
+      continue;
+    }
+    out += html.slice(cursor, start) + replacement;
+    cursor = end + 1;
+  }
+  return out;
+};
+const stripTags = (s) => decodeEntities(dropHtmlTags(dropNamedElement(dropNamedElement(String(s), "script"), "style"), " ")).replace(/\s+/g, " ").trim();
 const slugify = (s) => stripTags(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 // ---------- nav model ----------
@@ -202,10 +251,7 @@ const PAGE_SUMMARIES = {
 };
 
 function htmlToMarkdown(html) {
-  let s = html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<svg[\s\S]*?<\/svg>/gi, "")
+  let s = dropNamedElement(dropNamedElement(dropNamedElement(html, "script"), "style"), "svg")
     .replace(/<button(?![^>]*data-go)[\s\S]*?<\/button>/gi, "")
     .replace(/<aside class="tj-[a-z]+"[\s\S]*?<\/aside>/gi, "")
     .replace(/<em class="shot-demo">[\s\S]*?<\/em>/gi, "")
@@ -233,44 +279,44 @@ function htmlToMarkdown(html) {
   });
   s = s.replace(/<p class="ops-phase"[^>]*>([\s\S]*?)<\/p>/gi, (_, inner) => `\n\n**${inlineText(inner)}**\n\n`);
   s = s.replace(/<thead>[\s\S]*?<\/thead>/gi, (head) => {
-    const cells = [...head.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)].map((m) => inlineText(m[1]).replace(/\|/g, "\\|"));
+    const cells = [...head.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)].map((m) => escapePipes(inlineText(m[1])));
     if (!cells.length) return "";
     return `\n| ${cells.join(" | ")} |\n| ${cells.map(() => "---").join(" | ")} |\n`;
   });
   s = s.replace(/<tr[^>]*>([\s\S]*?)<\/tr>/gi, (_, row) => {
-    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => inlineText(m[1]).replace(/\|/g, "\\|"));
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => escapePipes(inlineText(m[1])));
     return cells.length ? `| ${cells.join(" | ")} |\n` : "";
   });
   s = s.replace(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/gi, (_, inner) => `\n\n*${inlineText(inner)}*\n\n`);
   s = s.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, (_, inner) => `\n\n${inlineText(inner)}\n\n`);
   s = s.replace(/<br\s*\/?>/gi, "\n");
-  s = s.replace(/<[^>]+>/g, "");
+  s = dropHtmlTags(s).replace(/ +/g, " ");
   return decodeEntities(s).replace(/[ \t]+\n/g, "\n").replace(/^[ \t]+/gm, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+function escapePipes(value) {
+  return String(value).replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
+}
+
 function inlineText(html) {
-  return decodeEntities(
-    String(html)
-      .replace(/<svg[\s\S]*?<\/svg>/gi, "")
-      .replace(/<a class="anchor"[^>]*>[\s\S]*?<\/a>/gi, "")
-      .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_, c) => `\`${decodeEntities(c)}\``)
-      .replace(/<(strong|b)[^>]*>([\s\S]*?)<\/\1>/gi, (_, _t, c) => `**${inlineText(c)}**`)
-      .replace(/<(em|i)[^>]*>([\s\S]*?)<\/\1>/gi, (_, _t, c) => `*${inlineText(c)}*`)
-      .replace(/<a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, label) => `[${inlineText(label)}](${href})`)
-      .replace(/<[^>]+>/g, "")
-      .replace(/\s+/g, " ")
-      .trim(),
-  );
+  const marked = dropNamedElement(String(html), "svg")
+    .replace(/<a class="anchor"[^>]*>[\s\S]*?<\/a>/gi, "")
+    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_, c) => `\`${decodeEntities(c)}\``)
+    .replace(/<(strong|b)[^>]*>([\s\S]*?)<\/\1>/gi, (_, _t, c) => `**${inlineText(c)}**`)
+    .replace(/<(em|i)[^>]*>([\s\S]*?)<\/\1>/gi, (_, _t, c) => `*${inlineText(c)}*`)
+    .replace(/<a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, label) => `[${inlineText(label)}](${href})`);
+  return decodeEntities(dropHtmlTags(marked).replace(/\s+/g, " ").trim());
 }
 
 function decodeEntities(s) {
-  return String(s)
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+  return String(s).replace(/&(?:nbsp|amp|lt|gt|quot|#39);/g, (entity) => {
+    if (entity === "&nbsp;") return " ";
+    if (entity === "&amp;") return "&";
+    if (entity === "&lt;") return "<";
+    if (entity === "&gt;") return ">";
+    if (entity === "&quot;") return '"';
+    return "'";
+  });
 }
 
 function pageMarkdown({ title, lede, description, updated, canonical, mdUrl, html }) {

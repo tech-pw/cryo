@@ -27,7 +27,7 @@ from cryo.scanner.cost import (
 from cryo.scanner.health import compute_health_score
 from cryo.scanner.orphans import table_location
 from cryo.scanner.quality import ColumnQualityAccumulator, summarize_column_quality
-from cryo.scanner.signals import detect_format_version, enrich_stats_signals
+from cryo.scanner.signals import detect_format_version, enrich_stats_signals, manifest_stats
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,8 @@ class _PartitionAccum:
     small: int = 0
     size_bytes: int = 0
     delete_files: int = 0
+    equality_delete_files: int = 0
+    equality_delete_bytes: int = 0
     last_write_ms: int | None = None
     sample_path: str | None = None
 
@@ -275,6 +277,9 @@ def analyze_table(
                 ),
             )
             accum.delete_files += 1
+            if delete_kind == "equality":
+                accum.equality_delete_files += 1
+                accum.equality_delete_bytes += file_size
             _note_last_write(accum, write_ms)
             continue
         total_files += 1
@@ -346,12 +351,13 @@ def analyze_table(
     avg_file_size_mb = (total_size_bytes / max(total_files, 1)) / MB if total_files else 0.0
     snapshot_info = _snapshot_info(table_obj)
     format_version = detect_format_version(table_obj)
+    manifest_total_bytes = sum(
+        int(_attr(manifest, "manifest_length", 0) or 0) for manifest in manifests
+    )
     cost = estimate_storage_cost(
         total_size_bytes=total_size_bytes,
         total_delete_bytes=delete_bytes,
-        manifest_total_bytes=sum(
-            int(_attr(manifest, "manifest_length", 0) or 0) for manifest in manifests
-        ),
+        manifest_total_bytes=manifest_total_bytes,
         total_snapshots=snapshot_info["total_snapshots"],
     )
     stats_for_health = {
@@ -518,10 +524,7 @@ def analyze_table(
         "delete": delete_size_bins,
         "unknown": unknown_file_sizes,
     }
-    raw["manifest_stats"] = {
-        "manifest_count": len(manifests),
-        "avg_files_per_manifest": round(total_files / max(len(manifests), 1), 2),
-    }
+    raw["manifest_stats"] = manifest_stats(len(manifests), manifest_total_bytes, total_files)
     if cost_analysis is not None:
         raw["cost"] = cost_analysis.raw
     common = {
@@ -731,6 +734,8 @@ def _partition_raw(accum: _PartitionAccum) -> dict[str, Any]:
     raw: dict[str, Any] = {
         "partition_values": dict(accum.values),
         "delete_files": accum.delete_files,
+        "equality_delete_files": accum.equality_delete_files,
+        "equality_delete_bytes": accum.equality_delete_bytes,
     }
     if accum.last_write_ms is not None:
         raw["last_write_at"] = _format_last_write_at(accum.last_write_ms)
@@ -877,20 +882,34 @@ def _snapshot_info(table_obj: object) -> dict[str, Any]:
 _ICEBERG_PROPERTY_KEYS = (
     "write.target-file-size-bytes",
     "write.distribution-mode",
-    "write.sort-order",
     "write.metadata.delete-after-commit.enabled",
     "write.metadata.previous-versions-max",
     "commit.retry.num-retries",
     "commit.retry.min-wait-ms",
     "commit.retry.max-wait-ms",
     "write.parquet.compression-codec",
-    "write.delete-mode",
-    "write.update-mode",
-    "write.merge-mode",
+    "write.delete.mode",
+    "write.update.mode",
+    "write.merge.mode",
     "history.expire.max-snapshot-age-ms",
     "history.expire.min-snapshots-to-keep",
     "gc.enabled",
     "format-version",
+    "write.delete.target-file-size-bytes",
+    "write.format.default",
+    "write.parquet.row-group-size-bytes",
+    "write.object-storage.enabled",
+    "write.data.path",
+    "write.delete.granularity",
+    "write.upsert.enabled",
+    "commit.retry.total-timeout-ms",
+    "commit.manifest-merge.enabled",
+    "commit.manifest.target-size-bytes",
+    "commit.manifest.min-count-to-merge",
+    "write.metadata.metrics.default",
+    "write.metadata.metrics.max-inferred-column-defaults",
+    "history.expire.max-ref-age-ms",
+    "comment",
 )
 
 
@@ -907,6 +926,34 @@ def _parse_bool_property(value: object) -> bool | None:
     return None
 
 
+def tracked_iceberg_properties(properties: Mapping[Any, Any]) -> dict[str, str]:
+    """The subset of table properties persisted into ``TableStats.raw``."""
+    tracked: dict[str, str] = {}
+    for key in _ICEBERG_PROPERTY_KEYS:
+        if key in properties:
+            tracked[key] = str(properties[key])
+    for key, value in properties.items():
+        key_str = str(key)
+        if key_str.startswith("write.parquet.bloom-filter-enabled.column."):
+            tracked[key_str] = str(value)
+    return tracked
+
+
+def _has_sort_order(table_obj: object, metadata: object) -> bool:
+    """Sort order is table metadata (sort-orders + default-sort-order-id), not a property."""
+    sort_order_fn = getattr(table_obj, "sort_order", None)
+    if callable(sort_order_fn):
+        try:
+            return bool(getattr(sort_order_fn(), "fields", None))
+        except Exception:
+            pass
+    default_id = _attr(metadata, "default_sort_order_id", None)
+    for order in _attr(metadata, "sort_orders", None) or []:
+        if _attr(order, "order_id", None) == default_id:
+            return bool(_attr(order, "fields", None))
+    return False
+
+
 def _table_properties(table_obj: object) -> dict[str, Any]:
     metadata = _attr(table_obj, "metadata", None)
     properties = _attr(table_obj, "properties", None) or _attr(metadata, "properties", None) or {}
@@ -914,18 +961,11 @@ def _table_properties(table_obj: object) -> dict[str, Any]:
         properties = properties()
     if not isinstance(properties, Mapping):
         properties = {}
-    iceberg_properties: dict[str, str] = {}
-    for key in _ICEBERG_PROPERTY_KEYS:
-        if key in properties:
-            iceberg_properties[key] = str(properties[key])
-    for key, value in properties.items():
-        key_str = str(key)
-        if key_str.startswith("write.parquet.bloom-filter-enabled.column."):
-            iceberg_properties[key_str] = str(value)
+    iceberg_properties = tracked_iceberg_properties(properties)
     target = properties.get("write.target-file-size-bytes")
     return {
         "write_distribution_mode": properties.get("write.distribution-mode"),
-        "has_sort_order": bool(properties.get("write.sort-order")),
+        "has_sort_order": _has_sort_order(table_obj, metadata),
         "target_file_size_bytes": int(target)
         if target is not None and str(target).isdigit()
         else None,

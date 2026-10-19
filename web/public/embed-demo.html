@@ -105,10 +105,14 @@
     </main>
     <script>
       (function () {
-        const params = new URLSearchParams(window.location.search);
-        const cryoBase = params.get("cryoUrl") || "http://localhost:5173";
+        const cryoBase = "http://localhost:5173";
         const frame = document.getElementById("embed-frame");
         const events = document.getElementById("events");
+
+        function safePath(path) {
+          if (typeof path !== "string" || !/^\/[A-Za-z0-9/_-]*$/.test(path)) return null;
+          return path;
+        }
 
         function log(message, payload) {
           const line = payload
@@ -119,8 +123,10 @@
 
         window.CryoEmbed = {
           navigate(path) {
-            frame.src = `${cryoBase}${path}`;
-            log("navigate", { path });
+            const next = safePath(path);
+            if (!next) return;
+            frame.src = `${cryoBase}${next}`;
+            log("navigate", { path: next });
           },
           post(message) {
             frame.contentWindow.postMessage({ source: "cryo-host", ...message }, cryoBase);
