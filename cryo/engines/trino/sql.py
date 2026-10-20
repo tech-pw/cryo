@@ -19,9 +19,17 @@ class UnsupportedPredicateError(ValueError):
 
 
 def session_setup() -> list[str]:
+    # The two retention floors match Cryo's own floor of one day (guardrails.py accepts any
+    # retention_days >= 1, and the planner tightens a hot table down to 1). A stock Trino
+    # coordinator rejects anything under its 7d default with INVALID_PROCEDURE_ARGUMENT, which
+    # failed expire_snapshots and remove_orphan_files outright. These only lower the floor the
+    # procedure argument must meet; a plan that asks for 7d still expires at 7d. Confirmed on
+    # Trino 480: the SET SESSION is accepted, and a following 7d expire removed nothing.
     return [
         "SET SESSION task_min_writer_count = 8",
         "SET SESSION writer_scaling_min_data_processed = '32MB'",
+        "SET SESSION iceberg.expire_snapshots_min_retention = '1d'",
+        "SET SESSION iceberg.remove_orphan_files_min_retention = '1d'",
     ]
 
 

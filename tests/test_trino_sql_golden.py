@@ -158,6 +158,8 @@ def test_trino_render_golden_operation_sql_and_session_setup() -> None:
     assert session_setup() == [
         "SET SESSION task_min_writer_count = 8",
         "SET SESSION writer_scaling_min_data_processed = '32MB'",
+        "SET SESSION iceberg.expire_snapshots_min_retention = '1d'",
+        "SET SESSION iceberg.remove_orphan_files_min_retention = '1d'",
     ]
 
 
