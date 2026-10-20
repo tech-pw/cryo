@@ -136,15 +136,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c25317ebddb8f2e6f006759336c95e5ded847a446f3524c27853bfe7d77a69b"
 dependencies = [
  "arrow-arith",
- "arrow-array",
- "arrow-buffer",
+ "arrow-array 59.3.1",
+ "arrow-buffer 59.3.1",
  "arrow-cast",
- "arrow-data",
- "arrow-ipc",
+ "arrow-data 59.3.1",
+ "arrow-ipc 59.3.1",
  "arrow-ord",
  "arrow-row",
- "arrow-schema",
- "arrow-select",
+ "arrow-schema 59.3.1",
+ "arrow-select 59.3.1",
  "arrow-string",
 ]
 
@@ -154,10 +154,10 @@ version = "59.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ab555c0ffe9cb817041c0cee80baa9663a22225d0a035693579771f2693cadc"
 dependencies = [
- "arrow-array",
- "arrow-buffer",
- "arrow-data",
- "arrow-schema",
+ "arrow-array 59.3.1",
+ "arrow-buffer 59.3.1",
+ "arrow-data 59.3.1",
+ "arrow-schema 59.3.1",
  "chrono",
  "num-traits",
 ]
@@ -169,9 +169,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dae1d91737421e92c6dd7c7f9d0f2d25198fd6fc539738b628f4dad10adf533"
 dependencies = [
  "ahash",
- "arrow-buffer",
- "arrow-data",
- "arrow-schema",
+ "arrow-buffer 59.3.1",
+ "arrow-data 59.3.1",
+ "arrow-schema 59.3.1",
+ "chrono",
+ "half",
+ "hashbrown 0.17.1",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "arrow-array"
+version = "60.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51dff6e4b9f158864a0aeb6a131ad53858ecbae7a2fc8989307b9b3c6b2f122e"
+dependencies = [
+ "ahash",
+ "arrow-buffer 60.0.0",
+ "arrow-data 60.0.0",
+ "arrow-schema 60.0.0",
  "chrono",
  "half",
  "hashbrown 0.17.1",
@@ -193,17 +211,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrow-buffer"
+version = "60.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7235b863533e9db3ab86905b4521251de11226275b436ff3cb2d0010558d1c5"
+dependencies = [
+ "bytes",
+ "half",
+ "num-bigint 0.5.1",
+ "num-traits",
+]
+
+[[package]]
 name = "arrow-cast"
 version = "59.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee510bc252781d700400979a96bd1eadebeae23901132bbabd92118da1b376c5"
 dependencies = [
- "arrow-array",
- "arrow-buffer",
- "arrow-data",
+ "arrow-array 59.3.1",
+ "arrow-buffer 59.3.1",
+ "arrow-data 59.3.1",
  "arrow-ord",
- "arrow-schema",
- "arrow-select",
+ "arrow-schema 59.3.1",
+ "arrow-select 59.3.1",
  "atoi",
  "base64 0.23.1",
  "chrono",
@@ -214,13 +244,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrow-cmp"
+version = "60.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73a0e9adb28d95739fabcdae637261a2c14e618caf58ba1b88857120f9ee2687"
+dependencies = [
+ "arrow-array 60.0.0",
+ "arrow-buffer 60.0.0",
+ "arrow-schema 60.0.0",
+]
+
+[[package]]
 name = "arrow-data"
 version = "59.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54f128c73bb7fe9f7137218f910edd5b436f390e0f040b1956f5028390787897"
 dependencies = [
- "arrow-buffer",
- "arrow-schema",
+ "arrow-buffer 59.3.1",
+ "arrow-schema 59.3.1",
+ "half",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "arrow-data"
+version = "60.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5aa06d5e22786c4966ffc4d2f171d0cb65d95f6bdea108a14e8c335e9faa437f"
+dependencies = [
+ "arrow-buffer 60.0.0",
+ "arrow-schema 60.0.0",
  "half",
  "num-integer",
  "num-traits",
@@ -232,11 +286,25 @@ version = "59.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e244f39b82fa7a823e8b5984a0bd988234f9c92c1df79378fb85090e6e4c821"
 dependencies = [
- "arrow-array",
- "arrow-buffer",
- "arrow-data",
- "arrow-schema",
- "arrow-select",
+ "arrow-array 59.3.1",
+ "arrow-buffer 59.3.1",
+ "arrow-data 59.3.1",
+ "arrow-schema 59.3.1",
+ "arrow-select 59.3.1",
+ "flatbuffers",
+]
+
+[[package]]
+name = "arrow-ipc"
+version = "60.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86c523472d22e31f984df7a44fc36e6323d3c9b05ffe53d267ee4c3aa7c128d2"
+dependencies = [
+ "arrow-array 60.0.0",
+ "arrow-buffer 60.0.0",
+ "arrow-data 60.0.0",
+ "arrow-schema 60.0.0",
+ "arrow-select 60.0.0",
  "flatbuffers",
 ]
 
@@ -246,11 +314,11 @@ version = "59.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70d376b9b883239ae0f9963cdeeb59126ccaac08d60adf208a6ad3e2dd4048c3"
 dependencies = [
- "arrow-array",
- "arrow-buffer",
- "arrow-data",
- "arrow-schema",
- "arrow-select",
+ "arrow-array 59.3.1",
+ "arrow-buffer 59.3.1",
+ "arrow-data 59.3.1",
+ "arrow-schema 59.3.1",
+ "arrow-select 59.3.1",
 ]
 
 [[package]]
@@ -259,10 +327,10 @@ version = "59.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48096811f92b5c3a0c59d33cfecd7d7d2ed037d81e54a27a42d232e7700e6de2"
 dependencies = [
- "arrow-array",
- "arrow-buffer",
- "arrow-data",
- "arrow-schema",
+ "arrow-array 59.3.1",
+ "arrow-buffer 59.3.1",
+ "arrow-data 59.3.1",
+ "arrow-schema 59.3.1",
  "half",
 ]
 
@@ -273,16 +341,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b6c8a6b12cf3869d299ce36ed8e1cd6fe9836264b68fb6c6538473a36124a1"
 
 [[package]]
+name = "arrow-schema"
+version = "60.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f85a9a58cd03560526b0066487574aacb9008e413504fa0ee23d61141e96c338"
+
+[[package]]
 name = "arrow-select"
 version = "59.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e523e85fa9fb3181a391bf0edfa6a1ae0dc46df8cbf7f6b96034dcb1e2a7a04a"
 dependencies = [
  "ahash",
- "arrow-array",
- "arrow-buffer",
- "arrow-data",
- "arrow-schema",
+ "arrow-array 59.3.1",
+ "arrow-buffer 59.3.1",
+ "arrow-data 59.3.1",
+ "arrow-schema 59.3.1",
+ "num-traits",
+]
+
+[[package]]
+name = "arrow-select"
+version = "60.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba3482b7d03bf4a3bf0b195f08a7f2b071595ccd54897e35b975ac63d3104977"
+dependencies = [
+ "ahash",
+ "arrow-array 60.0.0",
+ "arrow-buffer 60.0.0",
+ "arrow-cmp",
+ "arrow-data 60.0.0",
+ "arrow-schema 60.0.0",
  "num-traits",
 ]
 
@@ -292,11 +381,11 @@ version = "59.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b931a905a0e4b8832d9f54fb369cf6e545f9dc03cb3d9611216a7bd2653df60a"
 dependencies = [
- "arrow-array",
- "arrow-buffer",
- "arrow-data",
- "arrow-schema",
- "arrow-select",
+ "arrow-array 59.3.1",
+ "arrow-buffer 59.3.1",
+ "arrow-data 59.3.1",
+ "arrow-schema 59.3.1",
+ "arrow-select 59.3.1",
  "memchr",
  "num-traits",
  "regex",
@@ -769,7 +858,7 @@ dependencies = [
  "iceberg-catalog-rest",
  "iceberg-storage-opendal",
  "object_store",
- "parquet",
+ "parquet 60.0.0",
  "serde",
  "serde_json",
  "thiserror",
@@ -1533,12 +1622,12 @@ dependencies = [
  "apache-avro",
  "array-init",
  "arrow-arith",
- "arrow-array",
- "arrow-buffer",
+ "arrow-array 59.3.1",
+ "arrow-buffer 59.3.1",
  "arrow-cast",
  "arrow-ord",
- "arrow-schema",
- "arrow-select",
+ "arrow-schema 59.3.1",
+ "arrow-select 59.3.1",
  "arrow-string",
  "as-any",
  "async-trait",
@@ -1561,7 +1650,7 @@ dependencies = [
  "murmur3",
  "once_cell",
  "ordered-float",
- "parquet",
+ "parquet 59.3.1",
  "rand 0.9.4",
  "reqwest 0.12.28",
  "roaring",
@@ -2443,12 +2532,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b3d2ef0fb136e9341570f219ecb168902e76079c6d81ad555f0a4840b1e08a3"
 dependencies = [
  "ahash",
- "arrow-array",
- "arrow-buffer",
- "arrow-data",
- "arrow-ipc",
- "arrow-schema",
- "arrow-select",
+ "arrow-array 59.3.1",
+ "arrow-buffer 59.3.1",
+ "arrow-data 59.3.1",
+ "arrow-ipc 59.3.1",
+ "arrow-schema 59.3.1",
+ "arrow-select 59.3.1",
  "base64 0.23.1",
  "brotli",
  "bytes",
@@ -2468,6 +2557,31 @@ dependencies = [
  "tokio",
  "twox-hash",
  "zstd",
+]
+
+[[package]]
+name = "parquet"
+version = "60.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8af83d2940bc0510f9aef86d865f56fdc6095f87ab115ac885a80b7c5226d3ba"
+dependencies = [
+ "ahash",
+ "arrow-array 60.0.0",
+ "arrow-buffer 60.0.0",
+ "arrow-data 60.0.0",
+ "arrow-ipc 60.0.0",
+ "arrow-schema 60.0.0",
+ "arrow-select 60.0.0",
+ "base64 0.23.1",
+ "bytes",
+ "chrono",
+ "half",
+ "hashbrown 0.17.1",
+ "num-bigint 0.5.1",
+ "num-integer",
+ "num-traits",
+ "seq-macro",
+ "twox-hash",
 ]
 
 [[package]]

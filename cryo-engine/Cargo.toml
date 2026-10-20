@@ -24,7 +24,7 @@ iceberg-storage-opendal = { git = "https://github.com/apache/iceberg-rust", rev 
 
 # Arrow/Parquet — align with that iceberg revision. Parquet 59 does not depend on thrift.
 arrow = { version = "59", default-features = false, features = ["ipc"] }
-parquet = { version = "59", default-features = false, features = ["arrow"] }
+parquet = { version = "60", default-features = false, features = ["arrow"] }
 bytes = "1"
 
 # Object storage
