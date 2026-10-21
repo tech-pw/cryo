@@ -24,17 +24,20 @@ and what needs me?**
 
 ## Funnel semantics
 
-- It covers the **latest nightly batch run** (`latest_batch_run`), not all time. The lookup
-  filters `summary->>'pipeline' = 'batch'` in SQL. The first version scanned only the newest 20
-  runs, and on prod, ad-hoc scans and manual runs pushed the nightly run out of that window, so
-  the card showed "No nightly batch has run yet" (fixed 2026-10-21). The Decisions funnel
-  (`/decisions/funnel`) uses the same helper.
+- It covers the **latest nightly run** (`latest_batch_run`), not all time. A nightly run is
+  either `summary->>'pipeline' = 'batch'` or `kind = 'scheduled' and trigger = 'cron'`. The
+  scheduler's current preset writes the second shape and leaves `summary` null, so filtering
+  only on `pipeline` kept the Sankey on the last legacy batch (22 days old on 2026-10-21).
+  Scans and one-table runs are excluded. The Decisions funnel uses the same helper.
+- A job on that run means the table was selected, even when the run wrote no
+  `skip_evaluations` row. Current scan health is not a stage of the run; the Scan issues
+  card still shows it. A table with neither a job nor a recorded decision is **Not in this
+  run**, not "Not evaluated".
 - `last_scan_error_kind` must stay in `EXPLORER_FIELDS`. The Scan issues view filters on it,
   and without it the count request returns 400 and the card shows "—".
 - It counts **per table, not per operation**. A table with six ops counts once.
-- Stages: active → scanned / scan failing / not scanned → needs work / no work needed →
-  skip reasons (cooldown, over budget, not eligible, held, excluded…) or selected →
-  succeeded / failed / in progress / not run.
+- Stages: active → not in this run / no work needed / needs work → skip reasons or
+  selected → succeeded / failed / in progress / not run.
 - Clicking a stage opens the explorer view for the tables in that state **now**. Current state
   can differ from what happened last night (for example, a table that has been rescanned since).
 - Flow is conserved at every node; `tests/test_tables_maintenance_view.py` asserts this.
