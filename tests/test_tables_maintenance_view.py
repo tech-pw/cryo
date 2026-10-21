@@ -6,6 +6,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from sqlalchemy import select
+
 from cryo.api.routes import get_tables_maintenance_funnel, list_tables
 from cryo.api.routes_funnel import latest_batch_funnel
 from cryo.api.table_maintenance import FunnelRow, StateInputs, build_funnel, derive_state
@@ -85,16 +87,21 @@ def test_funnel_links_conserve_flow() -> None:
             FunnelRow("scanned", "eligible", "budget_cap", None, 2),
             FunnelRow("scanned", "selected", None, 6, 1),
             FunnelRow("scanned", "selected", None, 2, 4),
+            FunnelRow("scan_failing", None, None, 4, 1),
             FunnelRow("scan_failing", None, None, None, 2),
             FunnelRow("scanned", None, None, None, 0),
         ]
     )
     counts = {node.id: node.count for node in nodes}
-    assert counts["active"] == 22
-    assert counts["needs_work"] == 10
-    assert counts["selected"] == 5
+    assert counts["active"] == 23
+    assert counts["needs_work"] == 5
+    assert counts["selected"] == 6
     assert counts["failed"] == 1 and counts["succeeded"] == 4
+    assert counts["in_progress"] == 1
+    assert counts["not_in_run"] == 2
     assert "not_evaluated" not in counts
+    assert "scan_failing" not in counts
+    assert "scanned" not in counts
     for node in nodes:
         outgoing = sum(link.value for link in links if link.source == node.id)
         assert outgoing in (0, node.count)
@@ -241,9 +248,10 @@ def test_funnel_endpoint_reports_latest_nightly(session) -> None:
     counts = {node.id: node.count for node in funnel.nodes}
     assert funnel.run_id == run.id
     assert funnel.total_active == 4
-    assert counts["scan_failing"] == 1
+    assert "scan_failing" not in counts
     assert counts["no_work"] == 1
     assert counts["skip_cooldown"] == 1
+    assert counts["skip_excluded"] == 1
     assert counts["failed"] == 1
 
 
@@ -279,3 +287,53 @@ def test_funnel_finds_nightly_run_behind_many_newer_runs(session) -> None:
     session.commit()
     assert get_tables_maintenance_funnel(session).run_id == run.id
     assert latest_batch_funnel(session).run_id == str(run.id)
+
+
+def test_scheduled_cron_run_beats_an_older_batch_and_keeps_its_jobs(session) -> None:
+    """Production nightly runs are kind=scheduled, trigger=cron, with a null summary
+    and no skip_evaluations. A job on that run is selected. Current scan failures
+    do not replace that outcome, and tables the run never touched are not evaluated."""
+    _seed(session)
+    destination_id = session.scalar(select(Destination.id))
+    source_id = session.scalar(select(Source.id))
+    picked = Table(
+        source_id=source_id,
+        schema_name="s",
+        table_name="picked",
+        is_active=True,
+        consecutive_scan_failures=4,
+    )
+    session.add(picked)
+    session.flush()
+    nightly = MaintenanceRun(
+        id=uuid4(),
+        kind="scheduled",
+        trigger="cron",
+        status="queued",
+        created_at=datetime.now(UTC) + timedelta(days=1),
+        summary=None,
+    )
+    session.add(nightly)
+    session.flush()
+    session.add(
+        MaintenanceJob(
+            id=uuid4(),
+            run_id=nightly.id,
+            table_id=picked.id,
+            destination_id=destination_id,
+            mode="full",
+            status="queued",
+        )
+    )
+    session.commit()
+
+    funnel = get_tables_maintenance_funnel(session)
+    counts = {node.id: node.count for node in funnel.nodes}
+    assert funnel.run_id == nightly.id
+    assert latest_batch_funnel(session).run_id == str(nightly.id)
+    assert counts["selected"] == 1
+    assert counts["in_progress"] == 1
+    assert counts["not_in_run"] == 4
+    assert "not_evaluated" not in counts
+    assert "scan_failing" not in counts
+    assert "scanned" not in counts
