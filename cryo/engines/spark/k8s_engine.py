@@ -391,7 +391,11 @@ class SparkK8sEngine:
                         time.sleep(_SPARK_CATALOG_RETRY_BACKOFF_SECONDS * (attempt + 1))
                     continue
                 if is_spark_driver_oom(state_details) and _driver_heap_at_ceiling(
-                    stmt.action.value, total_files, oom_steps
+                    # oom_steps counts retries launched, so the pod that just died
+                    # ran the previous step. A 3072MiB kill must not read as 4096.
+                    stmt.action.value,
+                    total_files,
+                    oom_steps - 1,
                 ):
                     state_details = (
                         f"{state_details.split(chr(10), 1)[0]} at driver heap ceiling; "

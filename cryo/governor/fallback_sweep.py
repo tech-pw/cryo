@@ -124,6 +124,9 @@ def sweep_pending_fallback_dispatches(
         # new job. A second kill, a SQL error, or a missing plan falls through and
         # finalizes FAILED as before.
         if result.state == JobRunState.FAILED and _resubmit_after_driver_oom(session, row, result):
+            # The new engine_ref has to be visible to the next tick. The terminal
+            # path commits below; this one returns early, so it commits itself.
+            session.commit()
             still_pending += 1
             continue
         if result.state == JobRunState.SUCCESS:
@@ -212,7 +215,6 @@ def _resubmit_after_driver_oom(session: Session, row: AuditLog, result: object) 
     """
     from cryo.engines.spark.k8s import JobRunResult
     from cryo.engines.spark.k8s_engine import (
-        _driver_heap_at_ceiling,
         _oom_step_would_grow,
         is_spark_driver_oom,
     )
@@ -234,10 +236,9 @@ def _resubmit_after_driver_oom(session: Session, row: AuditLog, result: object) 
         return False
     stats_row = session.get(TableStats, row.table_id) if row.table_id is not None else None
     total_files = _pressure_file_count(stats_row)
+    # The pod that died ran at step 0. Passing 1 here would score the heap of the
+    # pod we have not launched and skip the only retry a 3072MiB tier gets.
     if not _oom_step_would_grow(row.action, total_files, 0):
-        return False
-    if _driver_heap_at_ceiling(row.action, total_files, 0):
-        # The first pod was already at 4096. A step-up cannot grow it.
         return False
     try:
         plan = plan_from_dict(job.plan)

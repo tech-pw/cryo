@@ -144,7 +144,8 @@ def test_execute_steps_driver_heap_once_on_oomkilled_then_stops() -> None:
     """Exit 137 is not a catalog race and not a heap sample. One larger driver, then stop.
 
     The second kill must not submit a third pod. The stored error has to keep OOMKilled
-    in front of the INFO tail, and say why the CALL was not split.
+    in front of the INFO tail. The pod that died ran at 3072, so it must not claim
+    the ceiling. That message is for a pod that was already at 4096.
     """
     engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats(
         {"total_size_gb": 28400.5, "total_files": 179_020}
@@ -174,8 +175,26 @@ def test_execute_steps_driver_heap_once_on_oomkilled_then_stops() -> None:
     assert first.kwargs["oom_steps"] == 0
     assert second.kwargs["oom_steps"] == 1
     assert results[0].error.startswith("Spark-on-K8s Job FAILED: OOMKilled exit 137")
-    assert "snapshot ids" in results[0].error
-    assert "BroadcastExchangeExec" not in results[0].error[:80]
+    assert "at driver heap ceiling" not in results[0].error
+    assert results[0].error.index("OOMKilled") < results[0].error.index("BroadcastExchangeExec")
+
+
+def test_execute_says_ceiling_only_when_the_dead_pod_was_at_it() -> None:
+    """At or above 200k files the first pod is already at 4096, so no step-up runs."""
+    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats({"total_files": 250_000})
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.return_value = "cryo-spark-oom"
+    mock_client.wait_for_completion.return_value = JobRunResult(
+        job_run_id="cryo-spark-oom",
+        state=JobRunState.FAILED,
+        state_details="OOMKilled exit 137",
+    )
+    engine._client = mock_client
+
+    results = engine.execute_plan(_expire_plan())
+    assert "at driver heap ceiling" in (results[0].error or "")
+    assert "snapshot ids" in (results[0].error or "")
+    assert mock_client.submit_spark_sql.call_count == 1
 
 
 def test_execute_does_not_call_a_3072_kill_the_ceiling() -> None:

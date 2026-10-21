@@ -231,6 +231,51 @@ def test_sweep_resubmits_an_oomkilled_expire_once(session, monkeypatch) -> None:
     assert job.status == "running"
 
 
+def test_sweep_does_not_resubmit_an_expire_already_at_the_heap_ceiling(
+    session, monkeypatch
+) -> None:
+    """A table at or above 200k files starts at 4096MiB. A step-up cannot grow it."""
+    destination = _seed_spark_destination(session)
+    job = _seed_running_job(session, destination_id=destination.id)
+    job.plan = {
+        "table_ref": "cdp.unified_bq.gold_dbt_pw_bq",
+        "mode": "deep",
+        "operations": [{"type": "expire_snapshots", "params": {"retain_last": 1}}],
+    }
+    session.add(
+        TableStats(
+            table_id=job.table_id,
+            scan_at=datetime(2026, 10, 19, tzinfo=UTC),
+            needs_compaction=False,
+            compaction_priority="none",
+            grade="C",
+            overall_score=70,
+            total_files=250_000,
+            small_files_count=0,
+            total_size_gb=28400.5,
+            total_delete_files=0,
+        )
+    )
+    row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-oom", job_id=job.id)
+    row.action = "expire_snapshots"
+    row.table_id = job.table_id
+    session.add(row)
+    session.commit()
+
+    mock_client = MagicMock()
+    mock_client.get_job_run.return_value = JobRunResult(
+        job_run_id="cryo-spark-oom",
+        state=JobRunState.FAILED,
+        state_details="OOMKilled exit 137",
+    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
+
+    result = sweep_pending_fallback_dispatches(session)
+
+    assert result.resolved_failed == 1
+    mock_client.submit_spark_sql.assert_not_called()
+
+
 def test_sweep_does_not_resubmit_a_second_oom_or_a_sql_error(session, monkeypatch) -> None:
     destination = _seed_spark_destination(session)
     job = _seed_running_job(session, destination_id=destination.id)
