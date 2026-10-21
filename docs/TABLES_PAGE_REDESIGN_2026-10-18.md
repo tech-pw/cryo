@@ -24,7 +24,13 @@ and what needs me?**
 
 ## Funnel semantics
 
-- It covers the **latest nightly batch run** (`latest_batch_run`), not all time.
+- It covers the **latest nightly batch run** (`latest_batch_run`), not all time. The lookup
+  filters `summary->>'pipeline' = 'batch'` in SQL. The first version scanned only the newest 20
+  runs, and on prod, ad-hoc scans and manual runs pushed the nightly run out of that window, so
+  the card showed "No nightly batch has run yet" (fixed 2026-10-21). The Decisions funnel
+  (`/decisions/funnel`) uses the same helper.
+- `last_scan_error_kind` must stay in `EXPLORER_FIELDS`. The Scan issues view filters on it,
+  and without it the count request returns 400 and the card shows "—".
 - It counts **per table, not per operation**. A table with six ops counts once.
 - Stages: active → scanned / scan failing / not scanned → needs work / no work needed →
   skip reasons (cooldown, over budget, not eligible, held, excluded…) or selected →
