@@ -406,6 +406,37 @@ def test_skip_operations_applies_to_manifest_only_mode_too() -> None:
     assert plan.operations == ()
 
 
+def test_job_operations_do_not_bound_the_plan_on_their_own() -> None:
+    """A preset's operations list is not a request. Only requested_operations bounds it.
+
+    The job record carries both, and they look the same. Treating the tuple as the
+    request is what dropped every op a preset omitted (2026-10-13).
+    """
+    from cryo.domain.enums import EngineType, OperationType
+    from cryo.planner.execution import build_execution_plan
+
+    class _Destination:
+        engine = EngineType.SPARK_EMR
+        config = {"catalog": "bench"}
+
+    plan = build_execution_plan(
+        stats={
+            "schema_name": "demo",
+            "table_name": "events",
+            "small_files_count": 200,
+            "total_size_gb": 10,
+            "snapshot_count": 40,
+        },
+        partitions=[],
+        mode=Mode.DEEP,
+        params={},
+        destination=_Destination(),
+        operations=(OperationType.OPTIMIZE,),
+    )
+    op_types = [op.type.value for op in plan.operations]
+    assert "expire_snapshots" in op_types
+
+
 def test_explicit_request_bounds_the_plan() -> None:
     """A request for optimize must not grow an expire_snapshots (issue #142, 2026-10-21).
 

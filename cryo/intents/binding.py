@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -70,6 +70,17 @@ def build_and_bind_job_intent(
         raise KeyError(f"destination {job.destination_id} not found")
 
     job_record = _job_record(session, job)
+    # An explicit request bounds the plan. The run summary is where the request is
+    # stored, and it is the only place: the job row has no params column. Reading it
+    # here, rather than trusting a flag set while the record was built, means the
+    # bound plan cannot grow an operation the caller did not ask for (issue #149).
+    summary = job.run.summary if job.run is not None else None
+    requested = summary.get("operations") if isinstance(summary, dict) else None
+    if isinstance(requested, list) and requested:
+        job_record = replace(
+            job_record,
+            params={**dict(job_record.params), "requested_operations": list(requested)},
+        )
     stats = _stats_dict(job.table)
     partitions = _latest_partitions(session, job.table_id)
     protected_snapshots = sorted(
