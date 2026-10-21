@@ -444,11 +444,17 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
     guardrails = dict(preset.guardrails) if preset else {}
     summary = dict(job.run.summary or {}) if job.run else {}
     operations = _coerce_operations(preset.operations) if preset else None
+    # The run summary's operations list is the caller's explicit request
+    # (POST /maintenance/run with operations=[...]). That bounds the plan. The preset's
+    # list does not: treating it as an allowlist silently dropped every op the table
+    # needed but the preset omitted (2026-10-13). The two have to stay distinguishable,
+    # because build_execution_plan honors skip_operations only for an explicit request.
     summary_operations = summary.get("operations")
     if isinstance(summary_operations, list) and summary_operations:
         overridden = _coerce_operations(summary_operations)
         if overridden is not None:
             operations = overridden
+            params["requested_operations"] = [op.value for op in overridden]
     actor_raw = summary.get("actor")
     actor = actor_raw if isinstance(actor_raw, str) and actor_raw else None
     # AutoComp (SIGMOD 2025): governor.decide_job_admission's min_benefit_score/min_moop_score

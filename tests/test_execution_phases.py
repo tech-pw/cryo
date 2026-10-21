@@ -406,6 +406,38 @@ def test_skip_operations_applies_to_manifest_only_mode_too() -> None:
     assert plan.operations == ()
 
 
+def test_explicit_request_bounds_the_plan() -> None:
+    """A request for optimize must not grow an expire_snapshots (issue #142, 2026-10-21).
+
+    The preset's operations list does not bound the plan. The request does.
+    """
+    from cryo.domain.enums import EngineType, OperationType
+    from cryo.planner.execution import build_execution_plan
+
+    class _Destination:
+        engine = EngineType.SPARK_EMR
+        config = {"catalog": "bench"}
+
+    stats = {
+        "schema_name": "demo",
+        "table_name": "events",
+        "small_files_count": 200,
+        "total_size_gb": 10,
+        "snapshot_count": 40,
+    }
+    plan = build_execution_plan(
+        stats=stats,
+        partitions=[],
+        mode=Mode.DEEP,
+        params={"requested_operations": ["optimize"]},
+        destination=_Destination(),
+        operations=(OperationType.OPTIMIZE,),
+    )
+    op_types = [op.type.value for op in plan.operations]
+    assert op_types == ["optimize"]
+    assert any("not requested for this run" in note for note in plan.notes)
+
+
 def test_skip_operations_empty_is_a_no_op() -> None:
     stats = {
         "schema_name": "demo",

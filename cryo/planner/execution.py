@@ -48,9 +48,14 @@ def build_execution_plan(
     excluded_operations: Collection[str] = (),
 ) -> MaintenancePlan:
     plan_params = execution_plan_params(params, destination, stats)
-    skip_operations = skip_operations_from_preset(operations)
-    if skip_operations:
-        plan_params = {**plan_params, "skip_operations": skip_operations}
+    # Only an explicit request bounds the plan. A preset's operations list does not:
+    # treating it as an allowlist dropped every op the table needed but the preset
+    # omitted (2026-10-13). The request does the opposite — the caller named what
+    # should run, and the planner adding expire_snapshots to an optimize request
+    # submitted a procedure nobody asked for (issue #142, 2026-10-21).
+    requested = params.get("requested_operations")
+    if isinstance(requested, (list, tuple)) and requested:
+        plan_params = {**plan_params, "skip_operations": _skips_for_request(requested)}
     if destination_is_native(destination):
         plan_params = inject_native_derived_chunk(
             plan_params,
@@ -145,6 +150,18 @@ def execution_plan_params(
     if schema and table:
         merged["table_ref"] = f"{catalog}.{schema}.{table}"
     return merged
+
+
+def _skips_for_request(requested: Sequence[object]) -> list[str]:
+    """Operations the planner must not add to an explicit request.
+
+    The caller named what should run. Everything else is skipped, so a request for
+    optimize cannot grow an expire_snapshots the table happens to qualify for.
+    """
+    from cryo.domain.enums import OperationType
+
+    requested_names = {str(op) for op in requested}
+    return [op.value for op in OperationType if op.value not in requested_names]
 
 
 def skip_operations_from_preset(
