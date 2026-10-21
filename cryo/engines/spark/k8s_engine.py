@@ -150,7 +150,15 @@ class SparkK8sEngine:
         if not overrides:
             return self
         new_engine = SparkK8sEngine(config=self.config, settings=self.settings)
-        new_engine._k8s_config = replace(new_engine._k8s_config, **overrides)
+        new_engine._k8s_config = replace(
+            new_engine._k8s_config,
+            catalog_uri=overrides.get("catalog_uri", new_engine._k8s_config.catalog_uri),
+            catalog_warehouse=overrides.get(
+                "catalog_warehouse", new_engine._k8s_config.catalog_warehouse
+            ),
+            s3_access_key=overrides.get("s3_access_key", new_engine._k8s_config.s3_access_key),
+            s3_secret_key=overrides.get("s3_secret_key", new_engine._k8s_config.s3_secret_key),
+        )
         new_engine._table_stats = self._table_stats
         return new_engine
 
