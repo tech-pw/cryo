@@ -51,6 +51,33 @@ def test_config_from_config_uses_nested_spark_k8s_block() -> None:
     assert cfg.executor_instances == 4
 
 
+def test_config_from_config_reads_top_level_catalog_fields() -> None:
+    """A destination row stores catalog_uri at the top level, not under spark_k8s.
+
+    The nested block wins when both are set. Issue #149, 2026-10-21: the URI was in
+    the row and the forwarding code was in the image, and the submit still dropped it.
+    """
+    cfg = SparkK8sConfig.from_config(
+        {
+            "catalog": "bench",
+            "catalog_uri": "http://iceberg-rest:8181",
+            "catalog_warehouse": "s3://bench/warehouse",
+            "catalog_impl": "rest",
+        }
+    )
+    assert cfg.catalog_uri == "http://iceberg-rest:8181"
+    assert cfg.catalog_warehouse == "s3://bench/warehouse"
+    assert cfg.catalog_impl == "rest"
+
+    nested_wins = SparkK8sConfig.from_config(
+        {
+            "catalog_uri": "http://top-level:8181",
+            "spark_k8s": {"catalog_uri": "http://nested:8181"},
+        }
+    )
+    assert nested_wins.catalog_uri == "http://nested:8181"
+
+
 def test_config_from_config_env_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CRYO_SPARK_K8S_NAMESPACE", "cryo")
     monkeypatch.setenv("CRYO_SPARK_K8S_IMAGE", "cryo-spark:latest")
