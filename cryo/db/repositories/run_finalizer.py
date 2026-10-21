@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from cryo.db.models import MaintenanceJob, MaintenanceRun
 from cryo.domain.enums import JobStatus, is_capacity_defer_reason
 
+OPEN_RUN_STATUSES = ("queued", "running")
+
 TERMINAL = {
     JobStatus.SUCCEEDED.value,
     JobStatus.FAILED.value,
@@ -87,12 +89,13 @@ def finalize_open_runs(
         # bug, not just wasted work) could still fall through to the `run.finished_at =
         # datetime.now(UTC)` assignment below and silently overwrite an already-recorded
         # completion time with the current tick's timestamp, corrupting run duration history.
-        # "running" is this table's actual open-run marker (see the column's server_default and
-        # the `if run.status != "running": run.status = "running"` still-in-grace branches
-        # below, which only ever move a run *into* "running", never a terminal run back out of
-        # it) -- restrict the query to it so a terminal run is never reconsidered at all.
+        # Restrict the query to open statuses so a terminal run is never reconsidered at all.
+        # Maintenance runs are created "queued" (run_service, scheduler_store, routes_archive)
+        # and nothing moves them to "running", so selecting only "running" finalized nothing:
+        # live 2026-10-21, 115 runs stuck "queued" since 2026-09-30 with every job terminal.
+        # Scan runs share this table but track their own lifecycle (repositories/scanner.py).
         #
-        # Review finding F09, 2026-09-20: restricting to status=="running" and null-guarding
+        # Review finding F09, 2026-09-20: restricting to open statuses and null-guarding
         # finished_at (both above) close the *sequential re-entry* case (a run genuinely already
         # terminal from a prior tick), but do nothing about two finalize_open_runs invocations
         # (two governor replicas, or overlapping ticks) racing the SAME still-open run
@@ -104,7 +107,10 @@ def finalize_open_runs(
         # deciding it (or not) on its own, but never both.
         runs = session.scalars(
             select(MaintenanceRun)
-            .where(MaintenanceRun.status == "running")
+            .where(
+                MaintenanceRun.status.in_(OPEN_RUN_STATUSES),
+                MaintenanceRun.kind != "scan",
+            )
             .with_for_update(skip_locked=True)
         )
         for run in runs:
@@ -117,8 +123,6 @@ def finalize_open_runs(
             if not counts:
                 continue
             if any(status not in TERMINAL for status in counts):
-                if run.status != "running":
-                    run.status = "running"
                 continue
             if counts.get(JobStatus.DEFERRED.value, 0) > 0:
                 deferred_jobs = session.execute(
@@ -139,8 +143,6 @@ def finalize_open_runs(
                     for finished_at, error in deferred_jobs
                 )
                 if still_in_grace:
-                    if run.status != "running":
-                        run.status = "running"
                     continue
             succeeded_count = counts.get(JobStatus.SUCCEEDED.value, 0)
             failed_count = counts.get(JobStatus.FAILED.value, 0)
@@ -159,13 +161,16 @@ def finalize_open_runs(
             else:
                 run.status = "failed"
             # Immutable once set (recovery plan §4): even though the query above already
-            # excludes non-"running" runs, guard finished_at directly too -- a second
+            # excludes terminal runs, guard finished_at directly too -- a second
             # finalize_open_runs invocation racing this one (two governor replicas, or a retry
             # after a partial commit) must never get a chance to stamp a later timestamp over
             # the run's real completion time.
             if run.finished_at is None:
                 run.finished_at = current
+            # Merged, not replaced: the run's actor, requested operations and correlation_id
+            # live in the same blob and are the only record of who asked for what.
             run.summary = {
+                **(run.summary or {}),
                 "jobs_total": sum(counts.values()),
                 "succeeded": succeeded_count,
                 "failed": failed_count,
