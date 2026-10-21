@@ -239,9 +239,7 @@ def test_sweep_does_not_resubmit_a_second_oom_or_a_sql_error(session, monkeypatc
         "mode": "deep",
         "operations": [{"type": "expire_snapshots", "params": {"retain_last": 1}}],
     }
-    already_stepped = _audit_row(
-        status="SUBMITTED", engine_ref="cryo-spark-step", job_id=job.id
-    )
+    already_stepped = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-step", job_id=job.id)
     already_stepped.action = "expire_snapshots"
     already_stepped.table_id = job.table_id
     already_stepped.detail = "oom-step cryo-spark-step\nOOMKilled exit 137"

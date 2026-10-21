@@ -242,9 +242,7 @@ def _resubmit_after_driver_oom(session: Session, row: AuditLog, result: object) 
     try:
         plan = plan_from_dict(job.plan)
         statements = [
-            statement
-            for statement in render(plan)
-            if statement.action == OperationType(row.action)
+            statement for statement in render(plan) if statement.action == OperationType(row.action)
         ]
         if len(statements) != 1:
             return False
