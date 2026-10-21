@@ -266,10 +266,35 @@ def test_with_source_config_does_not_override_destinations_own_keys() -> None:
     assert updated._k8s_config.s3_secret_key == "dest-secret"
 
 
-def test_with_source_config_no_op_when_source_has_no_keys() -> None:
+def test_with_source_config_no_op_when_source_has_nothing_to_fill() -> None:
     engine = SparkK8sEngine(config={"catalog": "sample"})
-    updated = engine.with_source_config({"uri": "thrift://metastore:9083"})
+    updated = engine.with_source_config({})
     assert updated is engine
+
+
+def test_with_source_config_fills_catalog_uri_from_the_source() -> None:
+    """A REST source with a URI and no static S3 keys still needs the URI on the submit.
+
+    Without --catalog-uri the runner never sets spark.sql.catalog.<name>.uri, Spark falls
+    back to spark_catalog, and the driver dies with "Invalid uri for http client: null"
+    (issue #143, 2026-10-21).
+    """
+    engine = SparkK8sEngine(config={"catalog": "bench", "spark_k8s": {"catalog_impl": "rest"}})
+    updated = engine.with_source_config(
+        {"uri": "http://iceberg-rest:8181", "warehouse": "s3://bench/warehouse"}
+    )
+    assert updated is not engine
+    assert updated._k8s_config.catalog_uri == "http://iceberg-rest:8181"
+    assert updated._k8s_config.catalog_warehouse == "s3://bench/warehouse"
+
+    destination_wins = SparkK8sEngine(
+        config={
+            "catalog": "bench",
+            "spark_k8s": {"catalog_uri": "http://destination-rest:8181"},
+        }
+    )
+    kept = destination_wins.with_source_config({"uri": "http://source-rest:8181"})
+    assert kept._k8s_config.catalog_uri == "http://destination-rest:8181"
 
 
 def test_with_table_stats_scales_executor_profile_down_for_small_tables() -> None:

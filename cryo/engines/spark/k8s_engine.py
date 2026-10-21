@@ -118,20 +118,46 @@ class SparkK8sEngine:
         s3_access_key/s3_secret_key already set on this destination's own config is an operator
         override and wins; this only fills the gap when the destination has none configured.
         """
+        overrides: dict[str, str] = {}
+
         access_key = source_config.get("s3.access-key-id")
         secret_key = source_config.get("s3.secret-access-key")
-        if not (
+        if (
             isinstance(access_key, str)
             and access_key
             and isinstance(secret_key, str)
             and secret_key
+            and not (self._k8s_config.s3_access_key and self._k8s_config.s3_secret_key)
         ):
-            return self
-        if self._k8s_config.s3_access_key and self._k8s_config.s3_secret_key:
+            overrides["s3_access_key"] = access_key
+            overrides["s3_secret_key"] = secret_key
+
+        # A REST catalog with no URI falls back to spark_catalog and the driver's HTTP
+        # client dies with "Invalid uri for http client: null" (2026-10-21, issue #143).
+        # The source's own URI is always right for its tables; the destination's is a
+        # static default shared across every catalog routed to it, so it only fills a gap.
+        source_uri = source_config.get("uri") or source_config.get("catalog_uri")
+        if isinstance(source_uri, str) and source_uri and not self._k8s_config.catalog_uri:
+            overrides["catalog_uri"] = source_uri
+        source_warehouse = source_config.get("warehouse")
+        if (
+            isinstance(source_warehouse, str)
+            and source_warehouse
+            and not self._k8s_config.catalog_warehouse
+        ):
+            overrides["catalog_warehouse"] = source_warehouse
+
+        if not overrides:
             return self
         new_engine = SparkK8sEngine(config=self.config, settings=self.settings)
         new_engine._k8s_config = replace(
-            new_engine._k8s_config, s3_access_key=access_key, s3_secret_key=secret_key
+            new_engine._k8s_config,
+            catalog_uri=overrides.get("catalog_uri", new_engine._k8s_config.catalog_uri),
+            catalog_warehouse=overrides.get(
+                "catalog_warehouse", new_engine._k8s_config.catalog_warehouse
+            ),
+            s3_access_key=overrides.get("s3_access_key", new_engine._k8s_config.s3_access_key),
+            s3_secret_key=overrides.get("s3_secret_key", new_engine._k8s_config.s3_secret_key),
         )
         new_engine._table_stats = self._table_stats
         return new_engine
