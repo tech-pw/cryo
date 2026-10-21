@@ -203,7 +203,10 @@ def test_execute_does_not_call_a_3072_kill_the_ceiling() -> None:
 
 
 def test_execute_does_not_spend_a_catalog_retry_on_oom() -> None:
-    """An OOM must not increment the catalog counter. A later catalog race still gets its retries."""
+    """An OOM must not increment the catalog counter.
+
+    A later catalog race still gets its retries.
+    """
     engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats({"total_files": 179_020})
     mock_client = MagicMock()
     mock_client.submit_spark_sql.side_effect = [
