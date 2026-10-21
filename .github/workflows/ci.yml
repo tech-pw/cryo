@@ -234,7 +234,10 @@ jobs:
       - name: Verify cryo-engine spawnable from repo root
         working-directory: .
         run: |
-          pip install -e ".[dev]"
+          # Bare `pip install -e ".[dev]"` resolved the yanked PyYAML 6.0 sdist and
+          # died building it (no cp312 wheel). The lockfile pins 6.0.3, which ships one.
+          pip install --require-hashes --requirement requirements.lock
+          pip install --no-deps -e .
           python - <<'PY'
           from cryo.engines.native.runner import resolve_binary_path, verify_cryo_engine_spawnable
           binary = resolve_binary_path({"binary_path": "cryo-engine/target/release/cryo-engine"})
@@ -270,7 +273,10 @@ jobs:
       - name: Verify cryo-engine-go spawnable from repo root
         working-directory: .
         run: |
-          pip install -e ".[dev]"
+          # Bare `pip install -e ".[dev]"` resolved the yanked PyYAML 6.0 sdist and
+          # died building it (no cp312 wheel). The lockfile pins 6.0.3, which ships one.
+          pip install --require-hashes --requirement requirements.lock
+          pip install --no-deps -e .
           python - <<'PY'
           from cryo.engines.native.runner import resolve_binary_path, verify_cryo_engine_spawnable
           binary = resolve_binary_path({
