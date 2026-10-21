@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from cryo.api.routes import get_tables_maintenance_funnel, list_tables
+from cryo.api.routes_funnel import latest_batch_funnel
 from cryo.api.table_maintenance import FunnelRow, StateInputs, build_funnel, derive_state
 from cryo.db.models import (
     Destination,
@@ -244,3 +245,37 @@ def test_funnel_endpoint_reports_latest_nightly(session) -> None:
     assert counts["no_work"] == 1
     assert counts["skip_cooldown"] == 1
     assert counts["failed"] == 1
+
+
+def test_scan_issues_view_predicate_compiles(session) -> None:
+    _seed(session)
+    cutoff = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
+    predicate = {
+        "any": [
+            {"field": "consecutive_scan_failures", "op": ">", "value": 0},
+            {"field": "last_scan_error_kind", "op": "!=", "value": None},
+            {"field": "scan_at", "op": "=", "value": None},
+            {"field": "scan_at", "op": "<", "value": cutoff},
+        ]
+    }
+    names = {item.table_name for item in _list(session, predicate).items}
+    assert names == {"broken"}
+
+
+def test_funnel_finds_nightly_run_behind_many_newer_runs(session) -> None:
+    run = _seed(session)
+    newer = datetime.now(UTC) + timedelta(minutes=1)
+    session.add_all(
+        MaintenanceRun(
+            id=uuid4(),
+            kind="scan" if i % 2 else "adhoc",
+            trigger="api",
+            status="succeeded",
+            created_at=newer + timedelta(seconds=i),
+            summary={"actor": "operator"},
+        )
+        for i in range(25)
+    )
+    session.commit()
+    assert get_tables_maintenance_funnel(session).run_id == run.id
+    assert latest_batch_funnel(session).run_id == str(run.id)

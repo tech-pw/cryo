@@ -450,14 +450,14 @@ def build_funnel(rows: Iterable[FunnelRow]) -> tuple[list[FunnelNode], list[Funn
 
 
 def latest_batch_run(session: Session) -> MaintenanceRun | None:
-    runs = session.scalars(
-        select(MaintenanceRun).order_by(MaintenanceRun.created_at.desc()).limit(20)
-    ).all()
-    for run in runs:
-        summary = run.summary if isinstance(run.summary, dict) else None
-        if summary and summary.get("pipeline") == "batch":
-            return run
-    return None
+    # Filter in SQL: ad-hoc scans and manual runs each create a run row, so on a busy
+    # fleet the nightly batch is rarely among the newest few rows.
+    return session.scalars(
+        select(MaintenanceRun)
+        .where(MaintenanceRun.summary["pipeline"].as_string() == "batch")
+        .order_by(MaintenanceRun.created_at.desc())
+        .limit(1)
+    ).first()
 
 
 def tables_funnel(session: Session, *, tenant_id: uuid.UUID) -> TablesFunnelResponse:
