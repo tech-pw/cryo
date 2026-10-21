@@ -12,7 +12,15 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-from cryo.db.models import AuditLog, Destination, MaintenanceJob, MaintenanceRun, Source, Table
+from cryo.db.models import (
+    AuditLog,
+    Destination,
+    MaintenanceJob,
+    MaintenanceRun,
+    Source,
+    Table,
+    TableStats,
+)
 from cryo.engines.spark.k8s import JobRunResult, JobRunState
 from cryo.governor.fallback_sweep import sweep_pending_fallback_dispatches
 
@@ -160,6 +168,151 @@ def test_sweep_cleans_up_driver_pod_and_secret_on_resolution(session, monkeypatc
     sweep_pending_fallback_dispatches(session)
 
     mock_client.cleanup_after_run.assert_called_once_with("cryo-spark-abc123")
+
+
+def test_sweep_resubmits_an_oomkilled_expire_once(session, monkeypatch) -> None:
+    """The expire that died was a fire-and-forget submit. execute() never ran.
+
+    The sweep must submit one larger driver and leave the row SUBMITTED, pointed at
+    the new job. A SQL failure on the same path still finalizes FAILED.
+    """
+    destination = _seed_spark_destination(session)
+    job = _seed_running_job(session, destination_id=destination.id)
+    job.plan = {
+        "table_ref": "cdp.unified_bq.gold_dbt_pw_bq",
+        "mode": "deep",
+        "operations": [
+            {
+                "type": "expire_snapshots",
+                "params": {"retention_days": 5, "retain_last": 1},
+            }
+        ],
+    }
+    session.add(
+        TableStats(
+            table_id=job.table_id,
+            scan_at=datetime(2026, 10, 19, tzinfo=UTC),
+            needs_compaction=False,
+            compaction_priority="none",
+            grade="C",
+            overall_score=70,
+            total_files=179_020,
+            small_files_count=0,
+            total_size_gb=28400.5,
+            total_delete_files=0,
+        )
+    )
+    row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-oom", job_id=job.id)
+    row.action = "expire_snapshots"
+    row.table_id = job.table_id
+    session.add(row)
+    session.commit()
+
+    mock_client = MagicMock()
+    mock_client.get_job_run.return_value = JobRunResult(
+        job_run_id="cryo-spark-oom",
+        state=JobRunState.FAILED,
+        state_details="OOMKilled exit 137\nINFO BroadcastExchangeExec",
+    )
+    mock_client.submit_spark_sql.return_value = "cryo-spark-step"
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
+
+    result = sweep_pending_fallback_dispatches(session)
+
+    assert result.still_pending == 1
+    assert result.resolved_failed == 0
+    session.refresh(row)
+    assert row.status == "SUBMITTED"
+    assert row.engine_ref == "cryo-spark-step"
+    assert row.detail.startswith("oom-step ")
+    assert mock_client.submit_spark_sql.call_args.kwargs["oom_steps"] == 1
+    assert mock_client.submit_spark_sql.call_args.kwargs["total_files"] == 179_020
+    session.refresh(job)
+    assert job.status == "running"
+
+
+def test_sweep_does_not_resubmit_an_expire_already_at_the_heap_ceiling(
+    session, monkeypatch
+) -> None:
+    """A table at or above 200k files starts at 4096MiB. A step-up cannot grow it."""
+    destination = _seed_spark_destination(session)
+    job = _seed_running_job(session, destination_id=destination.id)
+    job.plan = {
+        "table_ref": "cdp.unified_bq.gold_dbt_pw_bq",
+        "mode": "deep",
+        "operations": [{"type": "expire_snapshots", "params": {"retain_last": 1}}],
+    }
+    session.add(
+        TableStats(
+            table_id=job.table_id,
+            scan_at=datetime(2026, 10, 19, tzinfo=UTC),
+            needs_compaction=False,
+            compaction_priority="none",
+            grade="C",
+            overall_score=70,
+            total_files=250_000,
+            small_files_count=0,
+            total_size_gb=28400.5,
+            total_delete_files=0,
+        )
+    )
+    row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-oom", job_id=job.id)
+    row.action = "expire_snapshots"
+    row.table_id = job.table_id
+    session.add(row)
+    session.commit()
+
+    mock_client = MagicMock()
+    mock_client.get_job_run.return_value = JobRunResult(
+        job_run_id="cryo-spark-oom",
+        state=JobRunState.FAILED,
+        state_details="OOMKilled exit 137",
+    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
+
+    result = sweep_pending_fallback_dispatches(session)
+
+    assert result.resolved_failed == 1
+    mock_client.submit_spark_sql.assert_not_called()
+
+
+def test_sweep_does_not_resubmit_a_second_oom_or_a_sql_error(session, monkeypatch) -> None:
+    destination = _seed_spark_destination(session)
+    job = _seed_running_job(session, destination_id=destination.id)
+    job.plan = {
+        "table_ref": "cdp.unified_bq.gold_dbt_pw_bq",
+        "mode": "deep",
+        "operations": [{"type": "expire_snapshots", "params": {"retain_last": 1}}],
+    }
+    already_stepped = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-step", job_id=job.id)
+    already_stepped.action = "expire_snapshots"
+    already_stepped.table_id = job.table_id
+    already_stepped.detail = "oom-step cryo-spark-step\nOOMKilled exit 137"
+    sql_fail = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-sql", job_id=job.id)
+    sql_fail.action = "expire_snapshots"
+    sql_fail.table_id = job.table_id
+    session.add_all([already_stepped, sql_fail])
+    session.commit()
+
+    mock_client = MagicMock()
+    mock_client.get_job_run.side_effect = [
+        JobRunResult(
+            job_run_id="cryo-spark-step",
+            state=JobRunState.FAILED,
+            state_details="OOMKilled exit 137",
+        ),
+        JobRunResult(
+            job_run_id="cryo-spark-sql",
+            state=JobRunState.FAILED,
+            state_details="AnalysisException: boom",
+        ),
+    ]
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
+
+    result = sweep_pending_fallback_dispatches(session)
+
+    assert result.resolved_failed == 2
+    mock_client.submit_spark_sql.assert_not_called()
 
 
 def test_sweep_cleanup_failure_does_not_block_resolution(session, monkeypatch) -> None:

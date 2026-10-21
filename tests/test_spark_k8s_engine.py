@@ -7,7 +7,11 @@ from unittest.mock import MagicMock
 from cryo.domain.enums import Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
 from cryo.engines.spark.k8s import JobRunResult, JobRunState
-from cryo.engines.spark.k8s_engine import SparkK8sEngine, is_spark_retryable_catalog_error
+from cryo.engines.spark.k8s_engine import (
+    SparkK8sEngine,
+    is_spark_driver_oom,
+    is_spark_retryable_catalog_error,
+)
 
 
 def _plan() -> MaintenancePlan:
@@ -121,6 +125,177 @@ def test_execute_retries_basemetastore_nosuchkey_then_succeeds(monkeypatch) -> N
     assert sleeps == [10]
     mock_client.cleanup_after_run.assert_any_call("cryo-spark-try0")
     mock_client.cleanup_after_run.assert_any_call("cryo-spark-try1")
+
+
+def _expire_plan() -> MaintenancePlan:
+    return MaintenancePlan(
+        table_ref="cdp.unified_bq.gold_dbt_pw_bq",
+        mode=Mode.DEEP,
+        operations=(
+            Operation(
+                OperationType.EXPIRE_SNAPSHOTS,
+                {"retention_days": 5, "retain_last": 1},
+            ),
+        ),
+    )
+
+
+def test_execute_steps_driver_heap_once_on_oomkilled_then_stops() -> None:
+    """Exit 137 is not a catalog race and not a heap sample. One larger driver, then stop.
+
+    The second kill must not submit a third pod. The stored error has to keep OOMKilled
+    in front of the INFO tail. The pod that died ran at 3072, so it must not claim
+    the ceiling. That message is for a pod that was already at 4096.
+    """
+    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats(
+        {"total_size_gb": 28400.5, "total_files": 179_020}
+    )
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.side_effect = ["cryo-spark-oom0", "cryo-spark-oom1"]
+    info_tail = "INFO BroadcastExchangeExec\n" * 50
+    mock_client.wait_for_completion.side_effect = [
+        JobRunResult(
+            job_run_id="cryo-spark-oom0",
+            state=JobRunState.FAILED,
+            state_details=f"OOMKilled exit 137\n{info_tail}",
+        ),
+        JobRunResult(
+            job_run_id="cryo-spark-oom1",
+            state=JobRunState.FAILED,
+            state_details=f"OOMKilled exit 137\n{info_tail}",
+        ),
+    ]
+    engine._client = mock_client
+
+    results = engine.execute_plan(_expire_plan())
+    assert not results[0].ok
+    assert mock_client.submit_spark_sql.call_count == 2
+    first, second = mock_client.submit_spark_sql.call_args_list
+    assert first.kwargs["total_files"] == 179_020
+    assert first.kwargs["oom_steps"] == 0
+    assert second.kwargs["oom_steps"] == 1
+    assert results[0].error.startswith("Spark-on-K8s Job FAILED: OOMKilled exit 137")
+    assert "at driver heap ceiling" not in results[0].error
+    assert results[0].error.index("OOMKilled") < results[0].error.index("BroadcastExchangeExec")
+
+
+def test_execute_says_ceiling_only_when_the_dead_pod_was_at_it() -> None:
+    """At or above 200k files the first pod is already at 4096, so no step-up runs."""
+    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats({"total_files": 250_000})
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.return_value = "cryo-spark-oom"
+    mock_client.wait_for_completion.return_value = JobRunResult(
+        job_run_id="cryo-spark-oom",
+        state=JobRunState.FAILED,
+        state_details="OOMKilled exit 137",
+    )
+    engine._client = mock_client
+
+    results = engine.execute_plan(_expire_plan())
+    assert "at driver heap ceiling" in (results[0].error or "")
+    assert "snapshot ids" in (results[0].error or "")
+    assert mock_client.submit_spark_sql.call_count == 1
+
+
+def test_execute_does_not_call_a_3072_kill_the_ceiling() -> None:
+    """A second kill below 4096 must not claim the ceiling. That hid a missed step-up."""
+    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats({"total_files": 20_000})
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.side_effect = ["cryo-spark-oom0", "cryo-spark-oom1"]
+    mock_client.wait_for_completion.side_effect = [
+        JobRunResult(
+            job_run_id="cryo-spark-oom0",
+            state=JobRunState.FAILED,
+            state_details="OOMKilled exit 137",
+        ),
+        JobRunResult(
+            job_run_id="cryo-spark-oom1",
+            state=JobRunState.FAILED,
+            state_details="OOMKilled exit 137",
+        ),
+    ]
+    engine._client = mock_client
+
+    results = engine.execute_plan(_expire_plan())
+    assert "at driver heap ceiling" not in (results[0].error or "")
+    assert mock_client.submit_spark_sql.call_args_list[1].kwargs["oom_steps"] == 1
+
+
+def test_execute_does_not_spend_a_catalog_retry_on_oom() -> None:
+    """An OOM must not increment the catalog counter.
+
+    A later catalog race still gets its retries.
+    """
+    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats({"total_files": 179_020})
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.side_effect = [
+        "cryo-spark-oom",
+        "cryo-spark-cat0",
+        "cryo-spark-cat1",
+        "cryo-spark-ok",
+    ]
+    mock_client.wait_for_completion.side_effect = [
+        JobRunResult(
+            job_run_id="cryo-spark-oom",
+            state=JobRunState.FAILED,
+            state_details="OOMKilled exit 137",
+        ),
+        JobRunResult(
+            job_run_id="cryo-spark-cat0",
+            state=JobRunState.FAILED,
+            state_details="CommitFailedException: conflict",
+        ),
+        JobRunResult(
+            job_run_id="cryo-spark-cat1",
+            state=JobRunState.FAILED,
+            state_details="CommitFailedException: conflict",
+        ),
+        JobRunResult(job_run_id="cryo-spark-ok", state=JobRunState.SUCCESS),
+    ]
+    engine._client = mock_client
+
+    results = engine.execute_plan(_expire_plan())
+    assert results[0].ok
+    assert mock_client.submit_spark_sql.call_count == 4
+
+
+def test_execute_does_not_step_up_on_a_sql_error_that_mentions_oom() -> None:
+    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats({"total_files": 179_020})
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.return_value = "cryo-spark-sql"
+    mock_client.wait_for_completion.return_value = JobRunResult(
+        job_run_id="cryo-spark-sql",
+        state=JobRunState.FAILED,
+        state_details="AnalysisException: boom\nwatcher noted OOMKilled on a different pod",
+    )
+    engine._client = mock_client
+
+    results = engine.execute_plan(_expire_plan())
+    assert not results[0].ok
+    mock_client.submit_spark_sql.assert_called_once()
+    assert mock_client.submit_spark_sql.call_args.kwargs["oom_steps"] == 0
+
+
+def test_submit_passes_data_plus_delete_files() -> None:
+    """total_files excludes delete files. A MOR expire is sized from both."""
+    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats(
+        {"total_files": 100_000, "total_delete_files": 90_000}
+    )
+    mock_client = MagicMock()
+    mock_client.submit_spark_sql.return_value = "cryo-spark-mor"
+    engine._client = mock_client
+
+    result = engine.submit(engine.render(_expire_plan())[0])
+    assert result.ok
+    assert mock_client.submit_spark_sql.call_args.kwargs["total_files"] == 190_000
+    assert mock_client.submit_spark_sql.call_args.kwargs["oom_steps"] == 0
+
+
+def test_is_spark_driver_oom_matches_only_the_prefixed_kill() -> None:
+    assert is_spark_driver_oom("OOMKilled exit 137\nINFO Broadcast")
+    assert not is_spark_driver_oom("INFO\nOOMKilled exit 137")
+    assert not is_spark_driver_oom("OutOfMemoryError: Java heap space")
+    assert not is_spark_driver_oom(None)
 
 
 def test_execute_does_not_retry_dropped_table() -> None:
