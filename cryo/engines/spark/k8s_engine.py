@@ -150,17 +150,15 @@ class SparkK8sEngine:
 
         # A REST catalog with no URI falls back to spark_catalog and the driver's HTTP
         # client dies with "Invalid uri for http client: null" (2026-10-21, issue #143).
-        # The source's own URI is always right for its tables; the destination's is a
-        # static default shared across every catalog routed to it, so it only fills a gap.
+        # The source's own URI/warehouse always win: the destination's are a static default
+        # shared across every catalog routed to it, and they go stale when a metastore moves
+        # (2026-10-22: a leftover destination catalog_uri kept every Spark job on a retired
+        # HMS after the source was repointed). Matches native_admit._fallback_engine_config.
         source_uri = source_config.get("uri") or source_config.get("catalog_uri")
-        if isinstance(source_uri, str) and source_uri and not self._k8s_config.catalog_uri:
+        if isinstance(source_uri, str) and source_uri:
             overrides["catalog_uri"] = source_uri
         source_warehouse = source_config.get("warehouse")
-        if (
-            isinstance(source_warehouse, str)
-            and source_warehouse
-            and not self._k8s_config.catalog_warehouse
-        ):
+        if isinstance(source_warehouse, str) and source_warehouse:
             overrides["catalog_warehouse"] = source_warehouse
 
         if not overrides:

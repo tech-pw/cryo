@@ -766,6 +766,11 @@ until real evidence exists.
       rebuild, bounded scans, ABAC deferral, deferred re-queue agrees with real admission; per-table
       operation dedupe for ad-hoc (`force`), cron and supersede-on-success. See
       `docs/GOVERNOR_FIXES_AND_JOB_DEDUPE_2026-10-22.md`. Migration `20261022_1200`.
+- [x] **Spark catalog URI: source wins** — worker-path `SparkK8sEngine.with_source_config` lets the
+      table's source `uri`/`warehouse` override a shared destination default, matching the governor
+      fallback path. See `docs/HMS_MOVE_SPARK_CATALOG_URI_2026-10-22.md`.
+- [ ] Table-scoped and cron scans report `succeeded` with 0 tables when catalog discovery fails;
+      fail the chunk and set `last_scan_error` instead (`cryo/scanner/run.py`).
 - [ ] Chart `aria-label` summaries for all Recharts instances (accessibility backlog).
 - [ ] Query-pattern-aware optimization at scale — blocked on query-history ingestion maturity.
 - [ ] Native engine production hardening — see `architecture.md` §1.5.
