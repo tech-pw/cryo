@@ -8,7 +8,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from time import perf_counter
+from time import monotonic, perf_counter
 from typing import Any, Protocol, cast
 
 from cryo.config import get_settings
@@ -19,8 +19,9 @@ from cryo.domain.intents import IntentStatus
 from cryo.domain.models import CapacitySnapshot
 from cryo.governor.admission import (
     AdmissionConfig,
-    AdmissionJob,
     ReplicaBudget,
+    admission_config_from_destination,
+    admission_job_from_record,
     compute_admission_budget,
     decide_job_admission,
     pack_fleet_budget,
@@ -85,6 +86,13 @@ class WaveResult:
     re_enqueued: int = 0
     reaped: int = 0
 
+
+# Upper bound on pending entries read per destination per wave; the candidate window
+# (slots * 4) is far smaller than this in any real deployment.
+_MAX_WAVE_PENDING_READ = 2000
+
+# How often the Redis in-flight counters are rebuilt from Postgres.
+_IN_FLIGHT_REBUILD_INTERVAL_SECONDS = 300
 
 _ADMITTED = "admitted"
 _DEFERRED = "deferred"
@@ -271,6 +279,7 @@ class Governor:
         # subsequent run_wave ticks so regular queue admission is never blocked
         # behind a multi-batch cohort.
         self._pending_fallback_dispatches: list[_PendingFallbackDispatch] = []
+        self._last_in_flight_rebuild: float | None = None
 
     def _spark_engine_still_active(self, job: MaintenanceJobRecord) -> bool:
         """Real fix for a live incident, 2026-08-11: engine_activity_checker was declared as a
@@ -359,15 +368,23 @@ class Governor:
             reconciled = self._reconcile(current)
             tally.orphaned += reconciled.orphaned
 
-            pending_by_destination = self._queue.pending_by_destination()
-            for destination_id, job_ids in pending_by_destination.items():
-                governor_queue_depth.labels(destination=destination_id).set(len(job_ids))
+            # Only the head of each queue: a wave can look at slots*4 candidates, so reading
+            # (and decoding) a 30k-entry sorted set every 30s bought nothing.
+            pending_by_destination = self._queue.pending_by_destination(
+                limit=_MAX_WAVE_PENDING_READ
+            )
+            pending_depths: dict[str, int] = {}
+            for destination_id in pending_by_destination:
+                depth = self._queue.pending_depth(destination_id)
+                pending_depths[destination_id] = depth
+                governor_queue_depth.labels(destination=destination_id).set(depth)
 
             headroom = _WorkerDrainHeadroom(self._worker_drain_headroom())
             for destination_id, job_ids in pending_by_destination.items():
                 self._admit_for_destination(
                     destination_id,
                     job_ids,
+                    pending_depth=pending_depths[destination_id],
                     tally=tally,
                     headroom=headroom,
                     current=current,
@@ -415,7 +432,36 @@ class Governor:
             self._lock_store,
             now=current,
         )
+        self._maybe_rebuild_in_flight()
         return _ReconcileCounts(re_enqueued=re_enqueued, orphaned=orphaned, reaped=reaped)
+
+    def _maybe_rebuild_in_flight(self) -> None:
+        """Re-derive each destination's in-flight counter from Postgres, on a timer.
+
+        The Redis counter only moves at admit/complete/return_to_pending, so any path that
+        ends an admitted job another way leaks a slot permanently and capacity drifts toward
+        zero. On a timer rather than every wave: a worker finishing between the count and the
+        reset skews the counter by one until the next rebuild, which is cheap to tolerate once
+        in a while and not worth paying for on all waves.
+        """
+        count_in_flight = getattr(self._store, "in_flight_counts", None)
+        reset = getattr(self._queue, "reset_in_flight", None)
+        known = getattr(self._queue, "known_destinations", None)
+        if not (callable(count_in_flight) and callable(reset) and callable(known)):
+            return
+        now = monotonic()
+        if (
+            self._last_in_flight_rebuild is not None
+            and now - self._last_in_flight_rebuild < _IN_FLIGHT_REBUILD_INTERVAL_SECONDS
+        ):
+            return
+        self._last_in_flight_rebuild = now
+        try:
+            counts = count_in_flight()
+            for destination_id in set(counts) | set(known()):
+                reset(destination_id, counts.get(destination_id, {}))
+        except Exception:
+            logger.warning("In-flight counter rebuild failed", exc_info=True)
 
     def _reconcile_deferred(self, current: datetime) -> int:
         """reconcile_deferred_jobs, told why each job was actually deferred.
@@ -424,16 +470,18 @@ class Governor:
         _gate_approval refused -- which the very next wave refuses again. See
         reconcile_deferred_jobs' own docstring for the measured loop.
         """
-        if self._session_factory is None:
-            return reconcile_deferred_jobs(self._store, self._queue, now=current)
-        # One session for the whole pass, with the approved-key lookup memoised per table:
-        # this runs every wave, and the deferred backlog is bounded but not small.
-        with self._session_factory() as session:
+        # One session for the whole pass, with the lookups memoised per table: this runs
+        # every wave, and the deferred backlog is bounded but not small. Without a session
+        # factory (in-memory wiring) only the checks that need no database apply.
+        session_context = (
+            self._session_factory() if self._session_factory is not None else nullcontext(None)
+        )
+        with session_context as session:
             return reconcile_deferred_jobs(
                 self._store,
                 self._queue,
                 now=current,
-                still_blocked=_awaiting_approval_predicate(session),
+                still_blocked=_still_blocked_predicate(session, self._lock_store, now=current),
             )
 
     def _step_ledger(self) -> Any | None:
@@ -452,6 +500,7 @@ class Governor:
         destination_id: str,
         job_ids: list[str],
         *,
+        pending_depth: int,
         tally: _WaveTally,
         headroom: _WorkerDrainHeadroom,
         current: datetime,
@@ -482,7 +531,7 @@ class Governor:
                 # The worker fleet already has as much queued as it can drain; adding more
                 # buys no throughput. Distinct from having no engine capacity, which is
                 # counted per candidate below.
-                tally.record(destination_id, _BLOCKED, len(job_ids))
+                tally.record(destination_id, _BLOCKED, pending_depth)
                 return
             replicas = headroom.clamp(replicas)
 
@@ -698,6 +747,7 @@ class Governor:
             if not allowed:
                 logger.warning("Deferring job %s: %s", job.id, abac_reason)
                 _record_deferred_admission(wave.config)
+                self._defer(job, str(abac_reason))
                 return _DEFERRED
         return None
 
@@ -1097,26 +1147,7 @@ class Governor:
         self._store.mark_status(job.id, JobStatus.DEFERRED, error=reason)
 
 
-def _admission_job(job: MaintenanceJobRecord) -> AdmissionJob:
-    params = dict(job.params) if job.params else {}
-    estimated_benefit = params.get("min_expected_benefit_score")
-    if estimated_benefit is None:
-        estimated_benefit = params.get("benefit_score")
-    moop_score = params.get("moop_score")
-    size_gb = params.get("size_gb") or params.get("total_size_gb")
-    return AdmissionJob(
-        job_id=job.id,
-        table_id=job.table_id,
-        destination_id=job.destination_id,
-        mode=job.mode,
-        cooldown_hours=job.cooldown_hours,
-        estimated_benefit_score=float(estimated_benefit) if estimated_benefit is not None else None,
-        moop_score=float(moop_score) if moop_score is not None else None,
-        size_gb=float(size_gb) if size_gb is not None else None,
-        last_maintained_at=job.last_maintained_at,
-        deadline_at=job.deadline_at,
-        force_admit=job.force_admit,
-    )
+_admission_job = admission_job_from_record
 
 
 def _try_get_destination(store: JobStore, destination_id: str) -> DestinationConfig | None:
@@ -1133,38 +1164,91 @@ def _is_valid_job_id(job_id: str) -> bool:
     return bool(job_id) and job_id.lower() != "none"
 
 
-def _awaiting_approval_predicate(session: Any) -> Callable[[MaintenanceJobRecord], bool]:
-    """True while a deferred job is still waiting on the approval _gate_approval demanded.
+def _still_blocked_predicate(
+    session: Any,
+    lock_store: LockStore,
+    *,
+    now: datetime,
+) -> Callable[[MaintenanceJobRecord], bool]:
+    """True while whatever deferred a job, other than admission arithmetic, still holds.
 
-    Mirrors that gate's preconditions exactly -- an intent-scoped job, a job with no table or
-    no plan operations, is not approval-gated at all, so it answers False and stays eligible
-    for the ordinary admission-based re-queue. Anything this gets wrong in the True direction
-    strands a job until it is approved, so it errs the other way: a lookup that raises is
-    treated as "not blocked", which restores the old behaviour for that job rather than
-    silently parking it.
+    Admission is only one of the things that defers a job; _gate_job's earlier gates and the
+    table lock defer it too, and re-queueing a job the same gate refuses again next wave is
+    pure churn that also occupies the head of the queue. This answers the other half of
+    "would the gate chain take it now" for the gates that can be checked without side effects:
+    the table lock, a pause, a durable intent that is not ready, and a pending approval.
+
+    Anything this gets wrong in the True direction strands a job, so every lookup that raises
+    is treated as "not blocked", restoring the old re-queue behaviour for that job rather
+    than silently parking it.
     """
-    cache: dict[uuid.UUID, dict[tuple[uuid.UUID, str], list[dict[str, Any]]]] = {}
+    approval_cache: dict[uuid.UUID, dict[tuple[uuid.UUID, str], list[dict[str, Any]]]] = {}
+    paused_cache: dict[tuple[str, uuid.UUID], bool] = {}
+    paused_destinations: dict[str, bool] = {}
 
-    def still_awaiting(job: MaintenanceJobRecord) -> bool:
-        if job.intent_id is not None:
+    def intent_blocks(job: MaintenanceJobRecord) -> bool:
+        if job.intent_id is None:
             return False
-        table_uuid = _job_table_uuid(job)
-        if table_uuid is None or not job.plan:
+        if job.intent_status != IntentStatus.READY.value:
+            return True
+        return job.intent_expires_at is None or _as_utc(job.intent_expires_at) <= now
+
+    def lock_blocks(job: MaintenanceJobRecord) -> bool:
+        try:
+            return bool(lock_store.is_table_locked(job.table_id))
+        except Exception as exc:
+            logger.warning("Lock re-check failed for deferred job %s: %s", job.id, exc)
+            return False
+
+    def pause_blocks(job: MaintenanceJobRecord, table_uuid: uuid.UUID | None) -> bool:
+        try:
+            if table_uuid is not None:
+                key = (job.destination_id, table_uuid)
+                if key not in paused_cache:
+                    paused_cache[key] = table_uuid in prefetch_paused_table_ids(
+                        session, {table_uuid}, destination_id=job.destination_id
+                    )
+                if paused_cache[key]:
+                    return True
+            effect_ids = {
+                effect_id
+                for effect_id in job.intent_effect_destination_ids
+                if effect_id not in paused_destinations
+            }
+            if effect_ids:
+                paused = prefetch_paused_destination_ids(session, effect_ids)
+                for effect_id in effect_ids:
+                    paused_destinations[effect_id] = effect_id in paused
+            return any(paused_destinations.get(e) for e in job.intent_effect_destination_ids)
+        except Exception as exc:
+            logger.warning("Pause re-check failed for deferred job %s: %s", job.id, exc)
+            return False
+
+    def approval_blocks(job: MaintenanceJobRecord, table_uuid: uuid.UUID | None) -> bool:
+        if job.intent_id is not None or table_uuid is None or not job.plan:
             return False
         operations = job.plan.get("operations")
         if not operations:
             return False
         try:
-            approved = cache.get(table_uuid)
+            approved = approval_cache.get(table_uuid)
             if approved is None:
                 approved = prefetch_approved_operation_keys(session, {table_uuid})
-                cache[table_uuid] = approved
+                approval_cache[table_uuid] = approved
             return batch_job_requires_approval(table_uuid, operations, approved)
         except Exception as exc:
             logger.warning("Approval re-check failed for deferred job %s: %s", job.id, exc)
             return False
 
-    return still_awaiting
+    def still_blocked(job: MaintenanceJobRecord) -> bool:
+        if intent_blocks(job) or lock_blocks(job):
+            return True
+        if session is None:
+            return False
+        table_uuid = _job_table_uuid(job)
+        return pause_blocks(job, table_uuid) or approval_blocks(job, table_uuid)
+
+    return still_blocked
 
 
 def _job_table_uuid(job: MaintenanceJobRecord) -> uuid.UUID | None:
@@ -1207,38 +1291,7 @@ def _bandit_path() -> Path:
     return Path(os.environ.get("CRYO_STATE_DIR", "/tmp/cryo")) / "admission_bandit.json"
 
 
-def _admission_config_from_destination(
-    destination: DestinationConfig, default: AdmissionConfig
-) -> AdmissionConfig:
-    config = destination.config
-    per_replica_cap = config.get("per_replica_cap", config.get("slot_cap", default.per_replica_cap))
-    return AdmissionConfig(
-        offpeak_start_ist=int(config.get("offpeak_start_ist", default.offpeak_start_ist)),
-        offpeak_end_ist=int(config.get("offpeak_end_ist", default.offpeak_end_ist)),
-        per_replica_cap=int(per_replica_cap),
-        wave_wait_sec=int(config.get("wave_wait_sec", default.wave_wait_sec)),
-        adaptive_budget=bool(config.get("adaptive_budget", default.adaptive_budget)),
-        high_load_ratio=float(config.get("high_load_ratio", default.high_load_ratio)),
-        high_load_fraction=float(config.get("high_load_fraction", default.high_load_fraction)),
-        default_cooldown_hours=int(
-            config.get("default_cooldown_hours", default.default_cooldown_hours)
-        ),
-        min_benefit_score=float(config.get("min_benefit_score", default.min_benefit_score)),
-        min_moop_score=(
-            float(config["min_moop_score"])
-            if config.get("min_moop_score") is not None
-            else default.min_moop_score
-        ),
-        fleet_budget_gb=(
-            float(config["fleet_budget_gb"])
-            if config.get("fleet_budget_gb") is not None
-            else default.fleet_budget_gb
-        ),
-        staleness_boost_days=float(
-            config.get("staleness_boost_days", default.staleness_boost_days)
-        ),
-        staleness_boost_max=float(config.get("staleness_boost_max", default.staleness_boost_max)),
-    )
+_admission_config_from_destination = admission_config_from_destination
 
 
 def _cotenant_load_pct(live_capacity: Mapping[str, object]) -> float:

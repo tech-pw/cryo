@@ -762,6 +762,10 @@ until real evidence exists.
 - [x] Tables page redesign: triage cards, nightly maintenance Sankey, per-row maintenance block,
       triage views, facet filters, grouped column menu, bulk run dialog. See
       `docs/TABLES_PAGE_REDESIGN_2026-10-18.md`. Migration `20261018_1200`.
+- [x] **Governor fixes + operation-aware job dedupe** — FIFO-preserving re-queue, in-flight counter
+      rebuild, bounded scans, ABAC deferral, deferred re-queue agrees with real admission; per-table
+      operation dedupe for ad-hoc (`force`), cron and supersede-on-success. See
+      `docs/GOVERNOR_FIXES_AND_JOB_DEDUPE_2026-10-22.md`. Migration `20261022_1200`.
 - [ ] Chart `aria-label` summaries for all Recharts instances (accessibility backlog).
 - [ ] Query-pattern-aware optimization at scale — blocked on query-history ingestion maturity.
 - [ ] Native engine production hardening — see `architecture.md` §1.5.

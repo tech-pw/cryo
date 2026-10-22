@@ -671,10 +671,19 @@ export interface MaintenancePreviewResponse {
   items: TablePreviewRead[];
 }
 
+/** Operations a new run did not queue because an active job already covers them. */
+export interface SkippedTableOps {
+  table_id: UUID;
+  operations: string[];
+  covering_job_ids: string[];
+  fully_skipped: boolean;
+}
+
 export interface MaintenanceRunResponse {
   run_id: UUID;
   job_ids: UUID[];
   status: string;
+  skipped?: SkippedTableOps[];
 }
 
 export interface ScannerConfigRead {

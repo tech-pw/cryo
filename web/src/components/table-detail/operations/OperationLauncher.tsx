@@ -5,6 +5,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { getEffectiveParams, getEffectivePreset, getTable, runTableOperations } from "../../../api/client";
 import { useAuth } from "../../../lib/auth";
+import { describeSkippedOps } from "../../../lib/skippedOps";
 import { useWriteControl } from "../../../lib/useWriteControl";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
 import { Button } from "../../ui/button";
@@ -75,6 +76,7 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
   const [cart, setCartState] = useState<RunnableOperation[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
+  const [force, setForce] = useState(false);
   const [lastRunId, setLastRunId] = useState<string | null>(null);
 
   const preset = useQuery({
@@ -102,13 +104,16 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
       : null;
 
   const run = useMutation({
-    mutationFn: (ops: RunnableOperation[]) => runTableOperations(api, tableId, { operations: ops }),
-    onSuccess: (result, ops) => {
+    mutationFn: ({ ops, force: forced }: { ops: RunnableOperation[]; force: boolean }) =>
+      runTableOperations(api, tableId, forced ? { operations: ops, force: true } : { operations: ops }),
+    onSuccess: (result, { ops }) => {
       setLastRunId(result.run_id);
       setReviewOpen(false);
       setCartState([]);
       toast.success(ops.length === 1 ? `${OPERATION_CATALOG[ops[0]].title} queued` : `${ops.length} operations queued as one run`, {
-        description: "Follow it in Maintenance → Runs. It starts when engine capacity is available."
+        description: [describeSkippedOps(result.skipped), "Follow it in Maintenance → Runs. It starts when engine capacity is available."]
+          .filter(Boolean)
+          .join(" ")
       });
       const next = new URLSearchParams(searchParams);
       next.set("tab", "maintenance");
@@ -131,6 +136,7 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
   const clear = useCallback(() => setCartState([]), []);
   const review = useCallback(() => {
     setAcknowledged(false);
+    setForce(false);
     setReviewOpen(true);
   }, []);
   const launch = useCallback(
@@ -239,6 +245,10 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
               </span>
             </label>
           ) : null}
+          <label className="td-op-dialog-ack">
+            <input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} />
+            <span>Run even if already queued. Otherwise steps a queued or running job already covers are skipped.</span>
+          </label>
           {blockedReason ? <p className="td-op-dialog-blocked">{blockedReason}</p> : null}
 
           <DialogFooter>
@@ -250,7 +260,7 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
               variant={destructive ? "danger" : "primary"}
               disabled={!canSubmit}
               loading={run.isPending}
-              onClick={() => run.mutate(cart)}
+              onClick={() => run.mutate({ ops: cart, force })}
             >
               <Play aria-hidden="true" />
               {cart.length === 1 ? `Queue ${OPERATION_CATALOG[cart[0]].title}` : `Queue ${cart.length} operations`}

@@ -892,6 +892,20 @@ class MaintenanceJob(Base):
     __table_args__ = (
         Index("ix_jobs_run_status", "run_id", "status"),
         Index("ix_jobs_table_finished", "table_id", "finished_at"),
+        # One active job per (table, operation set). dedupe_key is NULL for forced jobs and for
+        # jobs from creators that do not dedupe, which exempts them. See job_dedupe.py.
+        Index(
+            "ux_jobs_active_table_ops",
+            "table_id",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('queued', 'admitted', 'running', 'deferred') AND dedupe_key IS NOT NULL"
+            ),
+            sqlite_where=text(
+                "status IN ('queued', 'admitted', 'running', 'deferred') AND dedupe_key IS NOT NULL"
+            ),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -908,6 +922,12 @@ class MaintenanceJob(Base):
     )
     mode: Mapped[str] = mapped_column(Text, nullable=False)
     plan: Mapped[JsonDict | None] = mapped_column(JSONB)
+    # Explicit operation subset this job was trimmed or requested to, set only when dedupe
+    # narrowed it. NULL means the run summary / mode decides. When set it bounds the plan the
+    # same way a run summary's operations list does.
+    operations: Mapped[JsonList | None] = mapped_column(JSONB)
+    # Canonical effective-operations string used by ux_jobs_active_table_ops; NULL = exempt.
+    dedupe_key: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'queued'"))
     engine_ref: Mapped[str | None] = mapped_column(Text)
     replica: Mapped[str | None] = mapped_column(Text)

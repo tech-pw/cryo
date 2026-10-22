@@ -76,7 +76,9 @@ def build_and_bind_job_intent(
     # bound plan cannot grow an operation the caller did not ask for (issue #149).
     summary = job.run.summary if job.run is not None else None
     requested = summary.get("operations") if isinstance(summary, dict) else None
-    if isinstance(requested, list) and requested:
+    # A job dedupe trimmed (jobs.operations) is narrower than the run's request and already
+    # carried into params by _job_record, so the run-level list must not widen it again.
+    if isinstance(requested, list) and requested and not job.operations:
         job_record = replace(
             job_record,
             params={**dict(job_record.params), "requested_operations": list(requested)},

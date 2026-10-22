@@ -216,6 +216,7 @@ _OPERATION_RUN_OPS = {
 class TableOperationRunRequest(BaseModel):
     operations: list[OperationType] = Field(min_length=1)
     trigger: str | None = "web-table-operation"
+    force: bool = False
 
 
 def mode_for_operations(operations: set[OperationType]) -> Mode:
@@ -284,5 +285,6 @@ def run_table_operations(
         mode=mode_for_operations(requested),
         trigger=payload.trigger,
         operations=[op.value for op in payload.operations],
+        force=payload.force,
     )
     return start_maintenance_run(session, request, principal, allow_operations_outside_preset=True)
