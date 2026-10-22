@@ -173,6 +173,7 @@ from cryo.planner.guardrails import (
 )
 from cryo.planner.planner import build_plan
 from cryo.scanner.orphans import estimate_orphan_scan_cost
+from cryo.scheduler.scheduler import fifo_priority
 from cryo.security.crypto import encrypt_secret
 from cryo.sources.factory import (
     assert_supported_source_type,
@@ -2565,7 +2566,13 @@ def force_admit_job(
     session.refresh(job)
     if was_deferred:
         wiring = build_runtime_wiring()
-        wiring.queue.enqueue(str(job.id), str(job.destination_id))
+        # Keeps its place by run age: force-admit waives scheduling gates, it does not
+        # jump the queue ahead of older runs.
+        wiring.queue.enqueue(
+            str(job.id),
+            str(job.destination_id),
+            fifo_priority(job.run.created_at if job.run is not None else None),
+        )
     return JobRead.model_validate(presets.job_summary(job))
 
 

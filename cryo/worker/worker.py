@@ -98,6 +98,11 @@ class MaintenanceJobRecord:
     # dead jobs were re-picked every time. None by default -- optional so callers that don't
     # need it (most) don't pay for the extra query.
     run_status: str | None = None
+    run_created_at: datetime | None = None
+    # Explicit operation subset recorded at creation by dedupe (jobs.operations); None means
+    # "whatever the run summary / mode plans".
+    requested_operations: tuple[str, ...] | None = None
+    dedupe_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -194,6 +199,10 @@ class JobStore(Protocol):
 
     def set_engine_ref(self, job_id: str, engine_ref: str) -> None: ...
 
+    def supersede_covered_jobs(self, job_id: str) -> list[tuple[str, str]]:
+        """Skip queued duplicates a just-succeeded job covered; returns (job_id, destination_id)."""
+        ...
+
     def deactivate_table(self, table_id: str, reason: str) -> None: ...
 
     def record_missing_metadata(self, table_id: str, reason: str) -> None: ...
@@ -282,6 +291,43 @@ class InMemoryJobStore:
     def set_engine_ref(self, job_id: str, engine_ref: str) -> None:
         self.jobs[job_id].engine_ref = engine_ref
 
+    def supersede_covered_jobs(self, job_id: str) -> list[tuple[str, str]]:
+        done = self.jobs[job_id]
+        covered = self._effective_operations(done)
+        cutoff = done.started_at
+        superseded: list[tuple[str, str]] = []
+        for candidate in self.jobs.values():
+            if (
+                candidate.id == done.id
+                or candidate.table_id != done.table_id
+                or candidate.status not in {JobStatus.QUEUED, JobStatus.DEFERRED}
+                or candidate.dedupe_key is None
+            ):
+                continue
+            if (
+                cutoff is not None
+                and candidate.run_created_at is not None
+                and candidate.run_created_at > cutoff
+            ):
+                continue
+            wanted = self._effective_operations(candidate)
+            if not wanted or not wanted <= covered:
+                continue
+            candidate.status = JobStatus.SKIPPED
+            candidate.error = f"superseded_by:{done.id}"
+            candidate.finished_at = datetime.now(UTC)
+            superseded.append((candidate.id, candidate.destination_id))
+        return superseded
+
+    @staticmethod
+    def _effective_operations(job: MaintenanceJobRecord) -> frozenset[str]:
+        from cryo.planner.job_coverage import effective_operations
+
+        return effective_operations(
+            job.mode,
+            job_operations=[str(op) for op in job.operations] if job.operations else None,
+        )
+
     def deactivate_table(self, table_id: str, reason: str) -> None:
         self.deactivated_tables[table_id] = reason
 
@@ -322,6 +368,9 @@ class InMemoryJobStore:
     def destination_exists(self, destination_id: str) -> bool:
         destination = self.destinations.get(destination_id)
         return destination is not None
+
+    def job_statuses(self, job_ids: Sequence[str]) -> dict[str, JobStatus]:
+        return {job_id: self.jobs[job_id].status for job_id in job_ids if job_id in self.jobs}
 
 
 class FakeMaintenanceEngine:
@@ -1177,6 +1226,8 @@ class Worker:
         )
         self._queue.complete(job.id, final_status)
         self._release_table_lock(job)
+        if final_status is JobStatus.SUCCEEDED:
+            self._supersede_covered_jobs(job)
         from cryo.governor.bandit_feedback import finalize_admission
 
         finalize_admission(
@@ -1365,6 +1416,26 @@ class Worker:
         if self._lock_store is None:
             return True
         return self._lock_store.renew_table_lock(job.table_id, job.id, self._lock_ttl_seconds)
+
+    def _supersede_covered_jobs(self, job: MaintenanceJobRecord) -> None:
+        """Retire queued duplicates this success already did the work for.
+
+        Best effort: the job is already finalized, so a failure here only means a redundant
+        job runs later (and the planner finds little to do).
+        """
+        supersede = getattr(self._store, "supersede_covered_jobs", None)
+        if supersede is None:
+            return
+        try:
+            superseded = supersede(job.id)
+        except Exception:
+            logger.warning("Could not supersede duplicates of job %s", job.id, exc_info=True)
+            return
+        for superseded_id, destination_id in superseded:
+            try:
+                self._queue.cancel_pending(superseded_id, destination_id)
+            except Exception:
+                logger.warning("Could not drop queue entry for %s", superseded_id, exc_info=True)
 
     def _release_table_lock(self, job: MaintenanceJobRecord) -> None:
         if self._lock_store is not None:

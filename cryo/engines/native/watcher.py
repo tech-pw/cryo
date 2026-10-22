@@ -7,10 +7,11 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.orm import Session
 
+from cryo.db.repositories.job_dedupe import supersede_covered_jobs
 from cryo.db.repositories.native_dispatch import (
     jobs_for_dispatch,
     list_active_dispatches,
@@ -33,6 +34,9 @@ from cryo.engines.native.runner import PROGRESS_PREFIX, split_stdout_lines
 from cryo.queue.locks import LockStore
 from cryo.queue.run_events import MAX_STREAM_LEN, build_log_line, safe_publish
 from cryo.worker.worker import AuditRecord
+
+if TYPE_CHECKING:
+    from cryo.db.models import MaintenanceJob
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +126,7 @@ class NativeJobWatcher:
         *,
         mark_status: Callable[..., None],
         record_audit: Callable[[AuditRecord], None] | None = None,
+        cancel_pending: Callable[[str, str | None], None] | None = None,
         namespace: str | None = None,
         lock_ttl_seconds: int = 6 * 60 * 60,
         run_events: Any | None = None,
@@ -131,6 +136,7 @@ class NativeJobWatcher:
         self._lock_store = lock_store
         self._mark_status = mark_status
         self._record_audit = record_audit
+        self._cancel_pending = cancel_pending
         self._namespace = namespace or current_k8s_namespace()
         self._lock_ttl_seconds = lock_ttl_seconds
         self._run_events = run_events
@@ -323,6 +329,7 @@ class NativeJobWatcher:
             self._lock_store.release_table_lock(str(job.table_id), str(job.id))
             if ok:
                 maybe_persist_optimize_properties(session, job)
+                self._supersede_covered(session, job)
                 succeeded += 1
             elif status is JobStatus.DEFERRED:
                 deferred += 1
@@ -347,6 +354,22 @@ class NativeJobWatcher:
         )
         _INCREMENTAL_LOG_SEEN.pop(str(dispatch_id), None)
 
+    def _supersede_covered(self, session: Session, job: MaintenanceJob) -> None:
+        """Retire queued duplicates this success covered; never fails the finalize."""
+        try:
+            with session.begin_nested():
+                superseded = supersede_covered_jobs(session, job.id, commit=False)
+        except Exception:
+            logger.warning("Could not supersede duplicates of job %s", job.id, exc_info=True)
+            return
+        if self._cancel_pending is None:
+            return
+        for superseded_id, destination_id in superseded:
+            try:
+                self._cancel_pending(superseded_id, destination_id)
+            except Exception:
+                logger.warning("Could not drop queue entry for %s", superseded_id, exc_info=True)
+
     def _finalize_failure(
         self,
         session: Session,
@@ -370,6 +393,7 @@ class NativeJobWatcher:
             if salvage.get(str(job.id)):
                 self._mark_status(str(job.id), JobStatus.SUCCEEDED, error=None)
                 maybe_persist_optimize_properties(session, job)
+                self._supersede_covered(session, job)
                 salvaged += 1
             else:
                 self._mark_status(str(job.id), JobStatus.FAILED, error=reason)

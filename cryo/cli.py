@@ -498,6 +498,7 @@ class GovernorRunner(DaemonRunner):
                 lock_store=wiring.lock_store,
                 mark_status=wiring.job_store.mark_status,
                 record_audit=wiring.job_store.record_audit,
+                cancel_pending=getattr(getattr(wiring, "queue", None), "cancel_pending", None),
                 run_events=getattr(wiring, "run_events", None),
             )
             watch = watcher.tick()
@@ -606,7 +607,10 @@ class GovernorRunner(DaemonRunner):
                     lock_store.release_table_lock(table_id, job_id)
                     released += 1
                     continue
-                if record.status is not JobStatus.RUNNING:
+                # ADMITTED holds the lock too: the governor takes it at admission, and the job
+                # may wait minutes for a worker. Releasing it lets a duplicate admit on top,
+                # which the worker then has to defer.
+                if record.status not in {JobStatus.RUNNING, JobStatus.ADMITTED}:
                     lock_store.release_table_lock(table_id, job_id)
                     released += 1
             if released:

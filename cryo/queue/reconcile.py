@@ -51,6 +51,16 @@ _MAX_DEFERRED_RECONCILE_PER_WAVE = 500
 # write), so more can be processed per wave within the same time budget.
 _MAX_QUEUED_RECONCILE_PER_WAVE = 2000
 
+# Head of each destination's pending queue that the purge pass examines per wave. The head is
+# what the governor reads next, so that is where a stale entry does harm; the rest is reached as
+# the head drains.
+_MAX_PURGE_SCAN_PER_DESTINATION = 2000
+
+# Per-wave bound on the RUNNING and ADMITTED scans (oldest first, which is where anything stale
+# sits). Both used to read every row of that status on each wave.
+_MAX_RUNNING_RECONCILE_PER_WAVE = 500
+_MAX_ADMITTED_RECONCILE_PER_WAVE = 500
+
 
 def reconcile_queued_jobs(store: JobStore, queue: MaintenanceQueue) -> int:
     """Re-enqueue DB jobs stuck in queued state that are missing from Redis.
@@ -93,7 +103,10 @@ def reconcile_queued_jobs(store: JobStore, queue: MaintenanceQueue) -> int:
             continue
         if queue_status is JobStatus.QUEUED and queue.is_pending(job.id, job.destination_id):
             continue
-        queue.enqueue(job.id, job.destination_id)
+        # Original run age, not the default 0: 0 outranks every FIFO score, so each re-enqueue
+        # would jump ahead of fresh work and a wave's candidate window would fill with jobs
+        # that were just deferred.
+        queue.enqueue(job.id, job.destination_id, fifo_priority(job.run_created_at))
         re_enqueued += 1
         logger.info("Re-enqueued queued job %s for destination %s", job.id, job.destination_id)
 
@@ -135,7 +148,12 @@ def reconcile_deferred_jobs(
     "is the thing that actually deferred this still true?" -- and the job is left alone while
     the answer is yes. Optional so the in-memory/test paths keep the old behaviour.
     """
-    from cryo.governor.admission import AdmissionConfig, AdmissionJob, decide_job_admission
+    from cryo.governor.admission import (
+        AdmissionConfig,
+        admission_config_from_destination,
+        admission_job_from_record,
+        decide_job_admission,
+    )
 
     list_deferred = getattr(store, "list_deferred_jobs", None)
     if not callable(list_deferred):
@@ -155,10 +173,18 @@ def reconcile_deferred_jobs(
         if destination is None:
             store.mark_status(job.id, JobStatus.FAILED, error="destination_not_found")
             continue
-        config = cast(AdmissionConfig, _admission_config(destination, AdmissionConfig))
-        admission_job = cast(AdmissionJob, _admission_job(job, AdmissionJob))
+        config = admission_config_from_destination(destination, AdmissionConfig())
+        admission_job = admission_job_from_record(job)
         decision = decide_job_admission(admission_job, config, now=current)
         if not decision.admissible and decision.defer:
+            continue
+        # pack_fleet_budget defers a job whose cost is unknown on every wave, and nothing
+        # waiting can supply a size, so re-queueing it only produces the same refusal.
+        if (
+            not job.force_admit
+            and config.fleet_budget_gb is not None
+            and admission_job.size_gb is None
+        ):
             continue
         # Admission would take it, but admission is not why it was deferred. Checked after
         # the admission decision so the cheap arithmetic still filters first and this only
@@ -169,7 +195,7 @@ def reconcile_deferred_jobs(
             store.mark_status(job.id, JobStatus.QUEUED)
             requeued += 1
             continue
-        queue.enqueue(job.id, job.destination_id)
+        queue.enqueue(job.id, job.destination_id, fifo_priority(job.run_created_at))
         store.mark_status(job.id, JobStatus.QUEUED)
         requeued += 1
         logger.info("Re-queued deferred job %s (was %s)", job.id, job.error)
@@ -211,7 +237,7 @@ def reconcile_stale_running_jobs(
 
     current = now or datetime.now(UTC)
     reaped = 0
-    for job in list_running():
+    for job in list_running(limit=_MAX_RUNNING_RECONCILE_PER_WAVE):
         if job.started_at is None:
             continue
         started_at = job.started_at if job.started_at.tzinfo else job.started_at.replace(tzinfo=UTC)
@@ -297,7 +323,7 @@ def reconcile_stuck_admitted_jobs(
     if stuck_after_seconds is None:
         stuck_after_seconds = get_settings().stuck_admitted_after_seconds
     requeued = 0
-    for job in list_admitted():
+    for job in list_admitted(limit=_MAX_ADMITTED_RECONCILE_PER_WAVE):
         if job.engine_ref:
             continue
         admitted_at = job.admitted_at
@@ -340,27 +366,42 @@ def purge_stale_queue_entries(store: JobStore, queue: MaintenanceQueue) -> int:
     UPDATE left ~22k terminal jobs in the Redis pending zset, drowning out 27 real ones.
     """
     destination_exists = getattr(store, "destination_exists", None)
+    status_lookup = getattr(store, "job_statuses", None)
     purged = 0
 
-    for destination_id, job_ids in queue.pending_by_destination().items():
+    for destination_id, job_ids in queue.pending_by_destination(
+        limit=_MAX_PURGE_SCAN_PER_DESTINATION
+    ).items():
         if callable(destination_exists) and not destination_exists(destination_id):
             for job_id in job_ids:
                 queue.cancel_pending(job_id, destination_id)
                 purged += 1
             continue
 
+        valid_ids: list[str] = []
         for job_id in job_ids:
-            if not _is_valid_job_id(job_id):
+            if _is_valid_job_id(job_id):
+                valid_ids.append(job_id)
+            else:
                 queue.cancel_pending(job_id, destination_id)
                 purged += 1
-                continue
-            try:
-                job = store.get_job(job_id)
-            except KeyError:
-                queue.cancel_pending(job_id, destination_id)
-                purged += 1
-                continue
-            if job.status not in _ACTIVE_QUEUE_STATUSES and job.status != JobStatus.DEFERRED:
+
+        statuses: dict[str, JobStatus | None]
+        if callable(status_lookup):
+            looked_up = status_lookup(valid_ids)
+            statuses = {job_id: looked_up.get(job_id) for job_id in valid_ids}
+        else:
+            statuses = {}
+            for job_id in valid_ids:
+                try:
+                    statuses[job_id] = store.get_job(job_id).status
+                except KeyError:
+                    statuses[job_id] = None
+
+        for job_id, status in statuses.items():
+            if status is None or (
+                status not in _ACTIVE_QUEUE_STATUSES and status != JobStatus.DEFERRED
+            ):
                 queue.cancel_pending(job_id, destination_id)
                 purged += 1
 
@@ -381,30 +422,3 @@ def _try_get_destination(store: JobStore, destination_id: str) -> DestinationCon
         return store.get_destination(destination_id)
     except KeyError:
         return None
-
-
-def _admission_config(destination: DestinationConfig, admission_config: type[Any]) -> object:
-    config = destination.config
-    per_replica_cap = config.get("per_replica_cap", config.get("slot_cap", 5))
-    return admission_config(
-        offpeak_start_ist=int(config.get("offpeak_start_ist", 0)),
-        offpeak_end_ist=int(config.get("offpeak_end_ist", 0)),
-        per_replica_cap=int(per_replica_cap),
-        wave_wait_sec=int(config.get("wave_wait_sec", 300)),
-        adaptive_budget=bool(config.get("adaptive_budget", True)),
-        high_load_ratio=float(config.get("high_load_ratio", 0.8)),
-        high_load_fraction=float(config.get("high_load_fraction", 0.5)),
-    )
-
-
-def _admission_job(job: MaintenanceJobRecord, admission_job: type[Any]) -> object:
-    return admission_job(
-        job_id=job.id,
-        table_id=job.table_id,
-        destination_id=job.destination_id,
-        mode=job.mode,
-        cooldown_hours=job.cooldown_hours,
-        last_maintained_at=job.last_maintained_at,
-        deadline_at=job.deadline_at,
-        force_admit=job.force_admit,
-    )
