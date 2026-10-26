@@ -1,0 +1,18 @@
+<svg class="bm-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" role="img" aria-label="Paired bars. p95 latency of live queries while idle and while Cryo compacted 67 GiB: point lookup 552 vs 485 ms, one-day scan 813 vs 808 ms, one-week scan 4,169 vs 4,195 ms.">
+<text x="138.0" y="62.0" class="bm-rowh" text-anchor="end">Point lookup</text>
+<rect class="bm-a0-fill" x="150" y="40" width="344.0" height="16" rx="4"/>
+<text x="502.0" y="53.0" class="bm-val" text-anchor="start">552 ms idle</text>
+<rect class="bm-cryo-fill" x="150" y="60" width="302.2" height="16" rx="4"/>
+<text x="460.2" y="73.0" class="bm-val" text-anchor="start">485 ms during Cryo compaction</text>
+<text x="138.0" y="118.0" class="bm-rowh" text-anchor="end">One-day scan</text>
+<rect class="bm-a0-fill" x="150" y="96" width="344.0" height="16" rx="4"/>
+<text x="502.0" y="109.0" class="bm-val" text-anchor="start">813 ms idle</text>
+<rect class="bm-cryo-fill" x="150" y="116" width="341.9" height="16" rx="4"/>
+<text x="499.9" y="129.0" class="bm-val" text-anchor="start">808 ms during Cryo compaction</text>
+<text x="138.0" y="174.0" class="bm-rowh" text-anchor="end">One-week scan</text>
+<rect class="bm-a0-fill" x="150" y="152" width="341.9" height="16" rx="4"/>
+<text x="499.9" y="165.0" class="bm-val" text-anchor="start">4,169 ms idle</text>
+<rect class="bm-cryo-fill" x="150" y="172" width="344.0" height="16" rx="4"/>
+<text x="502.0" y="185.0" class="bm-val" text-anchor="start">4,195 ms during Cryo compaction</text>
+<text x="150.0" y="214.0" class="bm-foot" text-anchor="start">p95 latency of live Trino queries, about 500 to 700 runs each, 0 failures.</text>
+</svg>

@@ -249,10 +249,13 @@ def _apply_skip_operations(
     kept = [op for op in operations if op.type.value not in skip]
     dropped = [op.type.value for op in operations if op.type.value in skip]
     if dropped:
-        notes.append(
-            "Skipped operation(s) not in the preset's configured operations list: "
-            f"{', '.join(sorted(set(dropped)))}."
-        )
+        # requested_operations is an explicit call (POST /maintenance/run). The preset
+        # list is not a bound, so the two explain themselves differently.
+        if params.get("requested_operations"):
+            reason = "not requested for this run"
+        else:
+            reason = "not in the preset's configured operations list"
+        notes.append(f"Skipped operation(s) {reason}: {', '.join(sorted(set(dropped)))}.")
     return tuple(kept)
 
 

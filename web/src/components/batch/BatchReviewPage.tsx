@@ -7,6 +7,7 @@ import { listDestinations, listPresets, runMaintenance } from "../../api/client"
 import { PageHeader } from "../ui/page-header";
 import { Select } from "../ui/select";
 import { useAuth } from "../../lib/auth";
+import { describeSkippedOps } from "../../lib/skippedOps";
 import {
   BATCH_RECIPES,
   loadDraft,
@@ -40,6 +41,7 @@ export const BatchReviewPage = () => {
   });
 
   const [draft, setDraft] = useState(() => loadDraft(identity));
+  const [force, setForce] = useState(false);
   useEffect(() => {
     const reload = () => setDraft(loadDraft(identity));
     window.addEventListener(MAINTENANCE_BATCH_CHANGE_EVENT, reload);
@@ -62,11 +64,13 @@ export const BatchReviewPage = () => {
         destination_id: batch.destinationId,
         preset_id: batch.presetId,
         mode: preset?.mode ?? "standard",
-        trigger: "web-batch"
+        trigger: "web-batch",
+        ...(force ? { force: true } : {})
       });
     },
     onSuccess: (result) => {
-      toast.success(`Run queued: ${result.run_id}`);
+      const skipped = describeSkippedOps(result.skipped);
+      toast.success(`Run queued: ${result.run_id}`, skipped ? { description: skipped } : undefined);
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
       navigate("/runs?tab=history");
@@ -119,6 +123,10 @@ export const BatchReviewPage = () => {
             options={presetOptions}
           />
         </div>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} />
+          Run even if already queued
+        </label>
         {selectedPreset && selectedDestination && selectedPreset.destination_id !== selectedDestination.id ? (
           <span className="text-xs text-[var(--color-status-warning)]">
             {selectedPreset.name} targets a different destination.

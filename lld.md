@@ -376,9 +376,14 @@ CREATE TABLE cryo.jobs (
     replica        text,                          -- which Trino coordinator
     started_at     timestamptz,
     finished_at    timestamptz,
-    error          text
+    error          text,
+    operations     jsonb,                         -- explicit subset when dedupe trimmed the job; NULL = mode/run decides
+    dedupe_key     text                           -- canonical effective operations; NULL = exempt (forced)
 );
 CREATE INDEX ON cryo.jobs (run_id, status);
+-- one active job per (table, operation set); race backstop for the dedupe check
+CREATE UNIQUE INDEX ux_jobs_active_table_ops ON cryo.jobs (table_id, dedupe_key)
+    WHERE status IN ('queued','admitted','running','deferred') AND dedupe_key IS NOT NULL;
 
 -- supersedes iceberg_maintenance_log
 CREATE TABLE cryo.audit_log (
@@ -778,6 +783,15 @@ finalize run summary
   destination off-peak window (IST hours); `light` allowed anytime. Missing engine off-peak, or
   equal start/end (including `0`/`0`), means no window — heavy modes may run at any hour.
 - **Cooldown / deadline / adaptive budget / round-robin**: all preserved from today.
+- **Re-queue keeps FIFO age**: every enqueue scores `fifo_priority(run.created_at)`; a re-queued job
+  never outranks fresh work. Deferred jobs are re-queued only when real admission would take them
+  and no earlier gate (lock, pause, intent, approval) still holds.
+- **In-flight counters** are rebuilt from Postgres every 5 minutes; `defer()` returns the slot of an
+  admitted/running job. Wave, purge and reaper scans are bounded and oldest-first.
+- **Duplicate maintenance**: jobs for the same table are deduped by operation (see
+  `docs/GOVERNOR_FIXES_AND_JOB_DEDUPE_2026-10-22.md`). Ad-hoc runs skip covered steps and report
+  them (`force` overrides), cron runs filter before the budget cut, and a succeeded job supersedes
+  queued jobs whose operations it covered.
 
 ---
 

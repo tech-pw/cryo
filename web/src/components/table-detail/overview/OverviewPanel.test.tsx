@@ -267,7 +267,7 @@ describe("OverviewPanel", () => {
     expect(await screen.findByText(/Keeps snapshots from the last 5 days/)).toBeInTheDocument();
     const run = screen.getByRole("button", { name: "Queue Expire snapshots" });
     expect(run).toBeDisabled();
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /files are deleted/ }));
     expect(run).toBeEnabled();
     fireEvent.click(run);
 

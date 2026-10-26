@@ -1,4 +1,4 @@
-FROM golang:1.27.2-bookworm@sha256:55395706e9703db746cc507abfc4eb2aea75918f8a8024e4848e2cb81004f5ad AS cryo-engine-go-builder
+FROM golang:1.27.3-bookworm@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132 AS cryo-engine-go-builder
 
 WORKDIR /build
 COPY engine-go/go.mod engine-go/go.sum ./
