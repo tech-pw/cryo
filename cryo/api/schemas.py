@@ -13,7 +13,7 @@ from cryo.engines.trino.catalog_bindings import parse_catalog_bindings, validate
 
 JsonDict = dict[str, Any]
 
-_NATIVE_ENGINE_IMPLS = frozenset({"go", "rust"})
+_NATIVE_ENGINE_IMPLS = frozenset({"go"})
 
 
 def validate_native_engine_config(engine: EngineType | str, config: Mapping[str, Any]) -> None:
@@ -26,7 +26,7 @@ def validate_native_engine_config(engine: EngineType | str, config: Mapping[str,
         raise ValueError("config.engine_impl must be a string for native engines")
     normalized = impl.strip().lower()
     if normalized not in _NATIVE_ENGINE_IMPLS:
-        raise ValueError("config.engine_impl must be 'go' or 'rust' for native engines")
+        raise ValueError("config.engine_impl must be 'go' for native engines")
 
 
 def validate_destination_config(engine: EngineType | str, config: Mapping[str, Any]) -> None:
