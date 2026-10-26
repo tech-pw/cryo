@@ -22,6 +22,7 @@ import {
   maintenanceOpsToSteps,
   scanPipelineSteps
 } from "../../components/operations/OperationPipeline";
+import { pipelineStepsFromJobs } from "../../lib/runPipeline";
 import { RunDurationBar } from "../../components/operations/RunDurationBar";
 import { RunHistoryGrid } from "../../components/operations/RunHistoryGrid";
 import {
@@ -88,57 +89,6 @@ const tableRef = (job: JobRead) => {
   const planRef = job.plan?.table_ref;
   if (typeof planRef === "string" && planRef) return planRef;
   return job.schema_name && job.table_name ? `${job.schema_name}.${job.table_name}` : job.table_id;
-};
-
-const planOperationNames = (plan: JobRead["plan"]): string[] => {
-  if (!plan) return [];
-  const names: string[] = [];
-  const ops = plan.operations;
-  if (Array.isArray(ops)) {
-    for (const op of ops) {
-      if (typeof op === "string" && op) names.push(op);
-      else if (op && typeof op === "object" && "type" in op) {
-        const type = (op as { type?: unknown }).type;
-        if (typeof type === "string" && type) names.push(type);
-      }
-    }
-  }
-  const single = plan.operation;
-  if (typeof single === "string" && single) names.push(single);
-  return names;
-};
-
-const jobHasOperation = (job: JobRead, op: string) => planOperationNames(job.plan).includes(op);
-
-const inferPipelineFromJobs = (jobs: JobRead[], operations: string[]) => {
-  const completed: string[] = [];
-  const partial: string[] = [];
-  const skipped: string[] = [];
-  let active: string | null = null;
-  let failed: string | null = null;
-  for (const op of operations) {
-    const opJobs = jobs.filter((job) => jobHasOperation(job, op));
-    if (opJobs.some((job) => job.status === "failed")) {
-      failed = op;
-      break;
-    }
-    if (opJobs.some((job) => IN_PROGRESS_JOB_STATUSES.has(job.status))) {
-      active = op;
-      break;
-    }
-    if (opJobs.length === 0) continue;
-    if (opJobs.every((job) => job.status === "skipped")) {
-      skipped.push(op);
-      continue;
-    }
-    const settled = opJobs.every(
-      (job) => job.status === "succeeded" || job.status === "partial" || job.status === "skipped"
-    );
-    if (!settled) continue;
-    if (opJobs.some((job) => job.status === "partial")) partial.push(op);
-    else if (opJobs.some((job) => job.status === "succeeded")) completed.push(op);
-  }
-  return { completed, partial, skipped, active, failed };
 };
 
 const chipLabel = (status: string) => status.charAt(0).toUpperCase() + status.slice(1);
@@ -608,13 +558,11 @@ export const RunDetail = () => {
 
   const pipelineSteps = useMemo(() => {
     if (scan) return scanPipelineSteps(runData?.status);
-    const ops = ["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"];
-    const { completed, active, failed, partial, skipped } = inferPipelineFromJobs(jobRows, ops);
-    return maintenanceOpsToSteps(ops, active, completed, failed, {
-      absentLabel: runFinished ? "Not recorded" : "Waiting",
-      partialOps: partial,
-      skippedOps: skipped
-    });
+    // Per-operation counts across every job; one failed table never hides later
+    // operations, and the list comes from the jobs (#184).
+    const steps = pipelineStepsFromJobs(jobRows);
+    if (steps.length) return steps;
+    return maintenanceOpsToSteps([], null, [], null, { absentLabel: runFinished ? "Not recorded" : "Waiting" });
   }, [jobRows, runData?.status, runFinished, scan]);
 
   const jobLogMessages = useMemo(() => {

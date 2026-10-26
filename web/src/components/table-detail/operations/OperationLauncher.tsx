@@ -20,7 +20,10 @@ interface LauncherValue {
   toggle: (op: RunnableOperation) => void;
   setCart: (ops: RunnableOperation[]) => void;
   clear: () => void;
-  /** Add one operation and open the review straight away (the "Fix" buttons). */
+  /**
+   * Review and run exactly one operation (the header menu and "Fix" buttons).
+   * The cart is left untouched and is not submitted with it.
+   */
   launch: (op: RunnableOperation) => void;
   review: () => void;
   pending: boolean;
@@ -75,6 +78,11 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
   const access = useWriteControl("runMaintenance");
   const [cart, setCartState] = useState<RunnableOperation[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
+  /**
+   * Set while reviewing a single launched operation instead of the cart. Reset only
+   * when a review opens, so the closing dialog doesn't flash the cart contents.
+   */
+  const [single, setSingle] = useState<RunnableOperation | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [force, setForce] = useState(false);
   const [lastRunId, setLastRunId] = useState<string | null>(null);
@@ -104,12 +112,12 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
       : null;
 
   const run = useMutation({
-    mutationFn: ({ ops, force: forced }: { ops: RunnableOperation[]; force: boolean }) =>
+    mutationFn: ({ ops, force: forced }: { ops: RunnableOperation[]; force: boolean; fromCart: boolean }) =>
       runTableOperations(api, tableId, forced ? { operations: ops, force: true } : { operations: ops }),
-    onSuccess: (result, { ops }) => {
+    onSuccess: (result, { ops, fromCart }) => {
       setLastRunId(result.run_id);
       setReviewOpen(false);
-      setCartState([]);
+      if (fromCart) setCartState([]);
       toast.success(ops.length === 1 ? `${OPERATION_CATALOG[ops[0]].title} queued` : `${ops.length} operations queued as one run`, {
         description: [describeSkippedOps(result.skipped), "Follow it in Maintenance → Runs. It starts when engine capacity is available."]
           .filter(Boolean)
@@ -134,18 +142,16 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
     []
   );
   const clear = useCallback(() => setCartState([]), []);
-  const review = useCallback(() => {
+  const openReview = useCallback((op: RunnableOperation | null) => {
     setAcknowledged(false);
     setForce(false);
+    setSingle(op);
     setReviewOpen(true);
   }, []);
-  const launch = useCallback(
-    (op: RunnableOperation) => {
-      setCartState((current) => ordered([...current, op]));
-      review();
-    },
-    [review]
-  );
+  const review = useCallback(() => openReview(null), [openReview]);
+  // A single launch reviews only that operation. Merging it into the cart made a
+  // one-click "Expire snapshots" submit every operation staged earlier (#181).
+  const launch = useCallback((op: RunnableOperation) => openReview(op), [openReview]);
 
   const value = useMemo<LauncherValue>(
     () => ({
@@ -163,9 +169,16 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
     [cart, toggle, setCart, clear, launch, review, run.isPending, blockedReason, lastRunId]
   );
 
+  /** What the review dialog shows and submits. */
+  const ops = single ? [single] : cart;
+  const removeFromReview = (op: RunnableOperation) => {
+    if (single) setReviewOpen(false);
+    else toggle(op);
+  };
+
   const commitsPerDay = numberParam((table.data?.stats?.raw ?? undefined) as Record<string, unknown> | undefined, "commits_per_day");
-  const destructive = cart.some((op) => OPERATION_CATALOG[op].destructive);
-  const canSubmit = cart.length > 0 && !blockedReason && (!destructive || acknowledged) && !run.isPending;
+  const destructive = ops.some((op) => OPERATION_CATALOG[op].destructive);
+  const canSubmit = ops.length > 0 && !blockedReason && (!destructive || acknowledged) && !run.isPending;
 
   return (
     <LauncherContext.Provider value={value}>
@@ -195,21 +208,21 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
               {destructive ? "Deletes files" : "Safe to run"}
             </span>
             <DialogTitle>
-              {cart.length === 1 ? OPERATION_CATALOG[cart[0]].title : `Queue ${cart.length} operations`}
+              {ops.length === 1 ? OPERATION_CATALOG[ops[0]].title : `Queue ${ops.length} operations`}
             </DialogTitle>
             <DialogDescription>
               On <code>{tableName}</code>. This queues a run. It starts when the engine has a free slot.
-              {cart.includes("optimize")
+              {ops.includes("optimize")
                 ? " Compact may also rewrite position-delete files or compute statistics when the workflow planner emits them."
                 : " Only the operations listed here are requested."}
             </DialogDescription>
           </DialogHeader>
 
-          {cart.length === 0 ? (
+          {ops.length === 0 ? (
             <p className="td-cart-note">The cart is empty. Add an operation from the table page first.</p>
           ) : (
             <ol className="td-cart-steps">
-              {cart.map((op, index) => {
+              {ops.map((op, index) => {
                 const info = OPERATION_CATALOG[op];
                 return (
                   <li key={op}>
@@ -225,7 +238,7 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
                         </p>
                       ))}
                     </div>
-                    <Button type="button" size="icon" variant="ghost" className="size-7" aria-label={`Remove ${info.title}`} onClick={() => toggle(op)}>
+                    <Button type="button" size="icon" variant="ghost" className="size-7" aria-label={`Remove ${info.title}`} onClick={() => removeFromReview(op)}>
                       <X className="!size-3.5" aria-hidden="true" />
                     </Button>
                   </li>
@@ -233,6 +246,11 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
               })}
             </ol>
           )}
+          {single && cart.length > 0 ? (
+            <p className="td-cart-note">
+              Your run cart ({cart.length === 1 ? "1 operation" : `${cart.length} operations`}) is not part of this run and stays as it is.
+            </p>
+          ) : null}
           <p className="td-cart-note">
             Engine and settings come from the <b>{preset.data?.preset_name ?? "assigned"}</b> workflow.
           </p>
@@ -253,17 +271,17 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
 
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => setReviewOpen(false)}>
-              Keep editing
+              {single ? "Cancel" : "Keep editing"}
             </Button>
             <Button
               type="button"
               variant={destructive ? "danger" : "primary"}
               disabled={!canSubmit}
               loading={run.isPending}
-              onClick={() => run.mutate({ ops: cart, force })}
+              onClick={() => run.mutate({ ops, force, fromCart: !single })}
             >
               <Play aria-hidden="true" />
-              {cart.length === 1 ? `Queue ${OPERATION_CATALOG[cart[0]].title}` : `Queue ${cart.length} operations`}
+              {ops.length === 1 ? `Queue ${OPERATION_CATALOG[ops[0]].title}` : `Queue ${ops.length} operations`}
             </Button>
           </DialogFooter>
         </DialogContent>
