@@ -1145,13 +1145,16 @@ class CostDashboardTotals(BaseModel):
     projected_monthly_cost_usd: float
     projected_savings_usd_month: float
     current_storage_bytes: int
-    reclaimable_bytes: int
+    # None when no active table has a measured reclaimable figure (not a measured zero).
+    reclaimable_bytes: int | None = None
+    reclaimable_tables_measured: int = 0
     precision_coverage: dict[str, int] = Field(default_factory=dict)
     orphan_scan_stale: bool = False
     last_full_cost_scan_at: datetime | None = None
-    # All-time cumulative $ saved from completed maintenance runs -- "saved to date," not
-    # bounded to the trend chart's recent window.
-    total_realized_savings_usd: float = 0.0
+    # Monthly storage value of all bytes successful reclaim actions have freed ($/month at
+    # the configured storage price), not lifetime dollars. None when nothing was measured.
+    total_realized_savings_usd: float | None = None
+    total_realized_bytes_freed: int | None = None
     # GET-cost reduction from compaction, summed over tables that have a TableCost row.
     # None means no table has one, so the UI must not render $0. The table count says how
     # much of the fleet the sum covers.
