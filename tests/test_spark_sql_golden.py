@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
+
 from cryo.domain.enums import Mode, OperationType, PartitionTransform
 from cryo.domain.models import (
     MaintenancePlan,
@@ -680,3 +682,36 @@ def test_spark_wair_recluster_quotes_odd_identifiers_and_keeps_numbers_bare() ->
     sql = render_wair_recluster("ice", "analytics.events", "user-id", [10, 20], column_type="long")
     assert "sort_order => '`user-id` ASC NULLS LAST'" in sql
     assert "where => '`user-id` = 10 OR `user-id` = 20'" in sql
+
+
+def _manifests_plan(table_ref: str) -> MaintenancePlan:
+    return MaintenancePlan(
+        table_ref=table_ref,
+        mode=Mode.STANDARD,
+        operations=(Operation(OperationType.OPTIMIZE_MANIFESTS, {}),),
+    )
+
+
+def test_spark_backtick_quotes_table_names_inside_procedure_literals() -> None:
+    rendered = render(_manifests_plan("iceberg.demo.bad-name"))
+
+    assert rendered[0].sql == (
+        "CALL iceberg.system.rewrite_manifests(table => 'iceberg.demo.`bad-name`')"
+    )
+
+
+def test_spark_keeps_nested_namespaces() -> None:
+    rendered = render(_manifests_plan("iceberg.ns1.ns2.events"))
+
+    assert rendered[0].sql == (
+        "CALL iceberg.system.rewrite_manifests(table => 'iceberg.ns1.ns2.events')"
+    )
+
+
+@pytest.mark.parametrize(
+    "table_ref",
+    ["iceberg.demo.x') ; DROP TABLE y --", "events", 'iceberg.demo.x" y', "iceberg..events"],
+)
+def test_spark_rejects_table_refs_that_could_break_out(table_ref: str) -> None:
+    with pytest.raises(ValueError):
+        render(_manifests_plan(table_ref))
