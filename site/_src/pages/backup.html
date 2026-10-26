@@ -1,0 +1,90 @@
+---
+title: Backup and restore
+lede: PostgreSQL holds everything Cryo knows, so back it up and practise restoring it. Redis holds the queue and can be rebuilt, with one known exception.
+description: What Cryo stores where, encrypted PostgreSQL backups with the built-in tool or the backup CronJob, a restore procedure, and what losing Redis costs.
+updated: 2026-10-26
+---
+<h2 id="what">What to back up</h2>
+<dl>
+  <dt>PostgreSQL: back it up</dt>
+  <dd>The <code>cryo</code> schema is Cryo's source of truth. It holds sources, destinations, presets, table stats and grades, plans, runs and jobs, approvals, pause controls, fences and the audit trail. Connection secrets in it are encrypted with <code>CRYO_SECRET_KEY</code>.</dd>
+  <dt>The Secret: back it up separately</dt>
+  <dd>A database backup is useless without the <code>CRYO_SECRET_KEY</code> it was written with, because the stored connection secrets can't be decrypted without it. Keep the Secret in your secret manager, not next to the backups.</dd>
+  <dt>Redis: no backup needed</dt>
+  <dd>Redis holds the job queue, leases and short-lived markers. The governor's reconcile pass rebuilds the queue from PostgreSQL after a restart. The bundled Redis has no volume on purpose. See <a href="#redis">Losing Redis</a> for the one thing that isn't rebuilt.</dd>
+</dl>
+<p>If your PostgreSQL is a managed service with snapshots or point-in-time recovery, that's a valid backup. The rest of this page covers Cryo's own tool, which adds encryption and an offsite CronJob.</p>
+
+<h2 id="key">The backup key</h2>
+<p>Cryo's backups are encrypted with AES-256-GCM using <code>CRYO_BACKUP_KEY</code>: 32 random bytes, encoded as URL-safe base64. Generate one, store it in your secret manager, and add it to the <code>cryo-secrets</code> Secret. Without this key, a backup can't be restored.</p>
+<codeblock lang="bash" title="terminal">
+$ openssl rand 32 | base64 | tr '+/' '-_'
+</codeblock>
+
+<h2 id="scheduled">Scheduled offsite backups</h2>
+<p>The chart has a backup CronJob, which is off by default. It runs <code>python -m cryo.operations.backup create-offsite</code> with the Cryo image and the same Secret. It takes a <code>pg_dump --format=custom</code>, encrypts it, and uploads the encrypted file first and its checksum manifest last. The manifest marks a complete backup. Retention deletes only Cryo's own timestamped backups under the prefix.</p>
+<codeblock lang="yaml" title="cryo-values.yaml">
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  s3Uri: s3://company-recovery/cryo/production/
+  retentionDays: 30
+  serviceAccount: cryo-backup
+</codeblock>
+<p><code>serviceAccount</code> must already exist and be able to write, list and delete under <code>s3Uri</code>, for example through IRSA. The chart doesn't create it. Use a bucket in a separate account or region, with versioning and object lock turned on. The CronJob's schedule is in UTC.</p>
+<codeblock lang="bash" title="terminal">
+$ kubectl -n cryo get cronjob cryo-backup
+$ kubectl -n cryo logs -l app.kubernetes.io/component=backup --tail=20
+</codeblock>
+<p class="expect">A successful run prints a JSON result with the backup and manifest S3 URIs.</p>
+
+<h2 id="manual">A one-off backup</h2>
+<p>Take one before every upgrade. The API pod already has the database URL and the backup key from the Secret.</p>
+<codeblock lang="bash" title="terminal">
+$ POD=$(kubectl -n cryo get pod -l app.kubernetes.io/component=api -o jsonpath='{.items[0].metadata.name}')
+$ kubectl -n cryo exec "$POD" -- python -m cryo.operations.backup create --output /tmp/cryo.dump.enc
+$ kubectl -n cryo cp "$POD:/tmp/cryo.dump.enc" ./cryo.dump.enc
+$ kubectl -n cryo cp "$POD:/tmp/cryo.dump.enc.manifest.json" ./cryo.dump.enc.manifest.json
+$ kubectl -n cryo exec "$POD" -- rm /tmp/cryo.dump.enc /tmp/cryo.dump.enc.manifest.json
+</codeblock>
+<p>The tool passes the database password through <code>PGPASSWORD</code>, never on the command line. The <code>pg_dump</code> in the image comes from the Debian <code>postgresql-client</code> package. If your server's major version is newer than that client, take the dump with your own tooling instead.</p>
+
+<h2 id="restore">Restore</h2>
+<p>Restoring is destructive. It runs <code>pg_restore --clean --if-exists</code> against <code>CRYO_DATABASE_URL</code>. Practise it first in an isolated environment with an empty database. Keep everything that writes to the database stopped until you've checked the result.</p>
+<steps>
+  <step title="Stop the writers">
+    <p>Scale the scheduler, governor, workers and scanner workers to zero, and suspend the CronJobs. The API stays up so you can run commands in it.</p>
+    <codeblock lang="bash" title="terminal">
+$ kubectl -n cryo scale deploy/cryo-scheduler deploy/cryo-governor deploy/cryo-worker deploy/cryo-scanner-worker --replicas=0
+$ kubectl -n cryo patch cronjob cryo-scanner -p '{"spec":{"suspend":true}}'
+    </codeblock>
+    <p>Suspend <code>cryo-maintenance</code> and <code>cryo-backup</code> the same way if you turned them on.</p>
+  </step>
+  <step title="Copy the backup in and restore it">
+    <p>The manifest must sit next to the backup. The tool checks the ciphertext against the manifest and then checks the decrypted dump before it restores anything. <code>--force</code> is required.</p>
+    <codeblock lang="bash" title="terminal">
+$ POD=$(kubectl -n cryo get pod -l app.kubernetes.io/component=api -o jsonpath='{.items[0].metadata.name}')
+$ kubectl -n cryo cp ./cryo.dump.enc "$POD:/tmp/cryo.dump.enc"
+$ kubectl -n cryo cp ./cryo.dump.enc.manifest.json "$POD:/tmp/cryo.dump.enc.manifest.json"
+$ kubectl -n cryo exec "$POD" -- python -m cryo.operations.backup restore --backup /tmp/cryo.dump.enc --force
+$ kubectl -n cryo exec "$POD" -- alembic upgrade head
+    </codeblock>
+  </step>
+  <step title="Check before you start anything">
+    <p>Sign in and check that sources, destinations, presets, tables and recent runs are all there. Open one source and run its connection test, which proves the stored secrets decrypt with this <code>CRYO_SECRET_KEY</code>. Open <strong>Control Room</strong> (<code>/control-room</code>) and check that the pauses are what you expect before maintenance can start.</p>
+  </step>
+  <step title="Start the writers again">
+    <p>Run your normal <code>helm upgrade</code> command. It puts back the replica counts from your values, and the CronJobs' <code>suspend</code> settings.</p>
+    <p class="expect">Done when every pod is ready and the next scan and run behave normally.</p>
+  </step>
+</steps>
+<p>Write down the start and end times, the backup's manifest hash, and anything that went differently from this procedure. That record is your measured restore time.</p>
+
+<h2 id="redis">Losing Redis</h2>
+<p>When Redis restarts empty, the governor rebuilds the queue from PostgreSQL: queued jobs are put back, and stale running jobs and table locks are reaped. One known gap remains. The scheduler and the scan scheduler keep their "last cron fire" markers only in Redis. After a restart, every daily preset and the daily scan can fire again within 24 hours of their last run, at whatever time Redis came back. That repeats maintenance and uses engine time. This is tracked in <a href="https://github.com/tech-pw/cryo/issues/177">#177</a>. Until it's fixed, give Redis stable resources and avoid restarting it during the day.</p>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/upgrade/" title="Upgrade and rollback">When a backup is the only way back.</linkcard>
+  <linkcard href="@/security/#secret-key" title="CRYO_SECRET_KEY">Why the key has to be backed up with the database.</linkcard>
+</linkcards>

@@ -99,6 +99,14 @@ def create_parser() -> argparse.ArgumentParser:
     # Analysis command (recovery plan §2/§3, 2026-09-20): bounded one-shot K8s Job entrypoint,
     # NOT a daemon -- claims one AnalysisTask batch and exits, unlike every other subcommand
     # above which runs an indefinite loop. See cryo/analysis/runner.py for the full rationale.
+    rotate_parser = subparsers.add_parser(
+        "rotate-secret-key",
+        help="Re-encrypt stored secrets with CRYO_SECRET_KEY (reads CRYO_SECRET_KEY_PREVIOUS)",
+    )
+    rotate_parser.add_argument(
+        "--apply", action="store_true", help="Write changes. Without it, only count them."
+    )
+
     analysis_parser = subparsers.add_parser(
         "analysis",
         help="Run one bounded batch of a durable analysis task, then exit (K8s Job entrypoint)",
@@ -1243,6 +1251,26 @@ def run_analysis(args: argparse.Namespace) -> NoReturn:
     sys.exit(analysis_main([args.task_type]))
 
 
+def run_rotate_secret_key(args: argparse.Namespace) -> NoReturn:
+    from cryo.db import models  # noqa: F401 - registers every table on Base.metadata
+    from cryo.db.base import Base
+    from cryo.db.session import SessionLocal
+    from cryo.security.key_rotation import rotate_secrets
+
+    with SessionLocal() as session:
+        report = rotate_secrets(session, Base.metadata, apply=args.apply)
+    for name, count in sorted(report.rotated.items()):
+        print(f"{name}: {count} to re-encrypt")
+    for name, count in sorted(report.undecryptable.items()):
+        print(f"{name}: {count} unreadable with CRYO_SECRET_KEY or CRYO_SECRET_KEY_PREVIOUS")
+    if report.total_undecryptable:
+        print("Nothing written: set CRYO_SECRET_KEY_PREVIOUS to the key these were encrypted with.")
+        sys.exit(1)
+    verb = "Re-encrypted" if args.apply else "Would re-encrypt (dry run; pass --apply)"
+    print(f"{verb} {report.total_rotated} value(s).")
+    sys.exit(0)
+
+
 def main() -> NoReturn:
     parser = create_parser()
     args = parser.parse_args()
@@ -1255,6 +1283,7 @@ def main() -> NoReturn:
         "events": run_events,
         "serve": run_serve,
         "analysis": run_analysis,
+        "rotate-secret-key": run_rotate_secret_key,
     }
 
     handler = commands.get(args.command)

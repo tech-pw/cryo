@@ -137,6 +137,24 @@ describe("OperationsHome", () => {
     expect(screen.queryByText(/preset creation isn't available/i)).not.toBeInTheDocument();
   });
 
+  it("badges the default preset and tells paused apart from disabled", async () => {
+    vi.mocked(getScannerStatus).mockResolvedValue(scannerStatus);
+    vi.mocked(listRuns).mockResolvedValue([]);
+    vi.mocked(listPresets).mockResolvedValue([
+      { ...preset, id: "p-default", name: "Fleet default", is_default: true, paused: true },
+      { ...preset, id: "p-retired", name: "Retired preset", enabled: false }
+    ] as PresetRead[]);
+
+    renderPage();
+
+    const defaultRow = (await screen.findByText("Fleet default")).closest("tr") as HTMLElement;
+    expect(within(defaultRow).getByText("Default")).toBeInTheDocument();
+    expect(within(defaultRow).getByText("Paused")).toBeInTheDocument();
+    const retiredRow = screen.getByText("Retired preset").closest("tr") as HTMLElement;
+    expect(within(retiredRow).getByText("Disabled")).toBeInTheDocument();
+    expect(within(retiredRow).queryByText("Paused")).not.toBeInTheDocument();
+  });
+
   it("switching to the runs tab persists the tab selection in the URL", async () => {
     vi.mocked(getScannerStatus).mockResolvedValue(scannerStatus);
     vi.mocked(listPresets).mockResolvedValue([preset]);

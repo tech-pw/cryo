@@ -67,6 +67,21 @@ shorter than 32 characters.
 
 Issued tokens expire in 24 hours. There is no published revocation list.
 
+## Rotating CRYO_SECRET_KEY
+
+`CRYO_SECRET_KEY` encrypts stored connection secrets, so changing it alone makes them
+unreadable. Roll it over in three steps:
+
+1. Deploy with the new value as `CRYO_SECRET_KEY` and the old one as
+   `CRYO_SECRET_KEY_PREVIOUS`. Every process now reads both.
+2. Run `cryo rotate-secret-key` (dry run: counts per table and column, no values), then
+   `cryo rotate-secret-key --apply`. It writes nothing if any value is unreadable with either key.
+   A second dry run reports 0.
+3. Remove `CRYO_SECRET_KEY_PREVIOUS` and redeploy.
+
+HS256 API tokens signed with the old key stop validating at step 1 unless `CRYO_JWT_SECRET` is
+set separately, so users sign in again.
+
 ## Cryptography
 
 Cryo uses [Fernet][fernet] (AES-128-CBC + HMAC-SHA256) from the `cryptography` library for

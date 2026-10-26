@@ -32,6 +32,9 @@ class PresetConfig:
     enabled: bool = True
     schedule_cron: str | None = None
     is_default: bool = False
+    # #119: paused holds the preset's tables (no fallthrough, no scheduled runs); enabled=False
+    # retires it so pinned tables fall through to rules or the default.
+    paused: bool = False
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,8 @@ def effective_preset(
     rules: Iterable[PresetRule],
     assignments: Iterable[TableAssignment] = (),
 ) -> EffectivePreset | None:
+    # A paused preset still wins resolution (#119): its tables are held, not re-routed.
+    # Callers that schedule work skip it via PresetConfig.paused.
     presets_by_id = {preset.id: preset for preset in presets if preset.enabled}
 
     stale_pin = False

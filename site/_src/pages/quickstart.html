@@ -2,10 +2,14 @@
 title: Quickstart
 lede: Start the local control plane. The UI comes up empty. Screenshots on this site are synthetic demo data, not the result of these commands.
 description: Clone Cryo and start the local stack. Migrations run. The UI does not show a graded lake until you add a source and scan.
-updated: 2026-10-06
+updated: 2026-10-26
 ---
 <callout type="note" title="Before you start">
   <p>You need Docker, Python 3.12 or newer, Node 22 or newer, and curl. This is a local control plane, not the production topology.</p>
+</callout>
+
+<callout type="caution" title="Development only">
+  <p>The local stack runs with <code>CRYO_ENVIRONMENT=dev</code> and the published default <code>CRYO_SECRET_KEY</code>. Its dev sign-in hands an admin token to anyone who can reach the API. Don't expose it. For a real install, follow <a href="@/install/">Install on Kubernetes</a> and <a href="@/security/">Security</a>.</p>
 </callout>
 
 <h2 id="install">Install and start</h2>
@@ -77,5 +81,5 @@ Read https://tech-pw.github.io/cryo/llms.txt, then answer only from those pages.
   <linkcard href="@/concepts/" title="How Cryo fits">What source, preset and destination mean once you look past the demo.</linkcard>
   <linkcard href="@/maintenance/" title="Maintenance">The fixed order the seeded tables run through.</linkcard>
   <linkcard href="@/health/" title="Health and cost">Why the seeded tables show the grades they show.</linkcard>
-  <linkcard href="@/deployment/" title="Deployment">Move from <code>make up</code> to a Kubernetes install.</linkcard>
+  <linkcard href="@/install/" title="Install on Kubernetes">Move from the local stack to a Kubernetes install.</linkcard>
 </linkcards>
