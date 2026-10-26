@@ -6,17 +6,62 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from cryo.api.schemas import MaintenanceRunRequest, MaintenanceRunResponse
+from cryo.api.schemas import MaintenanceRunRequest, MaintenanceRunResponse, SkippedTableOps
 from cryo.api.security import Principal
 from cryo.db.repositories.exclusions import excluded_table_ids
+from cryo.db.repositories.job_dedupe import active_coverage
 from cryo.db.repositories.presets import SelectionResult
 from cryo.domain.enums import JobStatus
 from cryo.intents.binding import build_and_bind_job_intent
 from cryo.observability.correlation import correlation_summary
 from cryo.planner.guardrails import sort_operations_canonically
+from cryo.planner.job_coverage import (
+    Coverage,
+    canonical_operations,
+    dedupe_key,
+    mode_operations,
+    uncovered,
+)
 from cryo.queue.run_events import build_job_status, build_log_line, safe_publish
+
+_DEDUPE_DETAIL_LIMIT = 200
+
+
+def _dedupe_summary(skipped: list[SkippedTableOps]) -> dict[str, object]:
+    return {
+        "tables_skipped": sum(1 for entry in skipped if entry.fully_skipped),
+        "steps_skipped": sum(len(entry.operations) for entry in skipped),
+        "details": [
+            {
+                "table_id": str(entry.table_id),
+                "operations": entry.operations,
+                "covering_job_ids": entry.covering_job_ids,
+                "fully_skipped": entry.fully_skipped,
+            }
+            for entry in skipped[:_DEDUPE_DETAIL_LIMIT]
+        ],
+    }
+
+
+def _already_covered_detail(skipped: list[SkippedTableOps]) -> dict[str, object]:
+    return {
+        "code": "already_queued",
+        "message": (
+            "Every selected table already has a queued or running job covering these "
+            "operations. Re-submit with force to run them anyway."
+        ),
+        "skipped": [
+            {
+                "table_id": str(entry.table_id),
+                "operations": entry.operations,
+                "covering_job_ids": entry.covering_job_ids,
+            }
+            for entry in skipped[:_DEDUPE_DETAIL_LIMIT]
+        ],
+    }
 
 
 def start_maintenance_run(
@@ -92,11 +137,42 @@ def start_maintenance_run(
             )
         selection = SelectionResult(kept)
 
+    # A scheduled-for-later run is exempt: its jobs sit at status="queued" until dispatch, so
+    # deduping now would compare against work that may be finished by then.
+    dedupe_enabled = not payload.force and payload.scheduled_at is None
+    wanted_ops: tuple[str, ...] = canonical_operations(
+        requested_ops if payload.operations is not None else mode_operations(payload.mode)
+    )
+    coverage_by_table: dict[str, Coverage] = {}
+    if dedupe_enabled and wanted_ops:
+        active = active_coverage(session, selection.table_ids)
+        for table_id in selection.table_ids:
+            coverage_by_table[str(table_id)] = uncovered(wanted_ops, active.get(str(table_id), []))
+    skipped: list[SkippedTableOps] = []
+    table_ids_to_run: list[uuid.UUID] = []
+    for table_id in selection.table_ids:
+        coverage = coverage_by_table.get(str(table_id))
+        if coverage is not None and coverage.skipped:
+            skipped.append(
+                SkippedTableOps(
+                    table_id=table_id,
+                    operations=list(coverage.skipped),
+                    covering_job_ids=list(coverage.covering_job_ids),
+                    fully_skipped=coverage.fully_covered,
+                )
+            )
+        if coverage is None or not coverage.fully_covered:
+            table_ids_to_run.append(table_id)
+    if not table_ids_to_run:
+        raise HTTPException(status_code=409, detail=_already_covered_detail(skipped))
+
     summary = correlation_summary({"actor": principal.subject})
     if excluded:
         summary["excluded_tables"] = len(excluded)
     if payload.operations is not None:
         summary["operations"] = list(requested_ops)
+    if skipped:
+        summary["dedupe"] = _dedupe_summary(skipped)
 
     run = api_routes.MaintenanceRun(
         kind="adhoc",
@@ -118,10 +194,10 @@ def start_maintenance_run(
     # Computed once for the whole run, not per-table -- avoids an N+1 query pattern and matches
     # how the scheduler's cron path (_apply_routing) resolves routing for a run as a batch.
     adaptive_destinations = api_routes._adaptive_routing_destinations_for_run(
-        session, preset, selection.table_ids
+        session, preset, table_ids_to_run
     )
     jobs: list[api_routes.MaintenanceJob] = []
-    for table_id in selection.table_ids:
+    for table_id in table_ids_to_run:
         if preset is not None and requested_ops:
             for op_name in requested_ops:
                 from cryo.domain.enums import OperationType
@@ -173,6 +249,12 @@ def start_maintenance_run(
                     },
                 )
         routed_destination_id = adaptive_destinations.get(str(table_id))
+        coverage = coverage_by_table.get(str(table_id))
+        trimmed_operations = (
+            list(coverage.remaining)
+            if coverage is not None and coverage.partially_covered
+            else None
+        )
         job = api_routes.MaintenanceJob(
             run_id=run.id,
             table_id=table_id,
@@ -182,14 +264,29 @@ def start_maintenance_run(
                 else payload.destination_id
             ),
             mode=payload.mode.value,
+            operations=trimmed_operations,
+            dedupe_key=dedupe_key(trimmed_operations or wanted_ops) if dedupe_enabled else None,
             status="queued",
             verified=verified_flag,
             plan_hash=plan_hash_value,
             verifier_version=verifier_version_value,
             verifier_violations=violations_value or None,
         )
-        session.add(job)
-        session.flush()
+        try:
+            # A concurrent run can take the (table, operations) slot between the coverage read
+            # and this insert; the unique index rejects us and the savepoint keeps the run alive.
+            with session.begin_nested():
+                session.add(job)
+        except IntegrityError:
+            skipped.append(
+                SkippedTableOps(
+                    table_id=table_id,
+                    operations=list(trimmed_operations or wanted_ops),
+                    covering_job_ids=[],
+                    fully_skipped=True,
+                )
+            )
+            continue
         if settings.durable_intents_enabled:
             build_and_bind_job_intent(
                 session,
@@ -199,6 +296,11 @@ def start_maintenance_run(
                 actor_id=principal.subject,
             )
         jobs.append(job)
+    if not jobs:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=_already_covered_detail(skipped))
+    if skipped:
+        run.summary = {**(run.summary or {}), "dedupe": _dedupe_summary(skipped)}
     session.commit()
     wiring = api_routes.build_runtime_wiring()
     if payload.scheduled_at is not None:
@@ -218,7 +320,7 @@ def start_maintenance_run(
             ),
         )
         return MaintenanceRunResponse(
-            run_id=run.id, job_ids=[job.id for job in jobs], status=run.status
+            run_id=run.id, job_ids=[job.id for job in jobs], status=run.status, skipped=skipped
         )
     safe_publish(
         wiring.run_events,
@@ -253,5 +355,5 @@ def start_maintenance_run(
             ),
         )
     return MaintenanceRunResponse(
-        run_id=run.id, job_ids=[job.id for job in jobs], status=run.status
+        run_id=run.id, job_ids=[job.id for job in jobs], status=run.status, skipped=skipped
     )

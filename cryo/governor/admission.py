@@ -4,9 +4,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from math import floor
+from typing import TYPE_CHECKING
 
 from cryo.domain.enums import Mode
 from cryo.domain.models import CapacitySnapshot
+
+if TYPE_CHECKING:
+    from cryo.worker.worker import DestinationConfig, MaintenanceJobRecord
 
 IST = timezone(timedelta(hours=5, minutes=30))
 DEFAULT_REPLICA = "default"
@@ -305,3 +309,61 @@ def _ensure_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value
+
+
+def admission_config_from_destination(
+    destination: DestinationConfig, default: AdmissionConfig
+) -> AdmissionConfig:
+    """The one place a destination's config becomes an AdmissionConfig, shared by the governor
+    and the deferred-job re-queue check so they cannot disagree about what admission would do."""
+    config = destination.config
+    per_replica_cap = config.get("per_replica_cap", config.get("slot_cap", default.per_replica_cap))
+    return AdmissionConfig(
+        offpeak_start_ist=int(config.get("offpeak_start_ist", default.offpeak_start_ist)),
+        offpeak_end_ist=int(config.get("offpeak_end_ist", default.offpeak_end_ist)),
+        per_replica_cap=int(per_replica_cap),
+        wave_wait_sec=int(config.get("wave_wait_sec", default.wave_wait_sec)),
+        adaptive_budget=bool(config.get("adaptive_budget", default.adaptive_budget)),
+        high_load_ratio=float(config.get("high_load_ratio", default.high_load_ratio)),
+        high_load_fraction=float(config.get("high_load_fraction", default.high_load_fraction)),
+        default_cooldown_hours=int(
+            config.get("default_cooldown_hours", default.default_cooldown_hours)
+        ),
+        min_benefit_score=float(config.get("min_benefit_score", default.min_benefit_score)),
+        min_moop_score=(
+            float(config["min_moop_score"])
+            if config.get("min_moop_score") is not None
+            else default.min_moop_score
+        ),
+        fleet_budget_gb=(
+            float(config["fleet_budget_gb"])
+            if config.get("fleet_budget_gb") is not None
+            else default.fleet_budget_gb
+        ),
+        staleness_boost_days=float(
+            config.get("staleness_boost_days", default.staleness_boost_days)
+        ),
+        staleness_boost_max=float(config.get("staleness_boost_max", default.staleness_boost_max)),
+    )
+
+
+def admission_job_from_record(job: MaintenanceJobRecord) -> AdmissionJob:
+    params = dict(job.params) if job.params else {}
+    estimated_benefit = params.get("min_expected_benefit_score")
+    if estimated_benefit is None:
+        estimated_benefit = params.get("benefit_score")
+    moop_score = params.get("moop_score")
+    size_gb = params.get("size_gb") or params.get("total_size_gb")
+    return AdmissionJob(
+        job_id=job.id,
+        table_id=job.table_id,
+        destination_id=job.destination_id,
+        mode=job.mode,
+        cooldown_hours=job.cooldown_hours,
+        estimated_benefit_score=float(estimated_benefit) if estimated_benefit is not None else None,
+        moop_score=float(moop_score) if moop_score is not None else None,
+        size_gb=float(size_gb) if size_gb is not None else None,
+        last_maintained_at=job.last_maintained_at,
+        deadline_at=job.deadline_at,
+        force_admit=job.force_admit,
+    )

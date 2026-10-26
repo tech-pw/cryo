@@ -1,0 +1,126 @@
+---
+title: Benchmark
+lede: We ran Cryo against the scheduled Spark jobs teams usually write for themselves, on real Iceberg tables, with three trials per test and every row checked afterwards. Here is what we measured.
+description: Measured results from CryoBench V2. Cryo versus scheduled Spark and hand-run Spark on table health, a 100 GiB table, live CDC, and query impact, plus the trade-offs.
+updated: 2026-10-23
+---
+<div class="bm-kpis">
+  <div class="bm-kpi"><b>151 / 151</b><span>Cryo maintenance jobs succeeded</span><small>Across every test, with no failed or partial commits.</small></div>
+  <div class="bm-kpi"><b>0</b><span>rows lost or changed</span><small>Table fingerprints matched the untouched copy after every run.</small></div>
+  <div class="bm-kpi"><b>4.3×</b><span>fewer delete files under live CDC</span><small>Time-weighted average of 4.9 vs 20.9, while the scheduled DAG's compactions all failed.</small></div>
+  <div class="bm-kpi"><b>1.76×</b><span>faster queries on a 100 GiB table</span><small>Geometric mean of the whole query mix. Up to 4.3× on individual queries.</small></div>
+  <div class="bm-kpi"><b>79%</b><span>fewer pointless rewrites than a scheduled DAG</span><small>43% fewer unnecessary operations once snapshot expiry is counted.</small></div>
+  <div class="bm-kpi"><b>≤ 4%</b><span>p95 slowdown for live queries during compaction</span><small>Every live query stayed between 0.88× and 1.04× of idle, with zero failures.</small></div>
+</div>
+
+<h2 id="contenders">What we compared</h2>
+<p>The real alternative to Cryo is usually not another product. It is a Spark job on a schedule that someone on the team wrote and now has to maintain. So that is what we measured Cryo against, using the same Spark and Iceberg versions and the same cluster.</p>
+<div class="bm-contenders">
+  <div class="bm-contender"><span class="bm-swatch" style="background:var(--bm-a0)"></span><b>No maintenance</b><p>The table as ingestion leaves it. Sets the baseline.</p></div>
+  <div class="bm-contender"><span class="bm-swatch" style="background:var(--bm-a1)"></span><b>Scheduled Spark DAG</b><p>Compact, rewrite manifests and expire snapshots on every table, every cycle. The common Airflow pattern.</p></div>
+  <div class="bm-contender"><span class="bm-swatch" style="background:var(--line-strong)"></span><b>Hand-run Spark</b><p>An engineer running the exact compaction SQL by hand, on the large-table test.</p></div>
+  <div class="bm-contender is-cryo"><span class="bm-swatch" style="background:var(--bm-cryo)"></span><b>Cryo</b><p>Default settings. Grades each table, plans only what it needs, runs it on Spark.</p></div>
+</div>
+<p>For a feature comparison with Amoro, LakeOps, Crunch, Databricks and managed cloud services, see <a href="@/reference/">Reference</a>. This page reports only what we ran and measured.</p>
+
+<h2 id="decisions">It touches only the tables that need work</h2>
+<p>We gave both approaches the same fleet: healthy tables, quiet ones, fragmenting ones, badly fragmented ones, and tables taking row updates. Over four cycles, the scheduled DAG rewrote everything it saw. Cryo left healthy tables alone and spent its work where the problems were.</p>
+<figure class="bm-figure">
+  <include src="includes/bench-decisions.svg"/>
+  <figcaption>Green chips are rewrites that fixed a real problem. Orange chips rewrote a table that was already healthy. Both approaches expire snapshots on every table by design.</figcaption>
+</figure>
+<div class="bm-split">
+  <div class="bm-panel">
+    <h3>Unnecessary rewrites per trial</h3>
+    <div class="bm-meter">
+      <div>Scheduled DAG<span><i class="is-a1" style="width:100%"></i></span><em>48</em></div>
+      <div>Cryo<span><i style="width:20.8%"></i></span><em>10</em></div>
+    </div>
+    <p style="margin-top:10px">Identical in all three trials. Counting snapshot expiry, it is 88 vs 50.</p>
+  </div>
+  <div class="bm-panel">
+    <h3>Every table ended healthy</h3>
+    <div class="bm-meter">
+      <div>No maintenance<span><i class="is-a0" style="width:65.8%"></i></span><em>66%</em></div>
+      <div>Scheduled DAG<span><i class="is-a1" style="width:100%"></i></span><em>100%</em></div>
+      <div>Cryo<span><i style="width:100%"></i></span><em>100%</em></div>
+    </div>
+    <p style="margin-top:10px">Share of query runs that hit a healthy table. Cryo matched the brute-force DAG while doing less of the work nobody needed.</p>
+  </div>
+</div>
+
+<h2 id="large-table">On a 100 GiB table, queries get faster</h2>
+<p>One table, 100 GiB, fragmented the way streaming ingestion leaves it. One Cryo run at the default 256 MB target turned thousands of small files into a few hundred right-sized ones.</p>
+<figure class="bm-figure">
+  <include src="includes/bench-layout.svg"/>
+  <figcaption>67 GiB rewritten in one run of about 21 minutes. Same rows and same results, a tenth of the files.</figcaption>
+</figure>
+<figure class="bm-figure">
+  <p class="bm-figure-title">Query speed after one Cryo run</p>
+  <include src="includes/bench-speed.svg"/>
+  <figcaption>Scans and aggregates gained the most. Single-row lookups got slower because each one now opens a larger file; see <a href="#tradeoffs">trade-offs</a>.</figcaption>
+</figure>
+<div class="bm-split">
+  <div class="bm-panel"><span class="bm-big">1.73× – 1.83×</span><h3>Whatever target size you pick</h3><p>128, 256 and 512 MB targets all landed in this range for the whole query mix. The default is a safe choice.</p></div>
+  <div class="bm-panel"><span class="bm-big">690 = 690</span><h3>Same output as hand-written Spark</h3><p>Cryo's compaction produced exactly the same file count, bytes and results as an engineer running the same SQL by hand.</p></div>
+  <div class="bm-panel"><span class="bm-big">538 – 802</span><h3>Queries to pay back the rewrite</h3><p>Customer filters repaid the compaction compute after 538 runs, whole-table aggregates after 588 and full reads after 802.</p></div>
+</div>
+
+<h2 id="cdc">Under live CDC, it keeps up</h2>
+<p>This is the case that breaks naive schedules. A MERGE landed on the table every 200 seconds for two hours. The scheduled DAG's compactions collided with the writer and failed every time. Cryo converted delete files in small commits between writes and kept the table lean.</p>
+<figure class="bm-figure">
+  <ul class="bm-legend"><li><i class="k-a0"></i>No maintenance</li><li><i class="k-a1"></i>Scheduled Spark DAG</li><li><i class="k-cryo"></i>Cryo</li></ul>
+  <include src="includes/bench-cdc.svg"/>
+  <figcaption>The no-maintenance and scheduled-DAG lines overlap because the DAG's work never committed. Ticks along the bottom mark Cryo's checks.</figcaption>
+</figure>
+<div class="bm-split">
+  <div class="bm-panel"><span class="bm-big">22 / 22</span><h3>Cryo jobs succeeded</h3><p>Every job finished while the writer kept committing.</p></div>
+  <div class="bm-panel"><span class="bm-big is-muted">0 / 3</span><h3>DAG compactions committed</h3><p>All three failed validation against the concurrent MERGE.</p></div>
+  <div class="bm-panel"><span class="bm-big">40 → 3</span><h3>Data files at the end</h3><p>Same rows, and aggregate queries ran in 0.58× the time.</p></div>
+</div>
+
+<h2 id="foreground">Users don't feel it</h2>
+<p>We ran a steady stream of dashboard-style queries against the 100 GiB table while Cryo rewrote 67 GiB of it, then compared with the same queries on an idle table.</p>
+<figure class="bm-figure">
+  <ul class="bm-legend"><li><i class="k-a0"></i>Idle table</li><li><i class="k-cryo"></i>During Cryo compaction</li></ul>
+  <include src="includes/bench-foreground.svg"/>
+  <figcaption>p95 stayed within 0.88× to 1.04× of idle across every query, and p99 improved for all three. Zero query failures.</figcaption>
+</figure>
+
+<h2 id="scorecard">Scorecard</h2>
+<div class="tbl">
+<table class="bm-matrix">
+  <thead><tr><th>Measured outcome</th><th>No maintenance</th><th>Scheduled Spark DAG</th><th class="is-cryo">Cryo</th></tr></thead>
+  <tbody>
+    <tr><td>Fleet restored to healthy</td><td class="bm-n">No</td><td class="bm-y">100%</td><td class="bm-y is-cryo">100%</td></tr>
+    <tr><td>Leaves healthy tables alone</td><td class="bm-m">n/a</td><td class="bm-n">No<small>48 pointless rewrites</small></td><td class="bm-y is-cryo">Mostly<small>10 not needed, none on healthy tables</small></td></tr>
+    <tr><td>Keeps up with live CDC</td><td class="bm-n">No<small>39 delete files</small></td><td class="bm-n">No<small>3 of 3 failed</small></td><td class="bm-y is-cryo">Yes<small>3 to 6 delete files</small></td></tr>
+    <tr><td>Data integrity</td><td class="bm-y">Intact</td><td class="bm-y">Intact</td><td class="bm-y is-cryo">Intact</td></tr>
+    <tr><td>Live-query p95 during maintenance</td><td class="bm-m">n/a</td><td class="bm-m">not measured</td><td class="bm-y is-cryo">≤ 4% slower</td></tr>
+    <tr><td>Decides what to run</td><td class="bm-m">n/a</td><td class="bm-n">You do</td><td class="bm-y is-cryo">Cryo does</td></tr>
+    <tr><td>Grade, history and audit trail per table</td><td class="bm-n">No</td><td class="bm-n">Build it</td><td class="bm-y is-cryo">Built in</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="tradeoffs">Trade-offs</h2>
+<p>A benchmark you can trust shows the costs too. These are the ones we measured.</p>
+<div class="bm-tradeoffs">
+  <div class="bm-tradeoff"><b>Spark compute</b><p>Cryo used about twice the Spark compute of the scheduled DAG on small tables, and 1.67× hand-run SQL on the 100 GiB table. It starts one Spark application per operation and expires snapshots on every table. Compute is cheap next to engineer time, but Cryo is not a compute saver.</p></div>
+  <div class="bm-tradeoff"><b>Point lookups</b><p>Bigger files make single-row lookups slower (1.8× at 256 MB). If your workload is mostly point reads, use a smaller target or skip compaction for that table.</p></div>
+  <div class="bm-tradeoff"><b>Latency to start</b><p>Jobs waited a median of about 3 minutes in the queue before Spark started. Fine for maintenance; not built for second-level reaction.</p></div>
+  <div class="bm-tradeoff"><b>Rough edges</b><p>We filed what we hit: run status staying queued (<a href="https://github.com/tech-pw/cryo/issues/153">#153</a>), chunked scans skipping tables (<a href="https://github.com/tech-pw/cryo/issues/154">#154</a>), and missing file metrics on Spark-on-Kubernetes jobs (<a href="https://github.com/tech-pw/cryo/issues/155">#155</a>). None affected data integrity.</p></div>
+</div>
+
+<h2 id="method">How we measured</h2>
+<ul class="bm-method">
+  <li><b>3 trials</b><span>per test, 95% confidence intervals</span></li>
+  <li><b>100 GiB</b><span>largest single table</span></li>
+  <li><b>2 hours</b><span>of continuous MERGE for CDC</span></li>
+  <li><b>Every row</b><span>fingerprinted before and after</span></li>
+  <li><b>Same stack</b><span>Spark 4.1 and Iceberg 1.11 on Kubernetes, for every contender</span></li>
+  <li><b>Read-only</b><span>Trino for all query timing</span></li>
+</ul>
+<p>Cryo ran with default settings throughout. The protocol was written and frozen before any scored run, compute was measured from Kubernetes pod requests, and rewritten bytes came from Iceberg's own snapshot summaries. Discovery was also checked at fleet scale: all 100 tables in a 100-table catalog were discovered, with exact file counts, in about two and a half minutes.</p>
+
+<callout type="tip" title="Try it on your own tables">The fastest way to see this on your lake is the <a href="@/quickstart/">Quickstart</a>. Point Cryo at a catalog, let it grade every table, and review the plan before anything runs.</callout>

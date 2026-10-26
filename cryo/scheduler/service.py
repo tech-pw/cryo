@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, replace
@@ -9,6 +9,11 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from cryo.db.session import SessionLocal
+from cryo.planner.job_coverage import (
+    ACTIVE_JOB_STATUSES,
+    ActiveJob,
+    effective_operations,
+)
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.scheduler.adaptive_routing import AdaptiveRoutingContext, resolve_destination_adaptive
 from cryo.scheduler.cron import cron_is_due
@@ -102,7 +107,11 @@ class SchedulerStore(Protocol):
         self, table_ids: Sequence[str]
     ) -> dict[str, dict[str, int]]: ...
 
-    def persist_run(self, run: ScheduledRunDraft) -> None: ...
+    def active_coverage(self) -> dict[str, list[ActiveJob]]: ...
+
+    def persist_run(self, run: ScheduledRunDraft) -> Collection[str] | None:
+        """Persist the run. Returns ids of jobs that were not stored (lost a dedupe race)."""
+        ...
 
     def mark_preset_run(self, preset_id: str, run_at: datetime) -> None: ...
 
@@ -213,6 +222,23 @@ class SchedulerService:
             return default
         return limit if limit > 0 else None
 
+    def _load_active_coverage(self) -> dict[str, list[ActiveJob]] | None:
+        """Fleet-wide active-job coverage, read once per tick and updated as runs are built.
+
+        None disables dedupe for the tick: a failed read must not stop maintenance from being
+        scheduled, and the unique index still stops exact duplicates at insert.
+        """
+        load = getattr(self._store, "active_coverage", None)
+        if not callable(load):
+            return None
+        try:
+            return dict(load())
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Active-job coverage unavailable: %s", exc)
+            return None
+
     def _dispatch_due_presets(self, current: datetime) -> SchedulerTickResult:
         """The actual cron-preset dispatch loop, extracted out of tick() so it can run first
         -- see tick()'s own docstring for why. Behavior unchanged from before that reordering."""
@@ -225,6 +251,8 @@ class SchedulerService:
         rules = self._store.list_rules()
         assignments = self._store.list_assignments()
         destinations = build_destinations_index(self._store.list_destinations())
+
+        coverage = self._load_active_coverage()
 
         runs_created = 0
         jobs_enqueued = 0
@@ -243,6 +271,7 @@ class SchedulerService:
                 trigger="cron",
                 budget_hint=self._scheduled_run_budget(preset),
                 now=current,
+                active_coverage=coverage,
             )
             if not run.jobs:
                 self._store.mark_preset_run(preset.id, current)
@@ -256,7 +285,22 @@ class SchedulerService:
             routed_jobs = _apply_routing(
                 run, preset, tables, destinations, failure_history=failure_history
             )
-            self._store.persist_run(routed_jobs)
+            not_persisted = self._store.persist_run(routed_jobs) or ()
+            if not_persisted:
+                routed_jobs = replace(
+                    routed_jobs,
+                    jobs=tuple(job for job in routed_jobs.jobs if job.id not in set(not_persisted)),
+                )
+            if coverage is not None:
+                for job in routed_jobs.jobs:
+                    coverage.setdefault(job.table_id, []).append(
+                        ActiveJob(
+                            job_id=job.id,
+                            operations=effective_operations(
+                                job.mode, job_operations=job.operations
+                            ),
+                        )
+                    )
             # created_at=current (the tick's own now, not a fresh datetime.now() call) so
             # this run's fifo_priority reflects its real logical creation time -- see
             # fifo_priority's own docstring for why every enqueue call site defaulting to
@@ -1401,15 +1445,10 @@ def _apply_routing(
                 destination_id=destination_id,
                 mode=job.mode,
                 status=job.status,
+                operations=job.operations,
             )
         )
-    return ScheduledRunDraft(
-        id=run.id,
-        preset_id=run.preset_id,
-        trigger=run.trigger,
-        deadline_at=run.deadline_at,
-        jobs=tuple(routed),
-    )
+    return replace(run, jobs=tuple(routed))
 
 
 class InMemorySchedulerStore:
@@ -1446,6 +1485,20 @@ class InMemorySchedulerStore:
 
     def list_destinations(self) -> list[dict[str, Any]]:
         return list(self.destinations)
+
+    def active_coverage(self) -> dict[str, list[ActiveJob]]:
+        coverage: dict[str, list[ActiveJob]] = {}
+        for run in self.runs:
+            for job in run.jobs:
+                if job.status.value not in ACTIVE_JOB_STATUSES:
+                    continue
+                coverage.setdefault(job.table_id, []).append(
+                    ActiveJob(
+                        job_id=job.id,
+                        operations=effective_operations(job.mode, job_operations=job.operations),
+                    )
+                )
+        return coverage
 
     def persist_run(self, run: ScheduledRunDraft) -> None:
         self.runs.append(run)
