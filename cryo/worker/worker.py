@@ -17,7 +17,12 @@ from cryo.domain.intents import (
     MaintenanceIntentRecord,
 )
 from cryo.domain.models import MaintenancePlan, Operation
-from cryo.engines.base import ExecCtx, RenderedStatement, is_table_not_found_error
+from cryo.engines.base import (
+    ExecCtx,
+    RenderedStatement,
+    is_capacity_refusal,
+    is_table_not_found_error,
+)
 from cryo.engines.base import ExecResult as BaseExecResult
 from cryo.engines.native.routing import (
     native_fallback_mismatch_detail,
@@ -1038,12 +1043,19 @@ class Worker:
                             )
                         if outcome_unknown:
                             reconciliation_required = True
+                        capacity_refused = not outcome_unknown and is_capacity_refusal(detail)
                         self._store.record_audit(
                             AuditRecord(
                                 job_id=job.id,
                                 table_id=job.table_id,
                                 action=statement.action,
-                                status="UNKNOWN" if outcome_unknown else "FAILED",
+                                status=(
+                                    "UNKNOWN"
+                                    if outcome_unknown
+                                    else "DEFERRED"
+                                    if capacity_refused
+                                    else "FAILED"
+                                ),
                                 engine=engine.type,
                                 detail=detail,
                                 duration_ms=result_duration_ms,
@@ -1150,6 +1162,18 @@ class Worker:
                         final_status = JobStatus.PARTIAL
                         error = budget_error
                         break
+                if (
+                    failed_actions
+                    and not had_success
+                    and final_status is JobStatus.SUCCEEDED
+                    and all(is_capacity_refusal(detail) for detail in failed_actions.values())
+                ):
+                    # Every failure was a namespace ResourceQuota refusing the Spark pods: a
+                    # capacity condition, not a table failure (issue #159). Defer; the
+                    # deferred-job reconciler requeues it when admission allows.
+                    final_status = JobStatus.DEFERRED
+                    error = "capacity_deferred: " + next(iter(failed_actions.values()))
+                    failed_actions = {}
                 if failed_actions and final_status is JobStatus.SUCCEEDED:
                     # Some operations landed and some didn't: PARTIAL is the honest answer.
                     # Calling the whole job FAILED would hide real reclaimed space from the

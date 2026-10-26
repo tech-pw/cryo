@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_valid
 
 from cryo.api.redact import redact_sensitive_dict
 from cryo.domain.enums import CostPrecision, EngineType, Mode, OperationType
+from cryo.engines.spark.k8s_keys import is_spark_k8s_destination, validate_spark_k8s_config
 from cryo.engines.trino.catalog_bindings import parse_catalog_bindings, validate_catalog_bindings
 
 JsonDict = dict[str, Any]
@@ -30,9 +31,12 @@ def validate_native_engine_config(engine: EngineType | str, config: Mapping[str,
 
 
 def validate_destination_config(engine: EngineType | str, config: Mapping[str, Any]) -> None:
-    """Validate engine-specific destination config (native impl + Trino catalog bindings)."""
+    """Validate engine-specific destination config (native impl, Trino catalog bindings,
+    Spark-on-Kubernetes settings)."""
     validate_native_engine_config(engine, config)
     validate_catalog_bindings(engine, config)
+    if is_spark_k8s_destination(engine, config):
+        validate_spark_k8s_config(config)
 
 
 class OrmModel(BaseModel):

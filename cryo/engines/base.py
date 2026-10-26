@@ -38,6 +38,36 @@ _EXCEPTION_HEADER_RE = re.compile(
 )
 
 
+ROOT_CAUSE_PREFIX = "[root cause] "
+
+# A namespace ResourceQuota refusing the Spark driver pod, its Service, or Cryo's own Job is
+# a capacity condition, not a table or SQL failure (issue #159). The worker defers such a
+# job instead of failing it, and the reconciler requeues it once admission allows.
+CAPACITY_REFUSED_MARKER = "[capacity_refused]"
+_QUOTA_REFUSAL_RE = re.compile(r"forbidden: exceeded quota", re.IGNORECASE)
+
+
+def is_capacity_refusal(message: str | None) -> bool:
+    if not message:
+        return False
+    return CAPACITY_REFUSED_MARKER in message or bool(_QUOTA_REFUSAL_RE.search(message))
+
+
+def capacity_refusal_error(message: str) -> str:
+    """One-line, front-loaded description of a quota refusal, keeping Kubernetes' own words."""
+    if message.startswith(CAPACITY_REFUSED_MARKER):
+        return message
+    quota_line = next(
+        (line.strip() for line in message.splitlines() if _QUOTA_REFUSAL_RE.search(line)),
+        "",
+    )
+    return (
+        f"{CAPACITY_REFUSED_MARKER} Kubernetes ResourceQuota refused a pod or Service for this "
+        "job. This is a namespace capacity limit, not a table failure; the job is deferred and "
+        f"retried when there is headroom. {quota_line[:600]}"
+    ).rstrip()
+
+
 def deepest_caused_by(message: str | None) -> str | None:
     """Return the most useful single "here's the real exception" line in a JVM-style trace.
 
@@ -92,9 +122,11 @@ def truncate_error_message(
     signature, but for any exception, so root cause always survives truncation regardless of
     where in the original text it falls.
     """
-    caused_by = deepest_caused_by(message)
+    # A caller that already named the root cause (e.g. an OOM-killed executor, whose
+    # follow-on NPE is the deepest "Caused by:" but not the cause) keeps its own.
+    caused_by = None if message.startswith(ROOT_CAUSE_PREFIX) else deepest_caused_by(message)
     if caused_by and caused_by not in message[:limit]:
-        prefix = f"[root cause] {caused_by}\n"
+        prefix = f"{ROOT_CAUSE_PREFIX}{caused_by}\n"
         message = prefix + message
     if len(message) <= limit:
         return message
