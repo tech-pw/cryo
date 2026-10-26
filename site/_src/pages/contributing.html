@@ -1,28 +1,25 @@
 ---
 title: Contributing
-lede: Open issues and pull requests on GitHub. GitHub is a filtered mirror of the GitLab repository, so a maintainer lands an accepted change in GitLab main and it comes back to GitHub with the next sync.
+lede: Issues and pull requests live on GitHub. Set up a dev environment, run the checks that match what you touched, and open a focused pull request against main.
 description: How to set up a Cryo development environment, run the tests and the docs build, and get a pull request merged.
 updated: 2026-10-26
 ---
 <p>This page is a summary. The full guide, with coding standards and the migration rules, is <a href="https://github.com/tech-pw/cryo/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>. Everyone taking part follows the <a href="https://github.com/tech-pw/cryo/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a>. Report security problems privately as described in <a href="https://github.com/tech-pw/cryo/blob/main/SECURITY.md">SECURITY.md</a>, never in a public issue.</p>
 
-<h2 id="path">How a pull request reaches main</h2>
-<p>The source of truth is the <code>main</code> branch on GitLab. <a href="https://github.com/tech-pw/cryo">tech-pw/cryo</a> on GitHub is a filtered copy that a scheduled job rebuilds from GitLab and force-pushes. Anything committed straight to GitHub <code>main</code> is overwritten by the next sync. The mechanics are in <a href="https://github.com/tech-pw/cryo/blob/main/docs/OSS_MIRROR.md">docs/OSS_MIRROR.md</a>.</p>
+<h2 id="path">How a pull request gets merged</h2>
+<p><a href="https://github.com/tech-pw/cryo">tech-pw/cryo</a> on GitHub is the source of truth. Pull requests are reviewed and merged there.</p>
 <steps>
 <step title="Open an issue or pick one">
 <p>For anything bigger than a small fix, open an issue first so the change can be discussed before you write it. Starter work is labelled <a href="https://github.com/tech-pw/cryo/labels/good%20first%20issue">good first issue</a>.</p>
 </step>
-<step title="Open a pull request on GitHub">
+<step title="Open a pull request">
 <p>Fork, branch from <code>main</code>, and open the pull request against <code>tech-pw/cryo</code>. GitHub Actions runs lint, type checks, tests and the docs check on it.</p>
 </step>
-<step title="Review">
-<p>A maintainer reviews it on GitHub. Keep the pull request focused on one change and link the issue it fixes.</p>
-</step>
-<step title="A maintainer lands it in GitLab">
-<p>Once it's approved, a maintainer applies your commits to GitLab <code>main</code>. The next mirror sync brings the change back to GitHub <code>main</code>. Commit SHAs on GitHub can differ from your branch because the sync rewrites history.</p>
+<step title="Review and merge">
+<p>A maintainer reviews it. Keep the pull request focused on one change and link the issue it fixes with <code>Fixes #N</code>. Once checks are green and it's approved, a maintainer squash-merges it into <code>main</code>.</p>
 </step>
 </steps>
-<p>The "Edit this page" link at the bottom of every docs page opens GitHub's editor and follows the same path: your edit becomes a pull request, and a maintainer carries it into GitLab.</p>
+<p>The "Edit this page" link at the bottom of every docs page opens GitHub's editor, and your edit becomes a pull request the same way.</p>
 
 <h2 id="setup">Development setup</h2>
 <p>You need Python 3.12+, Node 22 for the web UI and the docs site, Docker with Compose for the local stack, and Git. Go 1.25 is needed only for the native compactor in <code>engine-go/</code>, Rust only for <code>cryo-engine/</code>, and Java 17+ only to run PySpark.</p>

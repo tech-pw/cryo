@@ -7,31 +7,27 @@ updated: 2026-10-26
 
 # Contributing
 
-Open issues and pull requests on GitHub. GitHub is a filtered mirror of the GitLab repository, so a maintainer lands an accepted change in GitLab main and it comes back to GitHub with the next sync.
+Issues and pull requests live on GitHub. Set up a dev environment, run the checks that match what you touched, and open a focused pull request against main.
 
 This page is a summary. The full guide, with coding standards and the migration rules, is [CONTRIBUTING.md](https://github.com/tech-pw/cryo/blob/main/CONTRIBUTING.md). Everyone taking part follows the [Code of Conduct](https://github.com/tech-pw/cryo/blob/main/CODE_OF_CONDUCT.md). Report security problems privately as described in [SECURITY.md](https://github.com/tech-pw/cryo/blob/main/SECURITY.md), never in a public issue.
 
-## How a pull request reaches main
+## How a pull request gets merged
 
-The source of truth is the `main` branch on GitLab. [tech-pw/cryo](https://github.com/tech-pw/cryo) on GitHub is a filtered copy that a scheduled job rebuilds from GitLab and force-pushes. Anything committed straight to GitHub `main` is overwritten by the next sync. The mechanics are in [docs/OSS_MIRROR.md](https://github.com/tech-pw/cryo/blob/main/docs/OSS_MIRROR.md).
+[tech-pw/cryo](https://github.com/tech-pw/cryo) on GitHub is the source of truth. Pull requests are reviewed and merged there.
 
 ### Open an issue or pick one
 
 For anything bigger than a small fix, open an issue first so the change can be discussed before you write it. Starter work is labelled [good first issue](https://github.com/tech-pw/cryo/labels/good%20first%20issue).
 
-### Open a pull request on GitHub
+### Open a pull request
 
 Fork, branch from `main`, and open the pull request against `tech-pw/cryo`. GitHub Actions runs lint, type checks, tests and the docs check on it.
 
-### Review
+### Review and merge
 
-A maintainer reviews it on GitHub. Keep the pull request focused on one change and link the issue it fixes.
+A maintainer reviews it. Keep the pull request focused on one change and link the issue it fixes with `Fixes #N`. Once checks are green and it's approved, a maintainer squash-merges it into `main`.
 
-### A maintainer lands it in GitLab
-
-Once it's approved, a maintainer applies your commits to GitLab `main`. The next mirror sync brings the change back to GitHub `main`. Commit SHAs on GitHub can differ from your branch because the sync rewrites history.
-
-The "Edit this page" link at the bottom of every docs page opens GitHub's editor and follows the same path: your edit becomes a pull request, and a maintainer carries it into GitLab.
+The "Edit this page" link at the bottom of every docs page opens GitHub's editor, and your edit becomes a pull request the same way.
 
 ## Development setup
 
