@@ -50,9 +50,10 @@ containerSecurityContext:
 
 global:
   env:
-    # Public chart default. A production overlay must set this to prod and pin
-    # image.digest values; the chart refuses to render prod without them.
-    CRYO_ENVIRONMENT: dev
+    # Secure by default: prod turns off the self-issued dev token and refuses to start
+    # without a real CRYO_SECRET_KEY. The chart refuses to render prod without image
+    # digests. For a throwaway local install, set this to dev explicitly.
+    CRYO_ENVIRONMENT: prod
     CRYO_SCAN_TABLE_TIMEOUT_SECONDS: "600"
     # Go scan-stats (streaming manifests). Override to "pyiceberg" to fall back.
     CRYO_SCAN_ENGINE: go
@@ -93,6 +94,18 @@ api:
 
 worker:
   replicas: 2
+  # Readiness + liveness on the daemon's /healthz (observability.metricsPort). It turns 503
+  # after 5 consecutive failed loop ticks, or when one tick has run longer than
+  # tickStallSeconds (0 = no hung-tick check). Off for the worker by default: one
+  # tick can wait on an engine job for hours. Set it above your longest expected job if you want it.
+  probe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    readinessFailureThreshold: 2
+    livenessFailureThreshold: 4
+    tickStallSeconds: 0
   resources:
     requests:
       cpu: 500m
@@ -118,6 +131,18 @@ governor:
 
 scheduler:
   replicas: 1
+  # Readiness + liveness on the daemon's /healthz (observability.metricsPort). It turns 503
+  # after 5 consecutive failed loop ticks, or when one tick has run longer than
+  # tickStallSeconds (0 = no hung-tick check). A scheduler tick only evaluates
+  # crons and enqueues work, so an hour inside one tick means it is hung.
+  probe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    readinessFailureThreshold: 2
+    livenessFailureThreshold: 4
+    tickStallSeconds: 3600
   resources:
     requests:
       cpu: 100m
@@ -140,6 +165,18 @@ scheduler:
 
 scannerWorker:
   replicas: 3
+  # Readiness + liveness on the daemon's /healthz (observability.metricsPort). It turns 503
+  # after 5 consecutive failed loop ticks, or when one tick has run longer than
+  # tickStallSeconds (0 = no hung-tick check). Stale scan chunks are reclaimed after
+  # 15 minutes, so a tick running an hour is hung.
+  probe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    readinessFailureThreshold: 2
+    livenessFailureThreshold: 4
+    tickStallSeconds: 3600
   resources:
     requests:
       cpu: 500m
@@ -164,7 +201,11 @@ scannerWorker:
     minReplicas: 3
     maxReplicas: 8
     targetCPUUtilizationPercentage: 70
-    targetMemoryUtilizationPercentage: 80
+    # Off (null) by default. CPython rarely returns heap to the OS after a scan, so idle
+    # scanner workers sit above their memory request and a memory target pins the HPA at
+    # maxReplicas at 0% CPU. Set a percentage only if your workers' idle memory is well
+    # under the request. For queue-driven scaling use keda.enabled below.
+    targetMemoryUtilizationPercentage: null
     scaleDownStabilizationSeconds: 300
     # Cost remediation plan §5, 2026-09-16 (docs/CRYO_UNUSED_COST_FIX_2026-09-16.md): the CPU/
     # memory HPA above sits at its floor of 3 replicas nearly continuously between ad-hoc scan
@@ -434,6 +475,14 @@ web:
   # The web Deployment injects CRYO_API_UPSTREAM as the API Service FQDN and
   # NGINX_ENTRYPOINT_LOCAL_RESOLVERS so nginx uses the pod nameserver, not kube-dns.
   port: 8080
+  # Strict-Transport-Security from the web nginx. Off by default because an install without
+  # TLS must not send it. Turn it on only when the UI is served over HTTPS: browsers then
+  # refuse plain HTTP for this host for maxAgeSeconds.
+  hsts:
+    enabled: false
+    maxAgeSeconds: 31536000
+    includeSubDomains: false
+    preload: false
   probe:
     livenessInitialDelaySeconds: 5
     readinessInitialDelaySeconds: 3
@@ -454,3 +503,66 @@ web:
 service:
   type: ClusterIP
   port: 8000
+
+# PodDisruptionBudgets for the long-running Deployments, so a node drain or Karpenter
+# consolidation can't evict every replica at once. Off by default. maxUnavailable: 1 never
+# blocks a drain outright, even for the single-replica governor.
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  # Rendered only for components that are themselves rendered (web needs web.enabled).
+  components:
+    - api
+    - web
+    - worker
+    - scanner-worker
+    - governor
+
+# NetworkPolicies. Off by default (they need a CNI that enforces them).
+#   - Redis accepts connections only from this release's pods. The chart's Redis has no auth.
+#   - The API accepts connections from this release's pods plus api.from (for example
+#     your ingress controller's namespace). An empty api.from leaves the API reachable from
+#     anywhere in the cluster.
+#   - egress, when non-empty, restricts every Cryo pod's egress to DNS, this release's pods
+#     and these rules: add your database, catalog, object storage and engine endpoints.
+#     Empty leaves egress unrestricted.
+networkPolicy:
+  enabled: false
+  api:
+    from: []
+    # - namespaceSelector:
+    #     matchLabels:
+    #       kubernetes.io/metadata.name: ingress-nginx
+  egress: []
+  # - to:
+  #     - ipBlock:
+  #         cidr: 10.0.0.0/16
+  #   ports:
+  #     - port: 5432
+  #       protocol: TCP
+  #     - port: 443
+  #       protocol: TCP
+  # DNS egress allowed whenever egress is restricted.
+  dnsPorts:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+
+# Ingress in front of the web UI (which proxies /api to the API), or in front of the API
+# when web.enabled is false. Off by default. Terminate TLS here or at your load balancer:
+# sign-in passwords, Google ID tokens and session JWTs cross this hop.
+# api.ingressAnnotations (SSE settings for the assistant) are merged in.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: cryo.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # - secretName: cryo-tls
+  #   hosts:
+  #     - cryo.example.com

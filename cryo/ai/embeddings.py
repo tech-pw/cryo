@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+import zlib
 from collections.abc import Sequence
 
 _TOKEN_SPLIT = re.compile(r"[^a-z0-9_]+")
@@ -30,7 +31,10 @@ def embed_text(text: str, *, dim: int = _DEFAULT_DIM) -> tuple[float, ...]:
     for n in (2, 3, 4):
         for i in range(len(padded) - n + 1):
             gram = padded[i : i + n]
-            idx = hash(gram) % dim
+            # zlib.crc32, not hash(): str hashing is salted per process (PYTHONHASHSEED), so
+            # the same column name embedded differently on every pod and restart, and PII
+            # classification flipped between runs (issue #168).
+            idx = zlib.crc32(gram.encode("utf-8")) % dim
             vec[idx] += 1.0
 
     norm = math.sqrt(sum(v * v for v in vec))
