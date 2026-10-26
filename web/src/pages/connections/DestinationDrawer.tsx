@@ -745,7 +745,7 @@ export const DestinationDrawer = ({
                 label={
                   <HintLabel
                     label="Off-peak start (hr)"
-                    tooltip="Hour in Asia/Kolkata, not your browser timezone, when heavy (standard/deep) maintenance may start. Leave start and end both 0 (or equal) to allow maintenance at any time."
+                    tooltip="Hour in the install time zone (CRYO_DISPLAY_TIMEZONE, UTC by default), not your browser timezone, when heavy (standard/deep) maintenance may start. Leave start and end both 0 (or equal) to allow maintenance at any time."
                   />
                 }
               >
@@ -766,7 +766,7 @@ export const DestinationDrawer = ({
                 label={
                   <HintLabel
                     label="Off-peak end (hr)"
-                    tooltip="Hour in Asia/Kolkata, not your browser timezone, when the off-peak window ends (exclusive). Equal to start (including 0/0) disables the gate."
+                    tooltip="Hour in the install time zone (CRYO_DISPLAY_TIMEZONE, UTC by default), not your browser timezone, when the off-peak window ends (exclusive). Equal to start (including 0/0) disables the gate."
                   />
                 }
               >
@@ -870,7 +870,7 @@ export const DestinationDrawer = ({
                   form.watch("offpeak_end") == null ||
                   form.watch("offpeak_start") === form.watch("offpeak_end")
                     ? "Any time"
-                    : `${form.watch("offpeak_start")}:00–${form.watch("offpeak_end")}:00 Asia/Kolkata`}
+                    : `${form.watch("offpeak_start")}:00–${form.watch("offpeak_end")}:00 install time`}
                 </dd>
               </div>
               <div className="flex justify-between gap-2 sm:block">

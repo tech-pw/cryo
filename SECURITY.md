@@ -55,15 +55,19 @@ issues (after triage, not before):
 ## Dev token and the platform key
 
 `POST /api/v1/auth/token` self-issues `viewer`, `operator`, or `admin` with no identity check
-while the dev token is on. That route stays on unless `CRYO_ENVIRONMENT=prod`. Configuring OIDC
-does not turn it off. `CRYO_ALLOW_DEV_TOKEN_IN_PROD` reopens it on `environment=prod`.
+while the dev token is on. The route is on only when `CRYO_ENVIRONMENT` is `dev` or `test` and
+no `CRYO_OIDC_ISSUER_URL` is set. `CRYO_ALLOW_DEV_TOKEN_IN_PROD` turns it back on in any
+environment.
 
-The chart default is `CRYO_ENVIRONMENT: dev`. A default `helm install` is not an OIDC install.
-A public install must set `prod`, leave the dev-token override false, and set an issuer before
-the API is reachable.
+The chart defaults to `CRYO_ENVIRONMENT: prod`. A bare `helm install` refuses to render until
+every enabled image is pinned by digest, and the API refuses to start without a real
+`CRYO_SECRET_KEY`. Setting `dev` for a throwaway install re-opens the route unless an OIDC issuer
+is set.
 
-`CRYO_SECRET_KEY` defaults to `dev-only-change-me` when unset. HS256 API tokens fall back to that
-key. A deployment that omits the secret accepts tokens signed with the published default.
+`CRYO_SECRET_KEY` defaults to `dev-only-change-me`. It signs HS256 API tokens (unless
+`CRYO_JWT_SECRET` is set) and encrypts stored connection secrets. In `staging` and `prod`, every
+Cryo process refuses to start when `CRYO_SECRET_KEY` or `CRYO_JWT_SECRET` is the default or
+shorter than 32 characters.
 
 Issued tokens expire in 24 hours. There is no published revocation list.
 

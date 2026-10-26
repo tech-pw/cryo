@@ -2,7 +2,7 @@ name: docs
 
 on:
   push:
-    branches: [main, gitlab-main]
+    branches: [main]
     paths:
       - "site/**"
       - ".github/workflows/docs-pages.yml"
@@ -16,8 +16,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: docs-pages
-  cancel-in-progress: false
+  # Deploys (push / workflow_dispatch) share the single "docs-pages" group and are
+  # never cancelled, so Pages publishes stay serialized. Each PR gets its own group
+  # so PRs neither queue behind nor cancel each other; a newer push to the same PR
+  # cancels that PR's older run.
+  group: ${{ github.event_name == 'pull_request' && format('docs-pages-pr-{0}', github.event.pull_request.number) || 'docs-pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -54,7 +58,7 @@ jobs:
       - name: Stage the publishable tree
         run: |
           mkdir _site
-          rsync -a --exclude '_src' --exclude 'scripts' --exclude 'README.md' --exclude '.DS_Store' site/ _site/
+          rsync -a --exclude '_src' --exclude 'scripts' --exclude 'README.md' --exclude '.DS_Store' --exclude 'assets/img/screens/*.png' site/ _site/
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

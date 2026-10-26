@@ -67,3 +67,47 @@ def test_run_itself_tracks_failures_without_stopping() -> None:
     runner._stop.wait = _stop_after_two  # type: ignore[method-assign]
     runner.run()
     assert runner.consecutive_tick_failures == 2
+
+
+class _ObservingRunner(DaemonRunner):
+    """Records tick_started_at as seen from inside the tick."""
+
+    def __init__(self) -> None:
+        super().__init__("observing", interval=0)
+        self.seen: list[float | None] = []
+
+    def _tick(self) -> None:
+        self.seen.append(self.tick_started_at)
+        self._stop.set()
+
+
+def test_tick_started_at_is_set_during_a_tick_and_cleared_after() -> None:
+    runner = _ObservingRunner()
+    assert runner.tick_started_at is None
+    runner.run()
+    assert runner.seen and runner.seen[0] is not None
+    assert runner.tick_started_at is None
+
+
+def test_tick_started_at_is_cleared_after_a_failing_tick() -> None:
+    runner = _FlakyRunner([True])
+
+    def _stop(timeout: float | None = None) -> bool:
+        runner._stop.set()
+        return True
+
+    runner._stop.wait = _stop  # type: ignore[method-assign]
+    runner.run()
+    assert runner.tick_started_at is None
+    assert runner.consecutive_tick_failures == 1
+
+
+def test_tick_stalled() -> None:
+    runner = _FlakyRunner([])
+    # Idle between ticks: never stalled.
+    assert not runner.tick_stalled(60, now=1_000.0)
+    runner.tick_started_at = 900.0
+    assert not runner.tick_stalled(100, now=1_000.0)
+    assert runner.tick_stalled(99, now=1_000.0)
+    # 0 disables the check, however long the tick has run.
+    assert not runner.tick_stalled(0, now=1_000_000.0)

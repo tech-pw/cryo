@@ -25,6 +25,7 @@ from cryo.db.models import (
     Table,
     TableStats,
 )
+from cryo.db.tenant_scope import get_scoped_resource
 from cryo.quality.constraint_store import evaluate_table_constraints, latest_results
 from cryo.quality.constraints import (
     COLUMN_KINDS,
@@ -280,14 +281,15 @@ def _validate(spec: ConstraintSpec, column: dict[str, Any] | None) -> None:
 
 
 def _require_table(session: SessionDep, table_id: uuid.UUID) -> None:
-    if session.get(Table, table_id) is None:
-        raise HTTPException(404, "table not found")
+    get_scoped_resource(session, Table, table_id, resource_type="table")
 
 
 def _require_constraint(session: SessionDep, constraint_id: uuid.UUID) -> QualityConstraint:
     constraint = session.get(QualityConstraint, constraint_id)
     if constraint is None:
         raise HTTPException(404, "constraint not found")
+    # A constraint belongs to its table's tenant; another tenant's looks like a missing one.
+    get_scoped_resource(session, Table, constraint.table_id, resource_type="constraint")
     return constraint
 
 

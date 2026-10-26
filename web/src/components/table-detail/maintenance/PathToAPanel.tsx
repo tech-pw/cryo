@@ -193,6 +193,22 @@ export const PathToAPanel = ({ tableId }: { tableId: string }) => {
           {note}
         </p>
       ))}
+      {data.design_findings && data.design_findings.length > 0 ? (
+        <div aria-label="Design findings">
+          <h4 className="td-mt-subhead">Design findings</h4>
+          <p className="mb-2 text-xs text-muted-foreground">
+            Table layout issues. They don&apos;t lower the grade, and maintenance can&apos;t fix them.
+          </p>
+          <ul className="space-y-1 text-sm">
+            {data.design_findings.map((finding) => (
+              <li key={finding.label}>
+                <span className="font-medium">{finding.label}</span>
+                <span className="text-muted-foreground"> ({finding.severity}): {finding.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {KIND_ORDER.map((kind) => {
         const steps = data.steps.filter((step) => step.kind === kind);
         if (steps.length === 0) return null;

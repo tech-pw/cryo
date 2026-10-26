@@ -1,0 +1,43 @@
+{{- /* Optional Ingress; see ingress in values.yaml. Routes to web when enabled, else the API. */ -}}
+{{- if .Values.ingress.enabled }}
+{{- $svcName := printf "%s-api" (include "cryo.fullname" .) }}
+{{- $svcPort := .Values.service.port }}
+{{- if .Values.web.enabled }}
+{{- $svcName = printf "%s-web" (include "cryo.fullname" .) }}
+{{- $svcPort = .Values.web.service.port }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "cryo.fullname" . }}
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+  {{- $annotations := merge (dict) (.Values.ingress.annotations | default dict) (.Values.api.ingressAnnotations | default dict) }}
+  {{- with $annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: {{ $svcName }}
+                port:
+                  number: {{ $svcPort }}
+          {{- end }}
+    {{- end }}
+{{- end }}

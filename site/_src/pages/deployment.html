@@ -2,7 +2,7 @@
 title: Deployment
 lede: Cryo does not replace Trino or Apache Spark. It plans maintenance and admits the work to the engines you already run. Deploy it as a Helm chart and keep your engines where they are.
 description: How Cryo deploys on Kubernetes with Helm, what it needs from you, and the committed CPU and memory request floor.
-updated: 2026-10-05
+updated: 2026-10-26
 ---
 <h2 id="kubernetes-services">Cryo on Kubernetes</h2>
 <diagram name="k8s" caption="The Helm release holds Cryo's services. PostgreSQL and Redis are yours, and so are the engines." />
@@ -11,12 +11,19 @@ updated: 2026-10-05
 <h2 id="layout">Layout in three lines</h2>
 <dl>
   <dt>Helm chart</dt>
-  <dd>The chart lives at <code>deploy/helm/cryo</code>. Defaults are committed, and overrides are per environment.</dd>
+  <dd>The chart lives at <code>deploy/helm/cryo</code> and each release tag publishes it to <code>oci://ghcr.io/tech-pw/charts/cryo</code>, signed with cosign keyless. Defaults are committed, and overrides are per environment.</dd>
   <dt>Stores</dt>
   <dd>PostgreSQL and Redis are required. Both are external to the chart, so you can bring managed services.</dd>
   <dt>Engines</dt>
   <dd>Engines stay outside the chart. Cryo reaches them through source and destination configs stored in the database.</dd>
 </dl>
+
+<h2 id="install">Install the chart</h2>
+<p>No clone needed. The chart version <code>X.Y.Z</code> is the release tag without its <code>v</code>, and the published defaults pin that release's <code>ghcr.io/tech-pw/cryo</code>, <code>cryo-web</code> and <code>cryo-spark</code> images by digest.</p>
+<codeblock lang="bash" title="terminal">
+$ helm install cryo oci://ghcr.io/tech-pw/charts/cryo --version X.Y.Z --namespace cryo --create-namespace
+</codeblock>
+<p>The chart README lists the values a production install must set, including the database connection, the production environment flag, and OIDC.</p>
 
 <h2 id="request-floor">Request floor</h2>
 <p>These are the resources the committed Helm defaults request when Cryo is idle, summed across replicas. <code>scannerWorker</code> is the ad-hoc scan consumer, not the scanner CronJob.</p>

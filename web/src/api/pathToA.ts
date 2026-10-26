@@ -36,6 +36,13 @@ export interface PathToARead {
   reachable_score: number;
   reachable_grade: string;
   notes: string[];
+  design_findings?: PathDesignFinding[];
+}
+
+export interface PathDesignFinding {
+  label: string;
+  severity: string;
+  reason: string;
 }
 
 export interface PathToAApplyResponse {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import datetime
@@ -34,7 +35,13 @@ from cryo.db.repositories.presets import (
 from cryo.db.repositories.sources import table_in_source_scope
 from cryo.intents.binding import build_and_bind_job_intent
 from cryo.observability.correlation import correlation_summary
-from cryo.planner.job_coverage import ActiveJob, dedupe_key, effective_operations
+from cryo.planner.job_coverage import (
+    IN_FLIGHT_JOB_STATUSES,
+    ActiveJob,
+    dedupe_key,
+    effective_operations,
+)
+from cryo.scheduler.cron import db_instant
 from cryo.scheduler.rules import (
     PresetConfig,
     TableCandidate,
@@ -46,6 +53,8 @@ from cryo.scheduler.rules import (
     TableAssignment as TableAssignmentConfig,
 )
 from cryo.scheduler.scheduler import ScheduledRunDraft
+
+logger = logging.getLogger(__name__)
 
 
 class SQLSchedulerStore:
@@ -59,13 +68,16 @@ class SQLSchedulerStore:
         if IntentStore(self._session_factory).is_paused():
             return []
         with self._session_factory() as session:
-            presets = session.scalars(select(Preset).where(Preset.enabled.is_(True)))
+            presets = [
+                preset
+                for preset in session.scalars(select(Preset).where(Preset.enabled.is_(True)))
+                if preset.schedule_cron
+            ]
+            last_cron_runs = _last_cron_run_by_preset(session, [p.id for p in presets])
             due: list[tuple[PresetConfig, datetime | None]] = []
             for preset in presets:
-                if not preset.schedule_cron:
-                    continue
                 config = preset_to_config(preset)
-                last_run = self._get_last_run(config.id)
+                last_run = _latest(self._get_last_run(config.id), last_cron_runs.get(preset.id))
                 due.append((config, last_run))
             return due
 
@@ -210,6 +222,32 @@ class SQLSchedulerStore:
         with self._session_factory() as session:
             return active_coverage(session)
 
+    def preset_backlog_state(self, preset_id: str, since: datetime) -> tuple[int, set[str]]:
+        """(queued/admitted/running jobs of the preset, tables it has had a job for since
+        `since`). The second set is what keeps a backlog batch from retrying a table the same
+        cron period already attempted, whatever that attempt's outcome."""
+        preset_uuid = uuid.UUID(preset_id)
+        with self._session_factory() as session:
+            in_flight = session.scalar(
+                select(func.count())
+                .select_from(MaintenanceJob)
+                .join(MaintenanceRun, MaintenanceRun.id == MaintenanceJob.run_id)
+                .where(
+                    MaintenanceRun.preset_id == preset_uuid,
+                    MaintenanceJob.status.in_(IN_FLIGHT_JOB_STATUSES),
+                )
+            )
+            attempted = session.scalars(
+                select(MaintenanceJob.table_id)
+                .join(MaintenanceRun, MaintenanceRun.id == MaintenanceJob.run_id)
+                .where(
+                    MaintenanceRun.preset_id == preset_uuid,
+                    MaintenanceRun.created_at >= since,
+                )
+                .distinct()
+            ).all()
+        return int(in_flight or 0), {str(table_id) for table_id in attempted}
+
     def persist_run(self, run: ScheduledRunDraft) -> set[str]:
         """Store the run and its jobs; returns ids of jobs dropped because a concurrent run
         took the same (table, operations) slot between coverage read and insert."""
@@ -276,8 +314,45 @@ class SQLSchedulerStore:
 
     def _get_last_run(self, preset_id: str) -> datetime | None:
         key = f"{self._namespace}:scheduler:last_run:{preset_id}"
-        raw = self._redis.get(key)
+        try:
+            raw = self._redis.get(key)
+        except Exception:
+            logger.warning("Redis last-run marker read failed for preset %s", preset_id)
+            return None
         if raw is None:
             return None
         text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
         return datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+
+def _last_cron_run_by_preset(
+    session: Session, preset_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, datetime]:
+    """Newest cron-triggered run per preset, from Postgres.
+
+    The Redis marker is a cache: the bundled Redis has no persistence, so after a restart the
+    marker is gone and cron_is_due's 24h catch-up re-fired every daily preset at whatever time
+    Redis came back (#177). The runs table already records every fire that produced work.
+    """
+    if not preset_ids:
+        return {}
+    rows = session.execute(
+        select(
+            MaintenanceRun.preset_id,
+            func.max(func.coalesce(MaintenanceRun.scheduled_at, MaintenanceRun.created_at)),
+        )
+        .where(
+            MaintenanceRun.preset_id.in_(preset_ids),
+            MaintenanceRun.trigger == "cron",
+            MaintenanceRun.kind != "scan",
+        )
+        .group_by(MaintenanceRun.preset_id)
+    ).all()
+    return {
+        preset_id: db_instant(last) for preset_id, last in rows if preset_id is not None and last
+    }
+
+
+def _latest(*values: datetime | None) -> datetime | None:
+    present = [db_instant(value) for value in values if value is not None]
+    return max(present) if present else None

@@ -62,6 +62,8 @@ class PathToARead(BaseModel):
     reachable_score: int
     reachable_grade: str
     notes: list[str]
+    # Partition count and skew findings: reported beside the grade, never deducted (#285).
+    design_findings: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PathToAApplyRequest(BaseModel):
@@ -203,6 +205,16 @@ def load_snapshot(session: Session, table: Table) -> TableSnapshot | None:
         query_filters=_query_filters(session, table.id),
         property_changes=_property_changes(session, table.id),
         sort_columns=_sort_columns(session, table.id),
+        stats={
+            "total_size_gb": float(stats.total_size_gb or 0),
+            "total_files": int(stats.total_files or 0),
+            "total_partitions": int(stats.total_partitions or 0),
+            "avg_file_size_mb": float(stats.avg_file_size_mb or 0),
+            "target_file_size_bytes": stats.target_file_size_bytes,
+            "partition_skew_ratio": float(stats.partition_skew_ratio or 0.0),
+            "commits_per_day": raw.get("commits_per_day"),
+            "is_streaming": bool(raw.get("is_streaming")),
+        },
     )
 
 

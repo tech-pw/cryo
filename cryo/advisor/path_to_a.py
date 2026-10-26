@@ -32,7 +32,9 @@ from cryo.planner.planner import _expire_params
 from cryo.scanner.health import (
     HEALTH_THRESHOLDS,
     MIN_SMALL_FILES_FOR_COMPACTION,
+    compute_design_findings,
     grade_for_score,
+    health_thresholds_for,
 )
 
 StepKind = Literal["automatic", "approval", "design", "external"]
@@ -61,8 +63,10 @@ _LABEL_KEYS = {
     "Suboptimal properties": "properties",
     "Legacy file formats": "file_formats",
 }
-_FILE_KEYS = ("small_file_pct", "total_files", "avg_files_per_partition", "partition_skew_ratio")
-_LAYOUT_KEYS = (*_FILE_KEYS, "partition_count")
+# Partition count and skew are design findings since #285 and cost no points, so a layout
+# change is judged only on the file metrics it moves.
+_FILE_KEYS = ("small_file_pct", "total_files", "avg_files_per_partition")
+_LAYOUT_KEYS = _FILE_KEYS
 
 _COARSER = {
     PartitionTransform.DAY: (PartitionTransform.MONTH, PartitionTransform.YEAR),
@@ -101,6 +105,9 @@ class TableSnapshot:
     query_filters: Mapping[str, int] = field(default_factory=dict)
     property_changes: Mapping[str, str] = field(default_factory=dict)
     sort_columns: Sequence[str] = ()
+    # The scanner's stats as compute_health_score saw them (total_size_gb, avg_file_size_mb,
+    # snapshot_retention_days, commits_per_day, ...), so projections use the same limits.
+    stats: Mapping[str, Any] = field(default_factory=dict)
     now: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -132,24 +139,71 @@ class PathToA:
     reachable_score: int
     reachable_grade: str
     notes: list[str]
+    design_findings: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-def points_for(key: str, value: float) -> int:
-    """Deduction the scorer gives a metric value (scanners pass no size, so limits are flat)."""
-    if value >= HEALTH_THRESHOLDS[f"{key}_crit"]:
+def points_for(
+    key: str, value: float, thresholds: Mapping[str, int | float] = HEALTH_THRESHOLDS
+) -> int:
+    """Deduction the scorer gives a metric value against the given warn/crit limits."""
+    if value >= thresholds[f"{key}_crit"]:
         return 20
-    if value >= HEALTH_THRESHOLDS[f"{key}_warn"]:
+    if value >= thresholds[f"{key}_warn"]:
         return 8
     return 0
 
 
-def small_file_points(small_files: int, total_files: int) -> int:
+def small_file_points(
+    small_files: int,
+    total_files: int,
+    thresholds: Mapping[str, int | float] = HEALTH_THRESHOLDS,
+) -> int:
     if small_files < MIN_SMALL_FILES_FOR_COMPACTION:
         return 0
-    return points_for("small_file_pct", small_files / max(total_files, 1) * 100)
+    return points_for("small_file_pct", small_files / max(total_files, 1) * 100, thresholds)
+
+
+def _health_stats(snapshot: TableSnapshot, **overrides: Any) -> dict[str, Any]:
+    """The scorer's inputs for this table, optionally with projected file/partition counts.
+
+    A projected file count keeps the table's data size, so the scorer's file-count floor
+    (data size / target size) doesn't move with it.
+    """
+    stats: dict[str, Any] = dict(snapshot.stats)
+    stats.setdefault("total_size_gb", snapshot.total_size_bytes / GIB)
+    stats.setdefault("total_files", snapshot.total_files)
+    stats.setdefault("total_partitions", snapshot.total_partitions)
+    stats.setdefault("target_file_size_bytes", snapshot.table_target_bytes)
+    stats.setdefault("partition_skew_ratio", snapshot.partition_skew_ratio)
+    stats.setdefault("is_streaming", snapshot.is_streaming)
+    if "avg_file_size_mb" not in stats and snapshot.total_files:
+        stats["avg_file_size_mb"] = snapshot.total_size_bytes / MIB / snapshot.total_files
+    files = overrides.pop("total_files", None)
+    if files:
+        data_bytes = float(stats.get("avg_file_size_mb") or 0) * MIB * int(stats["total_files"])
+        stats["total_files"] = files
+        stats["avg_file_size_mb"] = data_bytes / MIB / files
+    stats.update(overrides)
+    return stats
+
+
+def _thresholds(snapshot: TableSnapshot, **overrides: Any) -> dict[str, int | float]:
+    return health_thresholds_for(_health_stats(snapshot, **overrides))
+
+
+_SEVERITY_WEIGHT = {"warning": 1, "critical": 2}
+
+
+def _design_labels(snapshot: TableSnapshot, **overrides: Any) -> dict[str, int]:
+    """Design findings as label -> severity weight (critical 2, warning 1)."""
+    findings = compute_design_findings(_health_stats(snapshot, **overrides))
+    return {
+        str(finding["label"]): _SEVERITY_WEIGHT.get(str(finding["severity"]), 1)
+        for finding in findings
+    }
 
 
 def commit_rate_from_history(history: Sequence[Mapping[str, Any]]) -> float | None:
@@ -314,6 +368,7 @@ def build_path_to_a(snapshot: TableSnapshot) -> PathToA:
         reachable_score=projection.score(),
         reachable_grade=grade_for_score(projection.score()),
         notes=notes,
+        design_findings=[dict(f) for f in compute_design_findings(_health_stats(snapshot))],
     )
 
 
@@ -375,15 +430,20 @@ def _projected_skew(snapshot: TableSnapshot, before: Sequence[int], after: Seque
     return snapshot.partition_skew_ratio * _skew(after) / sample_before
 
 
-def _apply_layout(projection: _Projection, layout: _Layout) -> None:
-    projection.set("total_files", points_for("total_files", layout.files))
-    projection.set("partition_count", points_for("partition_count", layout.partitions))
-    projection.set("partition_skew_ratio", points_for("partition_skew_ratio", layout.skew))
+def _apply_layout(snapshot: TableSnapshot, projection: _Projection, layout: _Layout) -> None:
+    limits = _thresholds(
+        snapshot, total_files=layout.files, total_partitions=layout.partitions or None
+    )
+    projection.set("total_files", points_for("total_files", layout.files, limits))
     if layout.partitions:
         avg = layout.files / layout.partitions
-        projection.set("avg_files_per_partition", points_for("avg_files_per_partition", avg))
+        projection.set(
+            "avg_files_per_partition", points_for("avg_files_per_partition", avg, limits)
+        )
     if layout.small_files is not None:
-        projection.set("small_file_pct", small_file_points(layout.small_files, layout.files))
+        projection.set(
+            "small_file_pct", small_file_points(layout.small_files, layout.files, limits)
+        )
 
 
 def _plural(count: int, noun: str, plural: str | None = None) -> str:
@@ -460,7 +520,7 @@ def _expire_step(snapshot: TableSnapshot, projection: _Projection) -> Step | Non
         confidence: Confidence = "assumed"
     else:
         kept = min(snapshot.total_snapshots, _snapshots_kept(rate, hours, retain_last))
-        projection.set("snapshot_count", points_for("snapshot_count", kept))
+        projection.set("snapshot_count", points_for("snapshot_count", kept, _thresholds(snapshot)))
         detail = (
             f"Keeps the last {_window(hours)} of history. At {rate:.0f} commits/day that "
             f"leaves about {_plural(kept, 'snapshot')} (now {snapshot.total_snapshots:,})."
@@ -596,7 +656,7 @@ def _compaction_step(
         skew=_projected_skew(snapshot, before_files, after_files),
         small_files=small if every_part else None,
     )
-    _apply_layout(projection, layout)
+    _apply_layout(snapshot, projection, layout)
     if not routine and projection.score() <= _score_of(before):
         projection.points = before
         return None
@@ -644,13 +704,16 @@ def _retention_step(snapshot: TableSnapshot, projection: _Projection) -> Step | 
     if not projection.has("snapshot_count") or not rate:
         return None
     hours, retain_last = _expire_window_hours(snapshot)
-    limit = int(HEALTH_THRESHOLDS["snapshot_count_warn"]) - 1
+    # The scorer's limit for this table. It is judged against the configured retention days,
+    # which a retention_hours override doesn't change, so the limit holds as the window shrinks.
+    limits = _thresholds(snapshot)
+    limit = int(limits["snapshot_count_warn"]) - 1
     needed = math.floor((limit - retain_last) / rate * 24)
     if needed < 1 or needed >= hours:
         return None
     before = dict(projection.points)
     kept = _snapshots_kept(rate, needed, retain_last)
-    projection.set("snapshot_count", points_for("snapshot_count", kept))
+    projection.set("snapshot_count", points_for("snapshot_count", kept, limits))
     return Step(
         id="retention_hours",
         kind="approval",
@@ -710,6 +773,7 @@ class _LayoutOption:
     layout: _Layout
     groups: int
     score: int
+    findings: Mapping[str, int] = field(default_factory=dict)
 
     @property
     def changes(self) -> int:
@@ -790,8 +854,13 @@ def _layout_options(
                 continue
             layout, groups = _option_layout(snapshot, parts, transform, dropped, target, scale)
             trial = projection.copy()
-            _apply_layout(trial, layout)
-            options.append(_LayoutOption(transform, dropped, layout, groups, trial.score()))
+            _apply_layout(snapshot, trial, layout)
+            findings = _design_labels(
+                snapshot, total_partitions=layout.partitions, partition_skew_ratio=layout.skew
+            )
+            options.append(
+                _LayoutOption(transform, dropped, layout, groups, trial.score(), findings)
+            )
     return options
 
 
@@ -802,20 +871,33 @@ def _partition_step(
     target: int,
     scale: _Scale,
 ) -> Step | None:
-    if not parts or not any(projection.has(key) for key in _LAYOUT_KEYS):
+    current_findings = _design_labels(snapshot)
+    if not parts or not (current_findings or any(projection.has(key) for key in _LAYOUT_KEYS)):
         return None
     options = _layout_options(snapshot, projection, parts, target, scale)
     if not options:
         return None
+    # Since #285 partition count and skew are design findings, not deductions. A layout
+    # change earns its place by raising the grade or by clearing a design finding.
     ranked = sorted(
         options,
-        key=lambda o: (-o.score, o.changes, len(o.dropped), _rank(o.transform)),
+        key=lambda o: (
+            -o.score,
+            sum(o.findings.values()),
+            o.changes,
+            len(o.dropped),
+            _rank(o.transform),
+        ),
     )
     best = ranked[0]
-    if best.score <= projection.score():
+    # Like fixed_since for deductions: a finding counts as fixed if it goes or drops a level.
+    cleared = [
+        label for label, weight in current_findings.items() if best.findings.get(label, 0) < weight
+    ]
+    if best.score <= projection.score() and not cleared:
         return None
     before = dict(projection.points)
-    _apply_layout(projection, best.layout)
+    _apply_layout(snapshot, projection, best.layout)
     time_field = _time_field(snapshot.partition_fields)
     title, detail = _layout_text(snapshot, best, time_field, parts, target)
     remove = [spec.partition_field or spec.base_column for spec in best.dropped]
@@ -826,7 +908,9 @@ def _partition_step(
     evidence = [
         f"{option.describe(time_field)}: about {option.layout.partitions:,} partitions, "
         f"{option.layout.files:,} files, skew about {option.layout.skew:.0f}x "
-        f"(score {option.score})"
+        f"(score {option.score}"
+        + (f"; still {', '.join(option.findings).lower()}" if option.findings else "")
+        + ")"
         for option in ranked[:4]
     ]
     return Step(
@@ -834,7 +918,7 @@ def _partition_step(
         kind="design",
         title=title,
         detail=detail,
-        fixes=projection.fixed_since(before),
+        fixes=[*projection.fixed_since(before), *cleared],
         projected_score=projection.score(),
         projected_grade=grade_for_score(projection.score()),
         confidence="estimated",

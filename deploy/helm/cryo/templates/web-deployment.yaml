@@ -34,13 +34,18 @@ spec:
             # from the pod's nameserver (NodeLocal DNSCache 169.254.20.10 on EKS).
             # kube-dns.kube-system.svc.cluster.local is often unreachable from the
             # pod when that cache is installed; short names also fail because nginx
-            # does not apply search domains. See docs/CRYO_WEB_AUTH_502_2026-10-13.md.
+            # does not apply search domains.
             - name: NGINX_ENTRYPOINT_LOCAL_RESOLVERS
               value: "1"
             - name: NGINX_ENVSUBST_FILTER
-              value: "NGINX_LOCAL_RESOLVERS|CRYO_API_UPSTREAM"
+              value: "NGINX_LOCAL_RESOLVERS|CRYO_API_UPSTREAM|CRYO_WEB_HSTS"
             - name: CRYO_API_UPSTREAM
               value: "http://{{ include "cryo.fullname" . }}-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}"
+            # Strict-Transport-Security value; empty sends no header (web/nginx.conf).
+            - name: CRYO_WEB_HSTS
+              {{- with .Values.web.hsts }}
+              value: {{ if .enabled }}{{ printf "max-age=%d%s%s" (int .maxAgeSeconds) (ternary "; includeSubDomains" "" .includeSubDomains) (ternary "; preload" "" .preload) | quote }}{{ else }}""{{ end }}
+              {{- end }}
           livenessProbe:
             httpGet:
               path: /

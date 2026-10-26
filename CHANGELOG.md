@@ -15,6 +15,15 @@ All notable changes to Cryo will be documented in this file. The format is based
 - `.github/ISSUE_TEMPLATE/` (bug, feature) and `.github/PULL_REQUEST_TEMPLATE.md`.
 - Initial `CHANGELOG.md`.
 
+### Security
+- Failed password and Google sign-ins are throttled per account (5 in 15 minutes) and per client
+  IP (20), using Redis so the limit holds across replicas. Locked attempts get `429` with
+  `Retry-After`, and the sign-in page says how long to wait. Each failure is audited as
+  `auth.login_failed` (admin-only `GET /api/v1/auth/audit`) and counted in
+  `cryo_auth_login_failures_total`. `/docs`, `/redoc` and `/openapi.json` are off by default in
+  `prod` (`CRYO_API_DOCS_ENABLED`). `CRYO_METRICS_BEARER_TOKEN` protects the scraper `/metrics`.
+  See the operator guide (#262).
+
 ### Changed
 - Docs site homepage: "Compact first, then clean up" is replaced by a scroll-driven story of one
   1 TB table. It decays for 30 days, then goes through each operation in order while a pinned
@@ -30,9 +39,9 @@ All notable changes to Cryo will be documented in this file. The format is based
   before-and-after scorecard.
 - `LICENSE` and `deploy/helm/cryo/LICENSE` are now the verbatim Apache License 2.0 text. The
   previous copies had reworded clauses, so GitHub could not identify the license.
-- The GitHub mirror sync now also rewrites file contents and commit messages through
-  `scripts/oss_mirror_replacements.txt` (internal hostnames, buckets, IPs, Slack IDs) and strips
-  internal working docs from history. See `docs/OSS_MIRROR.md`.
+- GitHub (`tech-pw/cryo`) is now the only source of truth. The GitLab-to-GitHub mirror sync
+  (`scripts/sync_oss_mirror.sh`, its exclude list, the `.gitlab-ci.yml` sync job and
+  `docs/OSS_MIRROR.md`) is removed, so pull requests merged here are no longer overwritten.
 - GitHub CI installs Python dependencies from `uv.lock` (the same lock the image ships) instead
   of resolving the newest releases on every run, builds `cryo-engine-go` for the scanner parity
   tests, and skips CodeQL and the Pages deploy while the repository is private. Lint, mypy,
@@ -66,6 +75,11 @@ All notable changes to Cryo will be documented in this file. The format is based
   the delete files it leaves dangling. See `docs/SPARK_ENGINE_OPTIMIZATION_2026-09-25.md`.
 
 ### Fixed
+- The web UI's nginx now sends `Content-Security-Policy` (with `frame-ancestors 'none'`),
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and `Referrer-Policy` on every
+  response, error pages included. `index.html` and SPA routes are `no-cache` so a deploy shows
+  up at once. Hashed `/assets/*` files are cached for a year as `immutable`. HSTS is a chart
+  value (`web.hsts`), off by default for installs without TLS (#260).
 - Docs-vs-code drift: `docs/GOVERNANCE.md` previously asserted an Apache-2.0 `LICENSE` link
   whose target file did not exist.
 - `stats_compute_ndv: false` was ignored, so batch runs paid for a full-table

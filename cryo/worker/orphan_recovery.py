@@ -11,6 +11,7 @@ import os
 import socket
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, cast
 
 from cryo.db.repositories.job_steps import JobStepRecord
@@ -66,6 +67,15 @@ _MAX_QUEUED_SCAN_PER_TICK = 2000
 # is normally a much smaller, transient set) but same unbounded shape.
 _MAX_RUNNING_SCAN_PER_TICK = 500
 _MAX_ADMITTED_SCAN_PER_TICK = 500
+
+# Slack past the Job deadline before an adopted Spark-on-K8s step is called overdue: the
+# original waiter's poll interval plus pod scheduling. #258.
+_ADOPTED_SPARK_DEADLINE_GRACE = timedelta(minutes=10)
+
+# Jobs this worker already logged as "adopted, still running" -- logged once per job, not on
+# every 5s recovery poll (#258: 8 workers logged every adopted job on every poll).
+_LOGGED_WAITING: set[str] = set()
+_LOGGED_WAITING_MAX = 10_000
 
 
 class StepLedger(Protocol):
@@ -289,16 +299,35 @@ def recover_orphaned_jobs(
             job=job,
         )
 
+        engine_ref = started.engine_ref or job.engine_ref
+        if state is EngineOpState.RUNNING and engine_ref and _is_spark_k8s(destination):
+            overdue = _adopted_spark_k8s_overdue(store, destination, job, started, engine_ref)
+            if overdue is not None:
+                error = (
+                    f"Spark Job {engine_ref} did not complete within {overdue}s "
+                    "(adopted after its worker was lost; driver cancelled)"
+                )
+                logger.warning("Adopted job %s: %s", job.id, error)
+                step_ledger.complete_step(
+                    job.id,
+                    started.step_index,
+                    JobStepStatus.FAILED,
+                    engine_ref=engine_ref,
+                    detail=started.detail,
+                )
+                store.mark_status(job.id, JobStatus.FAILED, error=error)
+                queue.complete(job.id, JobStatus.FAILED)
+                lock_store.release_table_lock(job.table_id, job.id)
+                lock_store.release_job_owner(job.id, holder)
+                _LOGGED_WAITING.discard(job.id)
+                resolved += 1
+                continue
+
         if state is EngineOpState.RUNNING or state is EngineOpState.NOT_APPLICABLE:
             waiting += 1
             lock_store.renew_job_owner(job.id, holder, owner_ttl_seconds)
             lock_store.renew_table_lock(job.table_id, job.id, lock_ttl_seconds)
-            logger.info(
-                "Adopted job %s step %s still %s; waiting",
-                job.id,
-                started.step_index,
-                state.value,
-            )
+            _log_waiting_once(job.id, started.step_index, state.value)
             continue
 
         if state is EngineOpState.UNCERTAIN:
@@ -312,6 +341,13 @@ def recover_orphaned_jobs(
                     started.operation_type.value,
                 )
             continue
+
+        if state in (EngineOpState.SUCCEEDED, EngineOpState.FAILED):
+            _LOGGED_WAITING.discard(job.id)
+            if engine_ref and _is_spark_k8s(destination):
+                # The original waiter deletes the driver pod and credentials Secret in
+                # execute()'s finally; an adopted step must too (#258).
+                _cleanup_spark_k8s(destination, engine_ref)
 
         if state is EngineOpState.SUCCEEDED:
             step_ledger.complete_step(
@@ -441,6 +477,99 @@ def _spark_job_state(destination: DestinationConfig, engine_ref: str) -> EngineO
     except Exception:
         logger.debug("Spark job probe failed for %s", engine_ref, exc_info=True)
         return EngineOpState.UNCERTAIN
+
+
+def _log_waiting_once(job_id: str, step_index: int, state: str) -> None:
+    if job_id in _LOGGED_WAITING:
+        logger.debug("Adopted job %s step %s still %s; waiting", job_id, step_index, state)
+        return
+    if len(_LOGGED_WAITING) >= _LOGGED_WAITING_MAX:
+        _LOGGED_WAITING.clear()
+    _LOGGED_WAITING.add(job_id)
+    logger.info("Adopted job %s step %s still %s; waiting", job_id, step_index, state)
+
+
+def _is_spark_k8s(destination: DestinationConfig) -> bool:
+    engine = str(destination.engine or "").lower()
+    submit_mode = str(destination.config.get("submit_mode") or "").lower()
+    return engine in {EngineType.SPARK_EMR.value, "spark"} and submit_mode == "k8s"
+
+
+def _adopted_spark_k8s_overdue(
+    store: JobStore,
+    destination: DestinationConfig,
+    job: MaintenanceJobRecord,
+    started: JobStepRecord,
+    engine_ref: str,
+    *,
+    now: datetime | None = None,
+) -> int | None:
+    """The Job deadline in seconds when an adopted Spark-on-K8s step has run past it.
+
+    The original waiter raises at the deadline (wait_for_completion) and its finally deletes
+    the driver. After adoption nothing did: the wrapper Job's activeDeadlineSeconds only kills
+    spark-submit, the driver is not owned by that Job, and recovery waited as long as the
+    driver ran -- 3h42m on a 7200s deadline in one install (#258). Measured from the driver
+    pod's start (each retry attempt gets its own deadline), else the step's start. Cancels the
+    Job and deletes the driver when overdue. Errors mean "not overdue": never fail on a guess.
+    """
+    current = now or datetime.now(UTC)
+    try:
+        from cryo.engines.spark.k8s import JobRunState, SparkK8sClient, SparkK8sConfig
+        from cryo.engines.spark.sizing import cap_deadline_seconds_for_table
+
+        config = SparkK8sConfig.from_config(destination.config)
+        client = SparkK8sClient(config)
+        run = client.get_job_run(engine_ref)
+        if run.state is not JobRunState.RUNNING:
+            return None
+        anchor = getattr(run, "started_at", None) or started.started_at
+        if anchor is None:
+            return None
+        anchor = anchor if anchor.tzinfo else anchor.replace(tzinfo=UTC)
+        elapsed = current - anchor
+        # Cheapest bound first: the smallest deadline any table gets. Only look up the
+        # table's size once the step has run at least that long.
+        smallest = cap_deadline_seconds_for_table(
+            config.active_deadline_seconds, total_size_gb=None
+        )
+        if elapsed <= timedelta(seconds=smallest) + _ADOPTED_SPARK_DEADLINE_GRACE:
+            return None
+        deadline = cap_deadline_seconds_for_table(
+            config.active_deadline_seconds, total_size_gb=_table_size_gb(store, job.table_id)
+        )
+        if elapsed <= timedelta(seconds=deadline) + _ADOPTED_SPARK_DEADLINE_GRACE:
+            return None
+        client.cancel_job_run(engine_ref)
+        return deadline
+    except Exception:
+        logger.warning(
+            "Deadline check failed for adopted Spark job %s (job %s)",
+            engine_ref,
+            job.id,
+            exc_info=True,
+        )
+        return None
+
+
+def _table_size_gb(store: JobStore, table_id: str) -> float | None:
+    """Table size for the deadline tier. Unknown size takes the largest tier's deadline, so
+    an unknown never cancels a job the original waiter would still have waited for."""
+    try:
+        stats = store.get_table_data(table_id).stats
+        raw = stats.get("total_size_gb")
+        return float(raw) if raw is not None else float("inf")
+    except Exception:
+        return float("inf")
+
+
+def _cleanup_spark_k8s(destination: DestinationConfig, engine_ref: str) -> None:
+    try:
+        from cryo.engines.spark.k8s import SparkK8sClient, SparkK8sConfig
+
+        SparkK8sClient(SparkK8sConfig.from_config(destination.config)).cleanup_after_run(engine_ref)
+    except Exception:
+        logger.warning("Cleanup failed for adopted Spark job %s", engine_ref, exc_info=True)
 
 
 def _try_destination(store: JobStore, destination_id: str) -> DestinationConfig | None:

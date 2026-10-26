@@ -47,7 +47,8 @@ export const ExcludedFromExpiry = ({ tableId }: { tableId: string }) => {
       </h3>
       <p className="mb-2 text-xs text-muted-foreground">
         On Spark, Cryo keeps each one by tagging it <code>cryo-protect-{"{id}"}</code>. Trino's expiry can't skip a single
-        snapshot, so exclusions only hold on Spark. Removing a row doesn't drop a tag already created.
+        snapshot, so on Trino destinations Cryo skips expire_snapshots for this table while any exclusion exists, and the
+        plan says why. Removing a row doesn't drop a tag already created.
       </p>
       {excluded.isError ? (
         <p className="text-xs text-destructive">

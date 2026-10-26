@@ -13,18 +13,27 @@ from cryo.domain.enums import Mode, OperationType, PartitionTransform
 from cryo.domain.models import (
     MaintenancePlan,
     Operation,
+    OptimizeTruncation,
     PartitionPredicate,
     PartitionPredicateTerm,
 )
 
 
 def plan_to_dict(plan: MaintenancePlan) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "table_ref": plan.table_ref,
         "mode": plan.mode.value,
         "operations": [_operation_to_dict(operation) for operation in plan.operations],
         "notes": list(plan.notes),
     }
+    # Only present when set, so every untruncated plan (and its hash) is unchanged.
+    if plan.optimize_truncation is not None:
+        payload["optimize_truncation"] = {
+            "planned_partitions": plan.optimize_truncation.planned_partitions,
+            "candidate_partitions": plan.optimize_truncation.candidate_partitions,
+            "max_chunks": plan.optimize_truncation.max_chunks,
+        }
+    return payload
 
 
 def plan_from_dict(payload: Mapping[str, Any]) -> MaintenancePlan:
@@ -77,7 +86,21 @@ def plan_from_dict(payload: Mapping[str, Any]) -> MaintenancePlan:
         mode=Mode(str(payload.get("mode"))),
         operations=tuple(operations),
         notes=notes,
+        optimize_truncation=_truncation_from_dict(payload.get("optimize_truncation")),
     )
+
+
+def _truncation_from_dict(raw: object) -> OptimizeTruncation | None:
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        return OptimizeTruncation(
+            planned_partitions=int(raw["planned_partitions"]),
+            candidate_partitions=int(raw["candidate_partitions"]),
+            max_chunks=int(raw["max_chunks"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def canonical_plan_bytes(plan: MaintenancePlan) -> bytes:

@@ -49,7 +49,9 @@ spec:
             {{- end }}
             - name: CRYO_HEALTH_PORT
               value: {{ .Values.observability.metricsPort | quote }}
+            {{- include "cryo.daemonStallEnv" .Values.scannerWorker.probe | nindent 12 }}
           envFrom:
             {{- include "cryo.envFrom" . | nindent 12 }}
+          {{- include "cryo.daemonProbes" (dict "root" $ "probe" .Values.scannerWorker.probe) | nindent 10 }}
           resources:
             {{- toYaml .Values.scannerWorker.resources | nindent 12 }}

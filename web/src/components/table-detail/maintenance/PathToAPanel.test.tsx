@@ -145,6 +145,19 @@ describe("PathToAPanel", () => {
     expect(screen.queryByRole("button", { name: "Change partition spec" })).not.toBeInTheDocument();
   });
 
+  it("lists design findings beside the grade without deducting them", async () => {
+    getPathToA.mockResolvedValue({
+      ...path,
+      design_findings: [
+        { label: "Partition volume skew", severity: "critical", reason: "largest partition is 300x the median" }
+      ]
+    });
+    renderPanel();
+    const section = await screen.findByLabelText("Design findings");
+    expect(section).toHaveTextContent("Partition volume skew");
+    expect(section).toHaveTextContent("don't lower the grade");
+  });
+
   it("says so when there is nothing to fix", async () => {
     getPathToA.mockResolvedValue({ ...path, steps: [], score: 100, grade: "A" });
     renderPanel();

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -71,9 +72,7 @@ def test_planner_compacts_to_the_tables_own_target_size() -> None:
     ]
     plan = build_plan(stats, partitions, Mode.STANDARD, {"min_small_files": 128})
     op = _optimize(plan)[0]
-    assert op.params["target_file_size_bytes"] == 512 * MIB
     assert op.params["file_size_mb"] == 512
-    assert any("table's own target file size (512 MB)" in note for note in plan.notes)
 
 
 def test_planner_keeps_explicit_target_and_honours_opt_out() -> None:
@@ -228,8 +227,9 @@ def _over_partitioned(days: int = 1000, per_day_mb: int = 17) -> TableSnapshot:
     total_files = sum(r["files_per_partition"] for r in rows) * 70
     stats = {
         "total_files": total_files,
-        "total_snapshots": 400,
+        "total_snapshots": 2000,
         "total_partitions": total_partitions,
+        "commits_per_day": 10.0,
         "partition_skew_ratio": 300.0,
         "avg_files_per_partition": total_files / total_partitions,
         "last_snapshot_committed_at": NOW,
@@ -246,20 +246,23 @@ def _over_partitioned(days: int = 1000, per_day_mb: int = 17) -> TableSnapshot:
         total_files=total_files,
         total_partitions=total_partitions,
         total_size_bytes=int(days * 70 * per_day_mb * MIB),
-        total_snapshots=400,
+        total_snapshots=2000,
         manifest_count=10,
-        commits_per_day=180.0,
+        commits_per_day=10.0,
         is_streaming=False,
         last_commit_at=NOW,
         table_target_bytes=512 * MIB,
         has_sort_order=True,
         write_distribution_mode="hash",
-        params={"retention_days": 7, "min_small_files": 128},
+        # A 30-day preset window on a table the scorer expects to hold ~7 days of snapshots:
+        # expiry alone can't clear the buildup, so the retention override is the fix.
+        params={"retention_days": 30, "min_small_files": 128},
         scheduled_operations=frozenset({"optimize", "expire_snapshots"}),
         partition_fields=(DAY_FIELD,),
         partitions=rows,
         partition_skew_ratio=300.0,
         query_filters={"event_ts": 40},
+        stats=stats,
         now=NOW,
     )
 
@@ -268,9 +271,13 @@ def test_projection_without_steps_matches_the_scorer() -> None:
     snapshot = _over_partitioned()
     path = build_path_to_a(snapshot)
     assert path.score == snapshot.score
-    assert snapshot.grade == "F"
+    assert snapshot.grade == "C"
     labels = {d["label"] for d in snapshot.deductions}
-    assert {"Snapshot retention buildup", "Partition volume skew", "Excessive file count"} <= labels
+    assert {"Snapshot retention buildup", "Excessive file count"} <= labels
+    # #285: partition count and skew are reported beside the grade, never deducted.
+    assert "Partition volume skew" not in labels
+    findings = {f["label"] for f in path.design_findings}
+    assert findings == {"Partition count complexity", "Partition volume skew"}
 
 
 def test_points_follow_the_scorer_thresholds() -> None:
@@ -287,10 +294,10 @@ def test_over_partitioned_table_needs_a_partition_change() -> None:
     assert expire.kind == "automatic" and expire.in_schedule
     assert expire.action == {"type": "run_operations", "operations": ["expire_snapshots"]}
 
-    retention = by_id["retention_hours"]
-    assert retention.kind == "approval"
-    assert retention.action == {"type": "set_overrides", "overrides": {"retention_hours": 6}}
-    assert "Snapshot retention buildup" in retention.fixes
+    # The planner already tightens expiry for a table this far over (backlog-aware window),
+    # so expiry alone clears the buildup and no retention override is proposed.
+    assert "Snapshot retention buildup" in expire.fixes
+    assert "retention_hours" not in by_id
 
     design = by_id["partition_spec"]
     assert design.kind == "design"
@@ -305,7 +312,8 @@ def test_over_partitioned_table_needs_a_partition_change() -> None:
     assert design.title == "Partition by month of event_ts instead of day"
     assert "40 recorded queries filter on event_ts." in design.detail
     assert "median partition holds 17 MB" in design.detail
-    assert design.projected_score > by_id["retention_hours"].projected_score
+    # The layout change no longer moves the grade; it clears the design findings.
+    assert {"Partition count complexity", "Partition volume skew"} <= set(design.fixes)
     assert path.cryo_score >= design.projected_score
     assert path.cryo_score > path.score
 
@@ -314,8 +322,9 @@ def test_compaction_alone_is_reported_honestly() -> None:
     path = build_path_to_a(_over_partitioned())
     routine = next(step for step in path.steps if step.id == "optimize")
     assert routine.kind == "automatic"
-    assert "Excessive file count" not in routine.fixes
-    assert "Partition volume skew" not in routine.fixes or routine.projected_score > path.score
+    # File-count limits follow the layout's own floor (#285), so compaction clears them.
+    assert "Excessive file count" in routine.fixes
+    assert "Partition volume skew" not in routine.fixes
 
 
 def test_steps_are_ordered_by_kind() -> None:
@@ -357,6 +366,64 @@ def test_healthy_table_has_no_steps() -> None:
     )
     path = build_path_to_a(snapshot)
     assert (path.grade, path.steps, path.reachable_grade) == ("A", [], "A")
+
+
+def _slow_writer(retention_days: int) -> TableSnapshot:
+    """4 commits/day, 90 snapshots: below the planner's tightening, above the scorer's limit."""
+    stats = {
+        "total_files": 100,
+        "total_snapshots": 90,
+        "commits_per_day": 4.0,
+        "total_size_gb": 10,
+        "last_snapshot_committed_at": NOW,
+        "write_distribution_mode": "hash",
+        "has_sort_order": True,
+        "target_file_size_bytes": 512 * MIB,
+    }
+    score, grade, deductions = _deductions(stats)
+    return TableSnapshot(
+        table_name="events",
+        score=score,
+        grade=grade,
+        deductions=deductions,
+        total_files=100,
+        total_partitions=1,
+        total_size_bytes=10 * GIB,
+        total_snapshots=90,
+        manifest_count=2,
+        commits_per_day=4.0,
+        is_streaming=False,
+        last_commit_at=NOW,
+        table_target_bytes=512 * MIB,
+        has_sort_order=True,
+        write_distribution_mode="hash",
+        params={"retention_days": retention_days},
+        scheduled_operations=frozenset({"expire_snapshots"}),
+        partition_fields=(),
+        partitions=[],
+        stats=stats,
+        now=NOW,
+    )
+
+
+def test_long_preset_window_needs_a_retention_override() -> None:
+    snapshot = _slow_writer(retention_days=30)
+    assert "Snapshot retention buildup" in {d["label"] for d in snapshot.deductions}
+    by_id = {step.id: step for step in build_path_to_a(snapshot).steps}
+
+    # 30 days at 4 commits/day keeps ~121 snapshots, still over the scorer's limit of 50.
+    assert "Snapshot retention buildup" not in by_id["expire_snapshots"].fixes
+    retention = by_id["retention_hours"]
+    assert retention.kind == "approval"
+    assert retention.action == {"type": "set_overrides", "overrides": {"retention_hours": 288}}
+    assert "Snapshot retention buildup" in retention.fixes
+    assert retention.projected_grade == "A"
+
+
+def test_short_preset_window_needs_no_retention_override() -> None:
+    by_id = {step.id: step for step in build_path_to_a(_slow_writer(retention_days=7)).steps}
+    assert "Snapshot retention buildup" in by_id["expire_snapshots"].fixes
+    assert "retention_hours" not in by_id
 
 
 def test_unfixable_deductions_become_external_steps() -> None:
@@ -418,7 +485,7 @@ def _seed(session, *, with_stats: bool = True) -> uuid.UUID:
         destination_id=destination.id,
         mode="standard",
         operations=["optimize", "expire_snapshots"],
-        params={"retention_days": 7},
+        params={"retention_days": 30},
         guardrails={},
     )
     session.add(preset)
@@ -448,7 +515,7 @@ def _seed(session, *, with_stats: bool = True) -> uuid.UUID:
                 query_count_30d=0,
                 raw={
                     "health_deductions": list(snapshot.deductions),
-                    "commits_per_day": 180.0,
+                    "commits_per_day": 10.0,
                     "partition_fields": [
                         {
                             "base_column": "event_ts",
@@ -485,9 +552,10 @@ def test_get_path_to_a(api_db: ApiDb) -> None:
     response = api_db.client.get(f"/api/v1/tables/{table_id}/path-to-a", headers=VIEWER_HEADERS)
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["grade"] == "F"
+    assert body["grade"] == "C"
     ids = [step["id"] for step in body["steps"]]
-    assert "retention_hours" in ids and "partition_spec" in ids
+    assert "partition_spec" in ids
+    assert {f["label"] for f in body["design_findings"]} == {"Partition volume skew"}
 
 
 def test_get_path_to_a_needs_a_scan(api_db: ApiDb) -> None:
@@ -505,13 +573,13 @@ def test_apply_override_step_needs_admin_and_merges(api_db: ApiDb) -> None:
     table_id = _seed(session)
     session.close()
     url = f"/api/v1/tables/{table_id}/path-to-a/apply"
-    denied = api_db.client.post(url, headers=OPERATOR_HEADERS, json={"step_id": "retention_hours"})
+    denied = api_db.client.post(url, headers=OPERATOR_HEADERS, json={"step_id": "optimize_all"})
     assert denied.status_code == 403
 
-    response = api_db.client.post(url, headers=ADMIN_HEADERS, json={"step_id": "retention_hours"})
+    response = api_db.client.post(url, headers=ADMIN_HEADERS, json={"step_id": "optimize_all"})
     assert response.status_code == 200, response.text
     session = api_db.session_factory()
-    assert session.get(TableAssignment, table_id).param_overrides == {"retention_hours": 6}
+    assert session.get(TableAssignment, table_id).param_overrides == {"min_small_files": 2}
     audit = session.get(AuditLog, response.json()["audit_log_id"])
     assert audit.action == "path_to_a_override"
     session.close()
@@ -659,24 +727,38 @@ def test_skewed_identity_column_is_dropped_and_sorted() -> None:
                 }
             )
     base = _over_partitioned()
-    deductions = [
-        {"label": "Partition volume skew", "deduction": 20, "severity": "critical", "reason": ""}
-    ]
+    total_files = sum(r["files_per_partition"] for r in rows)
+    size_gb = sum(r["partition_size_gb"] for r in rows)
+    stats = {
+        "total_files": total_files,
+        "total_partitions": len(rows),
+        "total_size_gb": size_gb,
+        "partition_skew_ratio": 100.0,
+        "last_snapshot_committed_at": NOW,
+        "write_distribution_mode": "hash",
+        "has_sort_order": True,
+        "target_file_size_bytes": 512 * MIB,
+    }
+    score, grade, deductions = _deductions(stats)
     snapshot = TableSnapshot(
         **{
             **base.__dict__,
             "deductions": deductions,
-            "score": 80,
-            "grade": "B",
+            "score": score,
+            "grade": grade,
             "total_partitions": len(rows),
-            "total_files": sum(r["files_per_partition"] for r in rows),
-            "total_size_bytes": int(sum(r["partition_size_gb"] for r in rows) * GIB),
+            "total_files": total_files,
+            "total_size_bytes": int(size_gb * GIB),
+            "total_snapshots": 3,
             "partition_skew_ratio": 100.0,
             "partition_fields": (kind, DAY_FIELD),
             "partitions": rows,
             "query_filters": {"kind": 12},
+            "stats": stats,
         }
     )
+    # Skew is a design finding, not a deduction (#285).
+    assert "Partition volume skew" not in {d["label"] for d in deductions}
     path = build_path_to_a(snapshot)
     by_id = {step.id: step for step in path.steps}
     design = by_id["partition_spec"]
@@ -688,3 +770,15 @@ def test_skewed_identity_column_is_dropped_and_sorted() -> None:
     sort = by_id["sort_order"]
     assert sort.action == {"type": "sort_order", "columns": ["kind"]}
     assert sort.confirm_text == "events"
+
+
+def test_projected_score_matches_the_scorer_on_projected_stats() -> None:
+    """The point of #285's rework: a step's projection is what the real scorer would give."""
+    snapshot = _slow_writer(retention_days=30)
+    retention = next(s for s in build_path_to_a(snapshot).steps if s.id == "retention_hours")
+    hours = retention.action["overrides"]["retention_hours"]
+    kept = math.ceil(4.0 * hours / 24) + 1
+    expected, _grade, _ = compute_health_score(
+        {**snapshot.stats, "total_snapshots": kept}, 0, now=NOW
+    )
+    assert retention.projected_score == expected

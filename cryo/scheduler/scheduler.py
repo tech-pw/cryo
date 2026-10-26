@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -36,6 +36,9 @@ class ScheduledJobDraft:
     operations: tuple[str, ...] | None = None
 
 
+BACKLOG_TRIGGER = "schedule_backlog"
+
+
 @dataclass(frozen=True)
 class ScheduledRunDraft:
     id: str
@@ -58,11 +61,14 @@ def build_scheduled_run(
     budget_hint: int | None = None,
     now: datetime | None = None,
     active_coverage: Mapping[str, Sequence[ActiveJob]] | None = None,
+    exclude_table_ids: Collection[str] = (),
 ) -> ScheduledRunDraft:
     current = now or datetime.now(UTC)
     mode = Mode(preset.mode)
     candidates = tables_for_preset(preset, tables, presets, rules, assignments, now=current)
     candidates = drop_recently_maintained(candidates, preset)
+    if exclude_table_ids:
+        candidates = [table for table in candidates if table.id not in exclude_table_ids]
     # Before the budget cut, so a table another job already covers does not spend one of the
     # run's slots.
     trimmed: dict[str, tuple[str, ...]] = {}

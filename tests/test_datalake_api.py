@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from cryo.api import routes
@@ -27,6 +28,14 @@ class FakeSession:
 
     def expunge_all(self) -> None:
         return None
+
+
+@pytest.fixture(autouse=True)
+def _runs_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests stub the run snapshot on a fake session, so the tenant-scoped run lookup
+    in front of it is stubbed too; cross-tenant refusal is in test_tenant_isolation_routes."""
+    monkeypatch.setattr(routes, "run_visible", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(routes, "get_scoped_run", lambda *_args, **_kwargs: None)
 
 
 def _client() -> TestClient:
