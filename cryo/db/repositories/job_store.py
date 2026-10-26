@@ -718,6 +718,8 @@ def _stats_dict(table: Table) -> dict[str, Any]:
         "query_count_30d": stats.query_count_30d,
         "partition_col": stats.partition_col,
         "partition_col_type": stats.partition_col_type,
+        # The optimize target follows it (#265); the scanner judges small files against it.
+        "target_file_size_bytes": stats.target_file_size_bytes,
         "projected_savings_usd_month": stats.projected_savings_usd_month,
         "format_version": (stats.raw or {}).get("format_version"),
         "raw": dict(stats.raw or {}),
