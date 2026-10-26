@@ -268,8 +268,13 @@ class SchedulerService:
         jobs_enqueued = 0
         fired: list[str] = []
 
+        # Cron runs in the install zone (#183), the same zone the off-peak gate uses.
+        from cryo.display_time import display_zone
+
         for preset, last_run_at in due_presets:
-            if not cron_is_due(preset.schedule_cron, now=current, last_run_at=last_run_at):
+            if not cron_is_due(
+                preset.schedule_cron, now=current, last_run_at=last_run_at, tz=display_zone()
+            ):
                 continue
 
             run = build_scheduled_run(

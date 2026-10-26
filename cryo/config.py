@@ -377,6 +377,17 @@ class Settings(BaseSettings):
     query_gets_per_file: float = Field(default=1.0, ge=0)
 
     # Equal start/end disables the off-peak gate (heavy modes may run anytime).
+    display_timezone: str = Field(
+        default="UTC",
+        description=(
+            "IANA time zone for the install (CRYO_DISPLAY_TIMEZONE), for example "
+            "'Asia/Kolkata' or 'Europe/Berlin'. Cron presets, the destination off-peak "
+            "window and run report clocks all use it, so a schedule and its off-peak window "
+            "always agree. Exposed to the web app via /api/v1/runtime. Before #183 the off-peak "
+            "gate and reports were hard-coded to IST while cron ran in UTC; set this to "
+            "'Asia/Kolkata' to keep the old off-peak behavior."
+        ),
+    )
     offpeak_start_ist: int = Field(default=0, ge=0, le=23)
     offpeak_end_ist: int = Field(default=0, ge=0, le=23)
     default_per_replica_optimize_cap: int = Field(default=5, gt=0)
