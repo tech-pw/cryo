@@ -799,7 +799,7 @@ reality.
 | 1 | `optimize_manifests` Option 1 (route to SQL) | ✅ Done | `routing.py` `NATIVE_ALWAYS_DISCONNECTED`; Go analyze counts current-snapshot manifests; execute returns routed message |
 | 2 | Optional sort on rewrite (#1157) | ✅ Done | `compaction_sort.go`: honors table sort order on write; validates `strategy=sort` / `sort_columns`; rejects unsorted tables + column mismatch |
 | 3 | z-order / global sort (opt-in) | ✅ Deferred | Explicit rejection in Go + route to Trino/Spark; DataFusion build tag remains out of default image |
-| 4 | Retire Rust `cryo-engine/` | 🟡 Partial | `CRYO_ENGINE_IMPL` default → `go`; Rust crate/CI/Docker stage kept until Phase E §8 gate green |
+| 4 | Retire Rust `cryo-engine/` | ✅ Done 2026-10-26 | Both crates, both Rust CI jobs, Dependabot entries, and `engine_impl=rust` removed. Done before the Phase E §8 gate: prod runs native maintenance off, so the Rust fallback was guarding nothing. Native optimize stays opt-in (`engine_impl=go`). |
 | 5 | Web UI engine preset support | ✅ Done | Split Native (iceberg-go/rust) in Connections; `engine_impl` round-trip; preset/bulk labels; grey-out `optimize_manifests` + manifest-only for native |
 
 **Exit criteria status:**

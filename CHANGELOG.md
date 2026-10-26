@@ -77,6 +77,11 @@ All notable changes to Cryo will be documented in this file. The format is based
   the delete files it leaves dangling. See `docs/SPARK_ENGINE_OPTIMIZATION_2026-09-25.md`.
 
 ### Fixed
+- The web UI's nginx now sends `Content-Security-Policy` (with `frame-ancestors 'none'`),
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and `Referrer-Policy` on every
+  response, error pages included. `index.html` and SPA routes are `no-cache` so a deploy shows
+  up at once. Hashed `/assets/*` files are cached for a year as `immutable`. HSTS is a chart
+  value (`web.hsts`), off by default for installs without TLS (#260).
 - Docs-vs-code drift: `docs/GOVERNANCE.md` previously asserted an Apache-2.0 `LICENSE` link
   whose target file did not exist.
 - `stats_compute_ndv: false` was ignored, so batch runs paid for a full-table

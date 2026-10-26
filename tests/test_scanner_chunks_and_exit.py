@@ -210,7 +210,14 @@ def test_scanner_cronjob_has_a_deadline_and_forbids_overlap() -> None:
     if shutil.which("helm") is None:
         pytest.skip("helm is required for chart rendering")
     rendered = subprocess.run(
-        ["helm", "template", "cryo", str(REPO / "deploy/helm/cryo")],
+        [
+            "helm",
+            "template",
+            "cryo",
+            str(REPO / "deploy/helm/cryo"),
+            "--set",
+            "global.env.CRYO_ENVIRONMENT=dev",
+        ],
         check=True,
         capture_output=True,
         text=True,

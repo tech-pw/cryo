@@ -402,8 +402,8 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
               </Button>
             </ConfirmAction>
             {operations.length ? (
-              <div className="ctd-header__menu-group" role="group" aria-label="Add to run">
-                <p className="ctd-header__menu-label">Add to run</p>
+              <div className="ctd-header__menu-group" role="group" aria-label="Run one operation">
+                <p className="ctd-header__menu-label">Run one operation</p>
                 {operations.map((item) => (
                   <Button
                     key={item.op}

@@ -51,6 +51,7 @@ from cryo.api.routes_table_maintenance import router as table_maintenance_router
 from cryo.api.s3_log_config_routes import router as s3_log_config_router
 from cryo.api.search_routes import router as search_router
 from cryo.api.slack_routes import router as slack_interactions_router
+from cryo.build_info import build_info, current_schema_revision
 from cryo.config import Settings, get_settings
 from cryo.mcp.http import mount_mcp
 from cryo.observability.logging import configure_logging
@@ -155,7 +156,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/healthz", tags=["health"])
     def healthz() -> dict[str, str]:
-        return {"status": "ok", "environment": settings.environment}
+        # Liveness only: no database call. /api/v1/version adds the schema revision.
+        return {
+            "status": "ok",
+            "environment": settings.environment,
+            "version": build_info().version,
+        }
+
+    @app.get("/api/v1/version", tags=["health"])
+    def version() -> dict[str, str | None]:
+        """Which build is running (#263). Unauthenticated like /healthz, so bug reports and
+        incident checks can read it without a token. schema_revision is the Alembic
+        revision in the database, null when the database can't be reached."""
+        return {**build_info().as_dict(), "schema_revision": current_schema_revision()}
 
     @app.get("/readyz", tags=["health"])
     def readyz() -> dict[str, str]:

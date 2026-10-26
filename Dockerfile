@@ -49,5 +49,21 @@ RUN groupadd --system --gid 10001 cryo \
     && chown cryo:cryo /app/.local
 USER 10001:10001
 
+# Build identity (#263). release-supply-chain.yml passes the tag, commit and build time;
+# a plain `docker build` leaves them empty and the app reports the package version only.
+# Kept last so changing them never invalidates the dependency layers above.
+ARG CRYO_VERSION=""
+ARG CRYO_GIT_SHA=""
+ARG CRYO_BUILD_DATE=""
+ENV CRYO_VERSION=${CRYO_VERSION} \
+    CRYO_GIT_SHA=${CRYO_GIT_SHA} \
+    CRYO_BUILD_DATE=${CRYO_BUILD_DATE}
+LABEL org.opencontainers.image.title="cryo" \
+      org.opencontainers.image.source="https://github.com/tech-pw/cryo" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${CRYO_VERSION}" \
+      org.opencontainers.image.revision="${CRYO_GIT_SHA}" \
+      org.opencontainers.image.created="${CRYO_BUILD_DATE}"
+
 # Default command (can be overridden in docker-compose)
 CMD ["uvicorn", "cryo.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -6,7 +6,7 @@ from functools import cmp_to_key
 from typing import Any, cast
 
 from cryo.domain.enums import Mode, OperationType, PartitionTransform, PredicateCapability
-from cryo.domain.models import MaintenancePlan, Operation, PartitionPredicate
+from cryo.domain.models import MaintenancePlan, Operation, OptimizeTruncation, PartitionPredicate
 from cryo.planner.chunking import greedy_pack
 from cryo.planner.equality_deletes import plan_convert_equality_deletes
 from cryo.planner.guardrails import sort_operations_canonically
@@ -51,6 +51,7 @@ def build_plan(
     notes: list[str] = []
     excluded = {str(op) for op in excluded_operations}
     dropped_by_table: set[str] = set()
+    truncations: list[OptimizeTruncation] = []
 
     if resolved_mode is Mode.MANIFEST_ONLY:
         operations.append(Operation(OperationType.OPTIMIZE_MANIFESTS, dict(params)))
@@ -64,17 +65,17 @@ def build_plan(
         )
 
     if resolved_mode in {Mode.LIGHT, Mode.STANDARD, Mode.DEEP}:
-        operations.append(
-            Operation(
-                OperationType.EXPIRE_SNAPSHOTS,
-                _expire_params(
-                    params,
-                    stats,
-                    protected_snapshot_ids=list(protected_snapshot_ids or []),
-                    notes=notes,
-                ),
-            )
+        expire_params = _expire_params(
+            params,
+            stats,
+            protected_snapshot_ids=list(protected_snapshot_ids or []),
+            notes=notes,
         )
+        expire_skip = _expire_interval_skip_note(stats, params, expire_params)
+        if expire_skip is not None:
+            notes.append(expire_skip)
+        else:
+            operations.append(Operation(OperationType.EXPIRE_SNAPSHOTS, expire_params))
         expire_data, expire_data_notes = plan_expire_data(
             stats,
             partitions,
@@ -95,7 +96,9 @@ def build_plan(
         optimize_ops = _apply_table_exclusions(
             list(
                 _apply_skip_operations(
-                    _optimize_operations(stats, partitions, params, notes), params, notes
+                    _optimize_operations(stats, partitions, params, notes, truncations),
+                    params,
+                    notes,
                 )
             ),
             excluded,
@@ -204,11 +207,14 @@ def build_plan(
         _apply_table_exclusions(operations, excluded, dropped_by_table), key=lambda op: op.type
     )
     _note_table_exclusions(dropped_by_table, notes)
+    final_operations = _apply_skip_operations(operations, params, notes)
+    planned_optimize = any(op.type is OperationType.OPTIMIZE for op in final_operations)
     return MaintenancePlan(
         table_ref=_table_ref(stats, params),
         mode=resolved_mode,
-        operations=_apply_skip_operations(operations, params, notes),
+        operations=final_operations,
         notes=tuple(notes),
+        optimize_truncation=truncations[0] if truncations and planned_optimize else None,
     )
 
 
@@ -264,6 +270,7 @@ def _optimize_operations(
     partitions: Sequence[Mapping[str, Any]],
     params: Mapping[str, Any],
     notes: list[str],
+    truncations: list[OptimizeTruncation] | None = None,
 ) -> list[Operation]:
     min_small_files = int(params.get("min_small_files", 128))
     delete_ratio_trigger = float(params.get("delete_ratio_trigger", 0))
@@ -361,13 +368,33 @@ def _optimize_operations(
         return []
 
     sorted_candidates = sorted(candidates, key=cmp_to_key(_compare_candidates))
+    max_chunks = _optional_int(params.get("max_chunks"))
     chunks = greedy_pack(
         sorted_candidates,
         gb_budget=chunk_size_gb,
         max_parts=max_parts,
-        max_chunks=_optional_int(params.get("max_chunks")),
+        max_chunks=max_chunks,
         oversize_alone=True,
     )
+    planned = sum(len(chunk) for chunk in chunks)
+    if max_chunks is not None and planned < len(sorted_candidates):
+        # greedy_pack stops at max_chunks and drops the rest. Said nothing before (#199): the
+        # run succeeded, the table started its cooldown, and most fragmented partitions were
+        # never touched. Candidates are sorted best-first, so the dropped ones are the
+        # lowest-benefit partitions.
+        notes.append(
+            f"OPTIMIZE limited to {planned} of {len(sorted_candidates)} qualifying partitions "
+            f"(max_chunks={max_chunks}); the remaining {len(sorted_candidates) - planned} are "
+            "left for the next run, and this run does not start the table's cooldown."
+        )
+        if truncations is not None:
+            truncations.append(
+                OptimizeTruncation(
+                    planned_partitions=planned,
+                    candidate_partitions=len(sorted_candidates),
+                    max_chunks=max_chunks,
+                )
+            )
 
     return [
         _optimize_operation(params, tuple(candidate.predicate for candidate in chunk))
@@ -973,6 +1000,36 @@ def _expire_params(
     if protected_snapshot_ids:
         out["protected_snapshot_ids"] = sorted(set(int(s) for s in protected_snapshot_ids))
     return out
+
+
+def _expire_interval_skip_note(
+    stats: Mapping[str, Any],
+    params: Mapping[str, Any],
+    expire_params: Mapping[str, Any],
+) -> str | None:
+    """Why expire_snapshots is left out of this plan, or None to plan it.
+
+    A second expiry a few hours after the last one can only remove snapshots committed in that
+    gap, yet it was the largest source of Spark launches in a fleet run: 52% of successful
+    expiries ran within 24h of the previous one on the same table (#179). The default interval
+    is half the effective retention window, capped at 24h, so a streaming table whose retention
+    was tightened to one day still expires twice a day.
+    """
+    hours_since = stats.get("hours_since_last_expire_snapshots")
+    if hours_since is None:
+        return None
+    configured = params.get("expire_snapshots_min_interval_hours")
+    if configured is None:
+        retention_days = float(expire_params.get("retention_days") or 0)
+        min_hours = min(24.0, retention_days * 12.0)
+    else:
+        min_hours = float(configured)
+    if min_hours <= 0 or float(hours_since) >= min_hours:
+        return None
+    return (
+        f"Skipped expire_snapshots: last successful expiry {float(hours_since):.1f}h ago, "
+        f"inside the {min_hours:g}h minimum interval (expire_snapshots_min_interval_hours)."
+    )
 
 
 def _orphan_params(params: Mapping[str, Any]) -> dict[str, Any]:
