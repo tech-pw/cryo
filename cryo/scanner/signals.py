@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from statistics import median
 from typing import Any
 
 
@@ -45,14 +46,22 @@ def detect_streaming_from_history(
     *,
     commits_per_day_threshold: float = 24.0,
     window_hours: int = 24,
+    min_pair_hours: float = 1.0,
 ) -> tuple[bool, float]:
-    """Derive commits/day from consecutive snapshot-count deltas in stats history.
+    """Derive commits/day from snapshot-count deltas in stats history.
 
     Skips the inference entirely when a Cryo maintenance job completed between the two
     samples (``maintenance_job_since_previous`` on the latest row, set by
     ``stats_history_for_signals``) -- expire_snapshots/optimize/optimize_manifests each
     commit their own snapshot, so the delta is explained by Cryo's own run, not external
     write velocity.
+
+    Two overlapping scans of the same table can land milliseconds apart with identical
+    snapshot counts (issue #290, same root cause as #256). Reading only the last pair then
+    yields a zero delta over a near-zero interval, so the rate comes out as 0 and the table
+    never looks streaming however fast it is really written. Instead of the last pair only,
+    this takes the median rate across every recent pair that is far enough apart in time
+    for the delta to mean anything, and uses the newest pair that qualifies.
     """
     if len(history) < 2:
         return False, 0.0
@@ -62,20 +71,33 @@ def detect_streaming_from_history(
         key=lambda row: _as_datetime(row.get("scan_at")) or datetime.min.replace(tzinfo=UTC),
     )
     latest = ordered[-1]
-    previous = ordered[-2]
     if latest.get("maintenance_job_since_previous"):
         return False, 0.0
-    latest_at = _as_datetime(latest.get("scan_at"))
-    previous_at = _as_datetime(previous.get("scan_at"))
-    if latest_at is None or previous_at is None:
+
+    candidates: list[tuple[float, float]] = []
+    for previous, current in zip(ordered, ordered[1:], strict=False):
+        if current.get("maintenance_job_since_previous"):
+            continue
+        start = _as_datetime(previous.get("scan_at"))
+        end = _as_datetime(current.get("scan_at"))
+        if start is None or end is None:
+            continue
+        hours = (end - start).total_seconds() / 3600
+        if hours < min_pair_hours or hours > window_hours:
+            continue
+        current_snaps = int(current.get("total_snapshots") or current.get("snapshot_count") or 0)
+        previous_snaps = int(previous.get("total_snapshots") or previous.get("snapshot_count") or 0)
+        commits = max(current_snaps - previous_snaps, 0)
+        candidates.append((hours, commits / hours * 24))
+
+    if not candidates:
         return False, 0.0
 
-    delta_hours = max((latest_at - previous_at).total_seconds() / 3600, 0.01)
-    latest_snaps = int(latest.get("total_snapshots") or latest.get("snapshot_count") or 0)
-    previous_snaps = int(previous.get("total_snapshots") or previous.get("snapshot_count") or 0)
-    commits = max(latest_snaps - previous_snaps, 0)
-    commits_per_day = commits / delta_hours * 24
-    is_streaming = commits_per_day >= commits_per_day_threshold and delta_hours <= window_hours
+    rates = [rate for _, rate in candidates]
+    commits_per_day = median(rates)
+    is_streaming = (
+        commits_per_day >= commits_per_day_threshold and candidates[-1][0] <= window_hours
+    )
     return is_streaming, round(commits_per_day, 2)
 
 
