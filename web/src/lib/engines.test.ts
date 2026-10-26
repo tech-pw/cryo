@@ -35,14 +35,12 @@ describe("engines", () => {
       "Trino",
       "Spark EMR",
       "Native (iceberg-go)",
-      "Native (iceberg-rust)",
       "Flink (config only)"
     ]);
     expect(ENGINE_VIRTUAL_OPTIONS.map((option) => option.value)).toEqual([
       "trino",
       "spark_emr",
       "native:go",
-      "native:rust",
       "flink"
     ]);
   });
@@ -53,22 +51,21 @@ describe("engines", () => {
     expect(formatEngineLabel("flink")).toBe("Flink (config only)");
     expect(formatEngineLabel("native")).toBe("Native (iceberg-go)");
     expect(formatEngineLabel("native", { engine_impl: "go" })).toBe("Native (iceberg-go)");
-    expect(formatEngineLabel("native", { engine_impl: "rust" })).toBe("Native (iceberg-rust)");
+    // A config left over from the removed Rust engine still reads as iceberg-go.
+    expect(formatEngineLabel("native", { engine_impl: "rust" })).toBe("Native (iceberg-go)");
     expect(formatEngineLabel(null)).toBe("—");
     expect(formatEngineLabel("native", { engine_impl: "go" }, { nativeEnabled: true })).toBe(
       "Native (iceberg-go)"
     );
     expect(formatEngineLabel("native", { engine_impl: "go" }, {})).toBe("Native (iceberg-go)");
-    expect(formatEngineLabel("native", { engine_impl: "rust" }, { nativeEnabled: false })).toBe(
-      "Native (iceberg-rust) (disabled fleet-wide)"
+    expect(formatEngineLabel("native", { engine_impl: "go" }, { nativeEnabled: false })).toBe(
+      "Native (iceberg-go) (disabled fleet-wide)"
     );
   });
 
   it("labels native disabled fleet-wide when the flag is false", () => {
     expect(nativeEngineOptionLabel(false)).toBe("Native (iceberg-go) (disabled fleet-wide)");
-    expect(nativeEngineOptionLabel(false, "rust")).toContain("disabled fleet-wide");
     expect(nativeEngineOptionLabel(true)).toBe("Native (iceberg-go)");
-    expect(nativeEngineOptionLabel(true, "rust")).toBe("Native (iceberg-rust)");
     expect(engineTypeOptions().map((option) => option.label)).toEqual(
       ENGINE_TYPE_OPTIONS.map((option) => option.label)
     );
@@ -79,7 +76,6 @@ describe("engines", () => {
       "Trino",
       "Spark EMR",
       "Native (iceberg-go) (disabled fleet-wide)",
-      "Native (iceberg-rust) (disabled fleet-wide)",
       "Flink (config only)"
     ]);
     expect(engineVirtualOptions().map((option) => option.label)).toEqual(
@@ -89,7 +85,6 @@ describe("engines", () => {
       "Trino",
       "Spark EMR",
       "Native (iceberg-go) (disabled fleet-wide)",
-      "Native (iceberg-rust) (disabled fleet-wide)",
       "Flink (config only)"
     ]);
     expect(nativeFleetDisabledRowLabel("the configured Spark SQL fallback")).toBe(
@@ -100,7 +95,7 @@ describe("engines", () => {
   it("resolves native implementation defaults", () => {
     expect(resolveNativeEngineImpl()).toBe("go");
     expect(resolveNativeEngineImpl({})).toBe("go");
-    expect(resolveNativeEngineImpl({ engine_impl: "rust" })).toBe("rust");
+    expect(resolveNativeEngineImpl({ engine_impl: "rust" })).toBe("go");
   });
 
   it("formats destination labels", () => {
@@ -116,12 +111,11 @@ describe("engines", () => {
     expect(nativeSupportsOperation("optimize_manifests", "go")).toBe(false);
     expect(nativeSupportsOperation("compute_statistics", "go")).toBe(false);
     expect(nativeSupportsOperation("rewrite_position_deletes", "go")).toBe(false);
-    expect(nativeSupportsOperation("optimize", "rust")).toBe(false);
   });
 
   it("maps virtual engine values", () => {
     expect(engineVirtualFromDestination("native", { engine_impl: "go" })).toBe("native:go");
-    expect(engineVirtualFromDestination("native", { engine_impl: "rust" })).toBe("native:rust");
+    expect(engineVirtualFromDestination("native", { engine_impl: "rust" })).toBe("native:go");
     expect(parseEngineVirtual("native:go")).toEqual({ engine: "native", engine_impl: "go" });
     expect(parseEngineVirtual("trino")).toEqual({ engine: "trino" });
     expect(parseEngineVirtual("flink")).toEqual({ engine: "flink" });

@@ -1,8 +1,9 @@
 # cryo-engine-go
 
 Go subprocess for Cryo worker native maintenance **and** streaming metadata scan-stats.
-Maintenance speaks the same JSON stdin/stdout protocol as the legacy Rust `cryo-engine`
-(`ExecuteRequest` / `ExecuteResponse`, `CRYO_PROGRESS:` lines on stdout).
+Maintenance speaks a JSON stdin/stdout protocol (`ExecuteRequest` / `ExecuteResponse`,
+`CRYO_PROGRESS:` lines on stdout). The image also links this binary as `cryo-engine`, the name
+the removed Rust engine used, so older configs still resolve to it.
 
 **Default build:** `CGO_ENABLED=0` (pure Go + gocloud FileIO). No DataFusion on the critical path.
 
@@ -39,8 +40,9 @@ With `CRYO_ENGINE_IMPL=go` (or `destination.config.engine_impl=go`) — **the de
 | `rewrite_data_files` **v3 partitioned DV** | ✅ | ❌ routed to SQL | Gated until iceberg-go #1135 lands |
 | `optimize_manifests` / `rewrite_manifests` | ✅ manifest count | ❌ routed to SQL | Not in iceberg-go; worker routes to `sql_fallback_destination_id` |
 
-Rust `cryo-engine` remains available via `CRYO_ENGINE_IMPL=rust` for expire/orphan parity during
-transition; compaction is not supported on Rust.
+This is the only native engine. The Rust `cryo-engine` and the `cryo-native` PyO3 module were
+removed on 2026-10-26; `engine_impl` accepts only `go`. Native optimize still runs only when
+`engine_impl=go` is set; an unset value routes optimize to the SQL fallback.
 
 ## Partial-progress checkpointing (`params.partial_progress`)
 
@@ -114,11 +116,6 @@ CRYO_PERF_LABEL=tuned CRYO_PERF_GROUP_CONCURRENCY=2 make test-native-compaction-
 
 The single-commit path remains available by setting `partial_progress: false`; MOR on non-REST
 catalogs still retries the whole rewrite on conflict when that path is used.
-
-## Optional PyO3 stack (out of scope here)
-
-`cryo-native/` / `cryo_native` is a **separate** Rust+DataFusion PyO3 module for direct
-`compact_files()` helpers and unit tests. It does **not** run in the worker subprocess path.
 
 ## Build & test
 
