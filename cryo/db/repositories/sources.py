@@ -68,7 +68,11 @@ def deactivate_out_of_scope_tables(
     if not allowed:
         result: CursorResult[Any] = session.execute(  # type: ignore[assignment]
             update(Table)
-            .where(Table.source_id == source_id, Table.is_active.is_(False))
+            .where(
+                Table.source_id == source_id,
+                Table.is_active.is_(False),
+                Table.removed_from_catalog_at.is_(None),
+            )
             .values(is_active=True)
         )
         return int(result.rowcount or 0)
@@ -89,6 +93,7 @@ def deactivate_out_of_scope_tables(
             Table.source_id == source_id,
             Table.is_active.is_(False),
             Table.schema_name.in_(allowed_set),
+            Table.removed_from_catalog_at.is_(None),
         )
         .values(is_active=True)
     )

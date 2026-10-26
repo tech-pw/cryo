@@ -7,6 +7,7 @@ import { useTableDetailContext } from "../../../pages/table-detail/TableDetailCo
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
 import { useOperationLauncher } from "../operations/OperationLauncher";
 import { OPERATION_CATALOG, RUNNABLE_OPERATIONS, type RunnableOperation } from "../operations/operationCatalog";
+import { RemovedFromCatalogBanner } from "./RemovedFromCatalogBanner";
 import { TableDetailHeader } from "./TableDetailHeader";
 
 const HEADER_OPERATIONS = RUNNABLE_OPERATIONS.map((op) => ({
@@ -39,63 +40,69 @@ export const TableDetailHeaderBar = () => {
     runAccess.reason ?? (presetId ? null : "Assign a workflow before running maintenance");
 
   return (
-    <TableDetailHeader
-      tableId={ctx.tableId}
-      tableName={row?.table_name ?? "Table"}
-      qualifiedName={row ? qualifiedTableName(row) : null}
-      sourceName={row?.source_name || ctx.sourceName || "Catalog"}
-      catalogName={row?.catalog_name}
-      schemaName={row?.schema_name ?? "—"}
-      scanned={Boolean(stats)}
-      score={knownNumber(stats?.overall_score)}
-      grade={stats?.grade ?? null}
-      ownerEmail={row?.owner_email ?? null}
-      partitionLabel={ctx.partitionColLabel}
-      location={row?.location ?? null}
-      scanAt={stats?.scan_at ?? null}
-      lastCommitAt={ctx.lastSnapshotCommittedAt}
-      sizeGb={knownNumber(stats?.total_size_gb)}
-      totalFiles={knownNumber(stats?.total_files)}
-      smallFiles={knownNumber(stats?.small_files_count)}
-      snapshotCount={knownNumber(stats?.total_snapshots)}
-      lastMaintainedAt={latest?.ts ?? latest?.created_at ?? null}
-      lastMaintainedOperation={latest?.action ?? null}
-      workflowName={ctx.effectivePreset.data?.preset_name ?? null}
-      workflowSource={ctx.effectivePreset.data?.provenance ?? null}
-      hasWorkflow={Boolean(presetId)}
-      engineLabel={engine ? formatEngineLabel(engine, ctx.effectiveDestination?.config) : null}
-      engineSupported={Boolean(engine)}
-      engineReason={engine ? null : "No workflow destination is assigned"}
-      scanBackoff={
-        failures >= 3
-          ? { until: null, failures }
-          : null
-      }
-      writeAllowed={runAccess.allowed && Boolean(presetId)}
-      writeReason={writeReason}
-      chooseWorkflowAllowed={workflowAccess.allowed}
-      chooseWorkflowReason={workflowAccess.reason}
-      scanAllowed={scanAccess.allowed}
-      scanReason={scanAccess.reason}
-      onScan={() => ctx.scan.mutate()}
-      onRefreshStats={() => ctx.scan.mutate()}
-      onChooseWorkflow={() => {
-        const next = new URLSearchParams(ctx.searchParams);
-        next.set("tab", "config");
-        ctx.navigate({ search: `?${next.toString()}`, hash: "#maintenance-settings" });
-      }}
-      onPreview={() => ctx.setPreviewOpen(true)}
-      onRun={() => ctx.run.mutate()}
-      operations={launcher ? HEADER_OPERATIONS : []}
-      onRunOperation={(op) => launcher?.launch(op as RunnableOperation)}
-      onOpenRunOnDemand={() => {
-        ctx.handleTabChange("maintenance");
-        window.setTimeout(() => document.getElementById("run-on-demand")?.scrollIntoView({ behavior: "smooth", block: "start" }), 250);
-      }}
-      operationsDisabledReason={launcher?.blockedReason ?? null}
-      onOpenSettings={() => ctx.setSettingsOpen(true)}
-      runPending={ctx.run.isPending}
-      scanPending={ctx.scan.isPending}
-    />
+    <>
+      <RemovedFromCatalogBanner
+        removedAt={row?.removed_from_catalog_at ?? null}
+        reason={row?.removed_reason ?? null}
+      />
+      <TableDetailHeader
+        tableId={ctx.tableId}
+        tableName={row?.table_name ?? "Table"}
+        qualifiedName={row ? qualifiedTableName(row) : null}
+        sourceName={row?.source_name || ctx.sourceName || "Catalog"}
+        catalogName={row?.catalog_name}
+        schemaName={row?.schema_name ?? "—"}
+        scanned={Boolean(stats)}
+        score={knownNumber(stats?.overall_score)}
+        grade={stats?.grade ?? null}
+        ownerEmail={row?.owner_email ?? null}
+        partitionLabel={ctx.partitionColLabel}
+        location={row?.location ?? null}
+        scanAt={stats?.scan_at ?? null}
+        lastCommitAt={ctx.lastSnapshotCommittedAt}
+        sizeGb={knownNumber(stats?.total_size_gb)}
+        totalFiles={knownNumber(stats?.total_files)}
+        smallFiles={knownNumber(stats?.small_files_count)}
+        snapshotCount={knownNumber(stats?.total_snapshots)}
+        lastMaintainedAt={latest?.ts ?? latest?.created_at ?? null}
+        lastMaintainedOperation={latest?.action ?? null}
+        workflowName={ctx.effectivePreset.data?.preset_name ?? null}
+        workflowSource={ctx.effectivePreset.data?.provenance ?? null}
+        hasWorkflow={Boolean(presetId)}
+        engineLabel={engine ? formatEngineLabel(engine, ctx.effectiveDestination?.config) : null}
+        engineSupported={Boolean(engine)}
+        engineReason={engine ? null : "No workflow destination is assigned"}
+        scanBackoff={
+          failures >= 3
+            ? { until: null, failures }
+            : null
+        }
+        writeAllowed={runAccess.allowed && Boolean(presetId)}
+        writeReason={writeReason}
+        chooseWorkflowAllowed={workflowAccess.allowed}
+        chooseWorkflowReason={workflowAccess.reason}
+        scanAllowed={scanAccess.allowed}
+        scanReason={scanAccess.reason}
+        onScan={() => ctx.scan.mutate()}
+        onRefreshStats={() => ctx.scan.mutate()}
+        onChooseWorkflow={() => {
+          const next = new URLSearchParams(ctx.searchParams);
+          next.set("tab", "config");
+          ctx.navigate({ search: `?${next.toString()}`, hash: "#maintenance-settings" });
+        }}
+        onPreview={() => ctx.setPreviewOpen(true)}
+        onRun={() => ctx.run.mutate()}
+        operations={launcher ? HEADER_OPERATIONS : []}
+        onRunOperation={(op) => launcher?.launch(op as RunnableOperation)}
+        onOpenRunOnDemand={() => {
+          ctx.handleTabChange("maintenance");
+          window.setTimeout(() => document.getElementById("run-on-demand")?.scrollIntoView({ behavior: "smooth", block: "start" }), 250);
+        }}
+        operationsDisabledReason={launcher?.blockedReason ?? null}
+        onOpenSettings={() => ctx.setSettingsOpen(true)}
+        runPending={ctx.run.isPending}
+        scanPending={ctx.scan.isPending}
+      />
+    </>
   );
 };
