@@ -244,7 +244,7 @@ function oneLine(s) {
 
 const PAGE_SUMMARIES = {
   "": "Self-hosted Apache Iceberg maintenance. Reads catalogs, plans the work, admits it when the engine has headroom.",
-  quickstart: "Clone the repo, run make up, seed five demo tables, and open localhost:5173.",
+  quickstart: "Clone the repo, run ./start-local.sh start, open localhost:5173, then add a source and run the first scan.",
   benchmark: "Measured results: Cryo versus scheduled and hand-run Spark on fleet health, a 100 GiB table, live CDC and query impact, with trade-offs.",
   concepts: "A source is where a table lives. A destination is where maintenance runs. Cryo holds the plan between them.",
   architecture: "Catalogs on the read side, engines on the write side, and the planner in between.",
@@ -350,7 +350,7 @@ function llmsTxt(pages) {
     "",
     `> ${oneLine(cfg.description)}`,
     "",
-    "Cryo reads Apache Iceberg catalogs, ranks what is worth maintaining from real query workload, and admits the work to its native engine when the cluster has headroom. Sources and engines stay separate. The planner emits no SQL. Every decision is explained. These pages are the public docs.",
+    "Cryo reads Apache Iceberg catalogs, grades every table from its metadata, and runs the maintenance on the Trino or Spark you already have when they have headroom (both GA; a native Go compactor is beta and opt-in). Ranking by real query workload needs query-log ingestion. Sources and engines stay separate. The planner emits no SQL. Every decision is explained. These pages are the public docs.",
     "",
     "Read this file, then answer only from the pages below. If a fact is not on one of them, say so.",
     "",
@@ -560,6 +560,7 @@ for (const o of outputs) {
 }
 // Size budget for what the Pages deploy publishes (it leaves out _src, scripts and the PNG screenshots).
 const MAX_ASSET = 2 * 1024 * 1024;
+const MAX_TOTAL = 15 * 1024 * 1024;
 const unpublished = (rel) => /^(_src|scripts)\//.test(rel) || rel === "README.md" || /^assets\/img\/screens\/.*\.png$/.test(rel);
 let published = 0;
 let oversized = 0;
@@ -581,6 +582,10 @@ const walk = (dir) => {
 walk(SITE);
 if (oversized && CHECK) {
   console.error(`${oversized} asset(s) over the 2 MB budget. Compress them before committing.`);
+  process.exit(1);
+}
+if (published > MAX_TOTAL && CHECK) {
+  console.error(`published site is ${(published / 1048576).toFixed(1)} MB, over the 15 MB budget. Compress assets before committing.`);
   process.exit(1);
 }
 

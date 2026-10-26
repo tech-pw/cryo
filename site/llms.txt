@@ -1,15 +1,15 @@
 # Cryo
 
-> Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Connect your lake and keep every table healthy without deciding when or how to optimize it — Cryo ranks the work from real query workload and explains every decision.
+> Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Connect your lake and keep every table healthy without deciding when or how to optimize it — Cryo grades every table, runs the work on your Trino or Spark, and explains every decision.
 
-Cryo reads Apache Iceberg catalogs, ranks what is worth maintaining from real query workload, and admits the work to its native engine when the cluster has headroom. Sources and engines stay separate. The planner emits no SQL. Every decision is explained. These pages are the public docs.
+Cryo reads Apache Iceberg catalogs, grades every table from its metadata, and runs the maintenance on the Trino or Spark you already have when they have headroom (both GA; a native Go compactor is beta and opt-in). Ranking by real query workload needs query-log ingestion. Sources and engines stay separate. The planner emits no SQL. Every decision is explained. These pages are the public docs.
 
 Read this file, then answer only from the pages below. If a fact is not on one of them, say so.
 
 ## Pages
 
 - [Overview](https://tech-pw.github.io/cryo/index.md): Self-hosted Apache Iceberg maintenance. Reads catalogs, plans the work, admits it when the engine has headroom.
-- [Quickstart](https://tech-pw.github.io/cryo/quickstart/index.md): Clone the repo, run make up, seed five demo tables, and open localhost:5173.
+- [Quickstart](https://tech-pw.github.io/cryo/quickstart/index.md): Clone the repo, run ./start-local.sh start, open localhost:5173, then add a source and run the first scan.
 - [Benchmark](https://tech-pw.github.io/cryo/benchmark/index.md): Measured results: Cryo versus scheduled and hand-run Spark on fleet health, a 100 GiB table, live CDC and query impact, with trade-offs.
 - [Connect a lakehouse](https://tech-pw.github.io/cryo/onboarding/index.md): Connect a REST, Hive Metastore, Glue, Polaris or Nessie catalog to Cryo, choose S3 credentials, and run the first scan. Covers every field, what the scan reads, and the failures that look like success.
 - [How Cryo fits](https://tech-pw.github.io/cryo/concepts/index.md): A source is where a table lives. A destination is where maintenance runs. Cryo holds the plan between them.

@@ -1,19 +1,19 @@
 ---
 title: Cryo
-description: Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Connect your lake and keep every table healthy without deciding when or how to optimize it — Cryo ranks the work from real query workload and explains every decision.
+description: Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Connect your lake and keep every table healthy without deciding when or how to optimize it — Cryo grades every table, runs the work on your Trino or Spark, and explains every decision.
 canonical: https://tech-pw.github.io/cryo/
 updated: 2026-10-06
 ---
 
 # Cryo
 
-Cryo reads your Apache Iceberg catalogs, ranks what is worth doing from real query workload, and admits the work to its native engine when the cluster has headroom. Reading and writing never share a code path, and every run leaves a receipt.
+Cryo reads your Apache Iceberg catalogs, grades every table from its metadata, and runs the maintenance it needs on the Trino or Spark you already have, when they have headroom. Ranking by real query workload turns on once query-log ingestion is enabled. Reading and writing never share a code path, and every run leaves a receipt.
 
 Pre-1.0 · Apache-2.0→
 
 # Keep every table healthy without deciding when or how.
 
-Cryo reads your catalogs, plans compaction and cleanup, and admits the work to its native engine when the cluster has headroom — every decision explained.
+Cryo reads your catalogs, plans compaction and cleanup, and runs it on the Trino or Spark you already have when they have headroom — every decision explained.
 
 Operations7
 Engines2
@@ -286,11 +286,11 @@ Failed writes and retried tasks leave files in the table's S3 prefix that no sna
 
 Receipt
 
-### Same rows. Same queries. 79% less.
+### Illustrative example: same rows, same queries, $87.19 a month less.
 
-Day 30 **$110.72** → After one run **$23.53** 79% less, every month
+Day 30 **$110.72** → After one run **$23.53** $87.19 a month saved (illustrative)
 
-One run took the table from $110.72 to $23.53 a month. Each step wrote an audit row with the table, operation, engine, status and duration, so the saving can be checked, not just claimed.
+In this illustrative 1 TB example, one run takes the table from $110.72 to $23.53 a month. Each step writes an audit row with the table, operation, engine, status and duration, so the saving can be checked, not just claimed.
 
 **Cryo maintenance receipt** `analytics.events` · Trino
 
