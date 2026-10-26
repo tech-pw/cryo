@@ -79,6 +79,9 @@ class SQLJobStore:
                 session,
                 table.id,
             )
+            hours_since_expire = _hours_since_last_expire_snapshots(session, table.id)
+            if hours_since_expire is not None:
+                stats["hours_since_last_expire_snapshots"] = hours_since_expire
             partitions = _latest_partitions(session, table.id)
             source_config = dict(table.source.config) if table.source is not None else {}
             return TableMaintenanceData(
@@ -126,11 +129,21 @@ class SQLJobStore:
                 JobStatus.PARTIAL,
             }:
                 job.finished_at = now
+            _track_deferral(job, JobStatus(status), now)
             if engine_ref is not None:
                 job.engine_ref = engine_ref
             if replica is not None:
                 job.replica = replica
             job.error = error
+            session.commit()
+
+    def set_deferred_reason(self, job_id: str, reason: str) -> None:
+        """Replace a still-deferred job's error without restarting its deferral clock."""
+        with self._session_factory() as session:
+            job = _load_job(session, uuid.UUID(job_id))
+            if job.status != JobStatus.DEFERRED.value or job.error == reason:
+                return
+            job.error = reason
             session.commit()
 
     def deactivate_table(self, table_id: str, reason: str) -> None:
@@ -509,6 +522,31 @@ def _destination_config(destination: Destination) -> DestinationConfig:
     )
 
 
+_DEFERRAL_ENDING_STATUSES = frozenset(
+    {
+        JobStatus.ADMITTED,
+        JobStatus.RUNNING,
+        JobStatus.SUCCEEDED,
+        JobStatus.FAILED,
+        JobStatus.SKIPPED,
+        JobStatus.PARTIAL,
+    }
+)
+
+
+def _track_deferral(job: MaintenanceJob, status: JobStatus, now: datetime) -> None:
+    """Keep deferred_since across re-defers and the reconcile re-queue (QUEUED).
+
+    The re-queue is part of the same episode: the job goes back to the gate chain and is
+    usually refused again. Only admission or a real outcome ends the episode.
+    """
+    if status is JobStatus.DEFERRED:
+        if job.deferred_since is None:
+            job.deferred_since = now
+    elif status in _DEFERRAL_ENDING_STATUSES:
+        job.deferred_since = None
+
+
 def _load_job(session: Session, job_id: uuid.UUID) -> MaintenanceJob:
     job = session.scalar(
         select(MaintenanceJob)
@@ -530,6 +568,10 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
     assignment = session.get(TableAssignment, job.table_id)
     if assignment is not None and assignment.param_overrides:
         params.update(assignment.param_overrides)
+    if job.run is not None and job.run.kind == "adhoc":
+        # An operator asked for this run; the expiry minimum interval only exists to stop
+        # scheduled runs from repeating it (#179).
+        params.setdefault("expire_snapshots_min_interval_hours", 0)
     guardrails = dict(preset.guardrails) if preset else {}
     summary = dict(job.run.summary or {}) if job.run else {}
     operations = _coerce_operations(preset.operations) if preset else None
@@ -652,6 +694,30 @@ def _coerce_operations(raw: Any) -> tuple[OperationType, ...] | None:
     return tuple(sort_operations_canonically(operations))
 
 
+def _hours_since_last_expire_snapshots(session: Session, table_id: uuid.UUID) -> float | None:
+    """Age of the table's last successful expire_snapshots, for the planner's minimum interval.
+
+    Deliberately separate from _last_maintained_at, which must stay reclaim-only: expiry is
+    metadata work and starting the compaction cooldown on it would block real reclaims. But
+    with no gate of its own, every run re-expired every table it planned, even an hour after
+    the previous expiry (#179).
+    """
+    last = session.scalar(
+        select(func.max(AuditLog.ts)).where(
+            AuditLog.table_id == table_id,
+            AuditLog.status.in_(("OK", "succeeded")),
+            AuditLog.action == OperationType.EXPIRE_SNAPSHOTS.value,
+        )
+    )
+    if last is None:
+        return None
+    if isinstance(last, str):
+        last = datetime.fromisoformat(last)
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return max(0.0, (datetime.now(UTC) - last).total_seconds() / 3600)
+
+
 def _last_maintained_at(session: Session, table_id: uuid.UUID) -> datetime | None:
     """Governor's cooldown_elapsed (admission.py) gates real admission decisions on this
     value -- it must mean "when did this table last actually have bytes reclaimed", not
@@ -718,6 +784,8 @@ def _stats_dict(table: Table) -> dict[str, Any]:
         "query_count_30d": stats.query_count_30d,
         "partition_col": stats.partition_col,
         "partition_col_type": stats.partition_col_type,
+        # The optimize target follows it (#265); the scanner judges small files against it.
+        "target_file_size_bytes": stats.target_file_size_bytes,
         "projected_savings_usd_month": stats.projected_savings_usd_month,
         "format_version": (stats.raw or {}).get("format_version"),
         "raw": dict(stats.raw or {}),

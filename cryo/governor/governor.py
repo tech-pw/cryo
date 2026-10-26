@@ -482,7 +482,7 @@ class Governor:
                 self._store,
                 self._queue,
                 now=current,
-                still_blocked=_still_blocked_predicate(session, self._lock_store, now=current),
+                blocked_reason=_still_blocked_reason(session, self._lock_store, now=current),
             )
 
     def _step_ledger(self) -> Any | None:
@@ -729,7 +729,7 @@ class Governor:
         )
         if not paused:
             return None
-        reason = "Maintenance execution is paused"
+        reason = _PAUSED_REASON
         logger.info("Job %s deferred: %s", job.id, reason)
         self._defer(job, reason)
         return _DEFERRED
@@ -755,13 +755,10 @@ class Governor:
     def _gate_intent(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> str | None:
         if job.intent_id is None:
             return None
-        if job.intent_status != IntentStatus.READY.value:
-            reason = f"Durable intent is not ready (status={job.intent_status or 'missing'})"
-            logger.info("Job %s deferred: %s", job.id, reason)
-            self._defer(job, reason)
-            return _DEFERRED
-        if job.intent_expires_at is None or _as_utc(job.intent_expires_at) <= wave.current:
-            reason = "Durable intent expired before admission"
+        if job.intent_status != IntentStatus.READY.value or (
+            job.intent_expires_at is None or _as_utc(job.intent_expires_at) <= wave.current
+        ):
+            reason = _intent_block_reason(job)
             logger.info("Job %s deferred: %s", job.id, reason)
             self._defer(job, reason)
             return _DEFERRED
@@ -789,7 +786,7 @@ class Governor:
                 table_uuid,
                 exc,
             )
-        self._defer(job, "Destructive operation requires approval")
+        self._defer(job, _APPROVAL_REASON)
         return _DEFERRED
 
     def _gate_pii(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> str | None:
@@ -917,7 +914,6 @@ class Governor:
             governor_qpp_decisions_total.labels(
                 destination=wave.destination_id, outcome="refused"
             ).inc()
-            self._lock_store.release_table_lock(job.table_id, job.id)
             self._defer(job, "qpp_refused")
             return _DEFERRED
         governor_qpp_decisions_total.labels(
@@ -977,7 +973,12 @@ class Governor:
         session_factory = self._session_factory
         assert session_factory is not None
 
+        tables_by_job = {job.id: job.table_id for job in buffered}
+
         def _defer_native_job(job_id: str, reason: str) -> None:
+            table_id = tables_by_job.get(job_id)
+            if table_id is not None:
+                self._lock_store.release_table_lock(table_id, job_id)
             self._queue.defer(job_id)
             self._store.mark_status(job_id, JobStatus.DEFERRED, error=reason)
 
@@ -1153,11 +1154,20 @@ class Governor:
         return expanded
 
     def _defer(self, job: MaintenanceJobRecord, reason: str) -> None:
+        # A deferred job must never keep its own table lock: nothing re-queues it while the
+        # lock exists, and its siblings on the table defer as table_locked behind it until
+        # the TTL runs out (#196). release_table_lock is compare-and-delete on the job id, so
+        # this is a no-op for the gates that refuse before the lock is taken and for a lock
+        # held by another job.
+        self._lock_store.release_table_lock(job.table_id, job.id)
         self._queue.defer(job.id)
         self._store.mark_status(job.id, JobStatus.DEFERRED, error=reason)
 
 
 _admission_job = admission_job_from_record
+
+_PAUSED_REASON = "Maintenance execution is paused"
+_APPROVAL_REASON = "Destructive operation requires approval"
 
 
 def _try_get_destination(store: JobStore, destination_id: str) -> DestinationConfig | None:
@@ -1180,7 +1190,18 @@ def _still_blocked_predicate(
     *,
     now: datetime,
 ) -> Callable[[MaintenanceJobRecord], bool]:
-    """True while whatever deferred a job, other than admission arithmetic, still holds.
+    """True while whatever deferred a job, other than admission arithmetic, still holds."""
+    reason_for = _still_blocked_reason(session, lock_store, now=now)
+    return lambda job: reason_for(job) is not None
+
+
+def _still_blocked_reason(
+    session: Any,
+    lock_store: LockStore,
+    *,
+    now: datetime,
+) -> Callable[[MaintenanceJobRecord], str | None]:
+    """The reason a deferred job is still blocked, other than admission arithmetic, or None.
 
     Admission is only one of the things that defers a job; _gate_job's earlier gates and the
     table lock defer it too, and re-queueing a job the same gate refuses again next wave is
@@ -1205,6 +1226,12 @@ def _still_blocked_predicate(
 
     def lock_blocks(job: MaintenanceJobRecord) -> bool:
         try:
+            holder_of = getattr(lock_store, "table_lock_holder", None)
+            if callable(holder_of):
+                holder = holder_of(job.table_id)
+                # The job's own lock (left behind by an older build that deferred without
+                # releasing it) is not something to wait for: the job is about to retake it.
+                return holder is not None and holder != job.id
             return bool(lock_store.is_table_locked(job.table_id))
         except Exception as exc:
             logger.warning("Lock re-check failed for deferred job %s: %s", job.id, exc)
@@ -1250,15 +1277,27 @@ def _still_blocked_predicate(
             logger.warning("Approval re-check failed for deferred job %s: %s", job.id, exc)
             return False
 
-    def still_blocked(job: MaintenanceJobRecord) -> bool:
-        if intent_blocks(job) or lock_blocks(job):
-            return True
+    def blocked_reason(job: MaintenanceJobRecord) -> str | None:
+        if intent_blocks(job):
+            return _intent_block_reason(job)
+        if lock_blocks(job):
+            return "table_locked"
         if session is None:
-            return False
+            return None
         table_uuid = _job_table_uuid(job)
-        return pause_blocks(job, table_uuid) or approval_blocks(job, table_uuid)
+        if pause_blocks(job, table_uuid):
+            return _PAUSED_REASON
+        if approval_blocks(job, table_uuid):
+            return _APPROVAL_REASON
+        return None
 
-    return still_blocked
+    return blocked_reason
+
+
+def _intent_block_reason(job: MaintenanceJobRecord) -> str:
+    if job.intent_status != IntentStatus.READY.value:
+        return f"Durable intent is not ready (status={job.intent_status or 'missing'})"
+    return "Durable intent expired before admission"
 
 
 def _job_table_uuid(job: MaintenanceJobRecord) -> uuid.UUID | None:

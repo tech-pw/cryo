@@ -11,10 +11,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from cryo.db.model_utils import qualified_table_name
 from cryo.db.models import QueryLog, Table, TableStats, TableStatsHistory
@@ -292,6 +293,167 @@ def detect_cost_spike_signal(
     )
 
 
+def _ratio_signal(
+    *,
+    table_id: UUID,
+    signal_type: str,
+    current: float,
+    baseline: float,
+    warning: float,
+    critical: float,
+    now: datetime,
+) -> MaintenanceSignal | None:
+    ratio = current / baseline
+    if ratio < warning:
+        return None
+    severity = "critical" if ratio >= critical else "warning"
+    if signal_type == "file_degradation":
+        description = (
+            f"Small file count ({current:.0f}) is {ratio:.1f}x "
+            f"baseline ({baseline:.0f}). "
+            f"Compaction needed to prevent query slowdown."
+        )
+    else:
+        monthly_cost_increase = (current - baseline) * 0.023
+        description = (
+            f"Storage size ({current:.1f}GB) is {ratio:.1f}x "
+            f"baseline ({baseline:.1f}GB). "
+            f"Estimated cost increase: ${monthly_cost_increase:.2f}/month. "
+            f"Orphan file cleanup may reduce costs."
+        )
+    return MaintenanceSignal(
+        table_id=table_id,
+        table_name="",
+        signal_type=signal_type,
+        severity=severity,
+        current_value=current,
+        baseline_value=baseline,
+        threshold=critical if severity == "critical" else warning,
+        description=description,
+        detected_at=now,
+    )
+
+
+def _fleet_signals(session: Session) -> list[MaintenanceSignal]:
+    """All three signals for every active table with a fixed number of set-based queries.
+
+    Gives the same results as calling the per-table detectors with their defaults, which issue
+    several queries per table and took over 60 s at ~12k tables (#259). Latency percentiles
+    are still computed per table, but only for tables with enough queries in both windows.
+    """
+    now = datetime.now(UTC)
+    active = select(Table.id).where(Table.is_active.is_(True))
+    signals: list[MaintenanceSignal] = []
+
+    # 1. File degradation: current small files vs the 7-day average before the current scan.
+    degradation_since = now - timedelta(days=7)
+    current_rows = session.execute(
+        select(TableStats.table_id, TableStats.small_files_count, TableStats.scan_at).where(
+            TableStats.table_id.in_(active),
+            TableStats.small_files_count > 0,
+        )
+    ).all()
+    baselines: dict[UUID, Any] = {
+        row[0]: row[1]
+        for row in session.execute(
+            select(TableStatsHistory.table_id, func.avg(TableStatsHistory.small_files_count))
+            .join(TableStats, TableStats.table_id == TableStatsHistory.table_id)
+            .where(
+                TableStats.table_id.in_(active),
+                TableStatsHistory.scan_at >= degradation_since,
+                TableStatsHistory.scan_at < TableStats.scan_at,
+            )
+            .group_by(TableStatsHistory.table_id)
+        ).all()
+    }
+    seen: set[UUID] = set()
+    for row in current_rows:
+        if row.table_id in seen:
+            continue  # the per-table detector reads one TableStats row per table
+        seen.add(row.table_id)
+        current = float(row.small_files_count)
+        baseline = float(baselines.get(row.table_id) or current) or 1.0
+        if signal := _ratio_signal(
+            table_id=row.table_id,
+            signal_type="file_degradation",
+            current=current,
+            baseline=baseline,
+            warning=2.0,
+            critical=3.0,
+            now=now,
+        ):
+            signals.append(signal)
+
+    # 2. Latency spike: only tables with >= 10 queries in both windows can fire.
+    baseline_since = now - timedelta(days=7)
+    recent_since = now - timedelta(hours=24)
+
+    def _busy(start: datetime, end: datetime | None) -> set[UUID]:
+        stmt = (
+            select(QueryLog.table_id)
+            .where(
+                QueryLog.table_id.in_(active),
+                QueryLog.executed_at >= start,
+                QueryLog.duration_ms.isnot(None),
+            )
+            .group_by(QueryLog.table_id)
+            .having(func.count() >= 10)
+        )
+        if end is not None:
+            stmt = stmt.where(QueryLog.executed_at < end)
+        return {tid for tid in session.scalars(stmt).all() if tid is not None}
+
+    for tid in _busy(baseline_since, recent_since) & _busy(recent_since, None):
+        if signal := detect_latency_spike_signal(session, tid):
+            signals.append(signal)
+
+    # 3. Cost spike: 7-day average size vs the 30-to-7-day average.
+    cost_baseline_since = now - timedelta(days=30)
+    cost_recent_since = now - timedelta(days=7)
+
+    def _avg_size(start: datetime, end: datetime | None) -> dict[UUID, float]:
+        stmt = (
+            select(TableStatsHistory.table_id, func.avg(TableStatsHistory.total_size_gb))
+            .where(
+                TableStatsHistory.table_id.in_(active),
+                TableStatsHistory.scan_at >= start,
+            )
+            .group_by(TableStatsHistory.table_id)
+        )
+        if end is not None:
+            stmt = stmt.where(TableStatsHistory.scan_at < end)
+        return {tid: float(avg) for tid, avg in session.execute(stmt).all() if avg}
+
+    baseline_sizes = _avg_size(cost_baseline_since, cost_recent_since)
+    recent_sizes = _avg_size(cost_recent_since, None)
+    for tid, baseline_size in baseline_sizes.items():
+        recent_size = recent_sizes.get(tid)
+        if not recent_size:
+            continue
+        if signal := _ratio_signal(
+            table_id=tid,
+            signal_type="cost_spike",
+            current=recent_size,
+            baseline=baseline_size,
+            warning=1.3,
+            critical=1.5,
+            now=now,
+        ):
+            signals.append(signal)
+
+    # Names in one query for the tables that fired.
+    named = {s.table_id for s in signals if not s.table_name}
+    if named:
+        tables = session.scalars(
+            select(Table).where(Table.id.in_(named)).options(selectinload(Table.source))
+        ).all()
+        names = {table.id: qualified_table_name(table) for table in tables}
+        for signal in signals:
+            if not signal.table_name:
+                signal.table_name = names.get(signal.table_id, str(signal.table_id))
+    return signals
+
+
 def detect_all_signals(
     session: Session,
     table_id: UUID | None = None,
@@ -308,21 +470,17 @@ def detect_all_signals(
     signals: list[MaintenanceSignal] = []
 
     if table_id:
-        table_ids = [table_id]
-    else:
-        tables = session.scalars(select(Table.id).where(Table.is_active.is_(True))).all()
-        table_ids = list(tables)
-
-    for tid in table_ids:
         # Check all three signal types
-        if signal := detect_file_degradation_signal(session, tid):
+        if signal := detect_file_degradation_signal(session, table_id):
             signals.append(signal)
 
-        if signal := detect_latency_spike_signal(session, tid):
+        if signal := detect_latency_spike_signal(session, table_id):
             signals.append(signal)
 
-        if signal := detect_cost_spike_signal(session, tid):
+        if signal := detect_cost_spike_signal(session, table_id):
             signals.append(signal)
+    else:
+        signals = _fleet_signals(session)
 
     # Sort by severity (critical first) then by current/baseline ratio descending
     def sort_key(s: MaintenanceSignal) -> tuple[int, float]:

@@ -359,12 +359,36 @@ Run focused tests first while developing, then the full suite before handing off
 # API
 curl -sf http://<api-host>/healthz
 
-# Prometheus metrics
+# Prometheus metrics (add -H "Authorization: Bearer $CRYO_METRICS_BEARER_TOKEN" when it is set)
 curl -sf http://<api-host>/metrics | grep -E '^cryo_(governor|worker|scanner|queue)'
 
 # Grafana dashboard: Cryo Overview (uid: cryo-overview)
 # Panels: admission decisions, queue depth, worker duration, scanner throughput, cost estimates
 ```
+
+### Sign-in and endpoint exposure
+
+| Setting | Default | What it does |
+|---|---|---|
+| `CRYO_AUTH_LOGIN_THROTTLE_ENABLED` | `true` | Throttles failed password and Google sign-ins. Counts live in Redis, so the limit holds across API replicas. |
+| `CRYO_AUTH_LOGIN_MAX_FAILURES` | `5` | Failed sign-ins for one account within the window before it gets `429` with `Retry-After`. The right password is refused too until the window ends. A successful sign-in clears the count. |
+| `CRYO_AUTH_LOGIN_IP_MAX_FAILURES` | `20` | Failed sign-ins from one client IP, across all accounts, within the window. |
+| `CRYO_AUTH_LOGIN_WINDOW_SECONDS` | `900` | Window length, and the longest a lockout lasts. |
+| `CRYO_API_DOCS_ENABLED` | unset | `/docs`, `/redoc` and `/openapi.json`. Unset means served everywhere except `CRYO_ENVIRONMENT=prod`. |
+| `CRYO_METRICS_BEARER_TOKEN` | unset | When set, the API's root `/metrics` requires `Authorization: Bearer <token>`. Set the same token as `bearer_token` (or `authorization.credentials`) in the Prometheus scrape config. |
+
+Failed sign-ins are written to the audit log as `auth.login_failed`, with the username or
+email tried, the method, the reason and the client IP. The password and token are never stored.
+Admins read these rows from `GET /api/v1/auth/audit`. They are kept out of the
+viewer-readable `/api/v1/audit` feed. `cryo_auth_login_failures_total{method,reason}` counts
+the same failures, plus `reason="throttled"` for refused attempts. Alert on a sustained rate.
+
+`/metrics` lists source and destination names in its labels. The web UI's nginx never proxies
+it, and the UI reads the admin-only `/api/v1/ops/metrics` copy. If an Ingress exposes the API
+Service directly, set `CRYO_METRICS_BEARER_TOKEN` or keep `/metrics` off that Ingress.
+
+The per-IP count uses the first `X-Forwarded-For` hop, which a client can forge when it
+reaches the API directly. That is why the per-account limit matters more.
 
 Log exploration (Loki via Grafana Explore):
 

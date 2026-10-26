@@ -234,9 +234,14 @@ def _scan_cost_multiplier(avg_bytes_per_query: float | None) -> float:
     available, so every caller that doesn't pass ``avg_bytes_per_query`` keeps today's behavior
     exactly. See module-level constants above for why log2 and why it's capped.
     """
-    if avg_bytes_per_query is None or avg_bytes_per_query <= 0:
+    if avg_bytes_per_query is None:
         return 1.0
-    gb = avg_bytes_per_query / 1_073_741_824  # bytes -> GiB
+    # PostgreSQL AVG(bigint) is numeric, which psycopg returns as Decimal; Decimal / float
+    # raised TypeError and failed every benefit-score tick (#164).
+    avg_bytes = float(avg_bytes_per_query)
+    if avg_bytes <= 0:
+        return 1.0
+    gb = avg_bytes / 1_073_741_824  # bytes -> GiB
     if gb <= 0:
         return 1.0
     multiplier = 1.0 + math.log2(max(gb, 0.001) / _TYPICAL_QUERY_BYTES_GB)
@@ -611,13 +616,15 @@ def update_partition_benefit_scores(
     # QueryLog is a curated/sampled table (see cryo.telemetry.curator's _is_summary_worthy --
     # only failed/slow/large queries plus a 1% sample of "normal" traffic land here), so a raw
     # sum would just track how much got sampled, not the actual per-query cost.
-    avg_bytes_per_query = session.scalar(
+    avg_bytes_raw = session.scalar(
         select(func.avg(QueryLog.bytes_read)).where(
             QueryLog.table_id == table_id,
             QueryLog.executed_at >= since,
             QueryLog.bytes_read.isnot(None),
         )
     )
+    # Decimal on PostgreSQL (AVG of bigint is numeric), float on SQLite (#164).
+    avg_bytes_per_query = float(avg_bytes_raw) if avg_bytes_raw is not None else None
 
     partition_frequency = _partition_query_frequency(
         session,

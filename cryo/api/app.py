@@ -52,6 +52,7 @@ from cryo.api.routes_table_maintenance import router as table_maintenance_router
 from cryo.api.s3_log_config_routes import router as s3_log_config_router
 from cryo.api.search_routes import router as search_router
 from cryo.api.slack_routes import router as slack_interactions_router
+from cryo.build_info import build_info, current_schema_revision
 from cryo.config import Settings, get_settings
 from cryo.mcp.http import mount_mcp
 from cryo.observability.logging import configure_logging
@@ -72,10 +73,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         environment=settings.environment,
     )
     init_tracing(settings, service_name=f"{settings.otel_service_name}-api")
+    docs_served = settings.api_docs_served()
     app = FastAPI(
         title=settings.app_name,
         version=__version__,
         lifespan=lifespan,
+        # #262: the schema lists every route and model; prod keeps it private by default.
+        docs_url="/docs" if docs_served else None,
+        redoc_url="/redoc" if docs_served else None,
+        openapi_url="/openapi.json" if docs_served else None,
         openapi_tags=[
             {"name": "health", "description": "Service health checks."},
             {"name": "dashboards", "description": "Aggregated datalake health and cost views."},
@@ -151,7 +157,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/healthz", tags=["health"])
     def healthz() -> dict[str, str]:
-        return {"status": "ok", "environment": settings.environment}
+        # Liveness only: no database call. /api/v1/version adds the schema revision.
+        return {
+            "status": "ok",
+            "environment": settings.environment,
+            "version": build_info().version,
+        }
+
+    @app.get("/api/v1/version", tags=["health"])
+    def version() -> dict[str, str | None]:
+        """Which build is running (#263). Unauthenticated like /healthz, so bug reports and
+        incident checks can read it without a token. schema_revision is the Alembic
+        revision in the database, null when the database can't be reached."""
+        return {**build_info().as_dict(), "schema_revision": current_schema_revision()}
 
     @app.get("/readyz", tags=["health"])
     def readyz() -> dict[str, str]:

@@ -18,6 +18,8 @@ class RuntimeFlags(BaseModel):
     native_engine_enabled: bool
     maintenance_writes_enabled: bool
     native_engine_fallback: str
+    # IANA zone the install schedules and reports in (CRYO_DISPLAY_TIMEZONE, #183).
+    display_timezone: str = "UTC"
 
 
 @router.get("/capabilities", response_model=CapabilityManifest)
@@ -34,6 +36,7 @@ def get_runtime(
 ) -> RuntimeFlags:
     """Return read-only process flags for this install."""
     from cryo.config import get_settings
+    from cryo.display_time import display_zone_name
     from cryo.maintenance.writes import maintenance_writes_enabled
 
     settings = get_settings()
@@ -41,4 +44,5 @@ def get_runtime(
         native_engine_enabled=settings.native_engine_enabled,
         maintenance_writes_enabled=maintenance_writes_enabled(),
         native_engine_fallback=NATIVE_ENGINE_SQL_FALLBACK,
+        display_timezone=display_zone_name(),
     )

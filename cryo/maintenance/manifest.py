@@ -25,7 +25,8 @@ from cryo.planner.serialization import plan_to_dict
 # them. Retention matches the most conservative of the retired presets (7 days, keep 4).
 DEFAULT_PARAMS: dict[str, Any] = {
     "strategy": "binpack",
-    "file_size_mb": 256,
+    # No file_size_mb: the planner rewrites to the table's write.target-file-size-bytes, the
+    # same target the scanner judges files against (#265; 256 MB when the table has none).
     "chunk_size_gb": 50,
     "max_partitions_per_chunk": 100,
     "min_small_files": 10,
@@ -39,7 +40,8 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "compute_statistics": True,
     "stats_compute_ndv": False,
     "delete_ratio_trigger": 0,
-    "partition_write_idle_hours": 0,
+    # No partition_write_idle_hours: the planner gates day/date-partitioned tables at 12h
+    # and leaves others ungated (#265).
     # Lanes always run spark.k8s.image (Dockerfile.spark pins Iceberg 1.11), and this
     # rewrite_data_files option needs Iceberg >= 1.7.
     "remove_dangling_deletes": True,

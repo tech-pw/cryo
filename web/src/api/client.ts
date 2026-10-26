@@ -691,6 +691,8 @@ export const runMaintenance = (
         scheduled_at?: string;
         /** Queue the jobs even when a queued or running job already covers the same operations. */
         force?: boolean;
+        /** A subset of the preset's operations; omit to run all of them. */
+        operations?: string[];
       }
     | {
         selection: { mode: "filter"; filter: Predicate | null };
@@ -700,6 +702,7 @@ export const runMaintenance = (
         trigger?: string;
         scheduled_at?: string;
         force?: boolean;
+        operations?: string[];
       }
 ) => apiFetch<MaintenanceRunResponse>("/maintenance/run", api, { method: "POST", body });
 

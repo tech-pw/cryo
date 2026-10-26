@@ -14,6 +14,12 @@ from prometheus_client import Counter, Gauge, Histogram, Summary
 
 # ==================== API SLO Metrics ====================
 
+auth_login_failures_total = Counter(
+    "cryo_auth_login_failures_total",
+    "Failed or throttled sign-ins by method (password, google) and bounded reason.",
+    ["method", "reason"],
+)
+
 api_requests_total = Counter(
     "cryo_api_requests_total",
     "API requests by bounded route template, method, and status class.",

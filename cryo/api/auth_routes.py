@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
-from typing import Literal
+from datetime import datetime
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from cryo.api.deps import require_admin
+from cryo.api.middleware import client_ip
 from cryo.config import Settings, get_settings
-from cryo.db.models import AuthSettings, LocalUser
+from cryo.db.models import AuditLog, AuthSettings, LocalUser
 from cryo.db.session import SessionLocal
 from cryo.governor.bandit_store import save_bandit
+from cryo.observability.metrics import auth_login_failures_total
 from cryo.security.google_id_token import verify_google_id_token
 from cryo.security.jwt_tokens import issue_access_token
+from cryo.security.login_throttle import get_login_throttle
 from cryo.security.oidc import (
     discover_oidc_endpoints,
     exchange_authorization_code,
@@ -25,7 +31,13 @@ from cryo.security.oidc import (
 )
 from cryo.security.passwords import hash_password, verify_password
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+AUTH_AUDIT_PREFIX = "auth."
+LOGIN_FAILED_ACTION = "auth.login_failed"
+_AUDIT_ACCOUNT_MAX = 254  # longest valid email; anything longer is truncated in the audit row
 
 
 class TokenRequest(BaseModel):
@@ -73,7 +85,9 @@ class OidcExchangeRequest(BaseModel):
 
 
 def _dev_token_enabled(settings: Settings) -> bool:
-    return settings.environment != "prod" or settings.allow_dev_token_in_prod
+    if settings.allow_dev_token_in_prod:
+        return True
+    return settings.environment in {"dev", "test"} and not settings.oidc_issuer_url
 
 
 def _dev_token_enabled_in_prod(settings: Settings) -> bool:
@@ -189,14 +203,14 @@ def refresh_oidc_access_token(payload: OidcRefreshRequest) -> TokenResponse:
 def issue_dev_token(payload: TokenRequest) -> TokenResponse:
     """Issue a signed JWT for dev/test UI and integration tests.
 
-    Disabled in production unless allow_dev_token_in_prod is explicitly set -- use your
-    identity provider instead.
+    Only on in dev/test with no OIDC issuer, unless allow_dev_token_in_prod is explicitly
+    set -- use your identity provider instead.
     """
     settings = get_settings()
     if not _dev_token_enabled(settings):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Token issuance is disabled in production",
+            detail="Token issuance is disabled; sign in through your identity provider",
         )
     role = payload.role.strip().lower()
     if role not in {"viewer", "operator", "admin"}:
@@ -319,44 +333,92 @@ def _last_admin(session: Session, excluding: uuid.UUID | None = None) -> bool:
     return len(remaining) == 0
 
 
+def _throttle_or_429(*, account: str | None, ip: str | None, method: str) -> None:
+    decision = get_login_throttle().check(account=account, client_ip=ip)
+    if decision.allowed:
+        return
+    auth_login_failures_total.labels(method=method, reason="throttled").inc()
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="Too many failed sign-in attempts. Try again later.",
+        headers={"Retry-After": str(decision.retry_after_seconds)},
+    )
+
+
+def _record_login_failure(*, account: str | None, ip: str | None, method: str, reason: str) -> None:
+    """Count, throttle and audit one failed sign-in. Never stores the password or token."""
+    get_login_throttle().record_failure(account=account, client_ip=ip)
+    auth_login_failures_total.labels(method=method, reason=reason).inc()
+    detail = f"method={method} reason={reason}"
+    if ip:
+        detail += f" client_ip={ip}"
+    try:
+        with SessionLocal() as session:
+            session.add(
+                AuditLog(
+                    action=LOGIN_FAILED_ACTION,
+                    status="failed",
+                    actor=(account or "")[:_AUDIT_ACCOUNT_MAX] or None,
+                    origin=method,
+                    detail=detail,
+                )
+            )
+            session.commit()
+    except SQLAlchemyError:
+        # The 401 must not turn into a 500 because the audit write failed; the counter
+        # above still records the attempt.
+        logger.warning("Could not write %s audit row", LOGIN_FAILED_ACTION, exc_info=True)
+
+
 @router.post("/login", response_model=TokenResponse)
-def login_with_password(payload: LoginRequest) -> TokenResponse:
+def login_with_password(payload: LoginRequest, request: Request) -> TokenResponse:
     settings_row = _auth_settings()
     if not settings_row.password_login_enabled:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Password sign-in is disabled"
         )
     username = payload.username.strip().lower()
+    ip = client_ip(request)
+    _throttle_or_429(account=username, ip=ip, method="password")
     with SessionLocal() as session:
         user = session.query(LocalUser).filter(LocalUser.username == username).one_or_none()
-        if (
-            user is None
-            or user.disabled
-            or not verify_password(payload.password, user.password_hash)
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password"
-            )
-        return _issue_for_user(user)
+        if user is None:
+            reason = "unknown_user"
+        elif user.disabled:
+            reason = "disabled"
+        elif not verify_password(payload.password, user.password_hash):
+            reason = "bad_password"
+        else:
+            get_login_throttle().record_success(account=username)
+            return _issue_for_user(user)
+    _record_login_failure(account=username, ip=ip, method="password", reason=reason)
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password"
+    )
 
 
 @router.post("/google", response_model=TokenResponse)
-def login_with_google(payload: GoogleLoginRequest) -> TokenResponse:
+def login_with_google(payload: GoogleLoginRequest, request: Request) -> TokenResponse:
     settings_row = _auth_settings()
     if not settings_row.google_enabled or not settings_row.google_client_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Google sign-in is not configured"
         )
+    ip = client_ip(request)
+    # The account is unknown until the token verifies, so the pre-check is per IP only.
+    _throttle_or_429(account=None, ip=ip, method="google")
     claims = verify_google_id_token(
         payload.id_token,
         client_id=settings_row.google_client_id,
         hosted_domain=settings_row.google_hosted_domain,
     )
     if claims is None:
+        _record_login_failure(account=None, ip=ip, method="google", reason="token_rejected")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Google sign-in was rejected"
         )
     email = claims["email"]
+    _throttle_or_429(account=email, ip=None, method="google")
     with SessionLocal() as session:
         user = session.query(LocalUser).filter(LocalUser.username == email).one_or_none()
         if user is None and settings_row.google_auto_provision:
@@ -365,11 +427,55 @@ def login_with_google(payload: GoogleLoginRequest) -> TokenResponse:
             session.commit()
             session.refresh(user)
         if user is None or user.disabled:
+            _record_login_failure(
+                account=email,
+                ip=ip,
+                method="google",
+                reason="disabled" if user is not None else "not_allowed",
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This Google account is not allowed to sign in",
             )
+        get_login_throttle().record_success(account=email)
         return _issue_for_user(user)
+
+
+class AuthAuditItem(BaseModel):
+    id: int
+    ts: datetime
+    action: str
+    status: str
+    actor: str | None = None
+    origin: str | None = None
+    detail: str | None = None
+
+
+@router.get("/audit", response_model=list[AuthAuditItem], dependencies=[Depends(require_admin)])
+def list_auth_audit(
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[AuthAuditItem]:
+    """Recent sign-in audit rows (failed sign-ins), newest first. Admin only: the rows hold
+    the usernames people tried, so they are kept out of the viewer-readable fleet audit."""
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(AuditLog)
+            .where(AuditLog.action.startswith(AUTH_AUDIT_PREFIX))
+            .order_by(AuditLog.ts.desc(), AuditLog.id.desc())
+            .limit(limit)
+        ).all()
+        return [
+            AuthAuditItem(
+                id=row.id,
+                ts=row.ts,
+                action=row.action,
+                status=row.status,
+                actor=row.actor,
+                origin=row.origin,
+                detail=row.detail,
+            )
+            for row in rows
+        ]
 
 
 @router.post(

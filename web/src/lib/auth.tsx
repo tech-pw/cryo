@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import type { ApiOptions } from "../api/client";
 import { clearRecentItems } from "../components/shell/recent";
 import type { RoleToken } from "../api/types";
+import { throttledMessage } from "./signInErrors";
 
 const ROLE_STORAGE_KEY = "cryo.devRole";
 const SUBJECT_STORAGE_KEY = "cryo.devSubject";
@@ -295,6 +296,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password })
       });
+      if (response.status === 429) throw new Error(throttledMessage(response));
       if (!response.ok) throw new Error("Invalid username or password");
       const payload = (await response.json()) as TokenPayload;
       persistSession(decodeJwtRole(payload.access_token), username.trim().toLowerCase(), payload.access_token, "local");
@@ -315,6 +317,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id_token: idToken })
       });
+      if (response.status === 429) throw new Error(throttledMessage(response));
       if (!response.ok) throw new Error("Google sign-in was rejected");
       const payload = (await response.json()) as TokenPayload;
       const nextSubject = decodeJwtSubject(payload.access_token);

@@ -17,6 +17,8 @@ class LockStore(Protocol):
 
     def is_table_locked(self, table_id: str) -> bool: ...
 
+    def table_lock_holder(self, table_id: str) -> str | None: ...
+
     def list_table_locks(self) -> list[tuple[str, str]]: ...
 
     def acquire_job_owner(self, job_id: str, holder: str, ttl_seconds: int) -> bool: ...
@@ -63,6 +65,11 @@ class InMemoryLockStore:
     def is_table_locked(self, table_id: str) -> bool:
         self._purge_expired(self._table_locks)
         return table_id in self._table_locks
+
+    def table_lock_holder(self, table_id: str) -> str | None:
+        self._purge_expired(self._table_locks)
+        lock = self._table_locks.get(table_id)
+        return lock.holder if lock is not None else None
 
     def list_table_locks(self) -> list[tuple[str, str]]:
         self._purge_expired(self._table_locks)
@@ -151,6 +158,9 @@ class RedisLockStore:
 
     def is_table_locked(self, table_id: str) -> bool:
         return bool(self._redis.exists(self._table_key(table_id)))
+
+    def table_lock_holder(self, table_id: str) -> str | None:
+        return _decode(self._redis.get(self._table_key(table_id))) or None
 
     def list_table_locks(self) -> list[tuple[str, str]]:
         # SCAN, not KEYS -- KEYS blocks the whole Redis instance on a large keyspace;
