@@ -13,7 +13,7 @@ const IMG = `${ROOT}docs/img/`;
 const HERO = pathToFileURL(`${IMG}src/readme-hero.html`).href;
 const SITE = pathToFileURL(`${ROOT}site/index.html`).href;
 
-const DIAGRAMS = ["table-decay", "health-grade", "planner-chunks", "governor-admission", "benchmark-proof", "feature-map"];
+const DIAGRAMS = ["table-decay", "health-grade", "planner-chunks", "governor-admission", "feature-map"];
 
 const SITE_SHOTS = {
   architecture: "section[aria-labelledby='how'] .window",

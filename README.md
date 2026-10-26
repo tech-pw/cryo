@@ -60,17 +60,6 @@ down everything it did.
   <img src="docs/img/maintenance-flow.png" alt="One partition of analytics.events passes through Cryo in five steps: scan, plan, admit, rewrite, receipt. On the left, before: 2,140 files averaging 18 MB, all of them small. In the middle, the audit log entry: optimize succeeded on trino-b in 4 minutes 12 seconds, 2,140 files down to 152. On the right, after: 152 files averaging 256 MB, none small, stamped with a receipt." width="100%">
 </p>
 
-## Measured, not promised
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/benchmark-proof-dark.png">
-  <img src="docs/img/benchmark-proof-light.png" alt="Benchmark results, Cryo against the scheduled Spark DAG most teams write themselves, on Spark 4.1 and Iceberg 1.11 on Kubernetes over three trials, with the protocol frozen before any scored run. 1.76 times faster queries: geometric mean of the query mix on a 100 GiB table after one run, 7,594 data files down to 690. 22 of 22 Cryo jobs committed versus 0 of 3 for the DAG, under a MERGE every 200 seconds for two hours. 79 percent fewer pointless rewrites. At most 4 percent p95 slowdown for live queries during compaction, with zero failures. Measured costs: about twice the DAG's Spark compute on small tables, single-row lookups 1.8 times slower at 256 MB files. 151 of 151 Cryo jobs succeeded." width="100%">
-</picture>
-
-We benchmarked Cryo against the compaction DAG most teams write themselves and published every
-result, including the ones where Cryo costs more. Method, raw data and trade-offs:
-[tech-pw.github.io/cryo/benchmark](https://tech-pw.github.io/cryo/benchmark/).
-
 ## Quick start
 
 You need Docker, Python 3.12+, Node 22+ and curl.
