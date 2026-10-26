@@ -1,0 +1,190 @@
+{
+ "trial": 3,
+ "duration_s": 7136.4359998703,
+ "batches": 36,
+ "fingerprints_equal": true,
+ "fingerprints": {
+  "a0": [
+   654000,
+   "-4683825401378090581994"
+  ],
+  "a1": [
+   654000,
+   "-4683825401378090581994"
+  ],
+  "a3": [
+   654000,
+   "-4683825401378090581994"
+  ]
+ },
+ "end_state": [
+  {
+   "arm": "a0",
+   "table": "events",
+   "snapshots": 36,
+   "ops": {
+    "append": 36
+   },
+   "maintenance_commits": 0,
+   "gib_rewritten": 0.0,
+   "final_data_files": 108,
+   "final_delete_files": 0,
+   "max_data_files": 108,
+   "max_delete_files": 0,
+   "tw_mean_data_files": 54.47469011049339,
+   "tw_mean_delete_files": 0.0
+  },
+  {
+   "arm": "a0",
+   "table": "orders",
+   "snapshots": 37,
+   "ops": {
+    "append": 1,
+    "overwrite": 36
+   },
+   "maintenance_commits": 0,
+   "gib_rewritten": 0.0,
+   "final_data_files": 40,
+   "final_delete_files": 39,
+   "max_data_files": 40,
+   "max_delete_files": 39,
+   "tw_mean_data_files": 21.97924032904617,
+   "tw_mean_delete_files": 20.949527554863966
+  },
+  {
+   "arm": "a1",
+   "table": "events",
+   "snapshots": 42,
+   "ops": {
+    "append": 36,
+    "replace": 6
+   },
+   "maintenance_commits": 6,
+   "gib_rewritten": 0.0442060986533761,
+   "final_data_files": 25,
+   "final_delete_files": 0,
+   "max_data_files": 30,
+   "max_delete_files": 0,
+   "tw_mean_data_files": 13.52048668292819,
+   "tw_mean_delete_files": 0.0
+  },
+  {
+   "arm": "a1",
+   "table": "orders",
+   "snapshots": 40,
+   "ops": {
+    "append": 1,
+    "overwrite": 36,
+    "replace": 3
+   },
+   "maintenance_commits": 3,
+   "gib_rewritten": 0.0,
+   "final_data_files": 40,
+   "final_delete_files": 39,
+   "max_data_files": 40,
+   "max_delete_files": 39,
+   "tw_mean_data_files": 21.963439450836304,
+   "tw_mean_delete_files": 20.933017797731903
+  },
+  {
+   "arm": "a3",
+   "table": "events",
+   "snapshots": 41,
+   "ops": {
+    "append": 36,
+    "replace": 5
+   },
+   "maintenance_commits": 5,
+   "gib_rewritten": 0.07357155531644821,
+   "final_data_files": 16,
+   "final_delete_files": 0,
+   "max_data_files": 21,
+   "max_delete_files": 0,
+   "tw_mean_data_files": 9.951447263576139,
+   "tw_mean_delete_files": 0.0
+  },
+  {
+   "arm": "a3",
+   "table": "orders",
+   "snapshots": 48,
+   "ops": {
+    "append": 1,
+    "overwrite": 36,
+    "replace": 11
+   },
+   "maintenance_commits": 11,
+   "gib_rewritten": 1.406465783715248,
+   "final_data_files": 3,
+   "final_delete_files": 5,
+   "max_data_files": 8,
+   "max_delete_files": 10,
+   "tw_mean_data_files": 2.883986368008413,
+   "tw_mean_delete_files": 4.874602598392808
+  }
+ ],
+ "a1": {
+  "windows": 3,
+  "ops": 18,
+  "ops_failed": 3,
+  "failed_ops": [
+   {
+    "window": 1,
+    "table": "orders",
+    "op": "rewrite_data_files",
+    "ok": false,
+    "seconds": 9.34,
+    "error": "Py4JJavaError: An error occurred while calling o49.sql.\n: java.lang.RuntimeException: Cannot commit rewrite because of a ValidationException or CommitFailedException. This usually means that this rewr"
+   },
+   {
+    "window": 2,
+    "table": "orders",
+    "op": "rewrite_data_files",
+    "ok": false,
+    "seconds": 11.97,
+    "error": "Py4JJavaError: An error occurred while calling o49.sql.\n: java.lang.RuntimeException: Cannot commit rewrite because of a ValidationException or CommitFailedException. This usually means that this rewr"
+   },
+   {
+    "window": 3,
+    "table": "orders",
+    "op": "rewrite_data_files",
+    "ok": false,
+    "seconds": 13.98,
+    "error": "Py4JJavaError: An error occurred while calling o49.sql.\n: java.lang.RuntimeException: Cannot commit rewrite because of a ValidationException or CommitFailedException. This usually means that this rewr"
+   }
+  ],
+  "vcpu_h": 0.09999999999999999,
+  "pods": 3
+ },
+ "a3": {
+  "windows": 11,
+  "window_s": {
+   "n": 11,
+   "mean": 175.99727272727273,
+   "ci95": 21.493431416773877
+  },
+  "jobs": 22,
+  "job_status": {
+   "succeeded": 22
+  },
+  "jobs_committed": 15,
+  "ops": {
+   "expire_snapshots": 22,
+   "convert_deletes": 11,
+   "optimize": 5
+  },
+  "spark_apps": 38,
+  "vcpu_h": 0.7924305554893282,
+  "pods": 114
+ },
+ "probe_ratios": {
+  "a1_c_agg_vs_a0_mean_over_probes": 0.9308138285460712,
+  "a1_c_agg_vs_a0_final": 0.8366445916114791,
+  "a1_c_point_vs_a0_mean_over_probes": 0.936288473386933,
+  "a1_c_point_vs_a0_final": 0.8906976744186047,
+  "a3_c_agg_vs_a0_mean_over_probes": 0.845414925966879,
+  "a3_c_agg_vs_a0_final": 0.5827814569536424,
+  "a3_c_point_vs_a0_mean_over_probes": 0.9058758247210031,
+  "a3_c_point_vs_a0_final": 0.7232558139534884
+ },
+ "stream_commit_retries": "NOT_ESTABLISHED for batches 0-32 (stream log rotated); batches 33-35 in p3.jsonl"
+}

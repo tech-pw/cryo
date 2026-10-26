@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: v2-podacct
+  namespace: cryo-bench
+  labels: {benchmark-run: 20261020-spark-001, benchmark-version: v2, purpose: pod-accounting}
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 259200
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels: {benchmark-version: v2, v2-job: v2-podacct}
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: bench-v2-controller
+      containers:
+        - name: podacct
+          image: ghcr.io/tech-pw/cryo@sha256:b440406dca311463c3ba672a8b6b6d469442f23851681662984effe82df1c691
+          command: ["python", "-u", "/opt/v2/podacct.py"]
+          volumeMounts: [{name: code, mountPath: /opt/v2}]
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 200m, memory: 256Mi}
+      volumes: [{name: code, configMap: {name: v2-p1-code}}]

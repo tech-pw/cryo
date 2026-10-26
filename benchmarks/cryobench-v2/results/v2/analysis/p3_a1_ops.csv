@@ -1,0 +1,22 @@
+window,table,op,ok,seconds,error
+1,orders,rewrite_data_files,False,9.34,Py4JJavaError: An error occurred while calling o49.sql.
+: java.lang.RuntimeException: Cannot commit rewrite because of a ValidationException or CommitFailedException. This usually means that this rewr
+1,orders,rewrite_manifests,True,1.67,
+1,orders,expire_snapshots,True,4.21,
+1,events,rewrite_data_files,True,5.51,
+1,events,rewrite_manifests,True,0.57,
+1,events,expire_snapshots,True,2.68,
+2,orders,rewrite_data_files,False,11.97,Py4JJavaError: An error occurred while calling o49.sql.
+: java.lang.RuntimeException: Cannot commit rewrite because of a ValidationException or CommitFailedException. This usually means that this rewr
+2,orders,rewrite_manifests,True,1.69,
+2,orders,expire_snapshots,True,5.64,
+2,events,rewrite_data_files,True,5.14,
+2,events,rewrite_manifests,True,0.71,
+2,events,expire_snapshots,True,3.57,
+3,orders,rewrite_data_files,False,13.98,Py4JJavaError: An error occurred while calling o49.sql.
+: java.lang.RuntimeException: Cannot commit rewrite because of a ValidationException or CommitFailedException. This usually means that this rewr
+3,orders,rewrite_manifests,True,1.93,
+3,orders,expire_snapshots,True,6.76,
+3,events,rewrite_data_files,True,5.6,
+3,events,rewrite_manifests,True,0.69,
+3,events,expire_snapshots,True,5.03,

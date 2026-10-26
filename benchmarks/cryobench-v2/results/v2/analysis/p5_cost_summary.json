@@ -1,0 +1,117 @@
+{
+ "label": "MODELED (requests x lifetime x published-rate assumptions). Not billed.",
+ "rates": {
+  "vcpu_h": 0.057,
+  "s3_gb_month": 0.025,
+  "s3_put_1k": 0.005,
+  "s3_get_1k": 0.0004,
+  "nat_gb_worst_case": 0.056
+ },
+ "v2_ledger": {
+  "compute_by_category": {
+   "shared_catalog_registry": {
+    "vcpu_h": 5.390354166669979,
+    "gib_h": 22.45968402778937,
+    "pods": 4,
+    "usd_modeled": 0.3072501875001888
+   },
+   "cryo_control_plane": {
+    "vcpu_h": 146.40425555563635,
+    "gib_h": 284.2210434029376,
+    "pods": 27,
+    "usd_modeled": 8.345042566671273
+   },
+   "harness_other": {
+    "vcpu_h": 5.559166666673289,
+    "gib_h": 13.897890625016556,
+    "pods": 19,
+    "usd_modeled": 0.3168725000003775
+   },
+   "measurement": {
+    "vcpu_h": 2.882333333333334,
+    "gib_h": 3.6029861111111106,
+    "pods": 82,
+    "usd_modeled": 0.16429300000000002
+   },
+   "data_generation": {
+    "vcpu_h": 31.243888889153794,
+    "gib_h": 94.65155555645626,
+    "pods": 37,
+    "usd_modeled": 1.7809016666817663
+   },
+   "trino": {
+    "vcpu_h": 576.4623333330949,
+    "gib_h": 1921.5411111103163,
+    "pods": 6,
+    "usd_modeled": 32.85835299998641
+   },
+   "diy_spark": {
+    "vcpu_h": 11.167222222222223,
+    "gib_h": 26.161666666666665,
+    "pods": 40,
+    "usd_modeled": 0.6365316666666667
+   },
+   "cryo_spark": {
+    "vcpu_h": 42.42012499901311,
+    "gib_h": 96.98261224803986,
+    "pods": 1017,
+    "usd_modeled": 2.4179471249437476
+   },
+   "cryo_scanner_cronjob": {
+    "vcpu_h": 0.48319444444444437,
+    "gib_h": 0.9663888888888887,
+    "pods": 24,
+    "usd_modeled": 0.02754208333333333
+   }
+  },
+  "compute_usd": 46.85473379578376,
+  "s3_bytes_now": 1471129165389,
+  "s3_objects_now": 148450,
+  "v2_days": 1.497597222223326,
+  "storage_usd_upper": 1.8359657930152387,
+  "trino_s3_requests_measured": 7470349,
+  "requests_usd_modeled": 5.2148896,
+  "nat_gb_upper": 7907.462603872,
+  "nat_usd_worst_case": 442.817905816832,
+  "v2_total_usd_excl_nat": 53.905589188799,
+  "v2_total_usd_incl_nat_worst": 496.72349500563104,
+  "prior_v0_v1_usd_upper": 160.0,
+  "idle_trino_waste": {
+   "from_utc": "2026-10-22T18:57:18Z",
+   "to_utc": "2026-10-23T06:54:00Z",
+   "hours": 11.945,
+   "vcpu_h": 215.01,
+   "usd_modeled": 12.25557
+  }
+ },
+ "control_plane_fixed_monthly_usd": {
+  "as_deployed_6_workers": 172.68150000000003,
+  "chart_default_2_workers": 89.4615,
+  "scanner_cronjob_4x0.5vcpu_per_6h_runs": "included in measured ledger"
+ },
+ "maintenance_cost_per_cycle_usd": {
+  "p1_10_small_tables": {
+   "a1": 0.011455416666666668,
+   "a2": 0.006978541666666667,
+   "a3": 0.02329144027468231
+  },
+  "p1_a3_excluding_expire": 0.013890200692796045,
+  "p2_100GiB_one_compaction": {
+   "c256": 0.17906544721774262,
+   "c128": 0.18414303889349434,
+   "c512": 0.1758696999915441,
+   "d256": 0.10692250000000002
+  },
+  "p3_2h_cdc": {
+   "a1": 0.005699999999999999,
+   "a3": 0.045168541662891706
+  }
+ },
+ "total_cost_saved_pct": "NOT_ESTABLISHED: Cryo used more maintenance compute than A1 in phases 1-3 and adds a fixed control plane; the engineering cost of building and running custom Spark/Airflow maintenance was not measured.",
+ "break_even_engineering_hours_per_month": {
+  "formula": "(control_plane_monthly + extra_maintenance_compute_monthly) / engineer_hourly_cost",
+  "control_plane_monthly_as_deployed": 172.68150000000003,
+  "control_plane_monthly_chart_default": 89.4615,
+  "note": "Engineer hourly cost and actual DIY maintenance effort are organisation inputs; not measured here."
+ }
+}
