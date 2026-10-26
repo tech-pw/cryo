@@ -351,8 +351,9 @@ def table_analysis_from_go_payload(
             history=stats_history,
         )
 
+    # Same compactable small-file count the planner and triggers read (issue #191).
     score, grade, health_deductions = compute_health_score(
-        stats_for_health, health_small_files, now=scan_at
+        stats_for_health, small_files_count, now=scan_at
     )
     primary = clean_fields[0] if clean_fields else {}
     raw: dict[str, Any] = {
@@ -365,6 +366,8 @@ def table_analysis_from_go_payload(
         "avg_null_rate": float(avg_null_rate),
         "max_null_rate": float(max_null_rate),
         "worst_null_column": worst_null_column,
+        # Informational only (not scored): every data file under HEALTH_SMALL_FILE_BYTES.
+        "files_under_8mib": health_small_files,
         "first_snapshot_at": first_snapshot_at,
         "last_snapshot_committed_at": last_snapshot_committed_at,
         "current_snapshot_id": payload.get("current_snapshot_id"),
