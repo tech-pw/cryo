@@ -75,6 +75,7 @@ def preset_to_config(preset: Preset) -> PresetConfig:
         enabled=preset.enabled,
         schedule_cron=preset.schedule_cron,
         is_default=bool(preset.is_default),
+        paused=bool(preset.paused),
     )
 
 
@@ -337,7 +338,7 @@ def unassign_tables(session: Session, *, table_ids: Sequence[uuid.UUID]) -> int:
 # live 2026-10-06: GET /runs?limit=200 took 17s/529KB and the Runs page's "Running now"/"Failed
 # runs" counts silently showed (0), since the request never resolved before the UI gave up and
 # fell back to an empty list). Dropped from list responses; see run_summary's detail=False.
-_DETAIL_ONLY_SUMMARY_KEYS = ("unreadable_tables", "failed_tables")
+_DETAIL_ONLY_SUMMARY_KEYS = ("unreadable_tables", "failed_tables", "removed_tables")
 
 
 def run_summary(

@@ -179,6 +179,9 @@ CREATE TABLE cryo.tables (
     table_name       text NOT NULL,
     first_seen_at    timestamptz NOT NULL DEFAULT now(),
     is_active        boolean NOT NULL DEFAULT true,
+    removed_from_catalog_at timestamptz,         -- #120 soft delete: scanner found it gone from
+                                              -- the catalog; cleared when the table is listed again
+    removed_reason   text,                       -- e.g. 'not_found_in_catalog: <source>/<schema>'
     UNIQUE (source_id, schema_name, table_name)
 );
 ```
@@ -343,10 +346,29 @@ CREATE TABLE cryo.table_assignments (
 );
 ```
 
-**Effective preset** for a table = `pinned assignment` if present, else the **highest-priority
-enabled rule** that matches its latest stats, else none (`provenance = "none"`). There is no
-platform-default fallback; users must explicitly assign a preset (or match a rule) before
-maintenance can run.
+**Effective preset** for a table (`cryo/scheduler/rules.py::effective_preset`) =
+1. its **pinned assignment** (`provenance = "assignment"`), else
+2. the **highest-priority enabled rule** that matches its latest stats (`"rule"`, or
+   `"rule_after_stale_pin"` when its pin points at a disabled/missing preset), else
+3. the tenant's **default preset** (`is_default = true`, `"default"`), else none (`"none"`).
+
+Ephemeral tables (`temp`/`tmp`/`scratch` schemas, `__dbt_tmp`, `_tmp` suffixes...) are never
+rule-matched or defaulted; pins still win. Default routing is implicit: no `table_assignments`
+row is written, so pinning or a matching rule moves a table off the default and unpinning moves
+it back.
+
+**Paused vs disabled (#119).** `presets.paused = true` holds the preset: it still wins
+resolution (its tables keep showing it and are *not* re-routed), but the scheduler never lists
+it as due and `build_scheduled_run` creates no jobs. Manual runs on it return 409 unless the
+request sets `override_pause` (audited as `preset_pause_overridden`). `enabled = false` retires
+the preset: pins to it fall through to rules, then the default. Pausing the default preset holds
+every default-routed table; unsetting it (no replacement) leaves them with provenance `none`.
+A default preset must have a `schedule_cron` (API returns 400 otherwise); migration
+`20261026_1710` fills `0 2 * * *` on a default preset that has none. `POST
+/presets/{id}/pause|resume|set-default|unset-default` (admin) and the same switches via `PATCH`
+write one `audit_log` row each (actor, before/after, affected-table count). The scanner reports
+`new_tables_on_default` in the scan run summary and audits `table_auto_assigned_default` per
+new table (capped at 1,000 rows per scan chunk).
 
 Bootstrap (migration `20260706_0011`, updated `20260707_0020`, `20260708_0022`,
 `20260709_0026`): destination `native-datafusion` (`engine = native`,

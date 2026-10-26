@@ -1,5 +1,30 @@
 # Cryo — TODO
 
+## Remove tables the catalog no longer has (#120) — 2026-10-26
+- [x] Soft delete (`tables.removed_from_catalog_at`, `removed_reason`), on by default, behind
+      re-list confirmation, a discovery-error skip and a mass-removal guard.
+- [x] Queued/deferred jobs for a removed table are skipped; running jobs are left alone.
+- [x] Restore on re-listing; `/tables` hides removed rows unless `include_removed=true`.
+- [x] Table detail banner; scan summary counters (`removed_from_catalog`,
+      `restored_to_catalog`, `missing_table_reconcile_skipped`, detail-only `removed_tables`).
+- [ ] Hard purge after a retention window. Needs FK `ON DELETE` changes on the stats, cost,
+      jobs and audit tables first. Deferred: it is irreversible and the migration is heavy on
+      large tables.
+- [ ] Registry filter/view for removed tables.
+
+## Default and paused presets (#119) — 2026-10-26
+
+- [x] `presets.paused` (migration `20261026_1710`); paused presets win resolution but never fire.
+- [x] Default preset must have a schedule; migration fills `0 2 * * *` on a default without one.
+- [x] Pause/resume/set-default/unset-default endpoints + audit rows; manual runs need `override_pause`.
+- [x] Scan summary `new_tables_on_default`; `table_auto_assigned_default` audit rows.
+- [x] Preset form Default/Paused switches with affected-table confirmation; Operations badges.
+- [ ] After deploy: `alembic upgrade head` (`20261026_1710`). The default preset starts firing
+  nightly at 02:00 (scheduler time zone) if it had no cron.
+- [ ] Follow-up: Tables registry "Effective preset" column and "On default" / "Unmaintained"
+  filters (`effective_provenance` on `/tables`).
+- [ ] Follow-up: decide whether pausing should also cancel already-queued jobs (today they drain).
+
 ## Table detail insights — 2026-10-18
 
 See [docs/TABLE_DETAIL_INSIGHTS_2026-10-18.md](docs/TABLE_DETAIL_INSIGHTS_2026-10-18.md).

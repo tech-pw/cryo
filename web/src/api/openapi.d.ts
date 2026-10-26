@@ -668,7 +668,11 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete Table Alert Subscription */
+        /**
+         * Delete Table Alert Subscription
+         * @description Unsubscribe. Only the subscriber (whoever created it, or the subscribed address
+         *     itself) or an admin may remove a subscription; other viewers get 403.
+         */
         delete: operations["delete_table_alert_subscription_api_v1_tables__table_id__alert_subscriptions__subscription_id__delete"];
         options?: never;
         head?: never;
@@ -1069,6 +1073,74 @@ export interface paths {
          *     this endpoint.
          */
         post: operations["force_admit_job_api_v1_jobs__job_id__force_admit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/presets/{preset_id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause Preset */
+        post: operations["pause_preset_api_v1_presets__preset_id__pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/presets/{preset_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume Preset */
+        post: operations["resume_preset_api_v1_presets__preset_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/presets/{preset_id}/set-default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Default Preset */
+        post: operations["set_default_preset_api_v1_presets__preset_id__set_default_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/presets/{preset_id}/unset-default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Unset Default Preset */
+        post: operations["unset_default_preset_api_v1_presets__preset_id__unset_default_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9345,6 +9417,11 @@ export interface components {
              * @default false
              */
             force: boolean;
+            /**
+             * Override Pause
+             * @default false
+             */
+            override_pause: boolean;
         };
         /** MaintenanceRunResponse */
         MaintenanceRunResponse: {
@@ -10016,6 +10093,11 @@ export interface components {
              * @default false
              */
             is_default: boolean;
+            /**
+             * Paused
+             * @default false
+             */
+            paused: boolean;
         };
         /** PresetPatch */
         PresetPatch: {
@@ -10044,6 +10126,8 @@ export interface components {
             } | null;
             /** Is Default */
             is_default?: boolean | null;
+            /** Paused */
+            paused?: boolean | null;
         };
         /** PresetRead */
         PresetRead: {
@@ -10085,6 +10169,11 @@ export interface components {
              * @default false
              */
             is_default: boolean;
+            /**
+             * Paused
+             * @default false
+             */
+            paused: boolean;
             /**
              * Id
              * Format: uuid
@@ -13369,6 +13458,10 @@ export interface components {
             first_seen_at: string;
             /** Is Active */
             is_active: boolean;
+            /** Removed From Catalog At */
+            removed_from_catalog_at?: string | null;
+            /** Removed Reason */
+            removed_reason?: string | null;
             /**
              * Consecutive Scan Failures
              * @default 0
@@ -15146,6 +15239,7 @@ export interface operations {
                 maintenance_overdue?: boolean;
                 p95_breach?: boolean;
                 no_reads_days?: number | null;
+                include_removed?: boolean;
             };
             header?: never;
             path?: never;
@@ -16200,6 +16294,130 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pause_preset_api_v1_presets__preset_id__pause_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                preset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresetRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_preset_api_v1_presets__preset_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                preset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresetRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_default_preset_api_v1_presets__preset_id__set_default_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                preset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresetRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unset_default_preset_api_v1_presets__preset_id__unset_default_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                preset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresetRead"];
                 };
             };
             /** @description Validation Error */
