@@ -1,0 +1,3 @@
+# The harness runs as Python; its bytecode is never part of the evidence.
+__pycache__/
+*.py[cod]
