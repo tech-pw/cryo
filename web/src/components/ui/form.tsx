@@ -103,11 +103,11 @@ export function FormField<
 }
 
 /** Convenience hook for the common `useForm({ resolver: zodResolver(schema) })` pattern. */
-export function useZodForm<TSchema extends z.ZodTypeAny>(
-  schema: TSchema,
-  options?: Omit<UseFormProps<z.infer<TSchema>>, "resolver">
-): UseFormReturn<z.infer<TSchema>> {
-  return useForm<z.infer<TSchema>>({
+export function useZodForm<TInput extends FieldValues, TOutput extends FieldValues = TInput>(
+  schema: z.ZodType<TOutput, TInput>,
+  options?: Omit<UseFormProps<TInput, unknown, TOutput>, "resolver">
+): UseFormReturn<TInput, unknown, TOutput> {
+  return useForm<TInput, unknown, TOutput>({
     ...options,
     resolver: zodResolver(schema)
   });
