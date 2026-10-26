@@ -9,8 +9,9 @@ from fastapi.testclient import TestClient
 
 from cryo import __version__
 from cryo.api.app import create_app
-from cryo.build_info import build_info
+from cryo.build_info import build_info, reset_schema_revision_cache
 from cryo.config import Settings
+from tests.auth_helpers import auth_header
 
 
 def _client() -> TestClient:
@@ -45,12 +46,21 @@ def test_blank_env_counts_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     assert info.git_sha is None
 
 
-def test_version_endpoint_is_unauthenticated(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture(autouse=True)
+def _fresh_schema_cache() -> None:
+    reset_schema_revision_cache()
+
+
+def test_version_endpoint_needs_a_token() -> None:
+    assert _client().get("/api/v1/version").status_code == 401
+
+
+def test_version_endpoint_returns_the_build_to_viewers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CRYO_VERSION", "v0.1.6")
     monkeypatch.setenv("CRYO_GIT_SHA", "abc123")
     monkeypatch.delenv("CRYO_BUILD_DATE", raising=False)
-    with patch("cryo.api.app.current_schema_revision", return_value="20261020_0001"):
-        response = _client().get("/api/v1/version")
+    with patch("cryo.build_info.current_schema_revision", return_value="20261020_0001"):
+        response = _client().get("/api/v1/version", headers=auth_header("viewer"))
     assert response.status_code == 200
     assert response.json() == {
         "version": "v0.1.6",
@@ -62,11 +72,18 @@ def test_version_endpoint_is_unauthenticated(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_version_endpoint_survives_an_unreachable_database() -> None:
     with patch("cryo.db.session.SessionLocal", side_effect=RuntimeError("down")):
-        response = _client().get("/api/v1/version")
+        response = _client().get("/api/v1/version", headers=auth_header("viewer"))
     assert response.status_code == 200
     assert response.json()["schema_revision"] is None
 
 
-def test_healthz_reports_the_version(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_schema_revision_is_read_once_per_minute() -> None:
+    with patch("cryo.build_info.current_schema_revision", return_value="r1") as read:
+        for _ in range(5):
+            _client().get("/api/v1/version", headers=auth_header("viewer"))
+    assert read.call_count == 1
+
+
+def test_healthz_does_not_expose_the_build(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CRYO_VERSION", "v0.1.6")
-    assert _client().get("/healthz").json()["version"] == "v0.1.6"
+    assert "version" not in _client().get("/healthz").json()

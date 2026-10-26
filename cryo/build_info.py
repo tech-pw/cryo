@@ -8,6 +8,7 @@ Dockerfiles and .github/workflows/release-supply-chain.yml). A source checkout o
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import asdict, dataclass
 
 from cryo import __version__
@@ -48,3 +49,26 @@ def current_schema_revision() -> str | None:
     except Exception:
         return None
     return str(row[0]) if row else None
+
+
+_SCHEMA_REVISION_TTL_SECONDS = 60.0
+_schema_revision_cache: tuple[float, str | None] | None = None
+
+
+def cached_schema_revision() -> str | None:
+    """current_schema_revision(), read at most once a minute per process."""
+    global _schema_revision_cache
+    now = time.monotonic()
+    if (
+        _schema_revision_cache is not None
+        and now - _schema_revision_cache[0] < _SCHEMA_REVISION_TTL_SECONDS
+    ):
+        return _schema_revision_cache[1]
+    revision = current_schema_revision()
+    _schema_revision_cache = (now, revision)
+    return revision
+
+
+def reset_schema_revision_cache() -> None:
+    global _schema_revision_cache
+    _schema_revision_cache = None

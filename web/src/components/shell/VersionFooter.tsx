@@ -1,3 +1,4 @@
+import { useAuth } from "../../lib/auth";
 import { AlertTriangle } from "lucide-react";
 import { Link } from "react-router-dom";
 
@@ -5,7 +6,7 @@ import { shortSha, useApiVersion, versionsDiffer, webBuild } from "../../lib/bui
 
 /** Sidebar footer: the running API version, linking to Settings > About (#263). */
 export const VersionFooter = ({ onNavigate }: { onNavigate?: () => void }) => {
-  const { data } = useApiVersion();
+  const { data } = useApiVersion(useAuth().token);
   if (!data) return null;
   const web = webBuild();
   const mismatch = versionsDiffer(web, data);
