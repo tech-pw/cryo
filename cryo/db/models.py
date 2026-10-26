@@ -940,6 +940,11 @@ class MaintenanceJob(Base):
     admitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    # When the job first went DEFERRED in its current deferral episode. finished_at is
+    # restamped on every re-defer, so a job a gate keeps refusing would restart the run
+    # finalizer's grace window forever; this is kept across re-defers and the reconcile
+    # re-queue, and cleared once the job is admitted or reaches a real terminal state.
+    deferred_since: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
     # Plan Verifier (arXiv:2510.09567) -- persisted verdict so the worker + audit trail can see
     # whether the plan was proof-checked at enqueue time, and reproduce the verdict hash.
