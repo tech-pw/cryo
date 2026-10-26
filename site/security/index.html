@@ -38,7 +38,7 @@
   <dt>Tokens Cryo signs itself (HS256)</dt>
   <dd>These are issued by password sign-in for local users, by Google sign-in, and by the dev token route. They're signed with <code>CRYO_JWT_SECRET</code>, or with <code>CRYO_SECRET_KEY</code> when that's unset, and they last 24 hours.</dd>
 </dl>
-<p><code>/healthz</code>, <code>/readyz</code>, <code>/healthz/deep</code> and <code>/metrics</code> need no token. Keep them off the public internet; see <a href="../install/#verify">Install</a>.</p>
+<p>On the API Service, <code>/healthz</code>, <code>/readyz</code> and <code>/healthz/deep</code> need no token, and <code>/metrics</code> needs one only when <code>CRYO_METRICS_BEARER_TOKEN</code> is set. The web UI does not proxy <code>/healthz/deep</code> or <code>/metrics</code>; admins see them through <code>/api/v1/ops/</code>. Keep the API Service off the public internet; see <a href="../install/#verify">Install</a>.</p>
 
 <h2 id="oidc">OIDC setup<a class="anchor" href="#oidc" aria-label="Link to OIDC setup">#</a></h2>
 <p>Register Cryo as a confidential client with the authorization-code flow, then set these in the Secret that <code>global.envFromSecret</code> names:</p>
@@ -138,7 +138,7 @@
   <li><input type="checkbox" aria-label="Done"> <code>/api/v1/auth/config</code> reports <code>"dev_token_enabled":false</code>, and <code>POST /api/v1/auth/token</code> returns 503.</li>
   <li><input type="checkbox" aria-label="Done"> Password sign-in is off in Settings unless you need local users.</li>
   <li><input type="checkbox" aria-label="Done"> Every image is pinned by digest. In <code>prod</code>, the chart enforces this.</li>
-  <li><input type="checkbox" aria-label="Done"> The UI is served over TLS, and <code>/metrics</code> and <code>/healthz/deep</code> aren't reachable from outside your network.</li>
+  <li><input type="checkbox" aria-label="Done"> The UI is served over TLS, the API Service is not exposed outside your network, and <code>CRYO_METRICS_BEARER_TOKEN</code> is set if anything outside the cluster can reach <code>/metrics</code>.</li>
   <li><input type="checkbox" aria-label="Done"> Credentials are in each connection's secret field or come from an IAM role, never from its <code>config</code>.</li>
   <li><input type="checkbox" aria-label="Done"> Egress is limited to the destinations above.</li>
 </ul>

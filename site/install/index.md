@@ -223,7 +223,7 @@ spec:
                   number: 80
 ```
 
-These annotations are for ingress-nginx, so use your controller's equivalents if you run a different one. The web pod also forwards `/metrics` and `/healthz/deep`, and neither needs a login. If the host can be reached from outside your network, block both at the Ingress.
+These annotations are for ingress-nginx, so use your controller's equivalents if you run a different one. The web pod does not forward `/metrics` or `/healthz/deep`: it answers both with 404, and admins read them in the UI through `/api/v1/ops/metrics` and `/api/v1/ops/healthz/deep`. Prometheus and probes reach the API Service directly. Set `CRYO_METRICS_BEARER_TOKEN` to require a token on the API's `/metrics`.
 
 ### Sign in
 

@@ -25,7 +25,7 @@ The UI sends you to your provider, and the API swaps the authorization code for 
 
 These are issued by password sign-in for local users, by Google sign-in, and by the dev token route. They're signed with `CRYO_JWT_SECRET`, or with `CRYO_SECRET_KEY` when that's unset, and they last 24 hours.
 
-`/healthz`, `/readyz`, `/healthz/deep` and `/metrics` need no token. Keep them off the public internet; see [Install](https://tech-pw.github.io/cryo/install/#verify).
+On the API Service, `/healthz`, `/readyz` and `/healthz/deep` need no token, and `/metrics` needs one only when `CRYO_METRICS_BEARER_TOKEN` is set. The web UI does not proxy `/healthz/deep` or `/metrics`; admins see them through `/api/v1/ops/`. Keep the API Service off the public internet; see [Install](https://tech-pw.github.io/cryo/install/#verify).
 
 ## OIDC setup
 
@@ -129,7 +129,7 @@ A default-deny egress NetworkPolicy that opens only these destinations is a good
 - `/api/v1/auth/config` reports `"dev_token_enabled":false`, and `POST /api/v1/auth/token` returns 503.
 - Password sign-in is off in Settings unless you need local users.
 - Every image is pinned by digest. In `prod`, the chart enforces this.
-- The UI is served over TLS, and `/metrics` and `/healthz/deep` aren't reachable from outside your network.
+- The UI is served over TLS, the API Service is not exposed outside your network, and `CRYO_METRICS_BEARER_TOKEN` is set if anything outside the cluster can reach `/metrics`.
 - Credentials are in each connection's secret field or come from an IAM role, never from its `config`.
 - Egress is limited to the destinations above.
 

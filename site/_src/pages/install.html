@@ -158,7 +158,7 @@ spec:
                 port:
                   number: 80
     </codeblock>
-    <p>These annotations are for ingress-nginx, so use your controller's equivalents if you run a different one. The web pod also forwards <code>/metrics</code> and <code>/healthz/deep</code>, and neither needs a login. If the host can be reached from outside your network, block both at the Ingress.</p>
+    <p>These annotations are for ingress-nginx, so use your controller's equivalents if you run a different one. The web pod does not forward <code>/metrics</code> or <code>/healthz/deep</code>: it answers both with 404, and admins read them in the UI through <code>/api/v1/ops/metrics</code> and <code>/api/v1/ops/healthz/deep</code>. Prometheus and probes reach the API Service directly. Set <code>CRYO_METRICS_BEARER_TOKEN</code> to require a token on the API's <code>/metrics</code>.</p>
   </step>
   <step title="Sign in">
     <p>Open <code>https://cryo.example.com</code> and sign in through your identity provider. You need the <code>admin</code> role in your access token to add sources. If <code>/api/v1/auth/config</code> returns 503 with <code>OIDC issuer discovery failed</code>, the API can't reach <code>CRYO_OIDC_ISSUER_URL/.well-known/openid-configuration</code>.</p>

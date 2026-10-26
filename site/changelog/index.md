@@ -29,6 +29,10 @@ All notable changes to Cryo will be documented in this file. The format is based
 - Initial `CHANGELOG.md`.
 - Docs site: the header shows the latest release tag (`version` in `site/_src/site.json`), and new Changelog (rendered from this file) and Contributing pages.
 
+### Security
+
+- Failed password and Google sign-ins are throttled per account (5 in 15 minutes) and per client IP (20), using Redis so the limit holds across replicas. Locked attempts get `429` with `Retry-After`, and the sign-in page says how long to wait. Each failure is audited as `auth.login_failed` (admin-only `GET /api/v1/auth/audit`) and counted in `cryo_auth_login_failures_total`. `/docs`, `/redoc` and `/openapi.json` are off by default in `prod` (`CRYO_API_DOCS_ENABLED`). `CRYO_METRICS_BEARER_TOKEN` protects the scraper `/metrics`. See the operator guide (#262).
+
 ### Changed
 
 - Docs site homepage: "Compact first, then clean up" is replaced by a scroll-driven story of one 1 TB table. It decays for 30 days, then goes through each operation in order while a pinned S3 bill shows what each step costs or saves ($110.72 to $23.53 a month in the example). Prices are S3 Standard us-east-1, and the expiry and orphan windows match the planner's defaults. The table is drawn as the brand's ice core sample and changes with each step: grains packing into blocks, old layers lifted into a tray, orphans swept into a pile. Cryo's mark narrates and fuses its cubes on `optimize`. Each chapter adds a plain-language analogy and a sourced cost that isn't on the bill (S3 503 throttling, request latency, Trino join order, GDPR deletes). It ends on a printed receipt and a "tables like this in your lake" estimator. A mood layer makes cost felt: the bill, its face, Cryo's mascot, the meters and the timeline rail go from green and smiling to red and crying as the bill climbs, and each step opens with a before-and-after scorecard.
