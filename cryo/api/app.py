@@ -20,6 +20,7 @@ from cryo.api.evidence_routes import router as evidence_router
 from cryo.api.extensions import router as extensions_router
 from cryo.api.maintenance_control import router as maintenance_control_router
 from cryo.api.maintenance_safety import router as maintenance_safety_router
+from cryo.api.metrics_routes import ops_router as ops_metrics_router
 from cryo.api.metrics_routes import router as metrics_router
 from cryo.api.middleware import RateLimitMiddleware
 from cryo.api.phase8_routes import router as phase8_router
@@ -188,6 +189,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(capabilities_router)
     app.include_router(advanced_router)
     app.include_router(metrics_router)
+    app.include_router(ops_metrics_router)
     app.include_router(maintenance_control_router)
     app.include_router(maintenance_exclusions_router)
     app.include_router(table_hold_router)
