@@ -10,6 +10,8 @@ from cryo.config import Settings, get_settings
 from cryo.domain.enums import EngineType
 from cryo.domain.models import CapacitySnapshot, MaintenancePlan
 from cryo.engines.base import (
+    METASTORE_UNREACHABLE_MARKER,
+    METASTORE_UNREACHABLE_SIGNATURES,
     ROOT_CAUSE_PREFIX,
     TABLE_NOT_FOUND_MARKER,
     ExecCtx,
@@ -63,6 +65,12 @@ _SPARK_RETRYABLE_SIGNATURES = (
     "CommitStateUnknownException",
     "org.apache.iceberg.exceptions.ValidationException",
 )
+# The driver could not reach the Hive Metastore: congestion or a restart, not the table. 66 of
+# 218 failed Spark jobs in one week were this, in bursts of 6-8 an hour (#257). They take the
+# catalog retry with a longer backoff, and a job that still fails is marked with
+# METASTORE_UNREACHABLE_MARKER so reports can count it apart from table failures.
+_SPARK_TRANSIENT_METASTORE_SIGNATURES = METASTORE_UNREACHABLE_SIGNATURES
+_SPARK_METASTORE_RETRY_BACKOFF_SECONDS = 30
 _SPARK_NON_RETRYABLE_SIGNATURES = (
     "NoSuchTableException",
     "TABLE_OR_VIEW_NOT_FOUND",
@@ -84,6 +92,19 @@ def is_spark_driver_oom(message: str | None) -> bool:
     return head.startswith("OOMKilled exit ")
 
 
+def is_spark_transient_metastore_error(message: str | None) -> bool:
+    """True when the driver failed to reach the Hive Metastore (connect/read timeout)."""
+    if not message:
+        return False
+    if any(sig in message for sig in _SPARK_NON_RETRYABLE_SIGNATURES):
+        return False
+    # A killed driver or executor leaves connection errors from its peers in the log; the
+    # kill is the cause, and the OOM retries own it.
+    if is_spark_driver_oom(message) or is_spark_executor_oom(message):
+        return False
+    return any(sig in message for sig in _SPARK_TRANSIENT_METASTORE_SIGNATURES)
+
+
 def is_spark_executor_oom(message: str | None) -> bool:
     """True when get_job_run front-loaded a kubelet-recorded executor OOMKilled (issue #166)."""
     if not message:
@@ -97,7 +118,19 @@ def is_spark_retryable_catalog_error(message: str | None) -> bool:
         return False
     if any(sig in message for sig in _SPARK_NON_RETRYABLE_SIGNATURES):
         return False
-    return any(sig in message for sig in _SPARK_RETRYABLE_SIGNATURES)
+    return any(sig in message for sig in _SPARK_RETRYABLE_SIGNATURES) or (
+        is_spark_transient_metastore_error(message)
+    )
+
+
+def _catalog_retry_backoff_seconds(message: str, attempt: int) -> int:
+    """Linear backoff; longer for a metastore that is refusing or timing out connections."""
+    base = (
+        _SPARK_METASTORE_RETRY_BACKOFF_SECONDS
+        if is_spark_transient_metastore_error(message)
+        else _SPARK_CATALOG_RETRY_BACKOFF_SECONDS
+    )
+    return base * (attempt + 1)
 
 
 @dataclass
@@ -468,7 +501,7 @@ class SparkK8sEngine:
                     self.k8s_client.cleanup_after_run(job_id)
                     job_id = None
                     if catalog_retry:
-                        time.sleep(_SPARK_CATALOG_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                        time.sleep(_catalog_retry_backoff_seconds(state_details, attempt))
                     continue
                 if is_spark_driver_oom(state_details) and _driver_heap_at_ceiling(
                     # oom_steps counts retries launched, so the pod that just died
@@ -482,6 +515,11 @@ class SparkK8sEngine:
                         "not splitting the CALL — Iceberg still anti-joins every retained "
                         f"file, and scan stats have no snapshot ids (total_files={total_files})\n"
                         f"{state_details}"
+                    )
+                if is_spark_transient_metastore_error(state_details):
+                    state_details = (
+                        f"{METASTORE_UNREACHABLE_MARKER} Hive Metastore unreachable after "
+                        f"{catalog_attempts} attempt(s)\n{state_details}"
                     )
                 error = f"Spark-on-K8s Job {result.state.value}: {state_details}"
                 if executor_oom:

@@ -14,7 +14,7 @@ def render(*args: str) -> list[dict]:
     if shutil.which("helm") is None:
         pytest.skip("helm is required for chart rendering")
     result = subprocess.run(
-        ["helm", "template", "cryo", str(CHART), *args],
+        ["helm", "template", "cryo", str(CHART), "--set", "global.env.CRYO_ENVIRONMENT=dev", *args],
         check=True,
         capture_output=True,
         text=True,

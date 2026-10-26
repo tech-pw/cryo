@@ -833,13 +833,14 @@ export const TableExplorerSection = () => {
   };
 
   const run = useMutation({
-    mutationFn: (args: { destinationId: UUID; presetId: UUID; mode: Mode }) => {
+    mutationFn: (args: { destinationId: UUID; presetId: UUID; mode: Mode; operations?: string[] }) => {
       if (selection?.mode === "filter") {
         return runMaintenance(api, {
           selection: { mode: "filter", filter: selection.filter },
           destination_id: args.destinationId,
           preset_id: args.presetId,
           mode: args.mode,
+          operations: args.operations,
           trigger: "web"
         });
       }
@@ -848,6 +849,7 @@ export const TableExplorerSection = () => {
         destination_id: args.destinationId,
         preset_id: args.presetId,
         mode: args.mode,
+        operations: args.operations,
         trigger: "web"
       });
     },

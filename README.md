@@ -505,6 +505,12 @@ cd web && npm run build && npm run test
 
 </details>
 
+## Community
+
+Questions, ideas and show-and-tell live in [GitHub Discussions](https://github.com/tech-pw/cryo/discussions).
+Bugs go to [Issues](https://github.com/tech-pw/cryo/issues). See [`SUPPORT.md`](./SUPPORT.md) and
+[`MAINTAINERS.md`](./MAINTAINERS.md).
+
 ## Contributing
 
 Read [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup and [`AGENTS.md`](./AGENTS.md) before opening a
