@@ -25,7 +25,7 @@ from cryo.scanner.cost import (
     build_table_cost_analysis,
     estimate_storage_cost,
 )
-from cryo.scanner.health import compute_health_score
+from cryo.scanner.health import compute_design_findings, compute_health_score
 from cryo.scanner.orphans import table_location
 from cryo.scanner.quality import ColumnQualityAccumulator, summarize_column_quality
 from cryo.scanner.signals import detect_format_version, enrich_stats_signals, manifest_stats
@@ -482,6 +482,7 @@ def analyze_table(
         "file_formats": sorted(file_formats),
         "snapshot_overhead_gb": cost.snapshot_overhead_gb,
         "health_deductions": health_deductions,
+        "health_design_findings": compute_design_findings(stats_for_health),
         "column_quality": [
             {
                 "field_id": stat.field_id,
