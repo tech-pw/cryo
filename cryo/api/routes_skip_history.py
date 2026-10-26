@@ -5,12 +5,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from cryo.api.deps import SessionDep, require_viewer
-from cryo.db.models import MaintenanceRun, Table
-from cryo.db.tenant_scope import current_tenant_id, get_scoped_resource, require_tenant
+from cryo.db.models import Table
+from cryo.db.tenant_scope import (
+    current_tenant_id,
+    get_scoped_resource,
+    get_scoped_run,
+    require_tenant,
+)
 from cryo.maintenance.skip_history import SkipEvaluation, list_skip_evaluations
 
 router = APIRouter(prefix="/api/v1", tags=["decisions"])
@@ -64,8 +69,7 @@ def list_run_skip_evaluations(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> SkipEvaluationPage:
-    if session.get(MaintenanceRun, run_id) is None:
-        raise HTTPException(status_code=404, detail="run not found")
+    get_scoped_run(session, run_id)
     rows, total = list_skip_evaluations(
         session,
         run_id=run_id,
