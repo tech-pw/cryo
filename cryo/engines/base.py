@@ -178,6 +178,28 @@ class ExecCtx:
     chunk_checkpointing: bool = False
 
 
+# Hive Metastore unreachable from a Spark driver: congestion or a restart, not the table
+# (#257). Engines mark a failure that survived its retries with METASTORE_UNREACHABLE_MARKER;
+# the raw signatures let a report classify failures from paths that don't mark them.
+METASTORE_UNREACHABLE_MARKER = "metastore_unreachable:"
+METASTORE_UNREACHABLE_SIGNATURES = (
+    "java.net.ConnectException",
+    "java.net.SocketTimeoutException",
+    "TTransportException",
+    "Could not connect to meta store",
+)
+
+
+def is_metastore_unreachable_error(error: str | None) -> bool:
+    if not error:
+        return False
+    if TABLE_NOT_FOUND_MARKER in error:
+        return False
+    return METASTORE_UNREACHABLE_MARKER in error or any(
+        sig in error for sig in METASTORE_UNREACHABLE_SIGNATURES
+    )
+
+
 @dataclass(frozen=True)
 class ExecResult:
     ok: bool
