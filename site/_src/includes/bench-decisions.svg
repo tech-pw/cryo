@@ -1,0 +1,59 @@
+<svg class="bm-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 300" role="img" aria-label="Decision grid. The scheduled DAG rewrote, re-manifested and expired every table every cycle, including healthy ones. Cryo left healthy tables alone, compacted the fragmented ones, and converted delete files on updated tables.">
+<text x="30.0" y="30.0" class="bm-colh" text-anchor="start">Table state</text>
+<text x="330.0" y="30.0" class="bm-colh" text-anchor="middle">Scheduled Spark DAG</text>
+<text x="560.0" y="30.0" class="bm-colh bm-cryo-t" text-anchor="middle">Cryo</text>
+<rect class="bm-row" x="16" y="40" width="688" height="44" rx="8"/>
+<text x="30.0" y="60.0" class="bm-rowh" text-anchor="start">Healthy</text>
+<text x="30.0" y="76.0" class="bm-rows" text-anchor="start">4 large files</text>
+<rect class="bm-chip bm-chip-waste" x="239.7" y="50" width="103.8" height="22" rx="11"/>
+<text x="291.6" y="65.0" class="bm-chipt bm-chip-waste-t" text-anchor="middle">16 not needed</text>
+<rect class="bm-chip bm-chip-exp" x="349.5" y="50" width="70.8" height="22" rx="11"/>
+<text x="384.9" y="65.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-chip bm-chip-exp" x="524.6" y="50" width="70.8" height="22" rx="11"/>
+<text x="560.0" y="65.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-row bm-row-alt" x="16" y="88" width="688" height="44" rx="8"/>
+<text x="30.0" y="108.0" class="bm-rowh" text-anchor="start">Quiet</text>
+<text x="30.0" y="124.0" class="bm-rows" text-anchor="start">12 small files</text>
+<rect class="bm-chip bm-chip-waste" x="239.7" y="98" width="103.8" height="22" rx="11"/>
+<text x="291.6" y="113.0" class="bm-chipt bm-chip-waste-t" text-anchor="middle">16 not needed</text>
+<rect class="bm-chip bm-chip-exp" x="349.5" y="98" width="70.8" height="22" rx="11"/>
+<text x="384.9" y="113.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-chip bm-chip-waste" x="473.0" y="98" width="97.2" height="22" rx="11"/>
+<text x="521.6" y="113.0" class="bm-chipt bm-chip-waste-t" text-anchor="middle">2 not needed</text>
+<rect class="bm-chip bm-chip-exp" x="576.2" y="98" width="70.8" height="22" rx="11"/>
+<text x="611.6" y="113.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-row" x="16" y="136" width="688" height="44" rx="8"/>
+<text x="30.0" y="156.0" class="bm-rowh" text-anchor="start">Fragmenting</text>
+<text x="30.0" y="172.0" class="bm-rows" text-anchor="start">150+ small files</text>
+<rect class="bm-chip bm-chip-ok" x="252.9" y="146" width="77.4" height="22" rx="11"/>
+<text x="291.6" y="161.0" class="bm-chipt bm-chip-ok-t" text-anchor="middle">16 useful</text>
+<rect class="bm-chip bm-chip-exp" x="336.3" y="146" width="70.8" height="22" rx="11"/>
+<text x="371.7" y="161.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-chip bm-chip-ok" x="486.2" y="146" width="70.8" height="22" rx="11"/>
+<text x="521.6" y="161.0" class="bm-chipt bm-chip-ok-t" text-anchor="middle">8 useful</text>
+<rect class="bm-chip bm-chip-exp" x="563.0" y="146" width="70.8" height="22" rx="11"/>
+<text x="598.4" y="161.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-row bm-row-alt" x="16" y="184" width="688" height="44" rx="8"/>
+<text x="30.0" y="204.0" class="bm-rowh" text-anchor="start">Badly fragmented</text>
+<text x="30.0" y="220.0" class="bm-rows" text-anchor="start">600+ small files</text>
+<rect class="bm-chip bm-chip-ok" x="252.9" y="194" width="77.4" height="22" rx="11"/>
+<text x="291.6" y="209.0" class="bm-chipt bm-chip-ok-t" text-anchor="middle">16 useful</text>
+<rect class="bm-chip bm-chip-exp" x="336.3" y="194" width="70.8" height="22" rx="11"/>
+<text x="371.7" y="209.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-chip bm-chip-ok" x="486.2" y="194" width="70.8" height="22" rx="11"/>
+<text x="521.6" y="209.0" class="bm-chipt bm-chip-ok-t" text-anchor="middle">8 useful</text>
+<rect class="bm-chip bm-chip-exp" x="563.0" y="194" width="70.8" height="22" rx="11"/>
+<text x="598.4" y="209.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-row" x="16" y="232" width="688" height="44" rx="8"/>
+<text x="30.0" y="252.0" class="bm-rowh" text-anchor="start">Row updates</text>
+<text x="30.0" y="268.0" class="bm-rows" text-anchor="start">delete files</text>
+<rect class="bm-chip bm-chip-waste" x="239.7" y="242" width="103.8" height="22" rx="11"/>
+<text x="291.6" y="257.0" class="bm-chipt bm-chip-waste-t" text-anchor="middle">16 not needed</text>
+<rect class="bm-chip bm-chip-exp" x="349.5" y="242" width="70.8" height="22" rx="11"/>
+<text x="384.9" y="257.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-chip bm-chip-waste" x="473.0" y="242" width="97.2" height="22" rx="11"/>
+<text x="521.6" y="257.0" class="bm-chipt bm-chip-waste-t" text-anchor="middle">8 not needed</text>
+<rect class="bm-chip bm-chip-exp" x="576.2" y="242" width="70.8" height="22" rx="11"/>
+<text x="611.6" y="257.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<text x="30.0" y="286.0" class="bm-foot" text-anchor="start">Operations per table class over 4 cycles, trial 7 (trials 8 and 9 identical). Expiry is snapshot expiry, a no-op inside a 2-hour test.</text>
+</svg>

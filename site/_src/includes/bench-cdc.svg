@@ -1,0 +1,44 @@
+<svg class="bm-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 330" role="img" aria-label="Line chart. Over two hours of MERGE ingestion, delete files rose steadily to 39 with no maintenance and with a scheduled Spark DAG, whose three compaction attempts all failed on commit conflicts. With Cryo checking every 10 minutes they peaked at 10 and, from its second run on, held between 3 and 6.">
+<line class="bm-grid" x1="52" x2="570" y1="284.0" y2="284.0"/>
+<text x="44.0" y="288.0" class="bm-tick" text-anchor="end">0</text>
+<line class="bm-grid" x1="52" x2="570" y1="219.0" y2="219.0"/>
+<text x="44.0" y="223.0" class="bm-tick" text-anchor="end">10</text>
+<line class="bm-grid" x1="52" x2="570" y1="154.0" y2="154.0"/>
+<text x="44.0" y="158.0" class="bm-tick" text-anchor="end">20</text>
+<line class="bm-grid" x1="52" x2="570" y1="89.0" y2="89.0"/>
+<text x="44.0" y="93.0" class="bm-tick" text-anchor="end">30</text>
+<line class="bm-grid" x1="52" x2="570" y1="24.0" y2="24.0"/>
+<text x="44.0" y="28.0" class="bm-tick" text-anchor="end">40</text>
+<text x="52.0" y="302.0" class="bm-tick" text-anchor="middle">0 min</text>
+<text x="138.3" y="302.0" class="bm-tick" text-anchor="middle">20 min</text>
+<text x="224.7" y="302.0" class="bm-tick" text-anchor="middle">40 min</text>
+<text x="311.0" y="302.0" class="bm-tick" text-anchor="middle">60 min</text>
+<text x="397.3" y="302.0" class="bm-tick" text-anchor="middle">80 min</text>
+<text x="483.7" y="302.0" class="bm-tick" text-anchor="middle">100 min</text>
+<text x="570.0" y="302.0" class="bm-tick" text-anchor="middle">120 min</text>
+<line class="bm-win-cryo" x1="100.2" x2="100.2" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="143.7" x2="143.7" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="186.7" x2="186.7" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="229.8" x2="229.8" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="273.0" x2="273.0" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="316.3" x2="316.3" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="359.5" x2="359.5" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="402.7" x2="402.7" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="445.9" x2="445.9" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="488.8" x2="488.8" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="532.2" x2="532.2" y1="284" y2="278"/>
+<path class="bm-line bm-a0" d="M53.2,284.0H58.3V258.0H72.1V251.5H86.5V245.0H100.9V238.5H115.3V232.0H129.7V225.5H144.1V219.0H158.5V212.5H172.9V206.0H187.2V199.5H201.6V193.0H216.1V186.5H230.4V180.0H244.8V173.5H259.2V167.0H273.6V160.5H288.0V154.0H302.4V147.5H316.8V141.0H331.2V134.5H345.6V128.0H359.9V121.5H374.3V115.0H388.7V108.5H403.1V102.0H417.5V95.5H431.9V89.0H446.3V82.5H460.7V76.0H475.1V69.5H489.5V63.0H503.9V56.5H518.3V50.0H532.7V43.5H547.1V37.0H561.5V30.5H565.8"/>
+<path class="bm-line bm-a1" d="M53.3,284.0H58.5V258.0H72.3V251.5H86.7V245.0H101.1V238.5H115.5V232.0H129.9V225.5H144.3V219.0H158.7V212.5H173.1V206.0H187.5V199.5H188.1V199.5H201.9V193.0H216.3V186.5H230.6V180.0H245.1V173.5H259.5V167.0H273.8V160.5H288.3V154.0H302.7V147.5H317.1V141.0H317.8V141.0H331.4V134.5H345.9V128.0H360.2V121.5H374.7V115.0H389.0V108.5H403.4V102.0H417.9V95.5H432.3V89.0H446.7V82.5H447.5V82.5H461.1V76.0H475.5V69.5H489.8V63.0H504.2V56.5H518.7V50.0H533.0V43.5H547.5V37.0H561.9V30.5H566.3"/>
+<path class="bm-line bm-cryo" d="M53.4,284.0H58.7V258.0H72.6V251.5H86.9V245.0H101.3V238.5H108.0V238.5H115.7V232.0H130.1V225.5H144.4V219.0H151.7V264.5H158.9V258.0H173.3V251.5H187.6V245.0H194.8V264.5H202.1V258.0H216.5V251.5H230.8V245.0H237.9V264.5H245.2V258.0H259.6V251.5H273.9V245.0H281.7V264.5H288.4V258.0H302.8V251.5H317.2V245.0H325.1V264.5H331.6V258.0H346.1V251.5H360.4V245.0H368.3V264.5H374.8V258.0H389.2V251.5H403.6V245.0H412.1V264.5H418.0V258.0H432.5V251.5H446.8V245.0H454.9V264.5H461.2V258.0H475.7V251.5H490.0V245.0H498.3V264.5H504.4V258.0H518.9V251.5H533.2V245.0H541.9V264.5H547.6V258.0H562.1V251.5H566.4"/>
+<g class="bm-fail"><circle cx="188.0" cy="199.5" r="7"/><path d="M185.0,196.5l6,6M191.0,196.5l-6,6"/></g>
+<g class="bm-fail"><circle cx="317.7" cy="141.0" r="7"/><path d="M314.7,138.0l6,6M320.7,138.0l-6,6"/></g>
+<g class="bm-fail"><circle cx="447.4" cy="82.5" r="7"/><path d="M444.4,79.5l6,6M450.4,79.5l-6,6"/></g>
+<text x="580.0" y="28.5" class="bm-lab bm-a0-t" text-anchor="start">No maintenance</text>
+<text x="580.0" y="44.5" class="bm-lab bm-a1-t" text-anchor="start">and scheduled DAG</text>
+<text x="580.0" y="255.5" class="bm-lab bm-cryo-t bm-strong" text-anchor="start">Cryo</text>
+<text x="52.0" y="16.0" class="bm-cap" text-anchor="start">Delete files on a table receiving a MERGE every 200 s</text>
+<text x="65.0" y="50.0" class="bm-note bm-fail-t" text-anchor="start">Scheduled compaction failed</text>
+<text x="65.0" y="65.0" class="bm-note bm-fail-t" text-anchor="start">3 of 3 times (commit conflicts)</text>
+<text x="328.3" y="193.0" class="bm-note bm-cryo-t" text-anchor="start">Cryo, checking every 10 min:</text>
+<text x="328.3" y="208.0" class="bm-note bm-cryo-t" text-anchor="start">held at 3 to 6 from its second run</text>
+</svg>
