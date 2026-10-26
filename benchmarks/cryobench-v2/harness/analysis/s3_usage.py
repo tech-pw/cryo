@@ -9,7 +9,7 @@ from pyarrow import fs
 
 PREFIX = "<benchmark-bucket>/cryo-benchmarks/20261020-spark-001/"
 s3 = fs.S3FileSystem(access_key=os.environ["AWS_ACCESS_KEY_ID"], secret_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-                     region="<region>")
+                     region="ap-south-1")
 agg = defaultdict(lambda: {"objects": 0, "bytes": 0, "min_mtime": None, "max_mtime": None})
 for info in s3.get_file_info(fs.FileSelector(PREFIX, recursive=True)):
     if info.type != fs.FileType.File:
