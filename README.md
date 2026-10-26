@@ -446,15 +446,12 @@ contribution.
 
 ## Tech stack
 
-Three trees ship: Python `cryo/`, Go `engine-go/` (the native compactor) and TypeScript `web/`.
+Three trees: Python `cryo/`, Go `engine-go/` (the native compactor) and TypeScript `web/`.
 
-**Engines in this repo.** The Python control plane (`cryo/`) plans and admits all work and runs
-it on Trino or Spark (GA). The Go native compactor (`engine-go/`) is beta, opt-in per destination
-(`engine_impl=go`) and not the default. The Rust crates (`cryo-engine/`, `cryo-native/`) are
-experimental: they are not built into the images and `cryo-native` is not published to PyPI.
-Native Rust compaction needs a rewrite-files commit that iceberg-rust does not provide yet; the
-upstream tracking epic, [apache/iceberg-rust#2269](https://github.com/apache/iceberg-rust/issues/2269),
-was closed as stale in October 2026 without it.
+**Engines in this repo.** The Python control plane (`cryo/`) scans, grades, plans and admits all
+work, and runs it on the Trino or Spark you already have (both GA). The Go native compactor
+(`engine-go/`) is beta, opt-in per destination (`engine_impl=go`) and not the default. Flink is
+config generation only. There is no Rust engine: Cryo's native path is the Go binary.
 
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy 2.0 + Alembic (PostgreSQL + pgvector), PyIceberg,
   trino-python-client, boto3 (EMR Serverless), Redis, structlog.
