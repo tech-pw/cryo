@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
 from cryo.domain.enums import Mode, OperationType
 from cryo.engines.base import EngineType
 from cryo.engines.spark.sql import render as render_spark
+from cryo.engines.trino.sql import UnsupportedPredicateError
 from cryo.engines.trino.sql import render as render_trino
 from cryo.planner.planner import build_plan
 
@@ -29,7 +32,10 @@ def test_expire_omits_keep_param_when_no_protected_ids() -> None:
     assert "protected_snapshot_ids" not in expire_op.params
 
 
-def test_trino_renderer_does_not_emit_set_snapshots() -> None:
+def test_trino_renderer_refuses_expire_with_protected_ids() -> None:
+    """Trino's expire_snapshots cannot keep a given snapshot id. Rendering it anyway would
+    expire a snapshot the operator protected (issue #198), so the renderer refuses; the
+    execution planner drops the operation with a note before it gets here."""
     plan = build_plan(
         _stats(),
         [],
@@ -37,11 +43,8 @@ def test_trino_renderer_does_not_emit_set_snapshots() -> None:
         {"retention_days": 7, "retain_last": 1},
         protected_snapshot_ids=[9, 7],
     )
-    rendered = render_trino(plan)
-    expire = next(s for s in rendered if str(s.action).endswith("expire_snapshots"))
-    assert "set_snapshots" not in expire.sql
-    assert "retention_threshold => '7d'" in expire.sql
-    assert "retain_last => 1" in expire.sql
+    with pytest.raises(UnsupportedPredicateError, match="protected snapshots"):
+        render_trino(plan)
 
 
 def test_trino_renderer_skips_set_when_no_protected_ids() -> None:

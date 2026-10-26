@@ -21,7 +21,7 @@ Settings that matter for security
 
 Defaults are the code defaults. The chart sets a few of its own in `global.env`, such as `CRYO_SCAN_ENGINE=go` and `CRYO_SCAN_TABLE_TIMEOUT_SECONDS=600`.
 
-232 settings, grouped by the first word of their name.
+235 settings, grouped by the first word of their name.
 
 ### CRYO_AI_*
 
@@ -393,6 +393,17 @@ Defaults are the code defaults. The chart sets a few of its own in `global.env`,
 | `CRYO_SCAN_SMALL_FILE_MB` | `89.6` | *Not described yet.* |
 
 | `CRYO_SCAN_TABLE_TIMEOUT_SECONDS` | `180.0` | Hard wall-clock bound for scanning a single table (catalog load, stats analysis, and orphan-file listing). |
+
+### CRYO_SCHEDULER_*
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+
+| `CRYO_SCHEDULER_BACKLOG_DRAIN_ENABLED` | `true` | After a capped cron run, keep scheduling further batches of the preset&#x27;s remaining candidates whenever the previous batch has drained, until the next cron fire. Each table is attempted at most once per cron period. A preset opts out with guardrails.backlog_drain=false. |
+
+| `CRYO_SCHEDULER_BACKLOG_DRAIN_INTERVAL_SECONDS` | `900` | Minimum time between backlog batches of one preset. |
+
+| `CRYO_SCHEDULER_BACKLOG_DRAIN_LOW_WATER` | `50` | Next backlog batch is scheduled once the preset has at most this many queued, admitted or running jobs. Deferred jobs are not counted: they hold no engine capacity and a few routinely stay deferred for hours. |
 
 ### CRYO_SILENT_*
 

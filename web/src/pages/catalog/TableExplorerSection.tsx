@@ -78,6 +78,7 @@ import {
 import { schemaTableName, tableTooltipName } from "../../lib/tableLabels";
 import { useTableExplorerSelection } from "../useTableExplorerSelection";
 import { formatRelative } from "../operations/runState";
+import { isManualTrigger } from "../../components/table-detail/runs/runModel";
 import { useExplorerViewParam } from "./CatalogDashboard";
 import { TRIAGE_VIEWS, useTriageCounts } from "./tablesTriage";
 
@@ -356,7 +357,7 @@ export const LastRunCell = ({ table }: { table: TableRead }) => {
       </span>
       <span className="pl-3.5 text-xs text-muted-foreground">
         {last.status.charAt(0).toUpperCase() + last.status.slice(1)}
-        {last.trigger === "schedule" ? " · nightly" : last.trigger ? " · manual" : ""}
+        {last.trigger ? (isManualTrigger(last.trigger) ? " · manual" : " · nightly") : ""}
       </span>
     </Link>
   );
