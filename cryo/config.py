@@ -1252,6 +1252,14 @@ class Settings(BaseSettings):
             "job and refuses jobs whose predicted p95 exceeds the per-destination target."
         ),
     )
+    qpp_fail_open: bool = Field(
+        default=False,
+        description=(
+            "When true, a QPP prediction error admits the job (advisory-only deployments). "
+            "By default an error defers the job with reason qpp_gate_check_failed, the same "
+            "fail-closed behaviour as the PII gate."
+        ),
+    )
     qpp_target_p95_ms: int = Field(
         default=10 * 60 * 1000,  # 10 minutes
         gt=0,

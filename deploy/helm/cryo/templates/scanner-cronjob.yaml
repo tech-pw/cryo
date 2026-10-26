@@ -8,11 +8,18 @@ metadata:
 spec:
   schedule: {{ .Values.scanner.schedule | quote }}
   suspend: {{ .Values.scanner.suspend | default false }}
+  # A wedged pod must not pile up behind the schedule: one scanner run at a time (#163).
+  concurrencyPolicy: {{ .Values.scanner.concurrencyPolicy | default "Forbid" }}
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 1
   jobTemplate:
     spec:
       ttlSecondsAfterFinished: 3600
+      # Hard stop for the whole Job. A pod blocked on a hung metastore call once ran for
+      # 7 days with nothing to stop it (#163). Keep it below the schedule interval.
+      {{- with .Values.scanner.activeDeadlineSeconds }}
+      activeDeadlineSeconds: {{ . }}
+      {{- end }}
       # Indexed, so each pod gets a distinct JOB_COMPLETION_INDEX to pass as --chunk-id.
       # Before 2026-09-22 this ran a single pod with no arguments, so cryo.scanner.run fell
       # back to its defaults (chunk_id=0, scan_num_chunks=4) and every run silently discarded

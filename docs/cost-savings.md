@@ -1,7 +1,7 @@
 # Cost & Savings Projection — Implementation Brief
 
-Pickup brief for the next coding session. Design source of truth is `lld.md` §16 (data model,
-config, algorithm), with supporting context in `plan.md` (§2 item 11, decision D12) and `hld.md`
+Pickup brief for the next coding session. Design source of truth is `docs/design/lld.md` §16 (data model,
+config, algorithm), with supporting context in `docs/design/hld.md`
 (§3.10 estimator, §5.5 data flow). This file is the practical "how to build it" guide (backend).
 For the **UI** side — the health-dashboard charts that turn these numbers into storage-gain and
 cost-savings visuals — see `research-and-roadmap.md` Part 7.

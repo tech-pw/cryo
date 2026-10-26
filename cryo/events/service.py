@@ -119,6 +119,10 @@ def _on_table_committed(event: TableCommitted) -> None:
                 delete_files_added=event.delete_files_added,
                 equality_delete_files_added=event.equality_delete_files_added,
                 position_delete_files_added=event.position_delete_files_added,
+                delete_files_removed=event.delete_files_removed,
+                equality_delete_files_removed=event.equality_delete_files_removed,
+                position_delete_files_removed=event.position_delete_files_removed,
+                snapshots_added=event.snapshots_added,
                 committed_at=event.observed_at,
             ),
         )

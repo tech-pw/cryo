@@ -27,9 +27,8 @@ Kubernetes. It replaces a set of Airflow DAGs + dbt macros (see `docs/design/hld
 1. `docs/design/hld.md` — components, data flow, deployment, separation of concerns.
 2. `docs/design/lld.md` — schemas, interfaces, planner algorithm, rendered SQL, API surface.
 3. `docs/CAPABILITIES.md` — what ships today (generated; edit the capability manifest, not the Markdown).
-4. `docs/README.md` — index of the docs. Internal planning files (`plan.md`, `todo.md`) live in the
-   internal repository only and are excluded from the public mirror
-   (`scripts/oss_mirror_exclude_paths.txt`).
+4. `docs/README.md` — index of the docs. Track planned work in GitHub Issues; there are no
+   `plan.md` or `todo.md` files in this repository.
 5. `docs/` — persistent project brain. Always keep it current with fixes, implementations,
    new features, design decisions, operational notes, and any project knowledge future agents
    or maintainers will need. If you're picking up work with no other context, start at
@@ -109,6 +108,9 @@ See `docs/design/lld.md` §1 for the full tree. Quick map:
 When touching scanner/planner/governor/engines, keep all of these (ported from today):
 
 - Partition-aware OPTIMIZE from **pre-computed scan data** (no live `$files` scans on hot paths).
+  One deliberate exception: the Trino engine sums `file_size_in_bytes` from `"table$files"`
+  before and after expire_snapshots / optimize / convert_deletes / expire_data to record
+  `actual_bytes_freed`. It is best-effort (failure means unmeasured) and never drives planning.
 - **GB-budgeted chunking** + **max partitions/chunk** cap (avoid Trino `FilterNode` complexity).
 - **Oversize partition runs alone**; **small-table bypass** (single full-table OPTIMIZE).
 - Partition **transform handling**: identity/day/month/year + `$partitions` introspection.
