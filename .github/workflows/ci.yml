@@ -489,7 +489,7 @@ jobs:
       - name: Start MinIO and Iceberg REST
         # critical-path.spec.ts drives the real "New lakehouse" wizard, whose
         # Test connection step makes a real list_namespaces() call -- it needs
-        # something listening at the REST URI it fills in, same as native-e2e.
+        # something listening at the REST URI it fills in, same as native-e2e-go.
         working-directory: .
         run: |
           docker compose -f docker-compose.dev-datalake.yml up -d minio minio-init iceberg-rest
