@@ -24,8 +24,26 @@ except ImportError:
     HAS_STRUCTLOG = False
 
 
+def quiet_sqlglot_logger() -> None:
+    """Keep sqlglot from copying raw query text into Cryo's logs (#165).
+
+    When sqlglot meets syntax it does not support (``PREPARE ... FROM`` / ``EXECUTE ...
+    USING`` from BI tools, among others) it logs the *entire statement* at WARNING before
+    falling back to a ``Command`` node. Ingested query-log SQL is user data -- string
+    literals, bound parameter values and client comments that can carry user identifiers --
+    so none of that may reach container logs. Cryo's own callers already swallow parse
+    failures and never log the statement, so ERROR is the only level sqlglot still needs.
+    Called from logging setup and from each module that parses query text, so processes that
+    never run ``configure_logging`` (scripts, notebooks, tests) are covered too.
+    """
+    logger = logging.getLogger("sqlglot")
+    if logger.level < logging.ERROR:
+        logger.setLevel(logging.ERROR)
+
+
 def quiet_third_party_loggers() -> None:
     """Entrypoints using ``logging.basicConfig`` instead of ``configure_logging`` call this."""
+    quiet_sqlglot_logger()
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     # httpx logs every request URL at INFO; Slack incoming-webhook URLs are the credential
     # itself, and the root-logger SensitiveDataFilter never sees propagated child records.

@@ -7254,7 +7254,12 @@ export interface components {
             /** Current Storage Bytes */
             current_storage_bytes: number;
             /** Reclaimable Bytes */
-            reclaimable_bytes: number;
+            reclaimable_bytes?: number | null;
+            /**
+             * Reclaimable Tables Measured
+             * @default 0
+             */
+            reclaimable_tables_measured: number;
             /** Precision Coverage */
             precision_coverage?: {
                 [key: string]: number;
@@ -7266,11 +7271,10 @@ export interface components {
             orphan_scan_stale: boolean;
             /** Last Full Cost Scan At */
             last_full_cost_scan_at?: string | null;
-            /**
-             * Total Realized Savings Usd
-             * @default 0
-             */
-            total_realized_savings_usd: number;
+            /** Total Realized Savings Usd */
+            total_realized_savings_usd?: number | null;
+            /** Total Realized Bytes Freed */
+            total_realized_bytes_freed?: number | null;
             /** Query Request Savings Usd Month */
             query_request_savings_usd_month?: number | null;
             /**

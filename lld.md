@@ -295,6 +295,11 @@ CREATE INDEX ON cryo.table_cost_history (table_id, scan_at);
 > **Realized savings**: after a maintenance job, the Worker records `actual_bytes_freed` per
 > operation on `cryo.audit_log` (new nullable column) so the UI can show *predicted vs realized*
 > and the model can self-calibrate. This is additive to §3.4's `audit_log`.
+>
+> On Trino the value is the drop in `SUM(file_size_in_bytes)` over `catalog.schema."table$files"`
+> read just before and just after the statement (expire_snapshots, optimize, convert_deletes,
+> expire_data). These two live `$files` reads are the only exception to the no-live-scans rule,
+> are best-effort (any failure leaves the value null), and never feed the planner.
 
 ### 3.3 Presets, rules, assignments (binding layer)
 

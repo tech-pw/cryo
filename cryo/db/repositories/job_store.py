@@ -160,6 +160,37 @@ class SQLJobStore:
             record_missing_metadata(session, uuid.UUID(table_id), reason=reason)
             session.commit()
 
+    def update_resource_failure_backoff(
+        self, table_id: str, status: JobStatus, error: str | None
+    ) -> None:
+        """Arm or end the per-table deadline/OOM backoff after a job finishes (#180).
+
+        See cryo.maintenance.failure_backoff for the schedule and why it lives on the
+        table's maintenance_retry_after."""
+        from cryo.maintenance.failure_backoff import (
+            clear_resource_failure_backoff,
+            is_resource_exhaustion_error,
+            record_resource_failure_backoff,
+        )
+
+        with self._session_factory() as session:
+            if status is JobStatus.SUCCEEDED:
+                clear_resource_failure_backoff(session, uuid.UUID(table_id))
+            elif status in (JobStatus.FAILED, JobStatus.PARTIAL) and (
+                is_resource_exhaustion_error(error)
+            ):
+                until = record_resource_failure_backoff(session, uuid.UUID(table_id))
+                if until is not None:
+                    logger.warning(
+                        "Table %s hit its deadline or OOM on consecutive runs; maintenance "
+                        "backed off until %s",
+                        table_id,
+                        until.isoformat(),
+                    )
+            else:
+                return
+            session.commit()
+
     def set_force_admit(self, job_id: str, value: bool) -> None:
         with self._session_factory() as session:
             job = _load_job(session, uuid.UUID(job_id))

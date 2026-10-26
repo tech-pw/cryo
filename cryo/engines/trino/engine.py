@@ -92,14 +92,14 @@ class TrinoEngine:
             table_id,
             stmt.sql[:_SQL_LOG_TRUNCATE],
         )
-        table_ref_raw = stmt.metadata.get("table_ref")
-        table_ref = table_ref_raw if isinstance(table_ref_raw, str) else None
-        measure_bytes = stmt.action in _BYTES_MEASURABLE_VIA_FILES_DIFF and table_ref is not None
+        files_ref_raw = stmt.metadata.get("files_ref")
+        files_ref = files_ref_raw if isinstance(files_ref_raw, str) else None
+        measure_bytes = stmt.action in _BYTES_MEASURABLE_VIA_FILES_DIFF and files_ref is not None
         try:
             for setup_sql in self._statement_session_setup(stmt, coordinator):
                 cursor.execute(setup_sql)
             bytes_before = (
-                _live_file_bytes(cursor, table_ref) if measure_bytes and table_ref else None
+                _live_file_bytes(cursor, files_ref) if measure_bytes and files_ref else None
             )
             # Regression, confirmed live 2026-09-09/10: a worker crash (OOM, pod eviction)
             # while blocked inside the synchronous cursor.execute() below left the job
@@ -171,8 +171,8 @@ class TrinoEngine:
                     pass
 
             actual_bytes_freed = None
-            if bytes_before is not None and table_ref:
-                bytes_after = _live_file_bytes(cursor, table_ref)
+            if bytes_before is not None and files_ref:
+                bytes_after = _live_file_bytes(cursor, files_ref)
                 if bytes_after is not None:
                     # Clamp at zero: OPTIMIZE/expire_snapshots only remove/rewrite files, they
                     # never add net live bytes, but a concurrent writer landing between the
@@ -250,7 +250,7 @@ class TrinoEngine:
         return self.coordinators[0]
 
 
-def _live_file_bytes(cursor: Any, table_ref: str) -> int | None:
+def _live_file_bytes(cursor: Any, files_ref: str) -> int | None:
     """Sum of file_size_in_bytes over a table's currently-referenced data/delete files.
 
     Best-effort: any failure (unsupported connector, permission gap, transient error) returns
@@ -259,13 +259,13 @@ def _live_file_bytes(cursor: Any, table_ref: str) -> int | None:
     weren't attempted at all.
     """
     try:
-        cursor.execute(f'SELECT COALESCE(SUM(file_size_in_bytes), 0) FROM {table_ref}."$files"')
+        cursor.execute(f"SELECT COALESCE(SUM(file_size_in_bytes), 0) FROM {files_ref}")
         row = cursor.fetchone()
         if row is None or row[0] is None:
             return None
         return int(row[0])
     except Exception:  # noqa: BLE001 - measurement is best-effort, never fatal
-        logger.debug("Live $files byte sum failed for %s", table_ref, exc_info=True)
+        logger.debug("Live $files byte sum failed for %s", files_ref, exc_info=True)
         return None
 
 

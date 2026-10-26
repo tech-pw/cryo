@@ -41,7 +41,9 @@ from sqlalchemy.orm import Session
 
 from cryo.db.models import AuditLog, Destination, MaintenanceJob, TableStats
 from cryo.domain.enums import JobStatus, OperationType
+from cryo.engines.base import capacity_refusal_error, is_capacity_refusal
 from cryo.engines.spark.k8s import JobRunState
+from cryo.engines.spark.procedure_metrics import rewrite_file_counts
 
 if TYPE_CHECKING:
     from cryo.engines.spark.k8s_engine import SparkK8sEngine
@@ -133,6 +135,11 @@ def sweep_pending_fallback_dispatches(
             row.status = "OK"
             if result.bytes_removed is not None:
                 row.actual_bytes_freed = result.bytes_removed
+            input_files, output_files = rewrite_file_counts(str(row.action), result.metrics)
+            if input_files is not None:
+                row.input_files_count = input_files
+            if output_files is not None:
+                row.output_files_count = output_files
             resolved_ok += 1
             job_status = JobStatus.SUCCEEDED
         elif result.state == JobRunState.UNKNOWN:
@@ -147,6 +154,13 @@ def sweep_pending_fallback_dispatches(
             # No positive evidence of success -- FAILED (not SUCCEEDED) is the safe default
             # for the job row, matching how a genuinely-failed dispatch is treated below.
             job_status = JobStatus.FAILED
+        elif is_capacity_refusal(result.state_details):
+            # A ResourceQuota refused the driver pod or Service: nothing ran, and the table
+            # is fine. Defer the job so the reconciler requeues it (issue #159).
+            row.status = "DEFERRED"
+            row.detail = capacity_refusal_error(result.state_details or "")
+            resolved_failed += 1
+            job_status = JobStatus.DEFERRED
         else:
             row.status = "FAILED"
             row.detail = result.state_details or row.detail

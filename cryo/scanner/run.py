@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
+import os
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, NoReturn, Protocol
 from uuid import UUID
 
 from sqlalchemy import select
@@ -65,6 +68,11 @@ class ScanSummary:
     # Failing tables not yet due on the retry ladder (persistence.SCAN_RETRY_LADDER).
     deferred: int = 0
     cancelled: bool = False
+    # Sources whose table discovery failed (timeout, metastore transport error, bad
+    # credentials). Their tables are not in `discovered`, so a metastore outage must not look
+    # like a clean scan of an empty catalog (#162). main() exits non-zero when this is set.
+    sources_failed: int = 0
+    discovery_errors: tuple[str, ...] = ()
 
 
 class ScanProgressCallback(Protocol):
@@ -116,6 +124,32 @@ def deterministic_chunk[T](items: list[T], *, chunk_id: int, num_chunks: int) ->
     return [item for index, item in enumerate(items) if index % num_chunks == chunk_id]
 
 
+def stable_chunk(
+    candidates: list[ScanCandidate], *, chunk_id: int, num_chunks: int
+) -> list[ScanCandidate]:
+    """This chunk's tables, chosen by a hash of each table's identity.
+
+    Membership depends only on (source id, schema, table), never on scan state. The old
+    index-modulo slice of the staleness-sorted list changed under the run's own writes:
+    chunk 0 refreshed scan_at for its tables, chunk 1 re-sorted and sliced a different
+    order, and in one 4-chunk run 11 of 38 tables fell into no chunk while others were
+    scanned twice (#154). Stalest-first ordering still applies inside each chunk.
+    """
+    if num_chunks <= 0:
+        raise ValueError("num_chunks must be positive")
+    if chunk_id < 0 or chunk_id >= num_chunks:
+        raise ValueError("chunk_id must be between 0 and num_chunks - 1")
+    if num_chunks == 1:
+        return list(candidates)
+    return [candidate for candidate in candidates if _chunk_of(candidate, num_chunks) == chunk_id]
+
+
+def _chunk_of(candidate: ScanCandidate, num_chunks: int) -> int:
+    key = f"{candidate.source.id}/{candidate.schema_name}/{candidate.table_name}"
+    digest = hashlib.sha1(key.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return int(digest, 16) % num_chunks
+
+
 def order_by_staleness(session: Session, candidates: list[ScanCandidate]) -> list[ScanCandidate]:
     """Sort candidates stalest-first, never-scanned before everything else.
 
@@ -128,8 +162,9 @@ def order_by_staleness(session: Session, candidates: list[ScanCandidate]) -> lis
 
     Stalest-first makes the run self-correcting instead: whatever it does not reach this pass
     is nearer the front of the next one. Same idea as Amoro's `balanced` scheduling policy.
-    Ordering is total (staleness, then catalog order) so chunk assignment stays deterministic
-    for a given fleet state.
+    Ordering is total (staleness, then catalog order). It decides the order within a chunk
+    only: chunk membership comes from stable_chunk, because each chunk's own writes change
+    the fleet state the next chunk would sort by (#154).
     """
     if not candidates:
         return []
@@ -223,8 +258,17 @@ def run_scan(
         # real error and let a broken source silently "succeed" with 0 tables. Raising here
         # routes it through the caller's existing failure handling instead.
         raise RuntimeError("; ".join(discovery_errors))
-    candidates = order_by_staleness(session, candidates)
-    assigned = deterministic_chunk(candidates, chunk_id=chunk_id, num_chunks=total_chunks)
+    if discovery_errors:
+        logger.error(
+            "Scanner chunk %s/%s: table discovery failed for %d source(s): %s",
+            chunk_id,
+            total_chunks,
+            len(discovery_errors),
+            "; ".join(discovery_errors),
+        )
+    assigned = order_by_staleness(
+        session, stable_chunk(candidates, chunk_id=chunk_id, num_chunks=total_chunks)
+    )
     honor_retry_backoff = not full_scan and table_ids is None and table_names is None
 
     logger.info(
@@ -247,7 +291,7 @@ def run_scan(
     )
 
     if effective_parallel > 0 and len(assigned) > 1:
-        return _run_scan_parallel(
+        summary = _run_scan_parallel(
             assigned,
             settings=settings,
             full_scan=full_scan,
@@ -259,19 +303,26 @@ def run_scan(
             progress_callback=progress_callback,
             cancel_checker=cancel_checker,
         )
-
-    return _run_scan_serial(
-        session,
-        assigned,
-        settings=settings,
-        full_scan=full_scan,
-        honor_retry_backoff=honor_retry_backoff,
-        cost_full_scan=cost_full_scan,
-        scan_at=scan_at,
-        total_discovered=len(candidates),
-        progress_callback=progress_callback,
-        cancel_checker=cancel_checker,
-    )
+    else:
+        summary = _run_scan_serial(
+            session,
+            assigned,
+            settings=settings,
+            full_scan=full_scan,
+            honor_retry_backoff=honor_retry_backoff,
+            cost_full_scan=cost_full_scan,
+            scan_at=scan_at,
+            total_discovered=len(candidates),
+            progress_callback=progress_callback,
+            cancel_checker=cancel_checker,
+        )
+    if discovery_errors:
+        summary = replace(
+            summary,
+            sources_failed=len(discovery_errors),
+            discovery_errors=tuple(discovery_errors),
+        )
+    return summary
 
 
 def _run_scan_serial(
@@ -697,7 +748,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None) -> int:
+    """One-shot scan; returns the process exit code.
+
+    Non-zero when any source failed discovery, so the Job and CronJob report the failure and
+    alerting fires instead of a metastore outage passing as an empty catalog (#162).
+    """
     configure_process_logging()
     args = parse_args(argv)
     with SessionLocal() as session:
@@ -711,6 +767,26 @@ def main(argv: list[str] | None = None) -> None:
             parallel_tables=args.parallel_tables,
         )
     logger.info("Scanner finished: %s", summary)
+    if summary.sources_failed:
+        logger.error(
+            "Scanner chunk failed: discovery failed for %d source(s)", summary.sources_failed
+        )
+        return 1
+    return 0
+
+
+def _exit_process(code: int) -> NoReturn:
+    """Exit without joining abandoned executor threads.
+
+    _run_bounded abandons a timed-out catalog call, but its worker thread stays blocked in
+    the catalog client. concurrent.futures joins its workers at interpreter exit, so with a
+    hung metastore socket a finished scanner pod never exited (one ran 7 days, #163).
+    Flush logs and streams, then os._exit.
+    """
+    logging.shutdown()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
 
 
 def _discover_candidates(
@@ -1020,4 +1096,4 @@ def _rebuild_cost_analysis(
 
 
 if __name__ == "__main__":
-    main()
+    _exit_process(main())

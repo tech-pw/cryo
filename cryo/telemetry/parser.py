@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from cryo.observability.logging import quiet_sqlglot_logger
+
 
 @dataclass
 class ColumnReference:
@@ -80,6 +82,7 @@ def extract_query_ranges(sql: str, *, open_ended: bool = False) -> list[QueryRan
         from sqlglot import exp
     except ImportError:
         return []
+    quiet_sqlglot_logger()  # never let sqlglot log the statement text (#165)
     try:
         parsed = sqlglot.parse_one(sql, read="trino")
     except Exception:
@@ -159,6 +162,7 @@ def _parse_with_sqlglot(sql: str) -> PredicateInfo | None:
         return None
 
     info = PredicateInfo()
+    quiet_sqlglot_logger()  # never let sqlglot log the statement text (#165)
     try:
         parsed = sqlglot.parse_one(sql, read="trino")
     except Exception:

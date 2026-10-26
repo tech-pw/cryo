@@ -462,9 +462,13 @@ export const CostOverviewTab = ({
               hint={<MetricHint label="Storage dollars only. Compaction rewrites data, so its storage saving is delete-file bytes, not the size of the small files." />}
             />
             <MetricTile
-              label="Saved to date"
-              value={displayCost(data.totals.total_realized_savings_usd)}
-              hint={<MetricHint label="Bytes maintenance freed, priced at the default storage rate. Not a measured drop in the AWS bill, and it does not subtract what the maintenance itself cost." />}
+              label="Reclaimed storage value"
+              value={
+                data.totals.total_realized_savings_usd == null
+                  ? NOT_MEASURED
+                  : `≈ ${formatCurrency(data.totals.total_realized_savings_usd)}/month`
+              }
+              hint={<MetricHint label="Monthly storage value of the bytes successful reclaim actions have freed, at the default storage rate. A per-month rate, not lifetime dollars, and not a measured drop in the AWS bill. It does not subtract what the maintenance itself cost or data written since." />}
             />
           </MetricGrid>
           <MetricGrid columns={3} className="mb-3">
@@ -488,7 +492,15 @@ export const CostOverviewTab = ({
             <MetricTile
               label="Reclaimable storage"
               value={displayBytes(data.totals.reclaimable_bytes)}
-              hint={<MetricHint label="Disk space maintenance would free up." />}
+              hint={
+                <MetricHint
+                  label={
+                    data.totals.reclaimable_bytes == null
+                      ? "Disk space maintenance would free up. No table has a measured figure yet."
+                      : `Disk space maintenance would free up, across ${data.totals.reclaimable_tables_measured ?? 0} tables with a measured figure.`
+                  }
+                />
+              }
             />
             <MetricTile
               label="Precision coverage"

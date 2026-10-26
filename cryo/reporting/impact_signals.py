@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -60,6 +60,19 @@ _RECLAIM_ACTIONS = (
     "rewrite_position_deletes",
 )
 _SUCCESS_STATUSES = ("OK", "succeeded")
+
+
+def realized_reclaim_conditions() -> tuple[Any, ...]:
+    """The one WHERE clause for "bytes maintenance actually freed".
+
+    Shared by the impact north star, per-run realized savings and the cost dashboard's
+    realized-savings tiles and trend, which used to sum every audit row with bytes, failed and
+    non-reclaim actions included, and so disagreed with Impact (issue #189).
+    """
+    return (
+        AuditLog.action.in_(_RECLAIM_ACTIONS),
+        AuditLog.status.in_(_SUCCESS_STATUSES),
+    )
 
 
 @dataclass(frozen=True)
@@ -185,8 +198,7 @@ def _daily_impact(session: Session, day_start: datetime, day_end: datetime) -> D
         ).where(
             AuditLog.ts >= day_start,
             AuditLog.ts < day_end,
-            AuditLog.action.in_(_RECLAIM_ACTIONS),
-            AuditLog.status.in_(_SUCCESS_STATUSES),
+            *realized_reclaim_conditions(),
         )
     ).one()
     bytes_freed, actions_succeeded, tables_touched, actions_with_bytes_evidence = row

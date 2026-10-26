@@ -161,9 +161,9 @@ export const Impact = ({ embedded = false }: { embedded?: boolean }) => {
       {hasRows ? (
         <MetricGrid columns={2}>
           <MetricTile
-            label="Saved to date"
-            value={realized == null ? "Not measured" : formatCurrency(realized)}
-            hint="Recorded after maintenance runs. Missing days are left out, not counted as zero."
+            label="Reclaimed storage value"
+            value={realized == null ? "Not measured" : `≈ ${formatCurrency(realized)}/month`}
+            hint="Monthly storage value of the bytes successful reclaim actions freed, not lifetime dollars. Missing days are left out, not counted as zero."
           />
         </MetricGrid>
       ) : null}

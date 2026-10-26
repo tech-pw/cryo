@@ -83,6 +83,54 @@ def bytes_removed_from_log(text: str | None) -> int | None:
     return found
 
 
+def result_metrics_from_log(text: str | None) -> dict[str, Any] | None:
+    """The ``metrics`` of the last successful ``[cryo-result]`` line, or None.
+
+    The runner prints the procedure's single-row counters there (for optimize,
+    ``rewritten_data_files_count`` / ``added_data_files_count`` / ``rewritten_bytes_count``).
+    The Spark-on-K8s success path used to keep only ``bytes_removed`` from the same line,
+    so every optimize run recorded null file counts (issue #155).
+    """
+    if not text:
+        return None
+    found: dict[str, Any] | None = None
+    for line in text.splitlines():
+        marker = line.find(RESULT_PREFIX)
+        if marker < 0:
+            continue
+        try:
+            payload = json.loads(line[marker + len(RESULT_PREFIX) :])
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(payload, dict)
+            and payload.get("ok")
+            and isinstance(payload.get("metrics"), dict)
+        ):
+            found = dict(payload["metrics"])
+    return found
+
+
+_REWRITE_ACTIONS = frozenset({"optimize", "convert_deletes", "rewrite_position_deletes"})
+
+
+def rewrite_file_counts(
+    action: str, metrics: dict[str, Any] | None
+) -> tuple[int | None, int | None]:
+    """(input files, output files) for a rewrite procedure; (None, None) when unmeasured."""
+    if action not in _REWRITE_ACTIONS or not metrics:
+        return None, None
+    if action == "rewrite_position_deletes":
+        return (
+            _optional_int(metrics.get("rewritten_delete_files_count")),
+            _optional_int(metrics.get("added_delete_files_count")),
+        )
+    return (
+        _optional_int(metrics.get("rewritten_data_files_count")),
+        _optional_int(metrics.get("added_data_files_count")),
+    )
+
+
 def _optional_int(value: Any) -> int | None:
     if value is None or isinstance(value, bool):
         return None

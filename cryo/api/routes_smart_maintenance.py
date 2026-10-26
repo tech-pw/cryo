@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
-from sqlalchemy.orm import joinedload, sessionmaker
+from sqlalchemy.orm import Session, joinedload, sessionmaker
 
 from cryo.api.deps import SessionDep, require_editor, require_operator, require_viewer
 from cryo.api.schemas import MaintenanceRunResponse
@@ -26,6 +26,7 @@ from cryo.db.models import (
 from cryo.db.repositories import presets
 from cryo.db.repositories.exclusions import excluded_table_ids
 from cryo.db.repositories.intents import IntentStore
+from cryo.db.tenant_scope import get_scoped_resource, tenant_filter_id
 from cryo.domain.enums import EngineType, Mode, OperationType
 from cryo.domain.intents import AttemptStatus, EffectState, MaintenanceIntentRecord
 from cryo.domain.models import MaintenancePlan, Operation
@@ -215,12 +216,15 @@ def list_detection_tiers(
     _principal: ViewerPrincipalDep,
     limit: int = 200,
 ) -> DetectionTierResponse:
-    rows = session.scalars(
+    tier_stmt = (
         select(Table)
         .options(joinedload(Table.stats))
         .join(TableStats, TableStats.table_id == Table.id)
-        .limit(max(1, min(limit, 1000)))
-    ).all()
+    )
+    tenant_id = tenant_filter_id(session)
+    if tenant_id is not None:
+        tier_stmt = tier_stmt.where(Table.tenant_id == tenant_id)
+    rows = session.scalars(tier_stmt.limit(max(1, min(limit, 1000)))).all()
     items: list[DetectionTierRow] = []
     for table in rows:
         stats = table.stats
@@ -249,6 +253,7 @@ def get_table_roi(
     session: SessionDep,
     _principal: ViewerPrincipalDep,
 ) -> ROIBreakdownRead:
+    get_scoped_resource(session, Table, table_id, resource_type="Table")
     stats = session.get(TableStats, table_id)
     if stats is None:
         raise HTTPException(status_code=404, detail="Table stats not found")
@@ -334,6 +339,7 @@ def table_workload_forecast(
     _principal: ViewerPrincipalDep,
     horizon_hours: int = 24,
 ) -> WorkloadForecastRead:
+    get_scoped_resource(session, Table, table_id, resource_type="Table")
     forecaster = WorkloadForecaster()
     forecast = forecaster.forecast(
         session, table_id, horizon_hours=max(1, min(horizon_hours, 7 * 24))
@@ -361,6 +367,9 @@ def list_layout_recommendations(
     )
     if status:
         stmt = stmt.where(LayoutRecommendation.status == status)
+    tenant_id = tenant_filter_id(session)
+    if tenant_id is not None:
+        stmt = stmt.where(Table.tenant_id == tenant_id)
     rows = session.execute(stmt.order_by(LayoutRecommendation.updated_at.desc()).limit(501)).all()
     truncated = len(rows) > 500
     rows = rows[:500]
@@ -394,9 +403,7 @@ def approve_layout_recommendation(
     session: SessionDep,
     principal: OperatorPrincipalDep,
 ) -> LayoutRecommendationRead:
-    recommendation = session.get(LayoutRecommendation, recommendation_id)
-    if recommendation is None:
-        raise HTTPException(status_code=404, detail="Recommendation not found")
+    recommendation, table = _scoped_recommendation(session, recommendation_id)
     recommendation.status = "approved"
     recommendation.approved_at = datetime.now(UTC)
     recommendation.approved_by = principal.subject
@@ -405,9 +412,6 @@ def approve_layout_recommendation(
     recommendation.dismissed_by = None
     recommendation.dismissed_reason = None
     session.commit()
-    table = session.get(Table, recommendation.table_id)
-    if table is None:
-        raise HTTPException(status_code=404, detail="Table not found")
     return LayoutRecommendationRead(
         id=recommendation.id,
         table_id=recommendation.table_id,
@@ -434,17 +438,12 @@ def dismiss_layout_recommendation(
     session: SessionDep,
     principal: OperatorPrincipalDep,
 ) -> LayoutRecommendationRead:
-    recommendation = session.get(LayoutRecommendation, recommendation_id)
-    if recommendation is None:
-        raise HTTPException(status_code=404, detail="Recommendation not found")
+    recommendation, table = _scoped_recommendation(session, recommendation_id)
     recommendation.status = "rejected"
     recommendation.dismissed_at = datetime.now(UTC)
     recommendation.dismissed_by = principal.subject
     recommendation.dismissed_reason = payload.reason
     session.commit()
-    table = session.get(Table, recommendation.table_id)
-    if table is None:
-        raise HTTPException(status_code=404, detail="Table not found")
     return LayoutRecommendationRead(
         id=recommendation.id,
         table_id=recommendation.table_id,
@@ -484,9 +483,7 @@ def execute_layout_recommendation(
     persists write.sort-order for future writers on success, and only marks the
     recommendation applied if the rewrite genuinely succeeded.
     """
-    recommendation = session.get(LayoutRecommendation, recommendation_id)
-    if recommendation is None:
-        raise HTTPException(status_code=404, detail="Recommendation not found")
+    recommendation, table = _scoped_recommendation(session, recommendation_id)
     if recommendation.status != "approved":
         raise HTTPException(
             status_code=400,
@@ -503,10 +500,6 @@ def execute_layout_recommendation(
     columns = _normalize_recommended_columns(recommendation.recommended_columns)
     if not columns:
         raise HTTPException(status_code=400, detail="Recommendation has no columns to apply")
-
-    table = session.get(Table, recommendation.table_id)
-    if table is None:
-        raise HTTPException(status_code=404, detail="Table not found")
 
     # Regression, 2026-08-11: recommended_columns comes straight from QueryPattern.column_name
     # telemetry (get_recommended_sort_columns in cryo/telemetry/patterns.py), which is never
@@ -1025,6 +1018,21 @@ def execute_layout_recommendation(
     session.commit()
 
     return MaintenanceRunResponse(run_id=run.id, job_ids=[job.id], status=run.status)
+
+
+def _scoped_recommendation(
+    session: Session, recommendation_id: uuid.UUID
+) -> tuple[LayoutRecommendation, Table]:
+    """Load a recommendation and its table, 404 when either is missing or the table belongs
+    to another tenant (so another tenant's recommendation IDs are indistinguishable from
+    unknown ones)."""
+    recommendation = session.get(LayoutRecommendation, recommendation_id)
+    if recommendation is None:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    table = get_scoped_resource(
+        session, Table, recommendation.table_id, resource_type="Recommendation"
+    )
+    return recommendation, table
 
 
 def _layout_effect_result(result: ExecResult) -> dict[str, Any]:

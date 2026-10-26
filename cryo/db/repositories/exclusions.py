@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from sqlalchemy import ColumnElement, and_, exists, func, or_, select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import AuditLog, MaintenanceExclusion, Table
+from cryo.db.models import AuditLog, MaintenanceExclusion, Source, Table
 
 
 class ExclusionExistsError(ValueError):
@@ -46,15 +46,21 @@ def excluded_table_ids(session: Session, table_ids: Sequence[uuid.UUID]) -> set[
     )
 
 
-def list_exclusions(session: Session) -> list[MaintenanceExclusion]:
-    return list(
-        session.scalars(
-            select(MaintenanceExclusion).order_by(
-                MaintenanceExclusion.schema_name,
-                MaintenanceExclusion.table_name.nulls_first(),
+def list_exclusions(
+    session: Session, *, tenant_id: uuid.UUID | None = None
+) -> list[MaintenanceExclusion]:
+    """All exclusions, or only those on ``tenant_id``'s sources when it is given."""
+    stmt = select(MaintenanceExclusion).order_by(
+        MaintenanceExclusion.schema_name,
+        MaintenanceExclusion.table_name.nulls_first(),
+    )
+    if tenant_id is not None:
+        stmt = stmt.where(
+            MaintenanceExclusion.source_id.in_(
+                select(Source.id).where(Source.tenant_id == tenant_id)
             )
         )
-    )
+    return list(session.scalars(stmt))
 
 
 def _target(exclusion: MaintenanceExclusion) -> str:

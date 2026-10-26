@@ -49,4 +49,19 @@ paths = [
   '''(?i)(?:^|/)engine-go/third_party/.*''',
 ]
 
+[[allowlists]]
+description = "Dependency lockfiles: package hashes and wheel tags match entropy rules. SCA covers these files."
+paths = [
+  '''(?i)(?:^|/)uv\.lock$''',
+  '''(?i)(?:^|/)package-lock\.json$''',
+  '''(?i)(?:^|/)Cargo\.lock$''',
+  '''(?i)(?:^|/)go\.sum$''',
+]
+
+[[allowlists]]
+description = "Generated architecture diagram pages: bundled viewer JS and i18n JSON, no credentials"
+paths = [
+  '''(?i)(?:^|/)site/diagrams/[^/]+\.html$''',
+]
+
 # CI trigger for docs-only comparison fix. Safe to delete after #81 merges.

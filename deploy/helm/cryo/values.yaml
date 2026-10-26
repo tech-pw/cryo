@@ -202,6 +202,11 @@ scanner:
   # so they cannot drift apart -- a --num-chunks larger than completions silently drops the
   # unclaimed chunks, which is the 2026-09-22 bug (see scanner-cronjob.yaml).
   chunks: 4
+  # Forbid: a new run does not start while the previous one is still going.
+  concurrencyPolicy: Forbid
+  # Kill a scanner Job that is still running after this long (5.5h, under the 6h schedule).
+  # Set to null to disable.
+  activeDeadlineSeconds: 19800
   resources:
     requests:
       cpu: 500m

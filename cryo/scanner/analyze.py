@@ -431,8 +431,13 @@ def analyze_table(
             format_version=format_version,
             history=stats_history,
         )
+    # One small-file definition for the score, the planner (min_small_files), the
+    # file_degradation trigger and the UI: compactable small files, i.e. files under
+    # scan_small_file_mb in partitions holding more than one of them. Scoring the separate
+    # "every file under 8 MiB" count graded tables down for fragmentation that the planner
+    # would never act on and the UI's small-file count did not show (issue #191).
     score, grade, health_deductions = compute_health_score(
-        stats_for_health, health_small_files, now=scan_time
+        stats_for_health, small_files_count, now=scan_time
     )
     column_quality = quality_accum.finish()
     quality_summary = summarize_column_quality(column_quality)
@@ -497,6 +502,8 @@ def analyze_table(
         "equality_delete_files": equality_delete_files,
         "position_delete_files": position_delete_files,
         "files_below_target": files_below_target,
+        # Informational only (not scored): every data file under HEALTH_SMALL_FILE_BYTES.
+        "files_under_8mib": health_small_files,
         "bytes_below_target": bytes_below_target,
         "reduction_target_bytes": reduction_target_bytes,
         "location": table_location(table_obj),

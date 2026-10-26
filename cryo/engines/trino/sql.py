@@ -12,6 +12,7 @@ from cryo.domain.models import (
 )
 from cryo.engines.base import RenderedStatement
 from cryo.engines.expire_data_sql import expire_data_metadata, render_expire_data_delete
+from cryo.engines.table_ref import split_table_ref
 from cryo.planner.partitions import DEFAULT_RENDERABLE_CAPABILITIES
 
 
@@ -37,7 +38,15 @@ def session_setup() -> list[str]:
 
 
 def render(plan: MaintenancePlan) -> list[RenderedStatement]:
-    return [_render_operation(plan.table_ref, operation) for operation in plan.operations]
+    parts = split_table_ref(plan.table_ref)
+    if len(parts) > 3:
+        raise ValueError(f"Trino table reference has more than 3 parts: {plan.table_ref!r}")
+    table_ref = quote_qualified_name(*parts)
+    # Trino addresses metadata tables as "table$files" in the table's own schema.
+    files_ref = ".".join(
+        [*map(_quote_identifier, parts[:-1]), quote_identifier(f"{parts[-1]}$files")]
+    )
+    return [_render_operation(table_ref, operation, files_ref) for operation in plan.operations]
 
 
 def render_predicate(
@@ -51,7 +60,7 @@ def render_predicate(
     return "(" + " AND ".join(_render_term(term) for term in predicate.terms) + ")"
 
 
-def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement:
+def _render_operation(table_ref: str, operation: Operation, files_ref: str) -> RenderedStatement:
     if operation.type is OperationType.EXPIRE_SNAPSHOTS:
         sql = _render_expire(table_ref, operation.params)
     elif operation.type is OperationType.REMOVE_ORPHAN_FILES:
@@ -92,6 +101,7 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
         engine=EngineType.TRINO,
         metadata={
             "table_ref": table_ref,
+            "files_ref": files_ref,
             **expire_data_metadata(operation.type.value, operation.params),
         },
     )

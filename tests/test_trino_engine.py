@@ -340,7 +340,7 @@ class FilesDiffCursor(FakeCursor):
 
     def execute(self, sql: str) -> None:
         self.executed.append(sql)
-        self._last_was_files_query = '"$files"' in sql
+        self._last_was_files_query = '$files"' in sql
         if self.fail_on and self.fail_on in sql:
             raise RuntimeError("boom")
 
@@ -363,17 +363,18 @@ def test_trino_engine_measures_bytes_freed_via_files_diff_for_optimize() -> None
             action=OperationType.OPTIMIZE,
             sql="ALTER TABLE iceberg.demo.t EXECUTE optimize",
             engine=EngineType.TRINO,
-            metadata={"table_ref": "iceberg.demo.t"},
+            metadata={"files_ref": 'iceberg.demo."t$files"'},
         ),
         ExecCtx(replica="localhost"),
     )
 
     assert result.ok is True
     assert result.actual_bytes_freed == 600_000_000
-    files_queries = [sql for sql in cursor.executed if '"$files"' in sql]
+    files_queries = [sql for sql in cursor.executed if '$files"' in sql]
     assert len(files_queries) == 2
-    assert all(
-        sql.startswith("SELECT COALESCE(SUM(file_size_in_bytes), 0) FROM") for sql in files_queries
+    assert (
+        files_queries
+        == ['SELECT COALESCE(SUM(file_size_in_bytes), 0) FROM iceberg.demo."t$files"'] * 2
     )
 
 
@@ -391,7 +392,7 @@ def test_trino_engine_clamps_negative_files_diff_to_zero() -> None:
             action=OperationType.EXPIRE_SNAPSHOTS,
             sql="ALTER TABLE iceberg.demo.t EXECUTE expire_snapshots(retention_threshold => '7d')",
             engine=EngineType.TRINO,
-            metadata={"table_ref": "iceberg.demo.t"},
+            metadata={"files_ref": 'iceberg.demo."t$files"'},
         ),
     )
 
@@ -417,13 +418,13 @@ def test_trino_engine_leaves_bytes_freed_unmeasured_for_remove_orphan_files() ->
                 "EXECUTE remove_orphan_files(retention_threshold => '7d')"
             ),
             engine=EngineType.TRINO,
-            metadata={"table_ref": "iceberg.demo.t"},
+            metadata={"files_ref": 'iceberg.demo."t$files"'},
         ),
     )
 
     assert result.ok is True
     assert result.actual_bytes_freed is None
-    assert not any('"$files"' in sql for sql in cursor.executed)
+    assert not any('$files"' in sql for sql in cursor.executed)
 
 
 def test_trino_engine_bytes_freed_none_when_files_query_fails() -> None:
@@ -440,7 +441,7 @@ def test_trino_engine_bytes_freed_none_when_files_query_fails() -> None:
             action=OperationType.OPTIMIZE,
             sql="ALTER TABLE iceberg.demo.t EXECUTE optimize",
             engine=EngineType.TRINO,
-            metadata={"table_ref": "iceberg.demo.t"},
+            metadata={"files_ref": 'iceberg.demo."t$files"'},
         ),
     )
 
@@ -448,8 +449,8 @@ def test_trino_engine_bytes_freed_none_when_files_query_fails() -> None:
     assert result.actual_bytes_freed is None
 
 
-def test_trino_engine_bytes_freed_none_without_table_ref_metadata() -> None:
-    """A RenderedStatement missing table_ref metadata (e.g. built by hand in a test, or an
+def test_trino_engine_bytes_freed_none_without_files_ref_metadata() -> None:
+    """A RenderedStatement missing files_ref metadata (e.g. built by hand in a test, or an
     older caller) must not attempt the $files query at all."""
     cursor = FilesDiffCursor([(1, 1)])
 
@@ -467,7 +468,7 @@ def test_trino_engine_bytes_freed_none_without_table_ref_metadata() -> None:
 
     assert result.ok is True
     assert result.actual_bytes_freed is None
-    assert not any('"$files"' in sql for sql in cursor.executed)
+    assert not any('$files"' in sql for sql in cursor.executed)
 
 
 def test_trino_engine_works_without_on_engine_ref_callback() -> None:

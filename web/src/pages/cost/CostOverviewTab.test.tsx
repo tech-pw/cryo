@@ -138,8 +138,8 @@ describe("CostOverviewTab", () => {
     renderTab();
 
     expect(await screen.findByText("Estimated storage cost")).toBeInTheDocument();
-    expect(screen.getByText("Saved to date")).toBeInTheDocument();
-    expect(screen.getAllByText("Cost data unavailable").length).toBeGreaterThan(0);
+    expect(screen.getByText("Reclaimed storage value")).toBeInTheDocument();
+    expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
     expect(screen.queryByText("$0")).not.toBeInTheDocument();
   });
 
@@ -165,6 +165,10 @@ describe("CostOverviewTab", () => {
     expect(await screen.findByText("Fewer GET requests")).toBeInTheDocument();
     expect(screen.getAllByText("$0").length).toBeGreaterThan(0);
     expect(screen.getByLabelText(/only 3 tables have the figure/i)).toBeInTheDocument();
+    // Realized savings are a monthly storage rate, labelled as one (issue #189).
+    expect(screen.getByText("Reclaimed storage value")).toBeInTheDocument();
+    expect(screen.getByText(/^≈ .*4.*\/month$/)).toBeInTheDocument();
+    expect(screen.queryByText("Saved to date")).not.toBeInTheDocument();
   });
 
   it("renders the opportunity page from the same filter as the candidate count", async () => {

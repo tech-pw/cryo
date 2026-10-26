@@ -141,19 +141,24 @@ def get_table_with_stats(session: Session, table_id: uuid.UUID) -> Table | None:
     )
 
 
-def list_compatible_presets(session: Session, table: Table) -> list[Preset]:
+def list_compatible_presets(
+    session: Session,
+    table: Table,
+    *,
+    tenant_id: uuid.UUID | None = None,
+) -> list[Preset]:
     """Return presets whose destination can serve this table's catalog.
 
     Non-Trino destinations are always compatible. Trino destinations require an
-    explicit ``catalog_bindings`` entry for ``table.source_id``.
+    explicit ``catalog_bindings`` entry for ``table.source_id``. When ``tenant_id`` is
+    given, only that tenant's presets are considered.
     """
     from cryo.engines.trino.catalog_bindings import destination_serves_source
 
-    presets = list(
-        session.scalars(
-            select(Preset).options(selectinload(Preset.destination)).order_by(Preset.name)
-        )
-    )
+    stmt = select(Preset).options(selectinload(Preset.destination)).order_by(Preset.name)
+    if tenant_id is not None:
+        stmt = stmt.where(Preset.tenant_id == tenant_id)
+    presets = list(session.scalars(stmt))
     return [
         preset
         for preset in presets
@@ -221,19 +226,20 @@ def simulate_preset(
     preset: Preset,
     *,
     sample_limit: int = 20,
+    tenant_id: uuid.UUID | None = None,
 ) -> tuple[list[TableCandidate], dict[str, float | int]]:
     presets, rules, assignments = load_resolution_inputs(session)
-    candidates = [
-        table_to_candidate(table)
-        for table in session.scalars(
-            select(Table)
-            .where(Table.is_active.is_(True))
-            .options(
-                selectinload(Table.stats).load_only(*STATS_LOAD_ONLY_COLUMNS),
-                selectinload(Table.cost).load_only(*COST_LOAD_ONLY_COLUMNS),
-            )
+    table_stmt = (
+        select(Table)
+        .where(Table.is_active.is_(True))
+        .options(
+            selectinload(Table.stats).load_only(*STATS_LOAD_ONLY_COLUMNS),
+            selectinload(Table.cost).load_only(*COST_LOAD_ONLY_COLUMNS),
         )
-    ]
+    )
+    if tenant_id is not None:
+        table_stmt = table_stmt.where(Table.tenant_id == tenant_id)
+    candidates = [table_to_candidate(table) for table in session.scalars(table_stmt)]
     matched = tables_for_preset(preset_to_config(preset), candidates, presets, rules, assignments)
     estimate = {
         "matched_count": len(matched),
@@ -251,11 +257,17 @@ def resolve_selection(
     mode: str,
     ids: Sequence[uuid.UUID],
     filter_payload: Mapping[str, Any] | None,
+    tenant_id: uuid.UUID | None = None,
 ) -> SelectionResult:
+    """Resolve a table selection. With ``tenant_id``, only that tenant's tables match;
+    another tenant's IDs are reported as unknown rather than revealed."""
     if mode == "ids":
         if not ids:
             raise ValueError("ids selection requires at least one id")
-        existing = list(session.scalars(select(Table.id).where(Table.id.in_(ids))))
+        id_stmt = select(Table.id).where(Table.id.in_(ids))
+        if tenant_id is not None:
+            id_stmt = id_stmt.where(Table.tenant_id == tenant_id)
+        existing = list(session.scalars(id_stmt))
         missing = set(ids) - set(existing)
         if missing:
             missing_ids = sorted(str(item) for item in missing)
@@ -271,6 +283,9 @@ def resolve_selection(
     stmt = select(Table.id).outerjoin(TableStats).outerjoin(TableCost).outerjoin(TableAssignment)
     if predicate is not None:
         stmt = stmt.where(predicate)
+    if tenant_id is not None:
+        stmt = stmt.where(Table.tenant_id == tenant_id)
+
     return SelectionResult(_filter_ids_in_maintenance_scope(session, list(session.scalars(stmt))))
 
 

@@ -19,7 +19,7 @@ from cryo.db.repositories.exclusions import (
     list_exclusions,
     set_table_hold,
 )
-from cryo.db.tenant_scope import get_scoped_resource
+from cryo.db.tenant_scope import get_scoped_resource, tenant_filter_id
 
 router = APIRouter(prefix="/api/v1/maintenance/exclusions", tags=["maintenance-control"])
 
@@ -78,10 +78,12 @@ def _read(
     dependencies=[Depends(require_viewer)],
 )
 def get_exclusions(session: SessionDep) -> list[MaintenanceExclusionRead]:
-    rows = list_exclusions(session)
-    names: dict[uuid.UUID, str] = (
-        dict(session.execute(select(Source.id, Source.name)).tuples().all()) if rows else {}
-    )
+    tenant_id = tenant_filter_id(session)
+    rows = list_exclusions(session, tenant_id=tenant_id)
+    names_stmt = select(Source.id, Source.name)
+    if tenant_id is not None:
+        names_stmt = names_stmt.where(Source.tenant_id == tenant_id)
+    names: dict[uuid.UUID, str] = dict(session.execute(names_stmt).tuples().all()) if rows else {}
     return [_read(session, row, names.get(row.source_id)) for row in rows]
 
 
@@ -98,9 +100,7 @@ def post_exclusion(
 ) -> MaintenanceExclusionRead:
     if len(payload.reason) < 3:
         raise HTTPException(status_code=422, detail="reason must be at least 3 characters")
-    source = session.get(Source, payload.source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail="Lakehouse not found")
+    source = get_scoped_resource(session, Source, payload.source_id, resource_type="Lakehouse")
     try:
         row = create_exclusion(
             session,
@@ -230,6 +230,8 @@ def remove_exclusion(
     row = session.get(MaintenanceExclusion, exclusion_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Exclusion not found")
+    # An exclusion belongs to its source's tenant; another tenant's looks like a missing one.
+    get_scoped_resource(session, Source, row.source_id, resource_type="Exclusion")
     delete_exclusion(session, row, actor=principal.subject)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

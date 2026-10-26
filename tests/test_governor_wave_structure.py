@@ -168,6 +168,40 @@ def test_a_job_refused_after_the_lock_is_taken_releases_it(monkeypatch):
     assert not locks.is_table_locked("table-1")
 
 
+def _qpp_raises(**_kw):
+    raise RuntimeError("qpp model unavailable")
+
+
+def test_a_qpp_error_defers_the_job_and_releases_its_lock(monkeypatch):
+    """#197: a QPP check that throws must not admit -- it fails closed like the PII gate,
+    and, running after the lock, releases it like a refusal does."""
+    governor, _, store, locks = _governor(jobs=[_job("job-1", table_id="table-1")])
+    monkeypatch.setattr(governor, "_qpp_enabled", True)
+    monkeypatch.setattr("cryo.governor.governor._evaluate_qpp_for_governor", _qpp_raises)
+
+    result = governor.run_wave(now=NOW)
+
+    assert result.admitted == 0
+    assert result.deferred == 1
+    assert not locks.is_table_locked("table-1")
+    job = store.get_job("job-1")
+    assert job.status is JobStatus.DEFERRED
+    assert job.error == "qpp_gate_check_failed"
+
+
+def test_qpp_fail_open_admits_on_error_for_advisory_deployments(monkeypatch):
+    governor, _, store, locks = _governor(jobs=[_job("job-1", table_id="table-1")])
+    monkeypatch.setattr(governor, "_qpp_enabled", True)
+    monkeypatch.setattr(governor, "_qpp_fail_open", True)
+    monkeypatch.setattr("cryo.governor.governor._evaluate_qpp_for_governor", _qpp_raises)
+
+    result = governor.run_wave(now=NOW)
+
+    assert result.admitted == 1
+    assert locks.is_table_locked("table-1")
+    assert store.get_job("job-1").status is JobStatus.ADMITTED
+
+
 def test_an_admitted_job_holds_its_table_lock(monkeypatch):
     governor, _, _, locks = _governor(jobs=[_job("job-1", table_id="table-1")])
 

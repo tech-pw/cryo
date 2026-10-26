@@ -153,17 +153,30 @@ _DEADLINE_CEILING_SECONDS = 14_400
 
 
 def cap_deadline_seconds_for_table(seconds: int, *, total_size_gb: float | None) -> int:
-    """Same intent as cap_deadline_seconds, scaled by table size.
+    """The Job deadline for this table: the size tier's deadline, never above the ceiling.
+
+    A destination configured below the base deadline (DISPATCH_DEADLINE_SECONDS) keeps its
+    own shorter window on every table -- the config can shrink the window, same as
+    cap_dispatch_profile's min() for CPU/memory. A destination at or above the base gets the
+    tier's deadline, which for large tables is longer than the base.
+
+    Before #180 this was min(seconds, tier). With the default base of 7200s that is still
+    7200s for every tier, so the 300GB+ tiers never took effect: 578-785GB tables kept
+    timing out at 7200s although their tier is 10800s.
 
     Unknown size takes the base (smallest) tier -- same fail-safe-small choice
     _tier_fraction makes for CPU/memory when size isn't known yet.
     """
-    if total_size_gb is not None:
-        for upper_bound, ceiling in _DEADLINE_SIZE_TIERS:
-            if total_size_gb < upper_bound:
-                return min(seconds, ceiling)
-        return min(seconds, _DEADLINE_CEILING_SECONDS)
-    return cap_deadline_seconds(seconds)
+    if total_size_gb is None:
+        return cap_deadline_seconds(seconds)
+    tier_deadline = _DEADLINE_CEILING_SECONDS
+    for upper_bound, ceiling in _DEADLINE_SIZE_TIERS:
+        if total_size_gb < upper_bound:
+            tier_deadline = ceiling
+            break
+    if seconds < DISPATCH_DEADLINE_SECONDS:
+        return min(seconds, tier_deadline)
+    return min(tier_deadline, _DEADLINE_CEILING_SECONDS)
 
 
 _LIGHTWEIGHT_OPS = frozenset(
@@ -234,6 +247,19 @@ def lightweight_driver_heap_mib(
     return min(stepped, _DRIVER_HEAP_CEILING_MIB)
 
 
+# Executor OOMKilled on a rewrite (issue #166): one retry on twice the executor heap,
+# never past this. The largest tier ceiling is 6144MiB, so a step from there lands here.
+_EXECUTOR_OOM_CEILING_MIB = 12_288
+
+
+def executor_heap_after_oom(executor_mem_mib: int, executor_oom_steps: int) -> int:
+    """Executor heap after ``executor_oom_steps`` OOM kills: doubled per step, capped."""
+    if executor_oom_steps <= 0:
+        return executor_mem_mib
+    stepped = executor_mem_mib << executor_oom_steps
+    return max(executor_mem_mib, min(stepped, _EXECUTOR_OOM_CEILING_MIB))
+
+
 def driver_max_result_size_mib(heap_mib: int) -> int:
     """Stay under the heap. Spark's 1g default is not safe on a 1024MiB driver."""
     return max(256, heap_mib - _MAX_RESULT_SIZE_HEADROOM_MIB)
@@ -246,6 +272,7 @@ def cap_dispatch_profile(
     total_size_gb: float | None = None,
     total_files: int | None = None,
     oom_steps: int = 0,
+    executor_oom_steps: int = 0,
 ) -> ExecutorProfile:
     """Bound what a cryo-spark submit is allowed to reserve, whatever the destination says.
 
@@ -277,7 +304,11 @@ def cap_dispatch_profile(
     return ExecutorProfile(
         executor_instances=min(profile.executor_instances, max_instances),
         executor_cpu_milli=min(profile.executor_cpu_milli, max_cpu_milli),
-        executor_mem_mib=min(profile.executor_mem_mib, max_mem_mib),
+        # executor_oom_steps > 0 only after the kernel OOM-killed an executor on the
+        # previous attempt of this same statement (issue #166).
+        executor_mem_mib=executor_heap_after_oom(
+            min(profile.executor_mem_mib, max_mem_mib), executor_oom_steps
+        ),
         driver_cpu_milli=min(profile.driver_cpu_milli, DISPATCH_DRIVER_CPU_MILLI),
         driver_mem_mib=min(profile.driver_mem_mib, DISPATCH_DRIVER_MEM_MIB),
     )
