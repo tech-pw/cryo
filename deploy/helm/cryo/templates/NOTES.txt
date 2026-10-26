@@ -5,8 +5,9 @@ The API is not a production install until you set:
   global.envFromSecret to a Secret with CRYO_DATABASE_URL and CRYO_SECRET_KEY
   global.env.CRYO_ENVIRONMENT to prod
 
-The chart default CRYO_ENVIRONMENT is dev. That leaves POST /api/v1/auth/token open.
-OIDC does not close that route.
+The chart default CRYO_ENVIRONMENT is dev. With no OIDC issuer set, that leaves
+POST /api/v1/auth/token open: anyone who reaches the API can mint an admin token.
+In staging and prod the API refuses to start without a CRYO_SECRET_KEY of 32+ characters.
 
 Web UI: {{ if .Values.web.enabled }}enabled{{ else }}off (web.enabled is false){{ end }}.
 
