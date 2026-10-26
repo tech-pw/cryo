@@ -134,6 +134,11 @@ class DaemonRunner:
         self._stop = Event()
         self._logger = logging.getLogger(f"cryo.{name}")
         self.consecutive_tick_failures = 0
+        # time.monotonic() when the tick now running began; None between ticks. Lets the
+        # health check tell a loop that is hung inside one tick (a socket read on a dead
+        # connection, a lock that never frees) from one that is merely idle between ticks --
+        # see tick_stalled() and _run_with_signal's readiness check.
+        self.tick_started_at: float | None = None
 
     def stop(self) -> None:
         self._stop.set()
@@ -141,6 +146,7 @@ class DaemonRunner:
     def run(self) -> None:
         self._logger.info("Starting %s (interval=%ds)", self.name, self.interval)
         while not self._stop.is_set():
+            self.tick_started_at = time.monotonic()
             try:
                 self._tick()
                 self.consecutive_tick_failures = 0
@@ -151,11 +157,20 @@ class DaemonRunner:
                     self.name,
                     self.consecutive_tick_failures,
                 )
+            finally:
+                self.tick_started_at = None
             self._stop.wait(self.interval)
         self._logger.info("Stopped %s", self.name)
 
     def _tick(self) -> None:
         raise NotImplementedError
+
+    def tick_stalled(self, stall_after_seconds: int, *, now: float | None = None) -> bool:
+        """True when one tick has been running longer than stall_after_seconds (0 = never)."""
+        started = self.tick_started_at
+        if stall_after_seconds <= 0 or started is None:
+            return False
+        return ((time.monotonic() if now is None else now) - started) > stall_after_seconds
 
 
 class BenefitScoreUpdaterRunner(DaemonRunner):
@@ -1176,6 +1191,8 @@ def _run_with_signal(runner: DaemonRunner, *, service_name: str | None = None) -
     if service_name and settings.health_port:
         from cryo.observability.health_server import start_health_server
 
+        stall_after = settings.daemon_tick_stall_seconds
+
         scale_metric_providers: dict[str, Callable[[], int]] = {
             "worker": _worker_scale_metric,
             "scanner": _scanner_scale_metric,
@@ -1188,7 +1205,14 @@ def _run_with_signal(runner: DaemonRunner, *, service_name: str | None = None) -
             # live incidents this is closing. No Deployment template wires a readinessProbe
             # at /healthz today (also see that same docstring) -- this is the code-side half;
             # the probe itself still needs wiring in deploy/helm/cryo and helm-repos/cryo.
-            return not r._stop.is_set() and r.consecutive_tick_failures < 5
+            # A tick that never returns (hung on a dead connection) never bumps
+            # consecutive_tick_failures either; CRYO_DAEMON_TICK_STALL_SECONDS (0 = off) turns
+            # that into an unhealthy /healthz so the chart's liveness probe restarts the pod.
+            return (
+                not r._stop.is_set()
+                and r.consecutive_tick_failures < 5
+                and not r.tick_stalled(stall_after)
+            )
 
         start_health_server(
             port=settings.health_port,

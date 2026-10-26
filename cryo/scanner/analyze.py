@@ -13,6 +13,7 @@ from cryo.config import Settings, get_settings
 from cryo.cost.model import CostStatsInput
 from cryo.domain.enums import Priority
 from cryo.planner.partitions import normalize_transform
+from cryo.planner.schema_gates import schema_time_columns
 from cryo.scanner.commit_signals import commit_signals, commits_from_snapshots
 from cryo.scanner.cost import (
     GB,
@@ -24,7 +25,7 @@ from cryo.scanner.cost import (
     build_table_cost_analysis,
     estimate_storage_cost,
 )
-from cryo.scanner.health import compute_health_score
+from cryo.scanner.health import compute_design_findings, compute_health_score
 from cryo.scanner.orphans import table_location
 from cryo.scanner.quality import ColumnQualityAccumulator, summarize_column_quality
 from cryo.scanner.signals import detect_format_version, enrich_stats_signals, manifest_stats
@@ -431,8 +432,13 @@ def analyze_table(
             format_version=format_version,
             history=stats_history,
         )
+    # One small-file definition for the score, the planner (min_small_files), the
+    # file_degradation trigger and the UI: compactable small files, i.e. files under
+    # scan_small_file_mb in partitions holding more than one of them. Scoring the separate
+    # "every file under 8 MiB" count graded tables down for fragmentation that the planner
+    # would never act on and the UI's small-file count did not show (issue #191).
     score, grade, health_deductions = compute_health_score(
-        stats_for_health, health_small_files, now=scan_time
+        stats_for_health, small_files_count, now=scan_time
     )
     column_quality = quality_accum.finish()
     quality_summary = summarize_column_quality(column_quality)
@@ -476,6 +482,7 @@ def analyze_table(
         "file_formats": sorted(file_formats),
         "snapshot_overhead_gb": cost.snapshot_overhead_gb,
         "health_deductions": health_deductions,
+        "health_design_findings": compute_design_findings(stats_for_health),
         "column_quality": [
             {
                 "field_id": stat.field_id,
@@ -497,6 +504,8 @@ def analyze_table(
         "equality_delete_files": equality_delete_files,
         "position_delete_files": position_delete_files,
         "files_below_target": files_below_target,
+        # Informational only (not scored): every data file under HEALTH_SMALL_FILE_BYTES.
+        "files_under_8mib": health_small_files,
         "bytes_below_target": bytes_below_target,
         "reduction_target_bytes": reduction_target_bytes,
         "location": table_location(table_obj),
@@ -525,6 +534,9 @@ def analyze_table(
         "unknown": unknown_file_sizes,
     }
     raw["manifest_stats"] = manifest_stats(len(manifests), manifest_total_bytes, total_files)
+    time_columns = _schema_time_columns(table_obj)
+    if time_columns:
+        raw["time_columns"] = time_columns
     if cost_analysis is not None:
         raw["cost"] = cost_analysis.raw
     common = {
@@ -667,6 +679,17 @@ def _fetch_manifest_entries_safe(manifest: object, io: object) -> list[object]:
     """Backward-compatible wrapper used by tests."""
     entries, _ = _read_manifest_entries(manifest, io)
     return entries
+
+
+def _schema_time_columns(table_obj: object) -> list[str]:
+    """Iceberg ``time`` columns of the current schema; Spark cannot read them (issue #169)."""
+    schema_fn = getattr(table_obj, "schema", None)
+    if not callable(schema_fn):
+        return []
+    try:
+        return schema_time_columns(schema_fn())
+    except Exception:  # pragma: no cover - defensive: a schema walk must never break a scan.
+        return []
 
 
 def partition_fields(table_obj: object) -> list[dict[str, Any]]:

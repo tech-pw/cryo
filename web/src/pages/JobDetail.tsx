@@ -38,9 +38,10 @@ import { Skeleton } from "../components/ui/skeleton";
 import { useAuth } from "../lib/auth";
 import { formatDuration } from "../lib/format";
 import { engineTagColor, formatEngineLabel, isNativeStatement } from "../lib/engines";
-import { isScanRun, shortRunId, targetLabel } from "../lib/operations";
+import { isScanRun, shortRunId } from "../lib/operations";
 import { cn } from "../lib/cn";
 import "./jobDetail.css";
+import { useRunWorkflow } from "./operations/useRunWorkflow";
 
 interface JobDetail extends JobDetailDashboard {}
 
@@ -251,12 +252,7 @@ export const JobDetail = () => {
   });
 
   const scan = isScanRun(run.data);
-  const workflowName = scan ? "Scanner" : run.data ? targetLabel(run.data) : "Workflow";
-  const workflowLink = scan
-    ? "/runs/scanner"
-    : run.data?.preset_id
-      ? `/runs/workflows/${run.data.preset_id}`
-      : "/runs";
+  const { name: workflowName, link: workflowLink } = useRunWorkflow(run.data);
 
   return (
     <div className="job-detail-page">

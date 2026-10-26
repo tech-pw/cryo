@@ -251,6 +251,39 @@ describe("OverviewPanel", () => {
     expect(fix?.textContent).toBe("Expire snapshots");
   });
 
+  it("lists structural design findings unscored and explains an unchanged grade (#264)", async () => {
+    mocks.getTable.mockResolvedValue(
+      scanned({
+        grade: "F",
+        raw: {
+          health_deductions: [],
+          health_design_findings: [
+            {
+              label: "Partition volume skew",
+              severity: "critical",
+              reason: "Skew ratio of 94.0x (above 50x)",
+              recommendation: "Choose a partition column with a more even distribution."
+            }
+          ]
+        }
+      })
+    );
+    mocks.getTableHealthTrends.mockResolvedValue({
+      trend_points: [
+        { timestamp: "2026-09-26T09:00:00Z", score: 40, grade: "F" },
+        { timestamp: "2026-09-28T09:00:00Z", score: 40, grade: "F" }
+      ]
+    });
+    mocks.getTableAudit.mockResolvedValue([{ id: 1, ts: "2026-09-27T09:00:00Z", action: "optimize", status: "OK" }]);
+    renderPanel();
+
+    expect(await screen.findByRole("heading", { name: "Design findings" })).toBeInTheDocument();
+    expect(screen.getByText("Partition volume skew")).toBeInTheDocument();
+    expect(screen.getByText(/more even distribution/)).toBeInTheDocument();
+    expect(document.querySelectorAll(".td-deductions li")).toHaveLength(0);
+    expect(await screen.findByText(/remaining issues are structural/)).toBeInTheDocument();
+  });
+
   it("asks for an explicit acknowledgement before a destructive operation runs", async () => {
     mocks.getTable.mockResolvedValue(
       scanned({

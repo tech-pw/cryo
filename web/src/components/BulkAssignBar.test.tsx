@@ -136,7 +136,77 @@ describe("BulkAssignBar", () => {
     openRunDialog();
     fireEvent.change(screen.getByRole("combobox", { name: "Run workflow" }), { target: { value: "preset-1" } });
     expect(screen.getByText("native-datafusion · Native (iceberg-go)")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Manifests only" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Compact files/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Rewrite manifests/ }));
     expect(screen.getByRole("button", { name: "Queue run" })).toBeDisabled();
+  });
+
+  const fullPreset: PresetRead = {
+    ...preset,
+    operations: ["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"]
+  };
+
+  const renderRun = (overrides: Partial<React.ComponentProps<typeof BulkAssignBar>> = {}) => {
+    const onRun = vi.fn();
+    const onManifestRewrite = vi.fn();
+    render(
+      <BulkAssignBar
+        selection={{ mode: "ids", ids: ["table-1", "table-2"], totalSelected: 2 }}
+        presets={[fullPreset]}
+        destinations={[destination]}
+        onClear={vi.fn()}
+        onAssign={vi.fn()}
+        onPreview={vi.fn()}
+        onRun={onRun}
+        onManifestRewrite={onManifestRewrite}
+        {...overrides}
+      />
+    );
+    openRunDialog();
+    fireEvent.change(screen.getByRole("combobox", { name: "Run workflow" }), { target: { value: "preset-1" } });
+    return { onRun, onManifestRewrite };
+  };
+
+  it("runs only the picked operations, e.g. expire snapshots without compaction", () => {
+    const { onRun } = renderRun();
+    for (const name of [/Compact files/, /Rewrite manifests/, /Remove orphan files/]) {
+      fireEvent.click(screen.getByRole("checkbox", { name }));
+    }
+    const queue = screen.getByRole("button", { name: "Queue run" });
+    expect(queue).toBeDisabled();
+    expect(screen.getByText("Confirm that files are deleted permanently.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /files are deleted permanently/ }));
+    fireEvent.click(queue);
+    expect(onRun).toHaveBeenCalledWith({
+      destinationId: "dest-1",
+      presetId: "preset-1",
+      mode: "standard",
+      operations: ["expire_snapshots"]
+    });
+  });
+
+  it("sends no operations list when every operation stays picked", () => {
+    const { onRun } = renderRun();
+    fireEvent.click(screen.getByRole("checkbox", { name: /files are deleted permanently/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Queue run" }));
+    expect(onRun).toHaveBeenCalledWith({ destinationId: "dest-1", presetId: "preset-1", mode: "standard" });
+  });
+
+  it("asks for at least one operation", () => {
+    renderRun({ presets: [{ ...preset, operations: ["optimize"] }], onManifestRewrite: undefined });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Compact files/ }));
+    expect(screen.getByRole("button", { name: "Queue run" })).toBeDisabled();
+    expect(screen.getByText("Choose at least one operation.")).toBeInTheDocument();
+  });
+
+  it("uses the manifest rewrite path when the workflow lacks it and it is the only pick", () => {
+    const { onRun, onManifestRewrite } = renderRun({ presets: [preset] });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Rewrite manifests/ }));
+    expect(screen.getByRole("button", { name: "Queue run" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Compact files/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Queue run" }));
+    expect(onManifestRewrite).toHaveBeenCalledWith({ destinationId: "dest-1", presetId: "preset-1" });
+    expect(onRun).not.toHaveBeenCalled();
   });
 });

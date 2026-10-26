@@ -192,6 +192,7 @@ S3 **request** rollups (`get_requests_30d`, …) come from
 | `file_formats` | `list[str]` | `["PARQUET"]` |
 | `snapshot_overhead_gb` | `float` | Tier-0 overhead |
 | `health_deductions` | `list` | `[{"label":"…","deduction":8,"severity":"warning","reason":"…"}]` |
+| `health_design_findings` | `list` | `[{"label":"Partition volume skew","severity":"critical","reason":"…","recommendation":"…"}]` (unscored) |
 | `column_quality` | `list` | per-field null/value/bounds |
 | `avg_null_rate` / `max_null_rate` / `worst_null_column` | quality summary | `0.1` / `0.1` / `"user_id"` |
 | `first_snapshot_at` / `last_snapshot_committed_at` | ISO | |

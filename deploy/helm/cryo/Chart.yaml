@@ -2,9 +2,13 @@ apiVersion: v2
 name: cryo
 description: Cryo Iceberg maintenance platform
 type: application
+# Source value only. The release workflow (.github/workflows/release-supply-chain.yml)
+# stamps version and appVersion from the git tag before packaging (v0.1.6 -> 0.1.6), see
+# scripts/stamp_helm_chart_release.sh. Published chart versions always equal the release tag.
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://github.com/tech-pw/cryo
+home: https://tech-pw.github.io/cryo/
+icon: https://tech-pw.github.io/cryo/assets/svg/cryo-mark.svg
 sources:
   - https://github.com/tech-pw/cryo
 keywords:
@@ -14,4 +18,37 @@ keywords:
   - trino
   - spark
 kubeVersion: ">=1.27.0-0"
-license: Apache-2.0
+# Org only. Named maintainers are not published yet (see MAINTAINERS.md); do not add people here.
+maintainers:
+  - name: tech-pw
+    url: https://github.com/tech-pw
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: database
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://tech-pw.github.io/cryo/
+    - name: Source
+      url: https://github.com/tech-pw/cryo
+    - name: support
+      url: https://github.com/tech-pw/cryo/issues
+  # Rewritten at release time with the tag (and digests) the release workflow pushed.
+  artifacthub.io/images: |
+    - name: cryo
+      image: ghcr.io/tech-pw/cryo:v0.1.0
+      platforms:
+        - linux/amd64
+    - name: cryo-web
+      image: ghcr.io/tech-pw/cryo-web:v0.1.0
+      platforms:
+        - linux/amd64
+    - name: cryo-spark
+      image: ghcr.io/tech-pw/cryo-spark:v0.1.0
+      platforms:
+        - linux/amd64
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/changes: |
+    - kind: added
+      description: Chart published to oci://ghcr.io/tech-pw/charts/cryo, signed with cosign keyless
+    - kind: changed
+      description: Packaged chart defaults to the GHCR release images for its version, pinned by digest

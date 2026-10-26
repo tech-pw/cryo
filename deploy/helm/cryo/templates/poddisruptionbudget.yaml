@@ -1,0 +1,21 @@
+{{- /* PDBs for the long-running Deployments; see podDisruptionBudget in values.yaml. */ -}}
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- range $component := .Values.podDisruptionBudget.components }}
+{{- if or (ne $component "web") $.Values.web.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "cryo.fullname" $ }}-{{ $component }}
+  labels:
+    {{- include "cryo.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  maxUnavailable: {{ $.Values.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "cryo.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $component }}
+{{- end }}
+{{- end }}
+{{- end }}
