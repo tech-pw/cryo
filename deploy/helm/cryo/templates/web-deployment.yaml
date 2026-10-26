@@ -38,9 +38,14 @@ spec:
             - name: NGINX_ENTRYPOINT_LOCAL_RESOLVERS
               value: "1"
             - name: NGINX_ENVSUBST_FILTER
-              value: "NGINX_LOCAL_RESOLVERS|CRYO_API_UPSTREAM"
+              value: "NGINX_LOCAL_RESOLVERS|CRYO_API_UPSTREAM|CRYO_WEB_HSTS"
             - name: CRYO_API_UPSTREAM
               value: "http://{{ include "cryo.fullname" . }}-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}"
+            # Strict-Transport-Security value; empty sends no header (web/nginx.conf).
+            - name: CRYO_WEB_HSTS
+              {{- with .Values.web.hsts }}
+              value: {{ if .enabled }}{{ printf "max-age=%d%s%s" (int .maxAgeSeconds) (ternary "; includeSubDomains" "" .includeSubDomains) (ternary "; preload" "" .preload) | quote }}{{ else }}""{{ end }}
+              {{- end }}
           livenessProbe:
             httpGet:
               path: /
