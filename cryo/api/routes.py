@@ -2653,7 +2653,6 @@ def _resolve_selection(session: Session, selection: AssignmentSelection) -> pres
             filter_payload=selection.filter,
             tenant_id=tenant_filter_id(session),
         )
-
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
