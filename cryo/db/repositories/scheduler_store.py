@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.config import get_settings
@@ -21,6 +22,7 @@ from cryo.db.models import (
 )
 from cryo.db.repositories.exclusions import table_is_excluded
 from cryo.db.repositories.intents import IntentStore
+from cryo.db.repositories.job_dedupe import active_coverage
 from cryo.db.repositories.presets import (
     COST_LOAD_ONLY_COLUMNS,
     STATS_LOAD_ONLY_COLUMNS,
@@ -32,6 +34,7 @@ from cryo.db.repositories.presets import (
 from cryo.db.repositories.sources import table_in_source_scope
 from cryo.intents.binding import build_and_bind_job_intent
 from cryo.observability.correlation import correlation_summary
+from cryo.planner.job_coverage import ActiveJob, dedupe_key, effective_operations
 from cryo.scheduler.rules import (
     PresetConfig,
     TableCandidate,
@@ -203,8 +206,21 @@ class SQLSchedulerStore:
                 result.setdefault(str(table_id), {})[str(destination_id)] = streak
         return result
 
-    def persist_run(self, run: ScheduledRunDraft) -> None:
+    def active_coverage(self) -> dict[str, list[ActiveJob]]:
         with self._session_factory() as session:
+            return active_coverage(session)
+
+    def persist_run(self, run: ScheduledRunDraft) -> set[str]:
+        """Store the run and its jobs; returns ids of jobs dropped because a concurrent run
+        took the same (table, operations) slot between coverage read and insert."""
+        dropped: set[str] = set()
+        with self._session_factory() as session:
+            summary = correlation_summary({"actor": "system:scheduler"})
+            if run.dedupe_tables_skipped or run.dedupe_steps_skipped:
+                summary["dedupe"] = {
+                    "tables_skipped": run.dedupe_tables_skipped,
+                    "steps_skipped": run.dedupe_steps_skipped,
+                }
             db_run = MaintenanceRun(
                 id=uuid.UUID(run.id),
                 kind="scheduled",
@@ -212,21 +228,34 @@ class SQLSchedulerStore:
                 trigger=run.trigger,
                 status="queued",
                 deadline_at=run.deadline_at,
-                summary=correlation_summary({"actor": "system:scheduler"}),
+                summary=summary,
             )
             session.add(db_run)
+            session.flush()
             db_jobs: list[MaintenanceJob] = []
             for job in run.jobs:
+                mode = job.mode.value if hasattr(job.mode, "value") else str(job.mode)
+                operations = list(job.operations) if job.operations else None
                 db_job = MaintenanceJob(
                     id=uuid.UUID(job.id),
                     run_id=uuid.UUID(run.id),
                     table_id=uuid.UUID(job.table_id),
                     destination_id=uuid.UUID(job.destination_id),
-                    mode=job.mode.value if hasattr(job.mode, "value") else str(job.mode),
+                    mode=mode,
+                    operations=operations,
+                    dedupe_key=dedupe_key(effective_operations(mode, job_operations=operations)),
                     status=job.status.value,
                 )
-                session.add(db_job)
+                try:
+                    with session.begin_nested():
+                        session.add(db_job)
+                except IntegrityError:
+                    dropped.add(job.id)
+                    continue
                 db_jobs.append(db_job)
+            if run.jobs and not db_jobs:
+                session.rollback()
+                return dropped
             session.flush()
             settings = get_settings()
             if settings.durable_intents_enabled:
@@ -239,6 +268,7 @@ class SQLSchedulerStore:
                         actor_id="system:scheduler",
                     )
             session.commit()
+        return dropped
 
     def mark_preset_run(self, preset_id: str, run_at: datetime) -> None:
         key = f"{self._namespace}:scheduler:last_run:{preset_id}"

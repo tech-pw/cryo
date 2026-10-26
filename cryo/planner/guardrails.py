@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TypeGuard, cast
 
-from cryo.domain.enums import OperationType
+from cryo.domain.enums import Mode, OperationType
 from cryo.domain.predicates import LEAF_OPERATORS, SUPPORTED_FIELDS
 
 # Canonical maintenance order. Compact first, then rewrite manifests, then clean up -- so a
@@ -29,6 +29,29 @@ CORRECT_ORDER: tuple[OperationType, ...] = (
 )
 
 _CANONICAL_RANK: dict[OperationType, int] = {op: idx for idx, op in enumerate(CORRECT_ORDER)}
+
+_LIGHT_OPERATIONS: frozenset[OperationType] = frozenset(
+    {OperationType.EXPIRE_SNAPSHOTS, OperationType.EXPIRE_DATA}
+)
+_STANDARD_OPERATIONS: frozenset[OperationType] = _LIGHT_OPERATIONS | {
+    OperationType.CONVERT_EQUALITY_DELETES,
+    OperationType.CONVERT_DELETES,
+    OperationType.REWRITE_POSITION_DELETES,
+    OperationType.OPTIMIZE,
+    OperationType.COMPUTE_STATISTICS,
+}
+
+# Upper bound of what ``build_plan`` can emit per mode. Whether a given table actually gets each
+# one is a per-table planner decision; duplicate-job detection only needs the ceiling, because
+# "this mode would have covered it" is what makes a second job redundant. A parity test keeps
+# this from drifting from planner.py.
+MODE_OPERATIONS: Mapping[Mode, frozenset[OperationType]] = {
+    Mode.LIGHT: _LIGHT_OPERATIONS,
+    Mode.STANDARD: _STANDARD_OPERATIONS,
+    Mode.DEEP: _STANDARD_OPERATIONS
+    | {OperationType.REMOVE_ORPHAN_FILES, OperationType.OPTIMIZE_MANIFESTS},
+    Mode.MANIFEST_ONLY: frozenset({OperationType.OPTIMIZE_MANIFESTS}),
+}
 
 
 def canonical_rank(operation: OperationType | str) -> int:

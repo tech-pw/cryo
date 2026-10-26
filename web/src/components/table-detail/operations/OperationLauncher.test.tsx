@@ -62,7 +62,7 @@ describe("run cart", () => {
     expect(steps).toEqual(["Compact files", "Remove orphan files"]);
     const run = within(dialog).getByRole("button", { name: "Queue 2 operations" });
     expect(run).toBeDisabled();
-    fireEvent.click(within(dialog).getByRole("checkbox"));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /files are deleted/ }));
     fireEvent.click(run);
 
     await waitFor(() =>
@@ -77,8 +77,22 @@ describe("run cart", () => {
     fireEvent.click(addButton("Rewrite manifests"));
     fireEvent.click(screen.getByRole("button", { name: "Review & run" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox", { name: /files are deleted/ })).not.toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Queue Rewrite manifests" })).toBeEnabled();
+  });
+
+  it("sends force only when the operator opts in to running already-queued steps", async () => {
+    renderCart();
+    await waitFor(() => expect(addButton("Rewrite manifests")).toBeEnabled());
+    fireEvent.click(addButton("Rewrite manifests"));
+    fireEvent.click(screen.getByRole("button", { name: "Review & run" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /Run even if already queued/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Queue Rewrite manifests" }));
+
+    await waitFor(() =>
+      expect(mocks.runTableOperations).toHaveBeenCalledWith({ token: "t" }, "t1", { operations: ["optimize_manifests"], force: true })
+    );
   });
 
   it("disables adding with the role's reason", async () => {

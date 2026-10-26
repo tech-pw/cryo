@@ -39,8 +39,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import AuditLog, Destination, MaintenanceJob
-from cryo.domain.enums import JobStatus
+from cryo.db.models import AuditLog, Destination, MaintenanceJob, TableStats
+from cryo.domain.enums import JobStatus, OperationType
 from cryo.engines.spark.k8s import JobRunState
 
 if TYPE_CHECKING:
@@ -118,6 +118,17 @@ def sweep_pending_fallback_dispatches(
         if result.state == JobRunState.RUNNING:
             still_pending += 1
             continue
+        # submit() returns before the driver exists, so the one OOM step cannot live
+        # in execute(). The 2026-10-19 expire died on this path. Resubmit once, on a
+        # larger driver, and leave the row SUBMITTED so the next tick resolves the
+        # new job. A second kill, a SQL error, or a missing plan falls through and
+        # finalizes FAILED as before.
+        if result.state == JobRunState.FAILED and _resubmit_after_driver_oom(session, row, result):
+            # The new engine_ref has to be visible to the next tick. The terminal
+            # path commits below; this one returns early, so it commits itself.
+            session.commit()
+            still_pending += 1
+            continue
         if result.state == JobRunState.SUCCESS:
             row.status = "OK"
             if result.bytes_removed is not None:
@@ -192,6 +203,113 @@ def _finalize_job_row(
     job.finished_at = datetime.now(UTC)
     if status is not JobStatus.SUCCEEDED:
         job.error = error
+
+
+def _resubmit_after_driver_oom(session: Session, row: AuditLog, result: object) -> bool:
+    """Submit one larger driver for an OOMKilled expire/orphan. False means finalize.
+
+    The async path never calls execute(), so the step that lives there never ran for
+    the expire that died. This is that step. It does not retry a SQL error, a second
+    kill, or an op whose driver is not the pressure point. A resubmit that cannot
+    rebuild the statement returns False and the caller finalizes FAILED.
+    """
+    from cryo.engines.spark.k8s import JobRunResult
+    from cryo.engines.spark.k8s_engine import (
+        _oom_step_would_grow,
+        is_spark_driver_oom,
+    )
+    from cryo.engines.spark.sql import render
+    from cryo.planner.serialization import plan_from_dict
+
+    if not isinstance(result, JobRunResult) or not is_spark_driver_oom(result.state_details):
+        return False
+    if row.action not in {"expire_snapshots", "remove_orphan_files"}:
+        return False
+    # The job name is the marker. engine_ref is a random cryo-spark-<hex> and
+    # cannot carry it. A second kill of a job we already stepped must finalize.
+    if "oom-step" in (row.detail or ""):
+        return False
+    if row.job_id is None:
+        return False
+    job = session.get(MaintenanceJob, row.job_id)
+    if job is None or not job.plan:
+        return False
+    stats_row = session.get(TableStats, row.table_id) if row.table_id is not None else None
+    total_files = _pressure_file_count(stats_row)
+    # The pod that died ran at step 0. Passing 1 here would score the heap of the
+    # pod we have not launched and skip the only retry a 3072MiB tier gets.
+    if not _oom_step_would_grow(row.action, total_files, 0):
+        return False
+    try:
+        plan = plan_from_dict(job.plan)
+        statements = [
+            statement for statement in render(plan) if statement.action == OperationType(row.action)
+        ]
+        if len(statements) != 1:
+            return False
+        engine = _spark_engine_for_fallback_lookups(session)
+        if engine is None:
+            return False
+        catalog = statements[0].metadata.get("catalog") or engine._catalog
+        if not catalog:
+            return False
+        if stats_row is not None:
+            engine = engine.with_table_stats(
+                {
+                    "total_size_gb": stats_row.total_size_gb,
+                    "total_files": stats_row.total_files,
+                    "total_delete_files": stats_row.total_delete_files,
+                }
+            )
+        new_ref = engine.k8s_client.submit_spark_sql(
+            statements[0].sql,
+            job_name=f"cryo-{row.action}-oom-step",
+            catalog=str(catalog),
+            destination_id=engine._destination_id,
+            operation=row.action,
+            total_size_gb=float(stats_row.total_size_gb) if stats_row is not None else None,
+            total_files=total_files,
+            oom_steps=1,
+        )
+    except Exception:
+        logger.warning(
+            "Fallback sweep: OOM step-up failed for audit row %s; finalizing FAILED",
+            row.id,
+            exc_info=True,
+        )
+        return False
+    try:
+        engine.k8s_client.cleanup_after_run(row.engine_ref or "")
+    except Exception:
+        logger.warning(
+            "Fallback sweep: cleanup of OOMKilled job %s failed",
+            row.engine_ref,
+            exc_info=True,
+        )
+    row.engine_ref = new_ref
+    # Keep the marker in front of the old log. The next tick's success path
+    # replaces detail, so this only has to survive until that tick. A second
+    # kill reads it and finalizes instead of starting a third pod.
+    row.detail = f"oom-step {new_ref}\n{result.state_details or ''}"
+    logger.info(
+        "Fallback sweep: resubmitted %s after driver OOM (was %s, now %s, files=%s)",
+        row.action,
+        result.job_run_id,
+        new_ref,
+        total_files,
+    )
+    return True
+
+
+def _pressure_file_count(stats_row: TableStats | None) -> int | None:
+    """Data files plus delete files. Either missing stays unknown, not zero."""
+    if stats_row is None:
+        return None
+    data = stats_row.total_files
+    deletes = stats_row.total_delete_files
+    if data is None and deletes is None:
+        return None
+    return int(data or 0) + int(deletes or 0)
 
 
 def _spark_engine_for_fallback_lookups(session: Session) -> SparkK8sEngine | None:

@@ -33,9 +33,21 @@ def _seed_destination(session) -> Destination:
     return destination
 
 
-def _seed_run(session, *, status: str = "running", created_at: datetime = NOW) -> MaintenanceRun:
+def _seed_run(
+    session,
+    *,
+    status: str = "running",
+    created_at: datetime = NOW,
+    kind: str = "scheduled",
+    summary: dict | None = None,
+) -> MaintenanceRun:
     run = MaintenanceRun(
-        id=uuid4(), kind="scheduled", status=status, trigger="cron", created_at=created_at
+        id=uuid4(),
+        kind=kind,
+        status=status,
+        trigger="cron",
+        created_at=created_at,
+        summary=summary,
     )
     session.add(run)
     session.flush()
@@ -348,7 +360,7 @@ def test_finalize_open_runs_never_reconsiders_an_already_terminal_run(
 ) -> None:
     """Recovery plan §4, 2026-09-20: the old query (`status != "cancelled"`) re-selected every
     already-terminal run (succeeded/failed/partial) on every tick forever, not just genuinely
-    open ones. Restricting to status == "running" means a terminal run is never even loaded, so
+    open ones. Restricting to open statuses means a terminal run is never even loaded, so
     it can never be re-finalized or have its finished_at touched again."""
     _, table = _seed_source_table(session)
     destination = _seed_destination(session)
@@ -367,6 +379,75 @@ def test_finalize_open_runs_never_reconsiders_an_already_terminal_run(
     if saved_finished_at is not None and saved_finished_at.tzinfo is None:
         saved_finished_at = saved_finished_at.replace(tzinfo=UTC)
     assert saved_finished_at == original_finished_at
+
+
+def test_queued_adhoc_run_with_all_jobs_terminal_finalizes(session, session_factory) -> None:
+    """Live 2026-10-21: maintenance runs are created "queued" and never move to "running", so a
+    finalizer that only selected "running" left 115 runs showing as queued for weeks after
+    every job had finished."""
+    _, table = _seed_source_table(session)
+    destination = _seed_destination(session)
+    run = _seed_run(session, status="queued", kind="adhoc")
+    _seed_job(session, run=run, table=table, destination=destination, status="succeeded")
+    _seed_job(session, run=run, table=table, destination=destination, status="failed")
+    session.commit()
+
+    finalized = finalize_open_runs(session_factory, now=NOW)
+
+    session.refresh(run)
+    assert finalized == 1
+    assert run.status == "partial"
+    assert run.finished_at is not None
+
+
+def test_queued_run_with_waiting_job_keeps_its_status(session, session_factory) -> None:
+    _, table = _seed_source_table(session)
+    destination = _seed_destination(session)
+    run = _seed_run(session, status="queued", kind="adhoc")
+    _seed_job(session, run=run, table=table, destination=destination, status="admitted")
+    session.commit()
+
+    finalize_open_runs(session_factory, now=NOW)
+
+    session.refresh(run)
+    assert run.status == "queued"
+    assert run.finished_at is None
+
+
+def test_finalize_keeps_the_request_fields_in_the_run_summary(session, session_factory) -> None:
+    _, table = _seed_source_table(session)
+    destination = _seed_destination(session)
+    run = _seed_run(
+        session,
+        status="queued",
+        kind="adhoc",
+        summary={"actor": "admin", "operations": ["expire_snapshots"], "correlation_id": "c-1"},
+    )
+    _seed_job(session, run=run, table=table, destination=destination, status="succeeded")
+    session.commit()
+
+    finalize_open_runs(session_factory, now=NOW)
+
+    session.refresh(run)
+    assert run.status == "succeeded"
+    assert run.summary["actor"] == "admin"
+    assert run.summary["operations"] == ["expire_snapshots"]
+    assert run.summary["correlation_id"] == "c-1"
+    assert run.summary["succeeded"] == 1
+
+
+def test_scan_runs_are_left_to_the_scanner(session, session_factory) -> None:
+    _, table = _seed_source_table(session)
+    destination = _seed_destination(session)
+    run = _seed_run(session, status="queued", kind="scan")
+    _seed_job(session, run=run, table=table, destination=destination, status="succeeded")
+    session.commit()
+
+    finalized = finalize_open_runs(session_factory, now=NOW)
+
+    session.refresh(run)
+    assert finalized == 0
+    assert run.status == "queued"
 
 
 def test_finalize_open_runs_never_overwrites_an_already_set_finished_at(

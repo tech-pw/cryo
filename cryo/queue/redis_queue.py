@@ -68,9 +68,15 @@ class QueueEntry:
 class MaintenanceQueue(Protocol):
     def enqueue(self, job_id: str, destination_id: str, priority: int = 0) -> None: ...
 
-    def pending(self, destination_id: str) -> list[str]: ...
+    def pending(self, destination_id: str, limit: int | None = None) -> list[str]: ...
 
-    def pending_by_destination(self) -> dict[str, list[str]]: ...
+    def pending_by_destination(self, limit: int | None = None) -> dict[str, list[str]]: ...
+
+    def pending_depth(self, destination_id: str) -> int: ...
+
+    def reset_in_flight(self, destination_id: str, counts: Mapping[str, int]) -> None: ...
+
+    def known_destinations(self) -> list[str]: ...
 
     def admit(self, job_id: str, destination_id: str, replica: str | None = None) -> None: ...
 
@@ -128,15 +134,26 @@ class InMemoryMaintenanceQueue:
         self._pending[destination_id].append((-priority, self._sequence, job_id))
         self._pending[destination_id].sort()
 
-    def pending(self, destination_id: str) -> list[str]:
-        return [job_id for _, _, job_id in self._pending.get(destination_id, [])]
+    def pending(self, destination_id: str, limit: int | None = None) -> list[str]:
+        ids = [job_id for _, _, job_id in self._pending.get(destination_id, [])]
+        return ids if limit is None else ids[:limit]
 
-    def pending_by_destination(self) -> dict[str, list[str]]:
+    def pending_by_destination(self, limit: int | None = None) -> dict[str, list[str]]:
         return {
-            destination_id: self.pending(destination_id)
+            destination_id: self.pending(destination_id, limit)
             for destination_id, entries in self._pending.items()
             if entries
         }
+
+    def pending_depth(self, destination_id: str) -> int:
+        return len(self._pending.get(destination_id, []))
+
+    def reset_in_flight(self, destination_id: str, counts: Mapping[str, int]) -> None:
+        # In-flight is derived from job statuses here, so there is no counter to drift.
+        del destination_id, counts
+
+    def known_destinations(self) -> list[str]:
+        return list(self._pending)
 
     def admit(self, job_id: str, destination_id: str, replica: str | None = None) -> None:
         self._remove_pending(job_id, destination_id)
@@ -293,17 +310,40 @@ class RedisMaintenanceQueue:
         pipe.sadd(self._destinations_key(), destination_id)
         pipe.execute()
 
-    def pending(self, destination_id: str) -> list[str]:
-        values = self._redis.zrevrange(self._pending_key(destination_id), 0, -1)
+    def pending(self, destination_id: str, limit: int | None = None) -> list[str]:
+        if limit is not None and limit <= 0:
+            return []
+        end = -1 if limit is None else limit - 1
+        values = self._redis.zrevrange(self._pending_key(destination_id), 0, end)
         return [_decode(value) for value in values]
 
-    def pending_by_destination(self) -> dict[str, list[str]]:
+    def pending_by_destination(self, limit: int | None = None) -> dict[str, list[str]]:
         destinations = [_decode(value) for value in self._redis.smembers(self._destinations_key())]
         return {
             destination_id: pending
             for destination_id in destinations
-            if (pending := self.pending(destination_id))
+            if (pending := self.pending(destination_id, limit))
         }
+
+    def pending_depth(self, destination_id: str) -> int:
+        return int(self._redis.zcard(self._pending_key(destination_id)) or 0)
+
+    def known_destinations(self) -> list[str]:
+        return [_decode(value) for value in self._redis.smembers(self._destinations_key())]
+
+    def reset_in_flight(self, destination_id: str, counts: Mapping[str, int]) -> None:
+        """Replace this destination's in-flight counter with counts derived from Postgres.
+
+        The counter is incremented at admit and decremented at complete/return_to_pending, so
+        any path that ends an admitted job without one of those leaks a slot for good. The
+        database is the record of which jobs actually hold a slot.
+        """
+        pipe = self._redis.pipeline()
+        pipe.delete(self._in_flight_key(destination_id))
+        live = {replica: int(count) for replica, count in counts.items() if int(count) > 0}
+        if live:
+            pipe.hset(self._in_flight_key(destination_id), mapping=live)
+        pipe.execute()
 
     def admit(self, job_id: str, destination_id: str, replica: str | None = None) -> None:
         replica_name = replica or "default"
@@ -490,10 +530,17 @@ class RedisMaintenanceQueue:
     def defer(self, job_id: str) -> None:
         entry = self._redis.hgetall(self._job_key(job_id))
         destination_id = _decode(entry.get(b"destination_id") or entry.get("destination_id"))
+        prior_status = _decode(entry.get(b"status") or entry.get("status"))
+        replica = _decode(entry.get(b"replica") or entry.get("replica")) or "default"
         self._ack(job_id)
         pipe = self._redis.pipeline()
         if destination_id:
             pipe.zrem(self._pending_key(destination_id), job_id)
+            # A job deferred after admit() (the worker losing the table lock) still holds the
+            # slot admit() took; nothing else ever returns it, so each such defer used to
+            # shrink the destination's capacity permanently.
+            if prior_status in {JobStatus.ADMITTED.value, JobStatus.RUNNING.value}:
+                pipe.hincrby(self._in_flight_key(destination_id), replica, -1)
         pipe.hset(self._job_key(job_id), "status", "deferred")
         # Deferred is not terminal -- the job comes back on a later wave, so it keeps the
         # active horizon rather than the short one complete() applies.
