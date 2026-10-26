@@ -154,9 +154,12 @@ class SparkK8sConfig:
             image_pull_policy=str(_get("image_pull_policy") or "IfNotPresent"),
             image_pull_secrets=pull_secrets,
             service_account=str(_get("service_account") or "default"),
-            catalog_uri=_get("catalog_uri"),
-            catalog_warehouse=_get("catalog_warehouse"),
-            catalog_impl=str(_get("catalog_impl") or "rest"),
+            # A destination row stores these at the top level of config. The nested
+            # spark_k8s block and the env var still win, but a value that exists only at
+            # the top level must not be dropped (issue #149, 2026-10-21).
+            catalog_uri=_get("catalog_uri") or config.get("catalog_uri"),
+            catalog_warehouse=_get("catalog_warehouse") or config.get("catalog_warehouse"),
+            catalog_impl=str(_get("catalog_impl") or config.get("catalog_impl") or "rest"),
             s3_endpoint=_get("s3_endpoint"),
             s3_access_key=_get("s3_access_key"),
             s3_secret_key=_get("s3_secret_key"),

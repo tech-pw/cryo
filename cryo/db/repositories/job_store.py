@@ -24,6 +24,7 @@ from cryo.db.models import (
     TableAssignment,
     TablePartition,
 )
+from cryo.db.repositories.job_dedupe import supersede_covered_jobs
 from cryo.db.repositories.operation_exclusions import excluded_operations
 from cryo.domain.enums import JobStatus, Mode, OperationType
 from cryo.observability.correlation import correlation_id_from_summary
@@ -406,6 +407,63 @@ class SQLJobStore:
             destination = session.get(Destination, uuid.UUID(destination_id))
             return destination is not None and destination.enabled
 
+    def job_statuses(self, job_ids: Sequence[str]) -> dict[str, JobStatus]:
+        """Status of each job id that exists, in one query per 1,000 ids.
+
+        The purge pass only needs "does it exist and is it still live", and get_job() answers
+        that with the full record -- run, preset, assignment, exclusions, AutoComp summary,
+        intent and last-maintained lookups -- per queue entry, every wave.
+        """
+        parsed: list[uuid.UUID] = []
+        for job_id in job_ids:
+            try:
+                parsed.append(uuid.UUID(job_id))
+            except (ValueError, AttributeError, TypeError):
+                continue
+        found: dict[str, JobStatus] = {}
+        with self._session_factory() as session:
+            for start in range(0, len(parsed), 1000):
+                chunk = parsed[start : start + 1000]
+                rows = session.execute(
+                    select(MaintenanceJob.id, MaintenanceJob.status).where(
+                        MaintenanceJob.id.in_(chunk)
+                    )
+                ).all()
+                for job_pk, status in rows:
+                    found[str(job_pk)] = JobStatus(status)
+        return found
+
+    def supersede_covered_jobs(self, job_id: str) -> list[tuple[str, str]]:
+        with self._session_factory() as session:
+            return supersede_covered_jobs(session, job_id)
+
+    def in_flight_counts(self) -> dict[str, dict[str, int]]:
+        """Jobs holding a worker-path engine slot, by destination and replica.
+
+        ADMITTED and RUNNING jobs without a dispatch_id are the ones admit() counted in
+        Redis. Native K8s dispatches carry a dispatch_id and are measured from live
+        Kubernetes state instead, so they are excluded here.
+        """
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(
+                    MaintenanceJob.destination_id,
+                    func.coalesce(MaintenanceJob.replica, "default"),
+                    func.count(MaintenanceJob.id),
+                )
+                .where(
+                    MaintenanceJob.status.in_((JobStatus.ADMITTED.value, JobStatus.RUNNING.value)),
+                    MaintenanceJob.dispatch_id.is_(None),
+                )
+                .group_by(
+                    MaintenanceJob.destination_id, func.coalesce(MaintenanceJob.replica, "default")
+                )
+            ).all()
+        counts: dict[str, dict[str, int]] = {}
+        for destination_id, replica, count in rows:
+            counts.setdefault(str(destination_id), {})[str(replica)] = int(count)
+        return counts
+
 
 def _destination_config(destination: Destination) -> DestinationConfig:
     config = dict(destination.config)
@@ -455,6 +513,13 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         if overridden is not None:
             operations = overridden
             params["requested_operations"] = [op.value for op in overridden]
+    # A job dedupe trimmed to the operations nothing else already covers; narrower than (and so
+    # wins over) the run's own request.
+    if job.operations:
+        trimmed = _coerce_operations(job.operations)
+        if trimmed is not None:
+            operations = trimmed
+            params["requested_operations"] = [op.value for op in trimmed]
     actor_raw = summary.get("actor")
     actor = actor_raw if isinstance(actor_raw, str) and actor_raw else None
     # AutoComp (SIGMOD 2025): governor.decide_job_admission's min_benefit_score/min_moop_score
@@ -511,6 +576,9 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         intent_effect_destination_ids=_intent_effect_destination_ids(intent),
         correlation_id=correlation_id_from_summary(summary),
         run_status=job.run.status if job.run else None,
+        run_created_at=job.run.created_at if job.run else None,
+        requested_operations=(tuple(str(op) for op in job.operations) if job.operations else None),
+        dedupe_key=job.dedupe_key,
     )
 
 

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import ColumnElement, case, func, or_, select
+from sqlalchemy import ColumnElement, and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from cryo.api.schemas import (
@@ -47,6 +47,7 @@ from cryo.maintenance.skip_history import (
     STAGE_ELIGIBLE,
     STAGE_EVALUATED,
     STAGE_NEEDS_WORK,
+    STAGE_SELECTED,
     SkipEvaluation,
 )
 
@@ -356,6 +357,7 @@ NODE_LABELS: Mapping[str, str] = {
     "not_scanned": "Not scanned yet",
     "scanned": "Scanned",
     "not_evaluated": "Not evaluated",
+    "not_in_run": "Not in this run",
     "no_work": "No work needed",
     "needs_work": "Needs work",
     "skip_cooldown": "Cooldown",
@@ -395,15 +397,20 @@ class FunnelRow:
 
 
 def funnel_path(row: FunnelRow) -> list[str]:
-    """Node ids from root to leaf for one group of tables."""
-    if row.scan_bucket != "scanned":
-        return ["active", row.scan_bucket]
-    path = ["active", "scanned"]
+    """Where the table landed in this nightly run.
+
+    A job is proof the table was selected, even when the run wrote no
+    ``skip_evaluations`` row. Current scan health is not a stage of the run:
+    ``scan_bucket`` stays on the row only because the query still groups by it.
+    A table with neither a job nor a recorded decision was not in the run.
+    """
+    if row.job_rank is not None or row.stage == STAGE_SELECTED:
+        return ["active", "selected", _RANK_OUTCOME.get(row.job_rank or 0, "not_run")]
     if row.stage is None:
-        return [*path, "not_evaluated"]
+        return ["active", "not_in_run"]
     if row.stage == STAGE_EVALUATED:
-        return [*path, "no_work"]
-    path.append("needs_work")
+        return ["active", "no_work"]
+    path = ["active", "needs_work"]
     if row.stage == STAGE_ELIGIBLE and row.reason == REASON_BUDGET_CAP:
         return [*path, "skip_budget_cap"]
     if row.stage == STAGE_NEEDS_WORK:
@@ -450,13 +457,19 @@ def build_funnel(rows: Iterable[FunnelRow]) -> tuple[list[FunnelNode], list[Funn
 
 
 def latest_batch_run(session: Session) -> MaintenanceRun | None:
-    # Filter in SQL: ad-hoc scans and manual runs each create a run row, so on a busy
-    # fleet the nightly batch is rarely among the newest few rows.
+    """Newest fleet nightly run.
+
+    The batch coordinator stamps ``summary.pipeline = "batch"``. The scheduler's
+    nightly preset does not: it writes ``kind="scheduled"`` and ``trigger="cron"``
+    with a null summary. Scans and one-table runs are neither, so they cannot hide
+    the nightly run by being newer.
+    """
+    nightly = or_(
+        MaintenanceRun.summary["pipeline"].as_string() == "batch",
+        and_(MaintenanceRun.kind == "scheduled", MaintenanceRun.trigger == "cron"),
+    )
     return session.scalars(
-        select(MaintenanceRun)
-        .where(MaintenanceRun.summary["pipeline"].as_string() == "batch")
-        .order_by(MaintenanceRun.created_at.desc())
-        .limit(1)
+        select(MaintenanceRun).where(nightly).order_by(MaintenanceRun.created_at.desc()).limit(1)
     ).first()
 
 

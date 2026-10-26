@@ -196,7 +196,10 @@ const formatApiDetail = (detail: unknown): string => {
       .filter(Boolean)
       .join("; ");
   }
-  if (detail && typeof detail === "object") return "";
+  if (detail && typeof detail === "object") {
+    const message = (detail as { message?: unknown }).message;
+    return typeof message === "string" ? message : "";
+  }
   return detail == null ? "" : String(detail);
 };
 
@@ -686,6 +689,8 @@ export const runMaintenance = (
         /** One-off future run time, distinct from a Preset's recurring schedule_cron. Must be
          * in the future -- the API rejects a past timestamp with 400. */
         scheduled_at?: string;
+        /** Queue the jobs even when a queued or running job already covers the same operations. */
+        force?: boolean;
       }
     | {
         selection: { mode: "filter"; filter: Predicate | null };
@@ -694,6 +699,7 @@ export const runMaintenance = (
         mode: Mode;
         trigger?: string;
         scheduled_at?: string;
+        force?: boolean;
       }
 ) => apiFetch<MaintenanceRunResponse>("/maintenance/run", api, { method: "POST", body });
 
@@ -714,7 +720,7 @@ export const runManifestRewrite = (
 export const runTableOperations = (
   api: ApiOptions,
   tableId: UUID,
-  body: { operations: OperationType[]; trigger?: string }
+  body: { operations: OperationType[]; trigger?: string; force?: boolean }
 ) =>
   apiFetch<MaintenanceRunResponse>(`/tables/${tableId}/maintenance/operations`, api, { method: "POST", body });
 

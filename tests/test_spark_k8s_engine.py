@@ -462,14 +462,31 @@ def test_with_source_config_fills_catalog_uri_from_the_source() -> None:
     assert updated._k8s_config.catalog_uri == "http://iceberg-rest:8181"
     assert updated._k8s_config.catalog_warehouse == "s3://bench/warehouse"
 
-    destination_wins = SparkK8sEngine(
+
+def test_with_source_config_source_catalog_wins_over_destination_default() -> None:
+    """Regression, 2026-10-22: the HMS moved and the source was repointed, but the shared
+    fallback destination still carried the retired thrift URI, so every Spark job kept
+    connecting to it and timed out. The source's URI/warehouse must win; the destination's
+    only applies when the source has none."""
+    engine = SparkK8sEngine(
         config={
-            "catalog": "bench",
-            "spark_k8s": {"catalog_uri": "http://destination-rest:8181"},
+            "catalog": "cdp",
+            "spark_k8s": {
+                "catalog_impl": "hive",
+                "catalog_uri": "thrift://retired-hms:9083",
+                "catalog_warehouse": "s3://old/warehouse",
+            },
         }
     )
-    kept = destination_wins.with_source_config({"uri": "http://source-rest:8181"})
-    assert kept._k8s_config.catalog_uri == "http://destination-rest:8181"
+    updated = engine.with_source_config(
+        {"uri": "thrift://hms-v2:9083", "warehouse": "s3://new/warehouse"}
+    )
+    assert updated._k8s_config.catalog_uri == "thrift://hms-v2:9083"
+    assert updated._k8s_config.catalog_warehouse == "s3://new/warehouse"
+
+    kept = engine.with_source_config({"s3.region": "ap-south-1"})
+    assert kept._k8s_config.catalog_uri == "thrift://retired-hms:9083"
+    assert kept._k8s_config.catalog_warehouse == "s3://old/warehouse"
 
 
 def test_with_table_stats_scales_executor_profile_down_for_small_tables() -> None:
