@@ -9,6 +9,8 @@
 
 **[Docs](https://tech-pw.github.io/cryo/)** · **[Quickstart](https://tech-pw.github.io/cryo/quickstart/)** · **[Architecture](./hld.md)** · **[What ships today](./docs/CAPABILITIES.md)** · **[Contributing](./CONTRIBUTING.md)**
 
+⭐ If Cryo saves you from writing another maintenance DAG, a star helps other Iceberg teams find it.
+
 </div>
 
 ---
@@ -41,6 +43,25 @@ down everything it did.
 <p align="center">
   <img src="docs/img/maintenance-flow.png" alt="One partition of analytics.events passes through Cryo in five steps: scan, plan, admit, rewrite, receipt. On the left, before: 2,140 files averaging 18 MB, all of them small. In the middle, the audit log entry: optimize succeeded on trino-b in 4 minutes 12 seconds, 2,140 files down to 152. On the right, after: 152 files averaging 256 MB, none small, stamped with a receipt." width="100%">
 </p>
+
+## Measured, not promised
+
+We benchmarked Cryo against the scheduled Spark compaction DAG most teams write themselves
+(Spark 4.1, Iceberg 1.11, Kubernetes, three trials). The method was frozen before any scored run,
+and the full results, losses included, are on the
+[benchmark page](https://tech-pw.github.io/cryo/benchmark/).
+
+| Result | What it means |
+|---|---|
+| **1.76× faster queries** | Geometric mean of the query mix on a 100 GiB table after one Cryo run (up to 4.3× on single queries). 7,594 data files became 690. |
+| **22 / 22 vs 0 / 3** | Jobs committed under a MERGE every 200 seconds for two hours. The DAG's compactions collided with the writer every time; Cryo's committed between writes. |
+| **79% fewer pointless rewrites** | Than the scheduled DAG, because Cryo only rewrites what its scan says needs it. |
+| **≤ 4% p95 slowdown** | For live queries while compaction ran, with zero query failures. |
+| **151 / 151 jobs succeeded** | Across every test, with no failed or partial commits. |
+
+The costs are measured too: about 2× the DAG's Spark compute on small tables, and single-row
+lookups 1.8× slower at 256 MB files. Cryo buys faster queries and safe commits, not cheaper
+maintenance compute.
 
 ## Why Cryo
 
@@ -284,6 +305,40 @@ Catalog and JDBC catalogs are rejected.
 - **Assignment** filters the fleet by schema, size, small-file ratio, grade or drift, selects every
   match across pages (as a filter, not a list of IDs), and assigns a preset in one action. Rule-based
   auto-matching handles the rest, with manual override.
+
+</details>
+
+<details>
+<summary><b>Beyond compaction</b>: archive, duplicates, guardrails, AI</summary>
+
+- **Archive cold partitions, and restore them.** Move a partition's data files to S3
+  Intelligent-Tiering, Standard-IA or Glacier Instant Retrieval from the table page, and back to
+  Standard. Objects are re-classed in place, so paths and Iceberg metadata never change and every
+  engine keeps reading. Archive-tier classes that break Iceberg reads are refused. Preflight prints
+  the exact IAM policy if a permission is missing.
+- **Duplicate-table finder.** Fingerprints tables, scores similarity with MinHash and clusters the
+  forgotten `_backup`, `_v2` and `_tmp` copies into a graph under **Insights → Duplicates**. Exact
+  verification runs on demand, per pair, before anyone drops anything.
+- **Shared S3 path detector.** Flags catalog tables that share a warehouse path or nest inside
+  another table's path, across every enabled Hive, Glue and REST source, so expiry and orphan
+  cleanup never delete another table's live files.
+- **Partition access.** Per-partition request counts from S3 request logs, with days since last
+  access, on each table's Usage tab.
+- **Settings advisor.** Recommends Iceberg table properties from the table's own scan signals and
+  explains each one. Nothing is written until you stage and approve it.
+- **Maintenance batch.** Collect tables while you investigate, review one exact plan, then submit
+  it. What you reviewed is what runs, or the submit is refused.
+- **Ask Cryo and MCP.** A plain-English assistant over your scanned fleet, also exposed as an MCP
+  server for AI agents. It can only propose an action; a person with the right role approves it.
+- **Maintenance as code.** Define policies in YAML in Git, review them in pull requests, and sync
+  them to Cryo.
+- **Self-tuning governor.** A contextual-bandit policy learns admission thresholds per destination
+  from real outcomes, and falls back to static limits when confidence is low.
+- **Data expiry with approval.** Opt-in TTL deletes, partition by partition, that only run after an
+  approval.
+
+Some of these read query logs or S3 request logs; see [Status](#status) and
+[`docs/CAPABILITIES.md`](./docs/CAPABILITIES.md).
 
 </details>
 
