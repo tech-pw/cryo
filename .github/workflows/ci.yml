@@ -55,10 +55,25 @@ jobs:
           gitleaks version
 
       - name: Scan git history for secrets
+        # fetch-depth: 0 fetches every branch, and gitleaks with no --log-opts runs
+        # `git log --all`, so one unrelated branch's finding used to fail every PR.
+        # A PR scans only its own commits (base..merge ref). Pushes to main and manual
+        # runs scan the full history of the checked-out ref.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            log_opts="--full-history origin/${BASE_REF}..HEAD"
+          else
+            log_opts="--full-history HEAD"
+          fi
+          echo "gitleaks log range: ${log_opts}"
           gitleaks detect \
             --source . \
             --config .gitleaks.toml \
+            --log-opts="${log_opts}" \
             --redact \
             --verbose \
             --exit-code 1

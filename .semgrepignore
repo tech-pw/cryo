@@ -1,0 +1,17 @@
+# Paths static analysis should not report on. Keep this list short.
+
+# Upstream apache/iceberg-go copy with Cryo patches (see CRYO_PATCH.md). Scan it as its own
+# target with its own baseline instead of mixing it into first-party findings.
+engine-go/third_party/
+
+# Generated or bundled output.
+site/diagrams/
+site/assets/js/
+web/dist/
+node_modules/
+
+# Dependency lockfiles. SCA covers them.
+uv.lock
+web/package-lock.json
+**/Cargo.lock
+**/go.sum
