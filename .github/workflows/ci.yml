@@ -7,12 +7,10 @@ on:
       - "docs/**"
       - "**.md"
       - "site/**"
+  # No paths-ignore on pull requests: these jobs are required status checks on main, and a
+  # skipped workflow never reports them, which would leave docs-only PRs unmergeable.
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**.md"
-      - "site/**"
   # Manual trigger: re-run CI against current main without needing an unrelated push.
   workflow_dispatch:
 
