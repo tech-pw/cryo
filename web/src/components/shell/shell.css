@@ -747,3 +747,28 @@
     display: none;
   }
 }
+
+/* Running version under the nav (#263). Hidden when the sidebar is collapsed. */
+.cryo-shell__version {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 18px 4px;
+  overflow: hidden;
+  color: var(--sidebar-text);
+  font-size: 11px;
+  opacity: 0.7;
+  text-decoration: none;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cryo-shell__version:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.cryo-shell--sidebar-collapsed .cryo-shell__version {
+  display: none;
+}
