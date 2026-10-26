@@ -104,7 +104,8 @@ const SAMPLE_TABLE = {
   }
 } as never;
 
-describe("Consolidated Catalog page", () => {
+// Whole-page renders: under 1s alone, but 5s+ when CI runs the full suite in parallel.
+describe("Consolidated Catalog page", { timeout: 20_000 }, () => {
   beforeEach(() => {
     window.localStorage.clear();
     vi.mocked(listPresets).mockResolvedValue([]);
