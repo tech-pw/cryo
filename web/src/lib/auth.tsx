@@ -44,7 +44,17 @@ interface OidcPublicConfig {
 interface GooglePublicConfig {
   client_id: string;
   hosted_domain?: string | null;
+  auto_provision?: boolean;
 }
+
+interface MeResponse {
+  subject: string;
+  role: string;
+  managed: boolean;
+}
+
+export const SESSION_ENDED_MESSAGE = "Your session ended. Sign in again.";
+const SESSION_CHECK_INTERVAL_MS = 60_000;
 
 interface AuthConfigResponse {
   mode: AuthMode;
@@ -69,6 +79,8 @@ interface AuthContextValue {
   devTokenEnabledInProd: boolean;
   passwordLoginEnabled: boolean;
   googleClientId: string | null;
+  googleHostedDomain: string | null;
+  googleAutoProvision: boolean;
   signIn: (role: RoleToken, subject: string) => Promise<void>;
   signInWithPassword: (username: string, password: string) => Promise<void>;
   signInWithGoogle: (idToken: string) => Promise<void>;
@@ -249,6 +261,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [oidcConfig, setOidcConfig] = useState<OidcPublicConfig | null>(null);
   const [passwordLoginEnabled, setPasswordLoginEnabled] = useState(false);
   const [googleClientId, setGoogleClientId] = useState<string | null>(null);
+  const [googleHostedDomain, setGoogleHostedDomain] = useState<string | null>(null);
+  const [googleAutoProvision, setGoogleAutoProvision] = useState(false);
 
   const persistSession = (
     nextRole: RoleToken,
@@ -401,7 +415,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     window.localStorage.removeItem(AUTH_MODE_STORAGE_KEY);
     window.sessionStorage.removeItem(OIDC_STATE_STORAGE_KEY);
     window.sessionStorage.removeItem(OIDC_VERIFIER_STORAGE_KEY);
+    window.google?.accounts.id.disableAutoSelect?.();
     clearRecentItems();
+  };
+
+  const endSession = () => {
+    signOut();
+    setError(SESSION_ENDED_MESSAGE);
   };
 
   useEffect(() => {
@@ -415,6 +435,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setOidcConfig(config.oidc ?? null);
         setPasswordLoginEnabled(config.password_login_enabled === true);
         setGoogleClientId(config.google?.client_id ?? null);
+        setGoogleHostedDomain(config.google?.hosted_domain ?? null);
+        setGoogleAutoProvision(config.google?.auto_provision === true);
 
         const storedToken = window.localStorage.getItem(TOKEN_STORAGE_KEY);
         const storedSubject = window.localStorage.getItem(SUBJECT_STORAGE_KEY);
@@ -487,6 +509,60 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => window.clearInterval(timer);
   }, [authMode, accessToken]);
 
+  useEffect(() => {
+    if (authMode !== "local" || !accessToken) return undefined;
+    let cancelled = false;
+
+    const checkSession = async () => {
+      const expiresAt = decodeJwtExpiry(accessToken);
+      if (expiresAt !== null && expiresAt <= Date.now()) {
+        endSession();
+        return;
+      }
+      let response: Response;
+      try {
+        response = await fetch("/api/v1/auth/me", {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+      } catch {
+        return;
+      }
+      if (cancelled) return;
+      if (response.status === 401) {
+        endSession();
+        return;
+      }
+      if (!response.ok) return;
+      const me = (await response.json().catch(() => null)) as MeResponse | null;
+      if (cancelled || !me) return;
+      if (TOKENS.includes(me.role as RoleToken)) {
+        setRole(me.role as RoleToken);
+        window.localStorage.setItem(ROLE_STORAGE_KEY, me.role);
+      }
+      if (me.subject) {
+        setSubject(me.subject);
+        window.localStorage.setItem(SUBJECT_STORAGE_KEY, me.subject);
+      }
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void checkSession();
+    };
+
+    void checkSession();
+    const timer = window.setInterval(() => {
+      void checkSession();
+    }, SESSION_CHECK_INTERVAL_MS);
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [authMode, accessToken]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       role,
@@ -502,6 +578,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       devTokenEnabledInProd,
       passwordLoginEnabled,
       googleClientId,
+      googleHostedDomain,
+      googleAutoProvision,
       signIn,
       signInWithPassword,
       signInWithGoogle,
@@ -520,7 +598,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       devTokenEnabled,
       devTokenEnabledInProd,
       passwordLoginEnabled,
-      googleClientId
+      googleClientId,
+      googleHostedDomain,
+      googleAutoProvision
     ]
   );
 

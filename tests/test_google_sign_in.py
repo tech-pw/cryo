@@ -9,7 +9,8 @@ from sqlalchemy.orm import sessionmaker
 
 from cryo.api.app import create_app
 from cryo.config import Settings
-from cryo.db.models import AuthSettings, LocalUser
+from cryo.db.models import AuditLog, AuthSettings, LocalUser
+from cryo.security.local_users import invalidate_local_user
 from tests.auth_helpers import ADMIN_HEADERS
 from tests.conftest import (
     _assign_missing_autoincrement_primary_keys,
@@ -30,7 +31,10 @@ def session_factory(session):
 @pytest.fixture()
 def client(session_factory, monkeypatch) -> TestClient:
     monkeypatch.setattr("cryo.api.auth_routes.SessionLocal", session_factory)
+    monkeypatch.setattr("cryo.security.local_users.SessionLocal", session_factory)
+    invalidate_local_user()
     with session_factory() as session:
+        session.query(AuditLog).delete()
         session.query(LocalUser).delete()
         session.merge(
             AuthSettings(
@@ -183,3 +187,128 @@ def test_bootstrap_list_does_not_promote_an_existing_user(
         assert session.query(LocalUser).filter_by(username="admin@company.com").one().role == (
             "viewer"
         )
+
+
+def _enable_viewer_auto_provision(client: TestClient) -> None:
+    response = client.patch(
+        "/api/v1/auth/settings",
+        json={"google_hosted_domain": "company.com", "google_auto_provision": True},
+        headers=ADMIN_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["google_auto_provision"] is True
+
+
+def _bearer(response) -> dict[str, str]:
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+def test_new_domain_account_gets_viewer_access_on_first_sign_in(client, session_factory) -> None:
+    _enable_viewer_auto_provision(client)
+
+    response = _google_login(client, "new.person@company.com")
+
+    assert response.status_code == 200
+    me = client.get("/api/v1/auth/me", headers=_bearer(response)).json()
+    assert me == {"subject": "new.person@company.com", "role": "viewer", "managed": True}
+    with session_factory() as session:
+        user = session.query(LocalUser).filter_by(username="new.person@company.com").one()
+        assert user.created_via == "google"
+        assert user.last_login_method == "google"
+        assert user.last_login_at is not None
+
+
+def test_auto_provision_needs_a_domain(client) -> None:
+    response = client.patch(
+        "/api/v1/auth/settings", json={"google_auto_provision": True}, headers=ADMIN_HEADERS
+    )
+
+    assert response.status_code == 400
+    assert "domain" in response.json()["detail"]
+
+
+def test_clearing_the_domain_turns_auto_provision_off_in_effect(client, session_factory) -> None:
+    with session_factory() as session:
+        row = session.get(AuthSettings, 1)
+        row.google_auto_provision = True
+        row.google_hosted_domain = None
+        session.commit()
+
+    assert _google_login(client, "anyone@gmail.com").status_code == 403
+    assert client.get("/api/v1/auth/config").json()["google"]["auto_provision"] is False
+
+
+def test_role_change_applies_to_an_existing_session(client) -> None:
+    _enable_viewer_auto_provision(client)
+    session_headers = _bearer(_google_login(client, "new.person@company.com"))
+    assert client.get("/api/v1/auth/users", headers=session_headers).status_code == 403
+    user = next(
+        u
+        for u in client.get("/api/v1/auth/users", headers=ADMIN_HEADERS).json()
+        if u["username"] == "new.person@company.com"
+    )
+
+    client.patch(f"/api/v1/auth/users/{user['id']}", json={"role": "admin"}, headers=ADMIN_HEADERS)
+
+    assert client.get("/api/v1/auth/me", headers=session_headers).json()["role"] == "admin"
+    assert client.get("/api/v1/auth/users", headers=session_headers).status_code == 200
+
+
+def test_disabling_a_user_ends_their_session(client) -> None:
+    _enable_viewer_auto_provision(client)
+    session_headers = _bearer(_google_login(client, "new.person@company.com"))
+    user = client.get("/api/v1/auth/users", headers=ADMIN_HEADERS).json()[0]
+
+    client.patch(f"/api/v1/auth/users/{user['id']}", json={"disabled": True}, headers=ADMIN_HEADERS)
+
+    assert client.get("/api/v1/auth/me", headers=session_headers).status_code == 401
+
+
+def test_admins_cannot_demote_or_disable_themselves(client, session_factory) -> None:
+    with session_factory() as session:
+        session.add_all(
+            [
+                LocalUser(username="test-user", role="admin"),
+                LocalUser(username="other@company.com", role="admin"),
+            ]
+        )
+        session.commit()
+    me = next(
+        u
+        for u in client.get("/api/v1/auth/users", headers=ADMIN_HEADERS).json()
+        if u["username"] == "test-user"
+    )
+
+    demote = client.patch(
+        f"/api/v1/auth/users/{me['id']}", json={"role": "viewer"}, headers=ADMIN_HEADERS
+    )
+    disable = client.patch(
+        f"/api/v1/auth/users/{me['id']}", json={"disabled": True}, headers=ADMIN_HEADERS
+    )
+
+    assert demote.status_code == 409
+    assert disable.status_code == 409
+
+
+def test_access_changes_are_audited_for_admins_only(client) -> None:
+    _enable_viewer_auto_provision(client)
+    _google_login(client, "new.person@company.com")
+    user = client.get("/api/v1/auth/users", headers=ADMIN_HEADERS).json()[0]
+    client.patch(
+        f"/api/v1/auth/users/{user['id']}", json={"role": "operator"}, headers=ADMIN_HEADERS
+    )
+
+    entries = client.get("/api/v1/auth/audit", headers=ADMIN_HEADERS).json()
+
+    assert [entry["action"] for entry in entries] == [
+        "user_updated",
+        "user_created",
+        "settings_updated",
+    ]
+    assert entries[0]["actor"] == "test-user"
+    assert "role=viewer->operator" in entries[0]["detail"]
+    fleet = client.get("/api/v1/audit", headers=ADMIN_HEADERS)
+    if fleet.status_code == 200:
+        assert not [
+            row for row in fleet.json().get("entries", []) if row["action"].startswith("auth.")
+        ]

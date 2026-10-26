@@ -21,6 +21,7 @@ interface GoogleAccountsId {
       logo_alignment?: "left" | "center";
     }
   ) => void;
+  disableAutoSelect?: () => void;
 }
 
 declare global {

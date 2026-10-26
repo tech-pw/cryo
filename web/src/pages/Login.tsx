@@ -10,7 +10,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Segmented } from "../components/ui/segmented";
 import { GoogleSignInButton } from "../components/GoogleSignInButton";
-import { roleOptions, useAuth } from "../lib/auth";
+import { roleOptions, SESSION_ENDED_MESSAGE, useAuth } from "../lib/auth";
 import { cn } from "../lib/cn";
 
 const SIGN_IN_RECOVERY_HINT =
@@ -33,7 +33,9 @@ export const Login = () => {
     devTokenEnabled,
     devTokenEnabledInProd,
     passwordLoginEnabled,
-    googleClientId
+    googleClientId,
+    googleHostedDomain,
+    googleAutoProvision
   } = useAuth();
   const [subject, setSubject] = useState("operator");
   const [password, setPassword] = useState("");
@@ -122,6 +124,11 @@ export const Login = () => {
           {googleClientId ? (
             <>
               <GoogleSignInButton clientId={googleClientId} onCredential={signInWithGoogleToken} />
+              {googleAutoProvision && googleHostedDomain ? (
+                <p className="-mt-2 text-center text-xs leading-4 text-muted-foreground">
+                  New accounts on {googleHostedDomain} start with viewer access.
+                </p>
+              ) : null}
               {formSignInEnabled ? (
                 <div className="flex items-center gap-3 text-xs text-muted-foreground" role="separator">
                   <span className="h-px flex-1 bg-border" />
@@ -153,7 +160,11 @@ export const Login = () => {
                 }
               />
             ) : null}
-            {error ? (
+            {error === SESSION_ENDED_MESSAGE ? (
+              <div ref={errorRef} tabIndex={-1} className="focus-visible:outline-none">
+                <Alert variant="info" title="Signed out" description={error} />
+              </div>
+            ) : error ? (
               <div ref={errorRef} tabIndex={-1} className="focus-visible:outline-none">
                 <Alert
                   variant="error"

@@ -12,12 +12,15 @@ const authMock = vi.hoisted(() => ({
   devTokenEnabledInProd: false,
   passwordLoginEnabled: false,
   googleClientId: null as string | null,
+  googleHostedDomain: null as string | null,
+  googleAutoProvision: false,
   signInWithGoogle: vi.fn(),
   signInWithPassword: vi.fn()
 }));
 
 vi.mock("../lib/auth", () => ({
   useAuth: () => authMock,
+  SESSION_ENDED_MESSAGE: "Your session ended. Sign in again.",
   roleOptions: [
     { label: "viewer", value: "viewer" },
     { label: "operator", value: "operator" },
@@ -34,6 +37,23 @@ describe("Login page", () => {
     authMock.loading = false;
     authMock.passwordLoginEnabled = false;
     authMock.googleClientId = null;
+    authMock.googleHostedDomain = null;
+    authMock.googleAutoProvision = false;
+  });
+
+  it("tells people on the allowed domain they will start as viewers", () => {
+    authMock.googleClientId = "client.apps.googleusercontent.com";
+    authMock.googleHostedDomain = "company.com";
+    authMock.googleAutoProvision = true;
+    render(<Login />);
+    expect(screen.getByText("New accounts on company.com start with viewer access.")).toBeInTheDocument();
+  });
+
+  it("explains an ended session without calling it a failure", () => {
+    authMock.error = "Your session ended. Sign in again.";
+    render(<Login />);
+    expect(screen.getByText("Signed out")).toBeInTheDocument();
+    expect(screen.queryByText("Sign-in failed")).not.toBeInTheDocument();
   });
 
   it("offers Google sign-in outside OIDC mode once a Client ID is saved", () => {
