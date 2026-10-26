@@ -23,6 +23,7 @@ import {
   OPERATION_STATUS_LABEL,
   OPERATION_STATUS_TONE
 } from "./tableConfig";
+import { formatShortDate } from "../../../lib/format";
 
 export const OPERATIONS_SECTION_ID = "tc-operations";
 
@@ -239,7 +240,7 @@ const OperationRow = ({
           {op.excluded && !staged ? (
             <span className="tc-editor-hint">
               By {op.excluded_by ?? "unknown"}
-              {op.excluded_at ? ` · ${new Date(op.excluded_at).toLocaleDateString()}` : ""}
+              {op.excluded_at ? ` · ${formatShortDate(op.excluded_at)}` : ""}
               {op.excluded_reason ? ` · “${op.excluded_reason}”` : ""}
             </span>
           ) : null}

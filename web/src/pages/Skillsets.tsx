@@ -36,6 +36,7 @@ import { Skeleton } from "../components/ui/skeleton";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { Label } from "../components/ui/label";
+import { formatDateTime } from "../lib/format";
 
 const promoteSchema = z.object({
   target_version: z.string().regex(/^\d+\.\d+\.\d+$/, "Use semver format, e.g. 1.2.0")
@@ -468,7 +469,7 @@ export const Skillsets = () => {
     {
       id: "created_at",
       header: "Created",
-      cell: ({ row }) => (row.original.created_at ? new Date(row.original.created_at).toLocaleString() : "—")
+      cell: ({ row }) => (row.original.created_at ? formatDateTime(row.original.created_at) : "—")
     },
     {
       id: "actions",

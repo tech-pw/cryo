@@ -1,4 +1,5 @@
 import type { RunRead } from "../../api/types";
+import { formatShortDate } from "../../lib/format";
 
 export type RunTone = "succeeded" | "running" | "queued" | "failed" | "partial" | "cancelled" | "other";
 
@@ -67,7 +68,7 @@ export const formatRelative = (value: string | null | undefined, now: number = D
   else if (abs < 3600) text = `${Math.round(abs / 60)}m`;
   else if (abs < 86_400) text = `${Math.round(abs / 3600)}h`;
   else if (abs < 30 * 86_400) text = `${Math.round(abs / 86_400)}d`;
-  else return new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  else return formatShortDate(at);
   if (text === "just now") return text;
   return future ? `in ${text}` : `${text} ago`;
 };

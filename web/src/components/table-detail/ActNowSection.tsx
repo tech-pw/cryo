@@ -27,7 +27,13 @@ import {
 import { useState, type ReactNode } from "react";
 import type { BenefitScoreResponse, TableSignalRead, TableSignalsResponse } from "../../api/client";
 import type { TableCostRead } from "../../api/types";
-import { formatBytesGb, formatCurrency, formatNumber, formatTime } from "../../lib/format";
+import {
+  formatBytesGb,
+  formatCurrency,
+  formatDateTime,
+  formatNumber,
+  formatTime
+} from "../../lib/format";
 import { useWriteControl } from "../../lib/useWriteControl";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
 import { operationLabels } from "../../lib/theme";
@@ -419,7 +425,7 @@ export const ActNowSection = ({
                   title="Schedule this run?"
                   description={
                     pickedTime
-                      ? `Queues maintenance for ${tableLabel} at ${new Date(pickedTime).toLocaleString()}, using the assigned engine preset.`
+                      ? `Queues maintenance for ${tableLabel} at ${formatDateTime(pickedTime)}, using the assigned engine preset.`
                       : "Pick a time first."
                   }
                   onConfirm={handleSchedule}
