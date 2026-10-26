@@ -13,6 +13,7 @@ from cryo.config import Settings, get_settings
 from cryo.cost.model import CostStatsInput
 from cryo.domain.enums import Priority
 from cryo.planner.partitions import normalize_transform
+from cryo.planner.schema_gates import schema_time_columns
 from cryo.scanner.commit_signals import commit_signals, commits_from_snapshots
 from cryo.scanner.cost import (
     GB,
@@ -532,6 +533,9 @@ def analyze_table(
         "unknown": unknown_file_sizes,
     }
     raw["manifest_stats"] = manifest_stats(len(manifests), manifest_total_bytes, total_files)
+    time_columns = _schema_time_columns(table_obj)
+    if time_columns:
+        raw["time_columns"] = time_columns
     if cost_analysis is not None:
         raw["cost"] = cost_analysis.raw
     common = {
@@ -674,6 +678,17 @@ def _fetch_manifest_entries_safe(manifest: object, io: object) -> list[object]:
     """Backward-compatible wrapper used by tests."""
     entries, _ = _read_manifest_entries(manifest, io)
     return entries
+
+
+def _schema_time_columns(table_obj: object) -> list[str]:
+    """Iceberg ``time`` columns of the current schema; Spark cannot read them (issue #169)."""
+    schema_fn = getattr(table_obj, "schema", None)
+    if not callable(schema_fn):
+        return []
+    try:
+        return schema_time_columns(schema_fn())
+    except Exception:  # pragma: no cover - defensive: a schema walk must never break a scan.
+        return []
 
 
 def partition_fields(table_obj: object) -> list[dict[str, Any]]:
