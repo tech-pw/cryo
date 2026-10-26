@@ -41,9 +41,10 @@ interface AuthAuditEntry {
 const METHOD_LABELS: Record<string, string> = { google: "Google", password: "password" };
 
 const AUDIT_LABELS: Record<string, string> = {
-  user_created: "Added a person",
-  user_updated: "Changed access",
-  settings_updated: "Changed sign-in settings"
+  "auth.user_created": "Added a person",
+  "auth.user_updated": "Changed access",
+  "auth.settings_updated": "Changed sign-in settings",
+  "auth.login_failed": "Failed sign-in"
 };
 
 const lastSignIn = (user: LocalUser): string => {
@@ -406,6 +407,8 @@ export const AccessControl = () => {
                     <Button
                       type="button"
                       variant="secondary"
+                      loading={patchUser.isPending && patchUser.variables?.id === user.id}
+                      disabled={patchUser.isPending && patchUser.variables?.id === user.id}
                       onClick={() => patchUser.mutate({ id: user.id, disabled: false })}
                     >
                       Enable
@@ -413,13 +416,24 @@ export const AccessControl = () => {
                   ) : (
                     <ConfirmAction
                       title={`Disable ${user.username}?`}
-                      description="They are signed out within a minute and can't sign in again until an admin enables them."
-                      okText="Disable"
+                      description={`${user.username} is signed out of Cryo and can't sign in again until an admin enables the account.`}
+                      okText="Disable user"
                       okButtonProps={{ danger: true }}
-                      onConfirm={() => patchUser.mutateAsync({ id: user.id, disabled: true }).then(() => undefined)}
+                      onConfirm={async () => {
+                        try {
+                          await patchUser.mutateAsync({ id: user.id, disabled: true });
+                        } catch {
+                          // onError already shows the message above the list.
+                        }
+                      }}
                       disabled={isSelf}
                     >
-                      <Button type="button" variant="secondary" disabled={isSelf}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        loading={patchUser.isPending && patchUser.variables?.id === user.id}
+                        disabled={isSelf || (patchUser.isPending && patchUser.variables?.id === user.id)}
+                      >
                         Disable
                       </Button>
                     </ConfirmAction>

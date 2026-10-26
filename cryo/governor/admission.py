@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from math import floor
 from typing import TYPE_CHECKING
 
@@ -12,6 +12,8 @@ from cryo.domain.models import CapacitySnapshot
 if TYPE_CHECKING:
     from cryo.worker.worker import DestinationConfig, MaintenanceJobRecord
 
+# Kept for callers and tests that need the historical zone; the gate itself now uses the
+# configured display zone (#183).
 IST = timezone(timedelta(hours=5, minutes=30))
 DEFAULT_REPLICA = "default"
 
@@ -38,7 +40,8 @@ class AdmissionJob:
 @dataclass(frozen=True)
 class AdmissionConfig:
     # Equal start/end (including the 0/0 default) means no window — heavy modes
-    # may run at any hour. Only a non-empty IST range gates standard/deep jobs.
+    # may run at any hour. Only a non-empty range gates standard/deep jobs. Hours are in
+    # CRYO_DISPLAY_TIMEZONE (#183).
     offpeak_start_ist: int = 0
     offpeak_end_ist: int = 0
     per_replica_cap: int = 5
@@ -257,18 +260,27 @@ def is_heavy_mode(mode: Mode | str) -> bool:
     return Mode(mode) in {Mode.STANDARD, Mode.DEEP}
 
 
-def is_offpeak(now: datetime, start_hour_ist: int, end_hour_ist: int) -> bool:
-    """Return True when *now* is inside the IST off-peak window.
+def is_offpeak(now: datetime, start_hour: int, end_hour: int, *, tz: tzinfo | None = None) -> bool:
+    """Return True when *now* is inside the off-peak window.
 
-    Equal ``start_hour_ist`` / ``end_hour_ist`` (including both unset → 0/0)
-    disables the gate so heavy maintenance may run at any hour.
+    The hours are in the install's time zone (CRYO_DISPLAY_TIMEZONE, cryo.display_time), the
+    same zone cron presets are evaluated in. Before #183 this always converted to IST, so a
+    Berlin team's 01:00-07:00 window ran 21:30-03:30 local time. The config fields keep their
+    historical ``_ist`` names.
+
+    Equal ``start_hour`` / ``end_hour`` (including both unset → 0/0) disables the gate so heavy
+    maintenance may run at any hour.
     """
-    hour = _ensure_aware(now).astimezone(IST).hour
-    if start_hour_ist == end_hour_ist:
+    if start_hour == end_hour:
         return True
-    if start_hour_ist < end_hour_ist:
-        return start_hour_ist <= hour < end_hour_ist
-    return hour >= start_hour_ist or hour < end_hour_ist
+    if tz is None:
+        from cryo.display_time import display_zone
+
+        tz = display_zone()
+    hour = _ensure_aware(now).astimezone(tz).hour
+    if start_hour < end_hour:
+        return start_hour <= hour < end_hour
+    return hour >= start_hour or hour < end_hour
 
 
 def cooldown_elapsed(

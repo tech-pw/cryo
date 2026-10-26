@@ -691,6 +691,8 @@ export const runMaintenance = (
         scheduled_at?: string;
         /** Queue the jobs even when a queued or running job already covers the same operations. */
         force?: boolean;
+        /** A subset of the preset's operations; omit to run all of them. */
+        operations?: string[];
       }
     | {
         selection: { mode: "filter"; filter: Predicate | null };
@@ -700,6 +702,7 @@ export const runMaintenance = (
         trigger?: string;
         scheduled_at?: string;
         force?: boolean;
+        operations?: string[];
       }
 ) => apiFetch<MaintenanceRunResponse>("/maintenance/run", api, { method: "POST", body });
 
@@ -2377,8 +2380,10 @@ export const getShallowHealth = async (): Promise<{ status: string }> => {
   return payload as { status: string };
 };
 
-export const getDeepHealth = async (): Promise<DeepHealthResponse> => {
-  const response = await fetch("/healthz/deep");
+export const getDeepHealth = async ({ token }: ApiOptions): Promise<DeepHealthResponse> => {
+  const response = await fetch(`${API_PREFIX}/ops/healthz/deep`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
   const payload = await response.json();
   if (
     payload &&
@@ -2394,8 +2399,10 @@ export const getDeepHealth = async (): Promise<DeepHealthResponse> => {
   return payload as DeepHealthResponse;
 };
 
-export const getMetricsText = async (maxLines = 60): Promise<string> => {
-  const response = await fetch("/metrics");
+export const getMetricsText = async ({ token }: ApiOptions, maxLines = 60): Promise<string> => {
+  const response = await fetch(`${API_PREFIX}/ops/metrics`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
   const text = await response.text();
   if (!response.ok) {
     throw responseError(response, "Failed to fetch metrics", text);

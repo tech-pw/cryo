@@ -93,6 +93,18 @@ api:
 
 worker:
   replicas: 2
+  # Readiness + liveness on the daemon's /healthz (observability.metricsPort). It turns 503
+  # after 5 consecutive failed loop ticks, or when one tick has run longer than
+  # tickStallSeconds (0 = no hung-tick check). Off for the worker by default: one
+  # tick can wait on an engine job for hours. Set it above your longest expected job if you want it.
+  probe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    readinessFailureThreshold: 2
+    livenessFailureThreshold: 4
+    tickStallSeconds: 0
   resources:
     requests:
       cpu: 500m
@@ -118,6 +130,18 @@ governor:
 
 scheduler:
   replicas: 1
+  # Readiness + liveness on the daemon's /healthz (observability.metricsPort). It turns 503
+  # after 5 consecutive failed loop ticks, or when one tick has run longer than
+  # tickStallSeconds (0 = no hung-tick check). A scheduler tick only evaluates
+  # crons and enqueues work, so an hour inside one tick means it is hung.
+  probe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    readinessFailureThreshold: 2
+    livenessFailureThreshold: 4
+    tickStallSeconds: 3600
   resources:
     requests:
       cpu: 100m
@@ -140,6 +164,18 @@ scheduler:
 
 scannerWorker:
   replicas: 3
+  # Readiness + liveness on the daemon's /healthz (observability.metricsPort). It turns 503
+  # after 5 consecutive failed loop ticks, or when one tick has run longer than
+  # tickStallSeconds (0 = no hung-tick check). Stale scan chunks are reclaimed after
+  # 15 minutes, so a tick running an hour is hung.
+  probe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    readinessFailureThreshold: 2
+    livenessFailureThreshold: 4
+    tickStallSeconds: 3600
   resources:
     requests:
       cpu: 500m
@@ -164,7 +200,11 @@ scannerWorker:
     minReplicas: 3
     maxReplicas: 8
     targetCPUUtilizationPercentage: 70
-    targetMemoryUtilizationPercentage: 80
+    # Off (null) by default. CPython rarely returns heap to the OS after a scan, so idle
+    # scanner workers sit above their memory request and a memory target pins the HPA at
+    # maxReplicas at 0% CPU. Set a percentage only if your workers' idle memory is well
+    # under the request. For queue-driven scaling use keda.enabled below.
+    targetMemoryUtilizationPercentage: null
     scaleDownStabilizationSeconds: 300
     # Cost remediation plan §5, 2026-09-16 (docs/CRYO_UNUSED_COST_FIX_2026-09-16.md): the CPU/
     # memory HPA above sits at its floor of 3 replicas nearly continuously between ad-hoc scan
@@ -202,6 +242,11 @@ scanner:
   # so they cannot drift apart -- a --num-chunks larger than completions silently drops the
   # unclaimed chunks, which is the 2026-09-22 bug (see scanner-cronjob.yaml).
   chunks: 4
+  # Forbid: a new run does not start while the previous one is still going.
+  concurrencyPolicy: Forbid
+  # Kill a scanner Job that is still running after this long (5.5h, under the 6h schedule).
+  # Set to null to disable.
+  activeDeadlineSeconds: 19800
   resources:
     requests:
       cpu: 500m
@@ -399,11 +444,19 @@ redis:
     fsGroup: 1000
 
 migration:
+  # The migration job runs the API image (image.repository plus image.digest, or image.tag)
+  # unless you set a separate migration image here. Leave repository and digest empty to
+  # follow the API image: the old defaults (cryo:latest) ignored image.digest and the
+  # pre-install hook could not pull (issue #140).
   image:
-    repository: cryo
-    tag: latest
+    # Set to run migrations from a different image. Empty follows image.repository.
+    repository: ""
+    # Used only with an explicit repository above. Empty falls back to image.tag.
+    tag: ""
+    # Set alone to pin the API repository at a different digest. Empty follows image.digest.
     digest: ""
-    pullPolicy: Always # see the comment on image.pullPolicy above
+    # Empty follows image.pullPolicy.
+    pullPolicy: ""
   # Alembic occasionally needs more than one attempt against a cold/just-provisioned
   # database (e.g. a connection racing the DB's own readiness) before the pre-install/
   # pre-upgrade hook gives up and blocks the release.
@@ -441,3 +494,66 @@ web:
 service:
   type: ClusterIP
   port: 8000
+
+# PodDisruptionBudgets for the long-running Deployments, so a node drain or Karpenter
+# consolidation can't evict every replica at once. Off by default. maxUnavailable: 1 never
+# blocks a drain outright, even for the single-replica governor.
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  # Rendered only for components that are themselves rendered (web needs web.enabled).
+  components:
+    - api
+    - web
+    - worker
+    - scanner-worker
+    - governor
+
+# NetworkPolicies. Off by default (they need a CNI that enforces them).
+#   - Redis accepts connections only from this release's pods. The chart's Redis has no auth.
+#   - The API accepts connections from this release's pods plus api.from (for example
+#     your ingress controller's namespace). An empty api.from leaves the API reachable from
+#     anywhere in the cluster.
+#   - egress, when non-empty, restricts every Cryo pod's egress to DNS, this release's pods
+#     and these rules: add your database, catalog, object storage and engine endpoints.
+#     Empty leaves egress unrestricted.
+networkPolicy:
+  enabled: false
+  api:
+    from: []
+    # - namespaceSelector:
+    #     matchLabels:
+    #       kubernetes.io/metadata.name: ingress-nginx
+  egress: []
+  # - to:
+  #     - ipBlock:
+  #         cidr: 10.0.0.0/16
+  #   ports:
+  #     - port: 5432
+  #       protocol: TCP
+  #     - port: 443
+  #       protocol: TCP
+  # DNS egress allowed whenever egress is restricted.
+  dnsPorts:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+
+# Ingress in front of the web UI (which proxies /api to the API), or in front of the API
+# when web.enabled is false. Off by default. Terminate TLS here or at your load balancer:
+# sign-in passwords, Google ID tokens and session JWTs cross this hop.
+# api.ingressAnnotations (SSE settings for the assistant) are merged in.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: cryo.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # - secretName: cryo-tls
+  #   hosts:
+  #     - cryo.example.com

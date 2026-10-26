@@ -309,6 +309,11 @@ _TRINO_CELLS = (
         SupportStatus.SUPPORTED,
         MaturityTier.GA,
         ExecutionMode.TRINO_SQL,
+        limitations=(
+            "Skipped, with a plan note, on tables with snapshots excluded from expiry: Trino "
+            "cannot keep a specific snapshot.",
+        ),
+        fallback_engines=(EngineType.SPARK_EMR,),
         owner="engines/trino",
         evidence=_TRINO_EVIDENCE,
     ),
@@ -347,7 +352,8 @@ _TRINO_CELLS = (
         MaturityTier.BETA,
         ExecutionMode.TRINO_SQL,
         limitations=(
-            "Implemented as OPTIMIZE; Spark-specific delete-file thresholds are unavailable.",
+            "Planned, run and recorded as OPTIMIZE, a data-file rewrite; Spark-specific "
+            "delete-file thresholds are unavailable.",
         ),
         fallback_engines=(EngineType.SPARK_EMR,),
         owner="engines/trino",

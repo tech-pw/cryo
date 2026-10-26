@@ -31,6 +31,15 @@ class TokenBucket:
         return False
 
 
+def client_ip(request: Request) -> str:
+    """Best-effort client address: first X-Forwarded-For hop, else the socket peer.
+
+    The forwarded header is client-controlled when the API is reached directly, so callers
+    must not rely on this alone for security decisions (login throttling also counts per
+    account)."""
+    return _client_key(request)
+
+
 def _client_key(request: Request) -> str:
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:

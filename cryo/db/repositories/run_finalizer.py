@@ -73,9 +73,10 @@ def finalize_open_runs(
     """Mark runs finished when all child jobs reached a terminal state.
 
     A run with only DEFERRED jobs left is not finalized until each of those jobs has been
-    deferred for at least _DEFERRED_FINALIZE_GRACE -- see that constant's docstring for the
-    race this avoids. Jobs deferred for a fleet-wide capacity reason (metastore_capacity,
-    native_cluster_capacity, fleet_admission_rate_cap) get the much longer
+    deferred for at least _DEFERRED_FINALIZE_GRACE, counted from the job's first deferral
+    (deferred_since) -- see that constant's docstring for the race this avoids. Jobs deferred
+    for a fleet-wide capacity reason (metastore_capacity, native_cluster_capacity,
+    fleet_admission_rate_cap) get the much longer
     _CAPACITY_DEFERRED_FINALIZE_GRACE instead -- see that constant's docstring for the 2026-09-15
     incident this fixes (29,832 jobs mass-failed as "orphaned_deferred" while the capacity
     constraint that deferred them was still genuinely active, not abandoned).
@@ -125,22 +126,26 @@ def finalize_open_runs(
             if any(status not in TERMINAL for status in counts):
                 continue
             if counts.get(JobStatus.DEFERRED.value, 0) > 0:
+                # Grace runs from the start of the deferral episode (deferred_since), not the
+                # latest re-defer: finished_at is restamped on every re-defer, so a job a gate
+                # keeps refusing (approval, PII tagging) restarted its own grace each wave and
+                # the run never closed (#167). Capacity deferrals keep measuring from the latest
+                # re-defer on purpose -- they clear on their own and the job is being actively
+                # retried, see _CAPACITY_DEFERRED_FINALIZE_GRACE. finished_at is also the
+                # fallback for rows written before deferred_since existed.
                 deferred_jobs = session.execute(
-                    select(MaintenanceJob.finished_at, MaintenanceJob.error).where(
+                    select(
+                        MaintenanceJob.deferred_since,
+                        MaintenanceJob.finished_at,
+                        MaintenanceJob.error,
+                    ).where(
                         MaintenanceJob.run_id == run.id,
                         MaintenanceJob.status == JobStatus.DEFERRED.value,
                     )
                 ).all()
                 still_in_grace = any(
-                    finished_at is not None
-                    and (finished_at if finished_at.tzinfo else finished_at.replace(tzinfo=UTC))
-                    > current
-                    - (
-                        _CAPACITY_DEFERRED_FINALIZE_GRACE
-                        if is_capacity_defer_reason(error)
-                        else _DEFERRED_FINALIZE_GRACE
-                    )
-                    for finished_at, error in deferred_jobs
+                    _deferred_in_grace(deferred_since, finished_at, error, current)
+                    for deferred_since, finished_at, error in deferred_jobs
                 )
                 if still_in_grace:
                     continue
@@ -181,3 +186,19 @@ def finalize_open_runs(
             finalized += 1
         session.commit()
     return finalized
+
+
+def _deferred_in_grace(
+    deferred_since: datetime | None,
+    finished_at: datetime | None,
+    error: str | None,
+    current: datetime,
+) -> bool:
+    if is_capacity_defer_reason(error):
+        anchor, grace = finished_at, _CAPACITY_DEFERRED_FINALIZE_GRACE
+    else:
+        anchor, grace = deferred_since or finished_at, _DEFERRED_FINALIZE_GRACE
+    if anchor is None:
+        return False
+    anchor = anchor if anchor.tzinfo else anchor.replace(tzinfo=UTC)
+    return anchor > current - grace

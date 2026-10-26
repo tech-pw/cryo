@@ -303,9 +303,9 @@ def test_access_changes_are_audited_for_admins_only(client) -> None:
     entries = client.get("/api/v1/auth/audit", headers=ADMIN_HEADERS).json()
 
     assert [entry["action"] for entry in entries] == [
-        "user_updated",
-        "user_created",
-        "settings_updated",
+        "auth.user_updated",
+        "auth.user_created",
+        "auth.settings_updated",
     ]
     assert entries[0]["actor"] == "test-user"
     assert "role=viewer->operator" in entries[0]["detail"]
