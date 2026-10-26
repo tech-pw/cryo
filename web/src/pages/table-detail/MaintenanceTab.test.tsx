@@ -167,7 +167,7 @@ describe("MaintenanceTab", () => {
     expect(document.querySelector(".td-grid-bar")?.getAttribute("data-tone")).toBe("queued");
     const runGrid = document.querySelector<HTMLElement>(".td-grid");
     expect(runGrid).toHaveClass("td-grid");
-    expect(runGrid?.style.gridTemplateColumns).toBe("minmax(112px, max-content) repeat(1, 20px)");
+    expect(runGrid?.style.gridTemplateColumns).toBe("minmax(112px, max-content) 20px");
     expect(runGrid?.style.gridTemplateColumns).not.toContain("1fr");
     expect(document.querySelector(".td-grid-bar span")?.getAttribute("style")).toContain("height:");
     expect(document.querySelector(".td-run-status")?.textContent).toContain("Waiting");

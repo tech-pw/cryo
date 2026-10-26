@@ -537,9 +537,40 @@ const AUDIT_ROWS: Array<[string, string, string, number, number | null, number |
   ["optimize", "succeeded", "Chunk 1/3: 16 partitions, event_date 2026-08-20..2026-09-04", 41, 133_000, 6.3 * GB, 13_638]
 ];
 
+// Jobless operator changes; the first three land back to back between two nightly runs.
+const CHANGE_ROWS: Array<[action: string, detail: string, minsAgo: number, actor: string]> = [
+  ["table_config_change", "cooldown_hours: 24 -> 12", 5 * 24 * 60 + 40, "priya@acme.io"],
+  ["apply_table_properties", "write.target-file-size-bytes: 134217728 -> 536870912", 5 * 24 * 60 + 35, "property-autopilot"],
+  ["table_config_change", "min_small_files: 50 -> 20", 4 * 24 * 60 + 300, "priya@acme.io"],
+  ["table_config_change", "retention_days: 7 -> 5", 9 * 60, "dev@acme.io"]
+];
+
 export function demoAuditBody() {
   return {
-    items: AUDIT_ROWS.map(([action, status, detail, mins, duration, freed, input], i) => ({
+    items: [
+      ...CHANGE_ROWS.map(([action, detail, mins, actor], i) => ({
+        id: 8900 + i,
+        created_at: ago(mins),
+        ts: ago(mins),
+        action,
+        status: "OK",
+        detail,
+        engine: null,
+        job_id: null,
+        duration_ms: null,
+        actual_bytes_freed: null,
+        input_files_count: null,
+        output_files_count: null,
+        actor,
+        effect_status: null
+      })),
+      ...auditReceipts()
+    ]
+  };
+}
+
+function auditReceipts() {
+  return AUDIT_ROWS.map(([action, status, detail, mins, duration, freed, input], i) => ({
       id: 9000 + i,
       created_at: ago(mins),
       action,
@@ -553,8 +584,7 @@ export function demoAuditBody() {
       output_files_count: input === null ? null : Math.round(input / 96),
       actor: "scheduler",
       effect_status: status === "succeeded" ? (freed ? "bytes_reported" : "files_reported") : "unverified"
-    }))
-  };
+  }));
 }
 
 // Scores are 100 minus 8-point warnings and 20-point criticals, so only these values exist.
