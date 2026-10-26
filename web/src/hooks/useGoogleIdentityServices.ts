@@ -9,6 +9,19 @@ interface GoogleAccountsId {
     error_callback?: (error: { type: string }) => void;
   }) => void;
   prompt: (momentListener?: (notification: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean }) => void) => void;
+  renderButton: (
+    parent: HTMLElement,
+    options: {
+      type?: "standard" | "icon";
+      theme?: "outline" | "filled_blue" | "filled_black";
+      size?: "large" | "medium" | "small";
+      text?: "signin_with" | "continue_with";
+      shape?: "rectangular" | "pill";
+      width?: number;
+      logo_alignment?: "left" | "center";
+    }
+  ) => void;
+  disableAutoSelect?: () => void;
 }
 
 declare global {
@@ -131,5 +144,35 @@ export const useGoogleIdentityServices = () => {
     []
   );
 
-  return { status, loadError, requestIdToken };
+  /** Renders Google's own sign-in button into `parent`. Unlike `prompt()` (One Tap), the
+   * button is not suppressed after a user dismisses One Tap, so it is what the Login page uses. */
+  const renderButton = useCallback(
+    (
+      parent: HTMLElement,
+      clientId: string,
+      onCredential: (idToken: string) => void,
+      options: { width?: number; theme?: "outline" | "filled_black" } = {}
+    ): boolean => {
+      const google = window.google;
+      if (!google || !clientId.trim()) return false;
+      google.accounts.id.initialize({
+        client_id: clientId,
+        callback: (response) => onCredential(response.credential)
+      });
+      parent.replaceChildren();
+      google.accounts.id.renderButton(parent, {
+        type: "standard",
+        theme: options.theme ?? "outline",
+        size: "large",
+        text: "signin_with",
+        shape: "rectangular",
+        logo_alignment: "center",
+        width: options.width
+      });
+      return true;
+    },
+    []
+  );
+
+  return { status, loadError, requestIdToken, renderButton };
 };

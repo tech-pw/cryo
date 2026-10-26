@@ -1,7 +1,7 @@
 ---
 title: Cryo
-lede: Cryo reads your Apache Iceberg catalogs, ranks what is worth doing from real query workload, and admits the work to its native engine when the cluster has headroom. Reading and writing never share a code path, and every run leaves a receipt.
-description: Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Connect your lake and keep every table healthy without deciding when or how to optimize it — Cryo ranks the work from real query workload and explains every decision.
+lede: Cryo reads your Apache Iceberg catalogs, grades every table from its metadata, and runs the maintenance it needs on the Trino or Spark you already have, when they have headroom. Ranking by real query workload turns on once query-log ingestion is enabled. Reading and writing never share a code path, and every run leaves a receipt.
+description: Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Connect your lake and keep every table healthy without deciding when or how to optimize it — Cryo grades every table, runs the work on your Trino or Spark, and explains every decision.
 updated: 2026-10-06
 ---
 <!--
@@ -16,7 +16,7 @@ FIRST VIEWPORT: Type-first hero, tally, actions, stack. No product graphic.
         <div class="hero-copy">
             <a class="sky-pill" href="%%RELEASE_URL%%"><span class="sky-dot" aria-hidden="true"></span>%%VERSION%% · Pre-1.0 · Apache-2.0<span aria-hidden="true">→</span></a>
             <h1 id="home-title">Keep every table healthy<br> <mark class="marker">without deciding</mark> when or how.</h1>
-            <p class="lede">Cryo reads your catalogs, plans compaction and cleanup, and admits the work to its native engine when the cluster has headroom — every decision explained.</p>
+            <p class="lede">Cryo reads your catalogs, plans compaction and cleanup, and runs it on the Trino or Spark you already have when they have headroom — every decision explained.</p>
             <dl class="tally" aria-label="Cryo at a glance">
                 <div><dt>Operations</dt><dd>7</dd></div>
                 <div><dt>Engines</dt><dd>2</dd></div>

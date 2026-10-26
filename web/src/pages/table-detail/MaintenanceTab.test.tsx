@@ -37,6 +37,22 @@ vi.mock("../../api/maintenanceStatus", () => ({
   getTableMaintenanceStatus
 }));
 
+vi.mock("../../api/pathToA", () => ({
+  getPathToA: vi.fn().mockResolvedValue({
+    table_id: "table-1",
+    score: 100,
+    grade: "A",
+    deductions: [],
+    steps: [],
+    cryo_score: 100,
+    cryo_grade: "A",
+    reachable_score: 100,
+    reachable_grade: "A",
+    notes: []
+  }),
+  applyPathStep: vi.fn()
+}));
+
 vi.mock("../../api/client", () => ({
   getTableRuns,
   getTableCost: vi.fn().mockResolvedValue({ table_id: "table-1", orphan_bytes: null }),

@@ -1,0 +1,65 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="diagram.css">
+<script>if (location.hash === "#dark") document.documentElement.classList.add("dark");</script>
+<style>
+.cols{margin-top:28px;display:grid;grid-template-columns:repeat(5,1fr);gap:16px;align-items:stretch}
+.col{padding:20px 18px 18px;border-top:4px solid var(--c)}
+.col h3{font:500 14px Mono,monospace;letter-spacing:.06em;color:var(--c)}
+.col .what{margin-top:4px;font-size:14px;color:var(--soft)}
+.col ul{margin-top:14px;list-style:none;display:flex;flex-direction:column;gap:11px}
+.col li{position:relative;padding-left:16px;font-size:15.5px;line-height:1.35}
+.col li::before{content:"";position:absolute;left:0;top:7px;width:7px;height:7px;border-radius:2px;background:var(--c)}
+.col li small{display:block;font-size:13px;color:var(--soft);margin-top:2px}
+.m{--c:#277ABE}.d{--c:#1E8E5A}.s{--c:#A9791E}.p{--c:#B23A2E}.i{--c:#6B4FBB}
+html.dark .m{--c:#68C1EA}html.dark .d{--c:#4CC38A}html.dark .s{--c:#E0B04A}html.dark .p{--c:#E5776B}html.dark .i{--c:#A993F0}
+.foot{margin-top:18px;display:flex;justify-content:space-between;font-size:15px;color:var(--soft)}
+.foot b{color:var(--ink);font-weight:600}
+</style></head><body>
+<div class="stage">
+  <h2>Everything an Iceberg lake needs, in one self-hosted control plane</h2>
+  <p class="sub">Free and open source under Apache 2.0. It runs on the Trino or Spark you already have.</p>
+  <div class="cols">
+    <div class="card col m"><h3>MAINTAIN</h3><p class="what">Keep tables fast</p><ul>
+      <li>Compaction, sort and Z-order</li>
+      <li>Snapshot expiry</li>
+      <li>Orphan file cleanup</li>
+      <li>Manifest rewrites</li>
+      <li>Column statistics</li>
+      <li>Delete-file rewrites</li>
+      <li>Data expiry (TTL)<small>only after approval</small></li>
+    </ul></div>
+    <div class="card col d"><h3>DECIDE</h3><p class="what">Fix the right tables first</p><ul>
+      <li>A–F grade for every table</li>
+      <li>AutoComp ranking, weighted by query heat</li>
+      <li>Partition-aware, GB-budgeted plans</li>
+      <li>Load-aware, self-tuning governor</li>
+      <li>Presets and rule-based assignment</li>
+      <li>Maintenance batch<small>review one plan, then apply</small></li>
+    </ul></div>
+    <div class="card col s"><h3>SAVE</h3><p class="what">Find the waste</p><ul>
+      <li>Archive cold partitions<small>in place, and restore</small></li>
+      <li>Duplicate-table finder</li>
+      <li>Partition access from S3 logs</li>
+      <li>S3 cost and inventory</li>
+      <li>Per-table settings advisor</li>
+    </ul></div>
+    <div class="card col p"><h3>PROTECT</h3><p class="what">Never break production</p><ul>
+      <li>Shared S3 path detector</li>
+      <li>Per-table locks</li>
+      <li>Audit receipt for every action</li>
+      <li>Owner alerts by email and Slack</li>
+      <li>OIDC and role-based access</li>
+      <li>Encrypted backups</li>
+    </ul></div>
+    <div class="card col i"><h3>INTEGRATE</h3><p class="what">Fit your stack</p><ul>
+      <li>Ask Cryo in plain English</li>
+      <li>MCP server for AI agents</li>
+      <li>Maintenance as code (GitOps)</li>
+      <li>REST API and Python SDK</li>
+      <li>Helm chart, OpenTelemetry, Prometheus</li>
+    </ul></div>
+  </div>
+  <div class="foot"><span><b>Engines</b>  Trino · Spark / EMR · native Go (beta)</span><span><b>Catalogs</b>  Iceberg REST · Polaris · Nessie · Hive · Glue</span></div>
+</div>
+</body></html>

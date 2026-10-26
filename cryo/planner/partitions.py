@@ -135,6 +135,72 @@ def date_to_transform_value(value: date, transform: PartitionTransform) -> int:
     raise ValueError(f"date_to_transform_value: unsupported transform {transform.value}")
 
 
+_TIME_TRANSFORMS = (PartitionTransform.DAY, PartitionTransform.MONTH, PartitionTransform.YEAR)
+
+
+def partition_date(field: PartitionFieldSpec, partition_row: Mapping[str, Any]) -> date | None:
+    """First calendar day of a day/month/year partition, or None when it can't be read.
+
+    Scanners store either the raw transform integer (days/months/years since 1970) or an
+    ISO-style string ("2026-10-20", "2026-10", "2026"); both resolve to the same date.
+    """
+    if field.transform not in _TIME_TRANSFORMS:
+        return None
+    value = _partition_value(field, partition_row)
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        value = value.date()
+    if isinstance(value, date):
+        return _period_start(value, field.transform)
+    text = str(value).strip()
+    if text.lstrip("-").isdigit() and (
+        field.transform is not PartitionTransform.YEAR or len(text) < 4
+    ):
+        return _transform_value_to_date(int(text), field.transform)
+    try:
+        if field.transform is PartitionTransform.DAY:
+            return date.fromisoformat(text[:10])
+        if field.transform is PartitionTransform.MONTH:
+            return date(int(text[:4]), int(text[5:7]), 1)
+        return date(int(text[:4]), 1, 1)
+    except (ValueError, IndexError):
+        return None
+
+
+def _period_start(value: date, transform: PartitionTransform) -> date:
+    if transform is PartitionTransform.MONTH:
+        return value.replace(day=1)
+    if transform is PartitionTransform.YEAR:
+        return value.replace(month=1, day=1)
+    return value
+
+
+def _transform_value_to_date(value: int, transform: PartitionTransform) -> date | None:
+    try:
+        if transform is PartitionTransform.DAY:
+            return date.fromordinal(_EPOCH.toordinal() + value)
+        if transform is PartitionTransform.MONTH:
+            year, month = divmod(value, 12)
+            return date(_EPOCH.year + year, month + 1, 1)
+        return date(_EPOCH.year + value, 1, 1)
+    except (ValueError, OverflowError):
+        return None
+
+
+def is_open_time_partition(
+    fields: Sequence[PartitionFieldSpec],
+    partition_row: Mapping[str, Any],
+    today: date,
+) -> bool:
+    """True when a day/month/year partition value is the current period (still taking writes)."""
+    for field in fields:
+        start = partition_date(field, partition_row)
+        if start is not None and start == _period_start(today, field.transform):
+            return True
+    return False
+
+
 def partition_fields_from_stats(
     stats: Mapping[str, Any],
     params: Mapping[str, Any] | None = None,

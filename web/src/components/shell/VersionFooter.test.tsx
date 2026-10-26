@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetApiVersionCache } from "../../lib/buildInfo";
 import { VersionFooter } from "./VersionFooter";
 
+vi.mock("../../lib/auth", () => ({ useAuth: () => ({ token: "t" }) }));
+
 const renderFooter = () =>
   render(
     <MemoryRouter>
@@ -30,7 +32,7 @@ describe("VersionFooter", () => {
     renderFooter();
     const link = await screen.findByRole("link", { name: /Cryo v0\.1\.6 · abcdef1/ });
     expect(link.getAttribute("href")).toBe("/settings/about");
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/version");
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/version", { headers: { Authorization: "Bearer t" } });
     expect(screen.queryByLabelText("Web and API versions differ")).toBeNull();
   });
 

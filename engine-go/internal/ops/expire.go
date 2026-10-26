@@ -24,12 +24,15 @@ func ExpireSnapshots(ctx context.Context, req *protocol.ExecuteRequest, op *prot
 	}
 	_ = cat
 
-	retentionDays := intParam(op.Params, "retention_days", 0)
+	retentionHours := intParam(op.Params, "retention_hours", 0)
+	if retentionHours <= 0 {
+		retentionHours = intParam(op.Params, "retention_days", 0) * 24
+	}
 	retainLast := intParam(op.Params, "retain_last", 0)
 
 	var expired uint64
 	if isExecuteMode(req.Mode) {
-		updated, count, err := commitExpireSnapshots(ctx, req, tbl, retentionDays, retainLast)
+		updated, count, err := commitExpireSnapshots(ctx, req, tbl, retentionHours, retainLast)
 		if err != nil {
 			progress.Failed(operation, err.Error())
 			return failResult(operation, fmt.Errorf("failed to commit expire_snapshots: %w", err))
@@ -37,7 +40,7 @@ func ExpireSnapshots(ctx context.Context, req *protocol.ExecuteRequest, op *prot
 		expired = count
 		_ = updated
 	} else {
-		expired = estimateExpiredSnapshots(tbl, retentionDays, retainLast)
+		expired = estimateExpiredSnapshots(tbl, retentionHours, retainLast)
 	}
 
 	progress.Progress(operation, 100, expired, 0)
@@ -68,7 +71,7 @@ func countRemovedSnapshots(before, after map[int64]struct{}) uint64 {
 	return removed
 }
 
-func estimateExpiredSnapshots(tbl *table.Table, retentionDays, retainLast int) uint64 {
+func estimateExpiredSnapshots(tbl *table.Table, retentionHours, retainLast int) uint64 {
 	before := len(snapshotIDs(tbl))
 	if before == 0 {
 		return 0
@@ -77,8 +80,8 @@ func estimateExpiredSnapshots(tbl *table.Table, retentionDays, retainLast int) u
 	if retainLast > 0 && before > retainLast {
 		after = retainLast
 	}
-	if retentionDays > 0 {
-		cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour).UnixMilli()
+	if retentionHours > 0 {
+		cutoff := time.Now().Add(-time.Duration(retentionHours) * time.Hour).UnixMilli()
 		kept := 0
 		for _, snap := range tbl.Metadata().Snapshots() {
 			if snap.TimestampMs >= cutoff {
@@ -98,11 +101,11 @@ func estimateExpiredSnapshots(tbl *table.Table, retentionDays, retainLast int) u
 	return uint64(before - after)
 }
 
-func expireOptions(retentionDays, retainLast int) []table.ExpireSnapshotsOpt {
+func expireOptions(retentionHours, retainLast int) []table.ExpireSnapshotsOpt {
 	opts := []table.ExpireSnapshotsOpt{table.WithPostCommit(false)}
-	if retentionDays > 0 {
-		opts = append(opts, table.WithOlderThan(time.Duration(retentionDays)*24*time.Hour))
-	} else if retentionDays == 0 && retainLast > 0 {
+	if retentionHours > 0 {
+		opts = append(opts, table.WithOlderThan(time.Duration(retentionHours)*time.Hour))
+	} else if retentionHours == 0 && retainLast > 0 {
 		opts = append(opts, table.WithOlderThan(0))
 	}
 	if retainLast > 0 {
@@ -143,7 +146,7 @@ func commitExpireSnapshots(
 	ctx context.Context,
 	req *protocol.ExecuteRequest,
 	tbl *table.Table,
-	retentionDays, retainLast int,
+	retentionHours, retainLast int,
 ) (*table.Table, uint64, error) {
 	current := tbl
 	var totalExpired uint64
@@ -163,8 +166,8 @@ func commitExpireSnapshots(
 			return current, totalExpired, nil
 		}
 
-		opts := expireOptions(retentionDays, retainLast)
-		if retentionDays == 0 && retainLast > 0 && beforeCount > retainLast+1 {
+		opts := expireOptions(retentionHours, retainLast)
+		if retentionHours == 0 && retainLast > 0 && beforeCount > retainLast+1 {
 			// REST catalog rejects multi-snapshot removal in a single commit; expire one step at a time.
 			opts = expireOptions(0, beforeCount-1)
 		}
