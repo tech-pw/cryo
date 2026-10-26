@@ -100,7 +100,9 @@ def test_google_only_user_outside_the_allowed_domain_is_rejected(client) -> None
     )
 
     assert response.status_code == 400
-    assert "company.com" in response.json()["detail"]
+    assert response.json()["detail"] == (
+        "Google sign-in is restricted to company.com; bob@other.com could not sign in"
+    )
 
 
 def test_domain_is_normalized_and_filters_the_admin_list(client) -> None:
