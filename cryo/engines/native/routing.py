@@ -64,7 +64,8 @@ NATIVE_DELETE_FILES_DETAIL = (
 )
 
 NATIVE_RUST_OPTIMIZE_DETAIL = (
-    "native compaction blocked upstream on iceberg-rust (EPIC #2269); "
+    "native Rust compaction unavailable: iceberg-rust has no rewrite-files commit "
+    "(apache/iceberg-rust#2269 closed unimplemented); "
     "set CRYO_ENGINE_IMPL=go or destination.config.engine_impl=go"
 )
 

@@ -5,11 +5,25 @@
   <img src="docs/img/hero-light.png" alt="Cryo: self-hosted Apache Iceberg maintenance, with a receipt for every decision. Small ice cubes fuse into one solid cube, beside the steps scan, plan, admit, rewrite, receipt." width="100%">
 </picture>
 
-[![CI](https://github.com/tech-pw/cryo/actions/workflows/ci.yml/badge.svg)](https://github.com/tech-pw/cryo/actions/workflows/ci.yml) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-143E60)](./LICENSE) [![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-277ABE)](./docs/VERSIONING.md) ![Python 3.12](https://img.shields.io/badge/python-3.12-277ABE) ![React 19](https://img.shields.io/badge/web-React%2019%20%2B%20TypeScript-277ABE) [![Docs](https://img.shields.io/badge/docs-tech--pw.github.io%2Fcryo-68C1EA)](https://tech-pw.github.io/cryo/)
+### Self-hosted Apache Iceberg maintenance that grades every table, plans the work each one needs, runs it on the Trino or Spark you already have, and leaves a receipt for every decision.
+
+[![CI](https://github.com/tech-pw/cryo/actions/workflows/ci.yml/badge.svg)](https://github.com/tech-pw/cryo/actions/workflows/ci.yml) [![GitHub stars](https://img.shields.io/github/stars/tech-pw/cryo?style=flat&color=277ABE)](https://github.com/tech-pw/cryo/stargazers) [![Latest tag](https://img.shields.io/github/v/tag/tech-pw/cryo?sort=semver&label=version&color=277ABE)](https://github.com/tech-pw/cryo/tags) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-143E60)](./LICENSE) [![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-277ABE)](./docs/VERSIONING.md) [![Docs](https://img.shields.io/badge/docs-tech--pw.github.io%2Fcryo-68C1EA)](https://tech-pw.github.io/cryo/)
 
 **[Docs](https://tech-pw.github.io/cryo/)** · **[Quickstart](https://tech-pw.github.io/cryo/quickstart/)** · **[Architecture](./hld.md)** · **[What ships today](./docs/CAPABILITIES.md)** · **[Contributing](./CONTRIBUTING.md)**
 
 </div>
+
+> **Measured in [CryoBench V2](https://tech-pw.github.io/cryo/benchmark/)** (Spark 4.1 and Iceberg 1.11 on Kubernetes, three trials per test):
+>
+> - **1.76× faster queries** on a 100 GiB table after one Cryo run (geometric mean of the whole query mix).
+> - **22 / 22 Cryo jobs succeeded under live CDC** (a MERGE every 200 seconds for two hours), while **0 / 3** scheduled-DAG compactions committed.
+> - **10 vs 48 unnecessary rewrites** per trial against a scheduled Spark DAG.
+> - Live-query **p95 stayed within 0.88× to 1.04× of idle** during compaction, with zero query failures.
+> - The trade-off: Cryo used **about twice the Spark compute** of the scheduled DAG on small tables. It is not a compute saver.
+>
+> [Full results, method and trade-offs →](https://tech-pw.github.io/cryo/benchmark/)
+
+<p align="center">If Cryo looks useful, <a href="https://github.com/tech-pw/cryo/stargazers">star the repo</a> so others can find it, and <a href="https://github.com/tech-pw/cryo/issues/new/choose">tell us what broke or what is missing</a>. Feedback from real lakes shapes what ships next.</p>
 
 ---
 
@@ -373,7 +387,8 @@ table: for a table already on ZSTD-3 with sensible row groups, the cheap residua
 3–12%. Granica's published 20–50% rests on one public datapoint (TPC-DS `store_sales`, 418 GiB
 across 301,949 files averaging ~1.45 MB) that changes file size, row-group size, sort order and
 encoding together, so it can't be credited to a codec alone. Neither vendor publishes a
-reproducible benchmark; Cryo's inputs are in [CryoBench](./docs/CRYOBENCH.md).
+reproducible benchmark. Cryo's measured results are on the [benchmark page](https://tech-pw.github.io/cryo/benchmark/); the
+[CryoBench fixture](./docs/CRYOBENCH.md) is a separate synthetic input generator, not that benchmark.
 
 Amoro cells were checked against `apache/amoro` commit `6d3cd42` (2026-10-17). The latest
 release then was v0.8.1-incubating (2025-09-11). `dynamic-allocation.*` is on `main` and the
@@ -431,7 +446,15 @@ contribution.
 
 ## Tech stack
 
-Three trees: Python `cryo/`, Go `engine-go/` (the native compactor) and TypeScript `web/`.
+Three trees ship: Python `cryo/`, Go `engine-go/` (the native compactor) and TypeScript `web/`.
+
+**Engines in this repo.** The Python control plane (`cryo/`) plans and admits all work and runs
+it on Trino or Spark (GA). The Go native compactor (`engine-go/`) is beta, opt-in per destination
+(`engine_impl=go`) and not the default. The Rust crates (`cryo-engine/`, `cryo-native/`) are
+experimental: they are not built into the images and `cryo-native` is not published to PyPI.
+Native Rust compaction needs a rewrite-files commit that iceberg-rust does not provide yet; the
+upstream tracking epic, [apache/iceberg-rust#2269](https://github.com/apache/iceberg-rust/issues/2269),
+was closed as stale in October 2026 without it.
 
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy 2.0 + Alembic (PostgreSQL + pgvector), PyIceberg,
   trino-python-client, boto3 (EMR Serverless), Redis, structlog.
