@@ -205,6 +205,17 @@ def _cron_invalid(message: str, *, raise_error: bool) -> bool:
     return False
 
 
+def db_instant(value: datetime | str) -> datetime:
+    """A timestamp read back from the database as an aware UTC datetime.
+
+    Aggregates (MAX/COALESCE) lose the column type on SQLite, which then returns ISO strings;
+    naive values are UTC by the schema's convention.
+    """
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return _ensure_aware(value)
+
+
 def _ensure_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
