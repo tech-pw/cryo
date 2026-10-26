@@ -379,7 +379,7 @@ def _dispatch(
     if action == "set_table_override":
         return _dispatch_override(session, args)
     if action == "update_preset":
-        return _dispatch_preset(session, args)
+        return _dispatch_preset(session, principal, args)
     raise UnsupportedDispatch(f"no dispatcher for {action}")
 
 
@@ -605,7 +605,9 @@ def _dispatch_override(session: Session, args: dict[str, Any]) -> _DispatchResul
     return _DispatchResult()
 
 
-def _dispatch_preset(session: Session, args: dict[str, Any]) -> _DispatchResult:
+def _dispatch_preset(
+    session: Session, principal: Principal, args: dict[str, Any]
+) -> _DispatchResult:
     from cryo.api.routes import patch_preset
     from cryo.api.schemas import PresetPatch
 
@@ -623,10 +625,13 @@ def _dispatch_preset(session: Session, args: dict[str, Any]) -> _DispatchResult:
             "enabled",
             "guardrails",
             "is_default",
+            "paused",
         )
         if key in args
     }
-    patch_preset(uuid.UUID(str(args["preset_id"])), PresetPatch.model_validate(fields), session)
+    patch_preset(
+        uuid.UUID(str(args["preset_id"])), PresetPatch.model_validate(fields), session, principal
+    )
     return _DispatchResult()
 
 

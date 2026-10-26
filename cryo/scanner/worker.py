@@ -233,6 +233,7 @@ class ScanWorker:
                     "skipped": scan_summary.skipped + scan_summary.deferred,
                     "failed": scan_summary.failed,
                     "unreadable": scan_summary.unreadable,
+                    "new_tables_on_default": scan_summary.new_tables_on_default,
                 },
             )
             safe_publish(

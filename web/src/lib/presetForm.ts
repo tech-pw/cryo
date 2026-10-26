@@ -24,6 +24,7 @@ export interface PresetFormValues {
   priority: number;
   enabled: boolean;
   is_default: boolean;
+  paused: boolean;
   min_small_files: number;
   chunk_size_gb: number;
   max_partitions_per_chunk: number;
@@ -129,6 +130,7 @@ export const presetToFormValues = (
     priority: preset?.priority ?? 100,
     enabled: preset?.enabled ?? true,
     is_default: preset?.is_default ?? false,
+    paused: preset?.paused ?? false,
     min_small_files: asNumber(params.min_small_files, PRESET_PARAM_DEFAULTS.min_small_files),
     chunk_size_gb: asNumber(params.chunk_size_gb, PRESET_PARAM_DEFAULTS.chunk_size_gb),
     max_partitions_per_chunk: asNumber(
@@ -257,6 +259,7 @@ export const formValuesToPresetWrite = (
     priority: values.priority,
     enabled: values.enabled,
     is_default: values.is_default,
+    paused: values.paused,
     params: mergePreservingUnknown(existingPreset?.params, paramsPatch, EDITABLE_PARAM_KEYS),
     guardrails: mergePreservingUnknown(
       existingPreset?.guardrails,
@@ -348,6 +351,7 @@ export const buildDefaultPresetFormValues = (destinations: DestinationRead[]): P
     priority: base.priority ?? 100,
     enabled: base.enabled ?? true,
     is_default: base.is_default ?? false,
+    paused: base.paused ?? false,
     min_small_files: base.min_small_files ?? PRESET_PARAM_DEFAULTS.min_small_files,
     chunk_size_gb: base.chunk_size_gb ?? PRESET_PARAM_DEFAULTS.chunk_size_gb,
     max_partitions_per_chunk:
@@ -378,6 +382,39 @@ export const buildDefaultPresetFormValues = (destinations: DestinationRead[]): P
   };
 };
 
+export const DEFAULT_PRESET_NEEDS_SCHEDULE =
+  "The default preset needs a schedule, otherwise the tables it covers are never maintained.";
+
+/**
+ * Plain-language warning for a save that changes who maintains tables (#119), or null.
+ * `coveredTables` is how many tables currently resolve to this preset.
+ */
+export const presetLifecycleWarning = (
+  before: Pick<PresetRead, "enabled" | "paused" | "is_default"> | null | undefined,
+  after: Pick<PresetFormValues, "enabled" | "paused" | "is_default">,
+  coveredTables: number | null
+): string | null => {
+  if (!before) return null;
+  const count = coveredTables == null ? "Its" : `${coveredTables}`;
+  const noun = coveredTables === 1 ? "table" : "tables";
+  if (before.enabled && !after.enabled) {
+    return coveredTables == null
+      ? "Disabling retires this preset. Tables pinned to it fall through to rules or the default preset."
+      : `Disabling retires this preset. ${count} ${noun} it covers will fall through to rules or the default preset.`;
+  }
+  if (!before.paused && after.paused) {
+    return coveredTables == null
+      ? "Pausing holds this preset's tables. They will not be maintained until you resume it."
+      : `Pausing holds this preset. ${count} ${noun} will stop being maintained until you resume it.`;
+  }
+  if (before.is_default && !after.is_default) {
+    return coveredTables == null
+      ? "Without a default preset, tables with no pin and no matching rule are not maintained."
+      : `${count} ${noun} on the default will stop being maintained unless another preset is made the default.`;
+  }
+  return null;
+};
+
 export const validatePresetFormValues = (values: PresetFormValues): Record<string, string> | null => {
   const errors: Record<string, string> = {};
 
@@ -387,6 +424,9 @@ export const validatePresetFormValues = (values: PresetFormValues): Record<strin
 
   const cronError = validateCronExpression(values.schedule_cron, { allowEmpty: true });
   if (cronError) errors.schedule_cron = cronError;
+  else if (values.is_default && !values.schedule_cron?.trim()) {
+    errors.schedule_cron = DEFAULT_PRESET_NEEDS_SCHEDULE;
+  }
 
   const fieldChecks: Array<[keyof PresetFormValues, string | null]> = [
     ["min_small_files", validateNonNegative("Min small files", values.min_small_files)],
