@@ -1,0 +1,56 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="diagram.css">
+<script>if (location.hash === "#dark") document.documentElement.classList.add("dark");</script>
+<style>
+.stats{margin-top:28px;display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.stat{padding:22px 22px 20px}
+.stat .big{font:700 52px/1 Plex,sans-serif;letter-spacing:-.02em;color:var(--core)}
+html.dark .stat .big{color:var(--glacier)}
+.stat .big .vs{font-size:24px;font-weight:600;color:var(--soft);margin:0 6px;letter-spacing:0}
+.stat .big .bad{color:var(--crit)}
+html.dark .stat .big .bad{color:#E5776B}
+.stat h4{margin-top:14px;font-weight:600;font-size:18px;line-height:1.3}
+.stat p{margin-top:6px;font-size:14.5px;line-height:1.45;color:var(--soft)}
+.costs{margin-top:18px;padding:16px 22px;display:flex;gap:28px;align-items:center}
+.costs .label{flex:none}
+.costs span{font-size:15px;color:var(--ink)}
+.costs span b{font-weight:600}
+.foot{margin-top:16px;display:flex;justify-content:space-between;font:500 14px Mono,monospace;color:var(--soft)}
+.foot b{color:var(--link);font-weight:500}
+</style></head><body>
+<div class="stage">
+  <h2>Cryo vs the scheduled Spark DAG most teams write themselves</h2>
+  <p class="sub">Spark 4.1, Iceberg 1.11 on Kubernetes, three trials. The protocol was frozen before any
+    scored run, and Cryo ran with default settings throughout.</p>
+  <div class="stats">
+    <div class="card stat">
+      <div class="big">1.76×</div>
+      <h4>faster queries</h4>
+      <p>Geometric mean of the query mix on a 100 GiB table after one run. 7,594 data files became 690.</p>
+    </div>
+    <div class="card stat">
+      <div class="big">22/22<span class="vs">vs</span><span class="bad">0/3</span></div>
+      <h4>jobs committed under live writes</h4>
+      <p>A MERGE every 200 seconds for two hours. The DAG's compactions collided with the writer every time.</p>
+    </div>
+    <div class="card stat">
+      <div class="big">79%</div>
+      <h4>fewer pointless rewrites</h4>
+      <p>Cryo rewrites only what its scan says needs it, instead of everything on a timer.</p>
+    </div>
+    <div class="card stat">
+      <div class="big">≤ 4%</div>
+      <h4>p95 slowdown for live queries</h4>
+      <p>While compaction ran. Every live query stayed within 0.88× to 1.04× of idle, with zero failures.</p>
+    </div>
+  </div>
+  <div class="card costs">
+    <span class="label">MEASURED COSTS</span>
+    <span><b>~2×</b> the DAG's Spark compute on small tables</span>
+    <span><b>1.8×</b> slower single-row lookups at 256 MB files</span>
+    <span><b>151 / 151</b> Cryo jobs succeeded</span>
+  </div>
+  <div class="foot"><span>Full method, data and trade-offs</span><b>tech-pw.github.io/cryo/benchmark</b></div>
+</div>
+</body></html>

@@ -9,6 +9,8 @@
 
 **[Docs](https://tech-pw.github.io/cryo/)** · **[Quickstart](https://tech-pw.github.io/cryo/quickstart/)** · **[Architecture](./hld.md)** · **[What ships today](./docs/CAPABILITIES.md)** · **[Contributing](./CONTRIBUTING.md)**
 
+Free and self-hosted. Runs on the Trino or Spark you already have. **[Try it locally in one command ↓](#quick-start)**
+
 ⭐ If Cryo saves you from writing another maintenance DAG, a star helps other Iceberg teams find it.
 
 </div>
@@ -46,22 +48,37 @@ down everything it did.
 
 ## Measured, not promised
 
-We benchmarked Cryo against the scheduled Spark compaction DAG most teams write themselves
-(Spark 4.1, Iceberg 1.11, Kubernetes, three trials). The method was frozen before any scored run,
-and the full results, losses included, are on the
-[benchmark page](https://tech-pw.github.io/cryo/benchmark/).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/benchmark-proof-dark.png">
+  <img src="docs/img/benchmark-proof-light.png" alt="Benchmark results, Cryo against the scheduled Spark DAG most teams write themselves, on Spark 4.1 and Iceberg 1.11 on Kubernetes over three trials, with the protocol frozen before any scored run. 1.76 times faster queries: geometric mean of the query mix on a 100 GiB table after one run, 7,594 data files down to 690. 22 of 22 Cryo jobs committed versus 0 of 3 for the DAG, under a MERGE every 200 seconds for two hours. 79 percent fewer pointless rewrites. At most 4 percent p95 slowdown for live queries during compaction, with zero failures. Measured costs: about twice the DAG's Spark compute on small tables, single-row lookups 1.8 times slower at 256 MB files. 151 of 151 Cryo jobs succeeded." width="100%">
+</picture>
 
-| Result | What it means |
-|---|---|
-| **1.76× faster queries** | Geometric mean of the query mix on a 100 GiB table after one Cryo run (up to 4.3× on single queries). 7,594 data files became 690. |
-| **22 / 22 vs 0 / 3** | Jobs committed under a MERGE every 200 seconds for two hours. The DAG's compactions collided with the writer every time; Cryo's committed between writes. |
-| **79% fewer pointless rewrites** | Than the scheduled DAG, because Cryo only rewrites what its scan says needs it. |
-| **≤ 4% p95 slowdown** | For live queries while compaction ran, with zero query failures. |
-| **151 / 151 jobs succeeded** | Across every test, with no failed or partial commits. |
+We benchmarked Cryo against the compaction DAG most teams write themselves and published every
+result, including the ones where Cryo costs more. Method, raw data and trade-offs:
+[tech-pw.github.io/cryo/benchmark](https://tech-pw.github.io/cryo/benchmark/).
 
-The costs are measured too: about 2× the DAG's Spark compute on small tables, and single-row
-lookups 1.8× slower at 256 MB files. Cryo buys faster queries and safe commits, not cheaper
-maintenance compute.
+## Quick start
+
+You need Docker, Python 3.12+, Node 22+ and curl.
+
+```bash
+git clone https://github.com/tech-pw/cryo.git
+cd cryo
+./start-local.sh start
+```
+
+Open **http://localhost:5173** and sign in with a role (`viewer`, `operator` or `admin`).
+`./start-local.sh` runs the database migrations; `make up` on its own does not.
+
+```bash
+curl -s http://localhost:8000/healthz   # liveness only; does not touch Postgres
+```
+
+The UI starts empty. `make seed` writes five small Iceberg tables, but it doesn't register a
+source, scan or enqueue maintenance, and it needs host PySpark. The
+[illustrated quickstart](https://tech-pw.github.io/cryo/quickstart/) walks through the rest.
+
+Running it for real? Jump to [Install on Kubernetes](#install-on-kubernetes).
 
 ## Why Cryo
 
@@ -128,164 +145,14 @@ maintenance compute.
 <sub>Screenshots are the real web UI on synthetic demo data, captured with
 <code>web/e2e/docs-capture</code>. No numbers in them come from a deployment.</sub>
 
-## How it works
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/architecture-dark.png">
-  <img src="docs/img/architecture-light.png" alt="Cryo architecture. Operators, catalogs, engines and monitors on the left connect to things you already run: Iceberg REST, Apache Hive, AWS Glue, Trino and Spark on EMR. In the middle, the Cryo control plane holds the HTTP API, scanner, planner, governor, scheduler and workers, backed by PostgreSQL and Redis on Kubernetes with Helm. On the right, engines write Iceberg files to Amazon S3; the scan never reads data files." width="100%">
-</picture>
-
-A table is **discovered** from a source (a catalog Cryo reads) and **maintained** on a destination
-(an engine Cryo writes through). The two never share a code path, a config or a database table.
-
-1. **Scanner** reads catalog metadata into PostgreSQL: stats, grade, cost.
-2. **Scheduler** finds the presets that are due and enqueues jobs.
-3. **Governor** probes live engine load and admits a job only when there's room.
-4. **Worker** asks the **planner** for a partition-aware plan, renders it for Trino or Spark,
-   and executes it, one table at a time, under a per-table lock.
-5. **Audit log** records the result. A failure on one table never fails the run.
-
-### Scan: every table gets a grade
-
-The scanner reads catalog metadata, never data files, and scores each table against 14 checks. The
-grade isn't a black box: every point lost comes with its reason and the operation that wins it back.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/health-grade-dark.png">
-  <img src="docs/img/health-grade-light.png" alt="How a table earns its grade. analytics.events starts at 100, loses 20 for small-file fragmentation (62.3% small files, fixed by optimize), 8 for snapshot retention buildup (184 snapshots, fixed by expire_snapshots) and 8 for manifest bloat (212 manifests, fixed by optimize_manifests), ending at 64, grade C. Bands: A from 90, B from 75, C from 60, D from 40, F below 40. Critical findings cost 20 points and warnings 8; count limits grow with table size." width="100%">
-</picture>
-
-### Plan: partition by partition, never the whole table
-
-The planner ranks partitions by small-file count from the stored scan, drops the ones that aren't
-worth rewriting, and packs the rest into chunks under a GB budget. One oversized partition runs on
-its own. The plan holds partition predicates, not SQL; each engine renders its own dialect.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/planner-chunks-dark.png">
-  <img src="docs/img/planner-chunks-light.png" alt="How the planner keeps OPTIMIZE from swamping Trino. Eight day partitions are ranked by small files; two with fewer than 128 small files are skipped. The rest pack into three chunks under a 100 GB budget: 79 GB with two partitions, a 160 GB partition that runs alone because it is over budget, and 78 GB with three partitions. Chunk 1 renders as a Trino ALTER TABLE EXECUTE optimize with a WHERE clause per partition, or as a Spark rewrite_data_files call with the same predicates." width="100%">
-</picture>
-
-### Admit: only when the engine has room
-
-Workers don't grab work on their own. The governor checks each job, then counts the rewrites
-already running on each Trino coordinator and admits work only into free slots. That's why adding
-workers never adds parallel `OPTIMIZE`s.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/governor-admission-dark.png">
-  <img src="docs/img/governor-admission-light.png" alt="How the governor decides when a job runs. A queued optimize job for analytics.events passes four groups of checks: is it allowed (not paused, access policy, approval for destructive operations, PII policy), is it due (cooldown, off-peak window, deadline and budget, optional ROI), is the table free (per-table lock), and is it safe (optional predicted p95 latency). It then needs a free slot: trino-a is full, trino-b has room and takes the job, trino-c has two free. A failed check defers the job with a reason; with no free slot it waits for the next governor wave." width="100%">
-</picture>
-
-### Rewrite and record
-
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <b>Compact first, then clean up.</b> The order is defined once, in
-      <code>cryo/planner/guardrails.py</code>.
-      <code>convert_equality_deletes</code> is opt-in and currently blocked on every
-      engine: it must replace equality deletes with position deletes without rewriting
-      data files, and no Trino or Spark procedure does that.<br><br>
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/img/operation-order-dark.png">
-        <img src="docs/img/operation-order-light.png" alt="The seven operations in order. Compact: convert_deletes, rewrite_position_deletes (Spark only), optimize. Measure: compute_statistics. Clean up: optimize_manifests, expire_snapshots, remove_orphan_files.">
-      </picture>
-    </td>
-    <td width="50%" valign="top">
-      <b>Every decision is written down</b>, including the ones Cryo chose not to make.<br><br>
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/img/receipts-dark.png">
-        <img src="docs/img/receipts-light.png" alt="An audit log feed: optimize on analytics.events succeeded in 4m 12s, expire_snapshots succeeded in 18s, optimize on billing.invoices deferred because Trino was busy, remove_orphan_files succeeded in 51s.">
-      </picture>
-    </td>
-  </tr>
-</table>
-
-Full component map and data flow: [`hld.md`](./hld.md). Schemas, interfaces and the planner
-algorithm: [`lld.md`](./lld.md).
-
-## Quick start
-
-You need Docker, Python 3.12+, Node 22+ and curl.
-
-```bash
-git clone https://github.com/tech-pw/cryo.git
-cd cryo
-./start-local.sh start
-```
-
-Open **http://localhost:5173** and sign in with a role (`viewer`, `operator` or `admin`).
-`./start-local.sh` runs the database migrations; `make up` on its own does not.
-
-```bash
-curl -s http://localhost:8000/healthz   # liveness only; does not touch Postgres
-```
-
-The UI starts empty. `make seed` writes five small Iceberg tables, but it doesn't register a
-source, scan or enqueue maintenance, and it needs host PySpark. The
-[illustrated quickstart](https://tech-pw.github.io/cryo/quickstart/) walks through the rest.
-
-### Install on Kubernetes
-
-Each release tag publishes the Helm chart to GHCR as an OCI artifact, signed with cosign keyless.
-No clone needed. Chart versions equal the release tag without the `v` (tag `v0.1.6` is chart
-`0.1.6`), and the packaged defaults pin that release's `ghcr.io/tech-pw/cryo`, `cryo-web` and
-`cryo-spark` images by digest.
-
-```bash
-helm install cryo oci://ghcr.io/tech-pw/charts/cryo --version <version> \
-  --namespace cryo --create-namespace \
-  --set global.envFromSecret=cryo-secrets
-```
-
-The [chart README](deploy/helm/cryo/README.md) lists the values a production install must set.
-
-> [!WARNING]
-> The chart default `CRYO_ENVIRONMENT=dev` leaves `POST /api/v1/auth/token` open, so anyone who can
-> reach the API can issue themselves a role. In production, set `CRYO_ENVIRONMENT=prod`, keep the
-> dev token off, and configure OIDC before the API is reachable. OIDC alone does not close the dev
-> token. See [SECURITY.md](./SECURITY.md).
-
-## Status
-
-> [!NOTE]
-> Cryo is **pre-1.0** (`v0.x` SemVer, see [`docs/VERSIONING.md`](./docs/VERSIONING.md)). The core
-> maintenance path is real and tested: scanner, health grading, planner, governor, the Trino and
-> Spark engines, presets and assignment, bulk runs, the audit log, the run console, and JWT/OIDC
-> auth. The AI, FinOps, tiering and anomaly surfaces are partial and only fill in once query-log
-> ingestion is on. [`docs/CAPABILITIES.md`](./docs/CAPABILITIES.md) lists exactly what each engine
-> can do today.
-
-| Engine | Maturity | What it does |
-|---|---|---|
-| **Trino** | GA | Iceberg maintenance through Trino SQL procedures |
-| **Spark / EMR** | GA | The full surface through Iceberg Spark procedures |
-| **Native (Go)** | Beta | Low-overhead compaction for simple table shapes, with SQL fallbacks |
-| **Flink** | Experimental | Generates Flink job config; Cryo does not submit it |
-
-Catalogs: Iceberg REST, Apache Polaris, Project Nessie, Hive Metastore and AWS Glue. Unity
-Catalog and JDBC catalogs are rejected.
-
-<details>
-<summary><b>Who this isn't for (yet)</b></summary>
-
-- **Multi-tenant SaaS operators.** Tenant isolation is opt-in
-  (`Settings.enforce_tenant_isolation`), not the default. Run one instance per customer until
-  that changes.
-- **Flink-first streaming shops.** The Flink engine generates config only and does not submit
-  jobs (see the `cryo/engines/flink/engine.py` docstring).
-- **Teams that want a zero-config managed product.** You operate this: Kubernetes, Postgres,
-  Redis and an Iceberg catalog.
-- **Anyone who needs an unattended native compactor.** The native path (`engine-go/`,
-  `CRYO_ENGINE_IMPL=go`) is beta. Use Trino or Spark unless native Go is explicitly configured.
-- **Anyone expecting full AI / FinOps / tiering / anomaly dashboards on day one.** They need
-  query-log ingestion (`Settings` → `telemetry_*`). Until then, expect empty charts, not broken
-  ones.
-
-</details>
-
 ## Features
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/feature-map-dark.png">
+  <img src="docs/img/feature-map-light.png" alt="Cryo's features in five groups. Maintain: compaction with sort and Z-order, snapshot expiry, orphan file cleanup, manifest rewrites, column statistics, delete-file rewrites, and data expiry only after approval. Decide: an A to F grade for every table, AutoComp ranking weighted by query heat, partition-aware GB-budgeted plans, a load-aware self-tuning governor, presets and rule-based assignment, and maintenance batches that review one plan before applying it. Save: archive cold partitions in place and restore them, a duplicate-table finder, partition access from S3 logs, S3 cost and inventory, and a per-table settings advisor. Protect: a shared S3 path detector, per-table locks, an audit receipt for every action, owner alerts by email and Slack, OIDC and role-based access, and encrypted backups. Integrate: Ask Cryo in plain English, an MCP server for AI agents, maintenance as code with GitOps, a REST API and Python SDK, and a Helm chart with OpenTelemetry and Prometheus. Engines: Trino, Spark on EMR, native Go in beta. Catalogs: Iceberg REST, Polaris, Nessie, Hive and Glue." width="100%">
+</picture>
+
+Expand any group for the details.
 
 <details>
 <summary><b>Maintenance</b>: sources, engines, planner, governor, presets</summary>
@@ -369,7 +236,143 @@ Some of these read query logs or S3 request logs; see [Status](#status) and
 - **Audit log** records table, action, status, detail, engine, duration, file counts and actor.
 - **Auth** is a signed JWT with the roles `evidence_collector`, `viewer`, `operator` and `admin`
   (`editor` is an alias of `operator`). Production uses OIDC; see the warning under
-  [Quick start](#quick-start).
+  [Install on Kubernetes](#install-on-kubernetes).
+
+</details>
+
+## How it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/architecture-dark.png">
+  <img src="docs/img/architecture-light.png" alt="Cryo architecture. Operators, catalogs, engines and monitors on the left connect to things you already run: Iceberg REST, Apache Hive, AWS Glue, Trino and Spark on EMR. In the middle, the Cryo control plane holds the HTTP API, scanner, planner, governor, scheduler and workers, backed by PostgreSQL and Redis on Kubernetes with Helm. On the right, engines write Iceberg files to Amazon S3; the scan never reads data files." width="100%">
+</picture>
+
+A table is **discovered** from a source (a catalog Cryo reads) and **maintained** on a destination
+(an engine Cryo writes through). The two never share a code path, a config or a database table.
+
+1. **Scanner** reads catalog metadata into PostgreSQL: stats, grade, cost.
+2. **Scheduler** finds the presets that are due and enqueues jobs.
+3. **Governor** probes live engine load and admits a job only when there's room.
+4. **Worker** asks the **planner** for a partition-aware plan, renders it for Trino or Spark,
+   and executes it, one table at a time, under a per-table lock.
+5. **Audit log** records the result. A failure on one table never fails the run.
+
+### Scan: every table gets a grade
+
+The scanner reads catalog metadata, never data files, and scores each table against 14 checks. The
+grade isn't a black box: every point lost comes with its reason and the operation that wins it back.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/health-grade-dark.png">
+  <img src="docs/img/health-grade-light.png" alt="How a table earns its grade. analytics.events starts at 100, loses 20 for small-file fragmentation (62.3% small files, fixed by optimize), 8 for snapshot retention buildup (184 snapshots, fixed by expire_snapshots) and 8 for manifest bloat (212 manifests, fixed by optimize_manifests), ending at 64, grade C. Bands: A from 90, B from 75, C from 60, D from 40, F below 40. Critical findings cost 20 points and warnings 8; count limits grow with table size." width="100%">
+</picture>
+
+### Plan: partition by partition, never the whole table
+
+The planner ranks partitions by small-file count from the stored scan, drops the ones that aren't
+worth rewriting, and packs the rest into chunks under a GB budget. One oversized partition runs on
+its own. The plan holds partition predicates, not SQL; each engine renders its own dialect.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/planner-chunks-dark.png">
+  <img src="docs/img/planner-chunks-light.png" alt="How the planner keeps OPTIMIZE from swamping Trino. Eight day partitions are ranked by small files; two with fewer than 128 small files are skipped. The rest pack into three chunks under a 100 GB budget: 79 GB with two partitions, a 160 GB partition that runs alone because it is over budget, and 78 GB with three partitions. Chunk 1 renders as a Trino ALTER TABLE EXECUTE optimize with a WHERE clause per partition, or as a Spark rewrite_data_files call with the same predicates." width="100%">
+</picture>
+
+### Admit: only when the engine has room
+
+Workers don't grab work on their own. The governor checks each job, then counts the rewrites
+already running on each Trino coordinator and admits work only into free slots. That's why adding
+workers never adds parallel `OPTIMIZE`s.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/governor-admission-dark.png">
+  <img src="docs/img/governor-admission-light.png" alt="How the governor decides when a job runs. A queued optimize job for analytics.events passes four groups of checks: is it allowed (not paused, access policy, approval for destructive operations, PII policy), is it due (cooldown, off-peak window, deadline and budget, optional ROI), is the table free (per-table lock), and is it safe (optional predicted p95 latency). It then needs a free slot: trino-a is full, trino-b has room and takes the job, trino-c has two free. A failed check defers the job with a reason; with no free slot it waits for the next governor wave." width="100%">
+</picture>
+
+### Rewrite and record
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <b>Compact first, then clean up.</b> The order is defined once, in
+      <code>cryo/planner/guardrails.py</code>.
+      <code>convert_equality_deletes</code> is opt-in and currently blocked on every
+      engine: it must replace equality deletes with position deletes without rewriting
+      data files, and no Trino or Spark procedure does that.<br><br>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/img/operation-order-dark.png">
+        <img src="docs/img/operation-order-light.png" alt="The seven operations in order. Compact: convert_deletes, rewrite_position_deletes (Spark only), optimize. Measure: compute_statistics. Clean up: optimize_manifests, expire_snapshots, remove_orphan_files.">
+      </picture>
+    </td>
+    <td width="50%" valign="top">
+      <b>Every decision is written down</b>, including the ones Cryo chose not to make.<br><br>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/img/receipts-dark.png">
+        <img src="docs/img/receipts-light.png" alt="An audit log feed: optimize on analytics.events succeeded in 4m 12s, expire_snapshots succeeded in 18s, optimize on billing.invoices deferred because Trino was busy, remove_orphan_files succeeded in 51s.">
+      </picture>
+    </td>
+  </tr>
+</table>
+
+Full component map and data flow: [`hld.md`](./hld.md). Schemas, interfaces and the planner
+algorithm: [`lld.md`](./lld.md).
+
+## Install on Kubernetes
+
+Each release tag publishes the Helm chart to GHCR as an OCI artifact, signed with cosign keyless.
+No clone needed. Chart versions equal the release tag without the `v` (tag `v0.1.6` is chart
+`0.1.6`), and the packaged defaults pin that release's `ghcr.io/tech-pw/cryo`, `cryo-web` and
+`cryo-spark` images by digest.
+
+```bash
+helm install cryo oci://ghcr.io/tech-pw/charts/cryo --version <version> \
+  --namespace cryo --create-namespace \
+  --set global.envFromSecret=cryo-secrets
+```
+
+The [chart README](deploy/helm/cryo/README.md) lists the values a production install must set.
+
+> [!WARNING]
+> The chart default `CRYO_ENVIRONMENT=dev` leaves `POST /api/v1/auth/token` open, so anyone who can
+> reach the API can issue themselves a role. In production, set `CRYO_ENVIRONMENT=prod`, keep the
+> dev token off, and configure OIDC before the API is reachable. OIDC alone does not close the dev
+> token. See [SECURITY.md](./SECURITY.md).
+
+## Status
+
+> [!NOTE]
+> Cryo is **pre-1.0** (`v0.x` SemVer, see [`docs/VERSIONING.md`](./docs/VERSIONING.md)). The core
+> maintenance path is real and tested: scanner, health grading, planner, governor, the Trino and
+> Spark engines, presets and assignment, bulk runs, the audit log, the run console, and JWT/OIDC
+> auth. The AI, FinOps, tiering and anomaly surfaces are partial and only fill in once query-log
+> ingestion is on. [`docs/CAPABILITIES.md`](./docs/CAPABILITIES.md) lists exactly what each engine
+> can do today.
+
+| Engine | Maturity | What it does |
+|---|---|---|
+| **Trino** | GA | Iceberg maintenance through Trino SQL procedures |
+| **Spark / EMR** | GA | The full surface through Iceberg Spark procedures |
+| **Native (Go)** | Beta | Low-overhead compaction for simple table shapes, with SQL fallbacks |
+| **Flink** | Experimental | Generates Flink job config; Cryo does not submit it |
+
+Catalogs: Iceberg REST, Apache Polaris, Project Nessie, Hive Metastore and AWS Glue. Unity
+Catalog and JDBC catalogs are rejected.
+
+<details>
+<summary><b>Who this isn't for (yet)</b></summary>
+
+- **Multi-tenant SaaS operators.** Tenant isolation is opt-in
+  (`Settings.enforce_tenant_isolation`), not the default. Run one instance per customer until
+  that changes.
+- **Flink-first streaming shops.** The Flink engine generates config only and does not submit
+  jobs (see the `cryo/engines/flink/engine.py` docstring).
+- **Teams that want a zero-config managed product.** You operate this: Kubernetes, Postgres,
+  Redis and an Iceberg catalog.
+- **Anyone who needs an unattended native compactor.** The native path (`engine-go/`,
+  `CRYO_ENGINE_IMPL=go`) is beta. Use Trino or Spark unless native Go is explicitly configured.
+- **Anyone expecting full AI / FinOps / tiering / anomaly dashboards on day one.** They need
+  query-log ingestion (`Settings` → `telemetry_*`). Until then, expect empty charts, not broken
+  ones.
 
 </details>
 
@@ -542,7 +545,11 @@ cd web && npm run build && npm run test
 
 ## Community
 
-Questions, ideas and show-and-tell live in [GitHub Discussions](https://github.com/tech-pw/cryo/discussions).
+**What grade does your worst table get?** Point Cryo at your catalog and tell us in
+[GitHub Discussions](https://github.com/tech-pw/cryo/discussions), where questions, ideas and
+show-and-tell live too. Real lakes shape the roadmap. If Cryo saves you a maintenance DAG, a ⭐ helps
+other Iceberg teams find it.
+
 Bugs go to [Issues](https://github.com/tech-pw/cryo/issues). See [`SUPPORT.md`](./SUPPORT.md) and
 [`MAINTAINERS.md`](./MAINTAINERS.md).
 
