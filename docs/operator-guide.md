@@ -462,6 +462,31 @@ Log exploration (Loki via Grafana Explore):
 | Scheduler disabled | PATCH `/api/v1/scanner/config` → `enabled: true` |
 | Full cost scan overload | Disable `cost_full_scan` until off-peak |
 
+### Tables removed from the catalog
+
+A whole-source scan (chunk 0 only; a table-scoped scan never does this) compares the registry
+with what the catalog lists and **soft-deletes** registered tables it no longer finds. The row
+stays. It gets `removed_from_catalog_at` and `removed_reason`, is set `is_active=false`, and is
+hidden from `GET /tables` unless you pass `include_removed=true`. Its queued and deferred jobs
+are skipped, and running jobs finish. Each removal writes a `table_removed_from_catalog` audit
+row. If the table is listed again, the next scan restores it (`table_restored_to_catalog`).
+Nothing is ever hard-deleted.
+
+What keeps a bad listing from removing real tables:
+- Every suspect schema is listed again before anything is removed. A schema whose listing
+  fails is skipped.
+- A schema that lists empty is skipped unless its namespace is gone too.
+- Any discovery error in the scan skips the reconcile for that scan.
+- Out-of-allowlist schemas are never treated as dropped.
+- Mass guard: if more than `CRYO_SCAN_MISSING_TABLE_MAX_FRACTION` (default 0.2) of a source's
+  registered tables, or more than `CRYO_SCAN_MISSING_TABLE_MAX_COUNT` (default 500), would be
+  removed, nothing is removed. The scan writes a `missing_table_reconcile_aborted` audit row
+  and increments `cryo_missing_table_reconcile_aborted_total`. The fraction is ignored for
+  `CRYO_SCAN_MISSING_TABLE_GUARD_MIN_COUNT` (default 5) or fewer removals.
+
+Turn it off with `CRYO_SCAN_REMOVE_MISSING_TABLES_ENABLED=false`. After a guard abort, check
+the catalog. If the drop was real, raise the limits for one scan.
+
 ### Unmatched tables (no effective preset)
 
 **Symptoms:**

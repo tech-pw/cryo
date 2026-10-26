@@ -42,6 +42,7 @@ from cryo.scanner.persistence import (
     stats_history_for_signals,
     upsert_table,
 )
+from cryo.scanner.reconcile_missing import ReconcileResult, reconcile_missing_tables
 from cryo.sources.base import SourceCatalog
 from cryo.sources.factory import source_catalog_for
 
@@ -74,6 +75,11 @@ class ScanSummary:
     # like a clean scan of an empty catalog (#162). main() exits non-zero when this is set.
     sources_failed: int = 0
     discovery_errors: tuple[str, ...] = ()
+    # Missing-table reconcile (#120). Only chunk 0 of a whole-source scan reconciles.
+    removed_from_catalog: int = 0
+    restored_to_catalog: int = 0
+    missing_table_reconcile_skipped: int = 0
+    removed_tables: tuple[str, ...] = ()
     # Newly registered tables whose effective preset is the default (#119).
     new_tables_on_default: int = 0
 
@@ -269,6 +275,16 @@ def run_scan(
             len(discovery_errors),
             "; ".join(discovery_errors),
         )
+    reconcile = _reconcile_missing(
+        session,
+        candidates,
+        discovery_errors=discovery_errors,
+        settings=settings,
+        scan_at=scan_at,
+        chunk_id=chunk_id,
+        table_scoped=table_ids is not None or table_names is not None,
+        schema_names=schema_names,
+    )
     assigned = order_by_staleness(
         session, stable_chunk(candidates, chunk_id=chunk_id, num_chunks=total_chunks)
     )
@@ -317,7 +333,64 @@ def run_scan(
             sources_failed=len(discovery_errors),
             discovery_errors=tuple(discovery_errors),
         )
-    return summary
+    if reconcile is None:
+        return summary
+    return replace(
+        summary,
+        removed_from_catalog=len(reconcile.removed),
+        restored_to_catalog=len(reconcile.restored),
+        missing_table_reconcile_skipped=len(reconcile.skipped),
+        removed_tables=tuple(reconcile.removed[:_REMOVED_TABLES_DETAIL_CAP]),
+    )
+
+
+_REMOVED_TABLES_DETAIL_CAP = 200
+
+
+def _reconcile_missing(
+    session: Session,
+    candidates: list[ScanCandidate],
+    *,
+    discovery_errors: list[str],
+    settings: Settings,
+    scan_at: datetime,
+    chunk_id: int,
+    table_scoped: bool,
+    schema_names: Sequence[str] | None,
+) -> ReconcileResult | None:
+    """Tombstone registered tables the catalog no longer lists (#120).
+
+    Runs once per scan (chunk 0 only) and never for a table-scoped scan, whose candidate
+    list is deliberately partial. Discovery errors mean the listing is incomplete too, so
+    the reconcile is skipped rather than risk tombstoning tables that merely failed to list.
+    A failure here never fails the scan.
+    """
+    if not settings.scan_remove_missing_tables_enabled or chunk_id != 0 or table_scoped:
+        return None
+    if discovery_errors:
+        logger.warning(
+            "Skipping missing-table reconcile: discovery reported %s error(s)",
+            len(discovery_errors),
+        )
+        return ReconcileResult(skipped=["discovery_errors"])
+    timeout = float(settings.scan_table_timeout_seconds)
+
+    def bounded(fn: Callable[[], Any], description: str) -> Any:
+        return _run_bounded(fn, timeout_seconds=timeout, description=description)
+
+    try:
+        return reconcile_missing_tables(
+            session,
+            candidates,
+            scan_at=scan_at,
+            settings=settings,
+            schema_names=schema_names,
+            bounded=bounded,
+        )
+    except Exception:
+        session.rollback()
+        logger.exception("Missing-table reconcile failed; scan continues")
+        return ReconcileResult(skipped=["reconcile_error"])
 
 
 def _unregistered_candidates(

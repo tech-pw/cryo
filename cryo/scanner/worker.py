@@ -233,6 +233,12 @@ class ScanWorker:
                     "skipped": scan_summary.skipped + scan_summary.deferred,
                     "failed": scan_summary.failed,
                     "unreadable": scan_summary.unreadable,
+                    "removed_from_catalog": scan_summary.removed_from_catalog,
+                    "restored_to_catalog": scan_summary.restored_to_catalog,
+                    "missing_table_reconcile_skipped": (
+                        scan_summary.missing_table_reconcile_skipped
+                    ),
+                    "removed_tables": list(scan_summary.removed_tables),
                     "new_tables_on_default": scan_summary.new_tables_on_default,
                 },
             )
