@@ -84,13 +84,34 @@ prometheus.io/port: {{ .Values.observability.metricsPort | quote }}
 {{- end -}}
 {{- end }}
 
+{{/*
+Image ref for the migration job. Follows the API image unless migration.image.repository or
+migration.image.digest is set, so setting image.digest pins migrations too (issue #140).
+*/}}
+{{- define "cryo.migrationImageRef" -}}
+{{- $api := .Values.image -}}
+{{- $m := .Values.migration.image | default dict -}}
+{{- if $m.repository -}}
+{{- include "cryo.imageRef" (dict "repository" $m.repository "digest" $m.digest "tag" (default $api.tag $m.tag)) -}}
+{{- else if $m.digest -}}
+{{- include "cryo.imageRef" (dict "repository" $api.repository "digest" $m.digest "tag" $api.tag) -}}
+{{- else -}}
+{{- include "cryo.imageRef" $api -}}
+{{- end -}}
+{{- end }}
+
+{{- define "cryo.migrationImagePullPolicy" -}}
+{{- $m := .Values.migration.image | default dict -}}
+{{- default .Values.image.pullPolicy $m.pullPolicy -}}
+{{- end }}
+
 {{- define "cryo.validateProductionImages" -}}
 {{- if eq (default "dev" (index .Values.global.env "CRYO_ENVIRONMENT")) "prod" -}}
   {{- if not .Values.image.digest -}}
     {{- fail "production requires image.digest (sha256:...)" -}}
   {{- end -}}
-  {{- if not .Values.migration.image.digest -}}
-    {{- fail "production requires migration.image.digest (sha256:...)" -}}
+  {{- if and .Values.migration.image.repository (not .Values.migration.image.digest) -}}
+    {{- fail "production with a separate migration.image.repository requires migration.image.digest (sha256:...)" -}}
   {{- end -}}
   {{- if and .Values.native.enabled (not .Values.native.image.digest) -}}
     {{- fail "production with native.enabled requires native.image.digest (sha256:...)" -}}
