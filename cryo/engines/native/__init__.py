@@ -1,21 +1,8 @@
-"""Native Rust engine for high-performance Iceberg table compaction."""
+"""Native maintenance engine: the cryo-engine-go subprocess."""
 
-from cryo.engines.native.engine import (
-    NativeCompactionConfig,
-    NativeCompactionResult,
-    NativeEngine,
-    is_native_available,
-    native_binpack,
-    native_sort,
-    native_zorder,
-)
+from cryo.engines.native.engine import NativeEngine, is_native_available
 
 __all__ = [
-    "NativeCompactionConfig",
-    "NativeCompactionResult",
     "NativeEngine",
     "is_native_available",
-    "native_binpack",
-    "native_sort",
-    "native_zorder",
 ]

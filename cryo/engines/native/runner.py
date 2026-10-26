@@ -35,7 +35,6 @@ _PROGRESS_EVENTS = frozenset(
         "commit_done",
     }
 )
-_ENGINE_IMPL_ENV = "CRYO_ENGINE_IMPL"
 
 # Stable token the Go engine prefixes onto a rewrite error when compaction repeatedly
 # lost the optimistic-concurrency commit race (see engine-go commitRaceLostToken). The
@@ -111,10 +110,9 @@ def _trusted_engine_binaries() -> set[str]:
         if which:
             found.add(which)
     repo_root = Path(__file__).resolve().parents[3]
-    for impl in ("go", "rust"):
-        for candidate in _repo_binary_candidates(repo_root, impl):
-            if candidate.is_file():
-                found.add(str(candidate))
+    for candidate in _repo_binary_candidates(repo_root):
+        if candidate.is_file():
+            found.add(str(candidate))
     return found
 
 
@@ -134,48 +132,23 @@ def resolve_binary_path(config: Mapping[str, Any]) -> str | None:
         if path is not None:
             return path
 
-    impl = _resolve_engine_impl(config)
-    names = _binary_names_for_impl(impl)
-    for name in names:
+    for name in DEFAULT_BINARY_NAMES:
         found = shutil.which(name)
         if found:
             return found
 
     repo_root = Path(__file__).resolve().parents[3]
-    for candidate in _repo_binary_candidates(repo_root, impl):
+    for candidate in _repo_binary_candidates(repo_root):
         if candidate.is_file():
             return str(candidate)
     return None
 
 
-def _resolve_engine_impl(config: Mapping[str, Any]) -> str:
-    configured = config.get("engine_impl")
-    if isinstance(configured, str) and configured.strip():
-        return configured.strip().lower()
-    env_value = os.getenv(_ENGINE_IMPL_ENV, "").strip().lower()
-    if env_value in {"go", "rust"}:
-        return env_value
-    return "go"
-
-
-def _binary_names_for_impl(impl: str) -> tuple[str, ...]:
-    if impl == "go":
-        return ("cryo-engine-go", "cryo-engine")
-    return ("cryo-engine", "cryo-engine-go")
-
-
-def _repo_binary_candidates(repo_root: Path, impl: str) -> tuple[Path, ...]:
-    if impl == "go":
-        return (
-            repo_root / "engine-go" / "bin" / "cryo-engine-go",
-            repo_root / "engine-go" / "bin" / "cryo-engine",
-            repo_root / "cryo-engine" / "target" / "release" / "cryo-engine",
-            repo_root / "cryo-engine" / "target" / "debug" / "cryo-engine",
-        )
+def _repo_binary_candidates(repo_root: Path) -> tuple[Path, ...]:
+    # The Rust cryo-engine is gone; the image symlinks that name to the Go binary.
     return (
-        repo_root / "cryo-engine" / "target" / "release" / "cryo-engine",
-        repo_root / "cryo-engine" / "target" / "debug" / "cryo-engine",
         repo_root / "engine-go" / "bin" / "cryo-engine-go",
+        repo_root / "engine-go" / "bin" / "cryo-engine",
     )
 
 
