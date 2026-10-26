@@ -62,7 +62,8 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: "ai", label: "AI & models", path: "/settings/ai" },
   { id: "notifications", label: "Notifications", path: "/settings/notifications" },
   { id: "access", label: "Access & policy", path: "/settings/access" },
-  { id: "admin", label: "Admin", path: "/settings/admin", adminOnly: true }
+  { id: "admin", label: "Admin", path: "/settings/admin", adminOnly: true },
+  { id: "about", label: "About", path: "/settings/about" }
 ];
 
 export interface PaletteEntry {

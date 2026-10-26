@@ -14,6 +14,7 @@ import {
   TablesHome
 } from "./components/Redirects";
 import {
+  SettingsAboutHome,
   SettingsAccessHome,
   SettingsAdminHome,
   SettingsAiHome,
@@ -128,6 +129,7 @@ const AuthenticatedRoutes = () => (
           <Route path="/settings/access" element={<SettingsAccessHome />} />
           <Route path="/settings/admin" element={<SettingsAdminHome />} />
           <Route path="/settings/notifications" element={<SettingsNotificationsHome />} />
+          <Route path="/settings/about" element={<SettingsAboutHome />} />
           <Route path="/connections" element={<LegacyRedirect />} />
           <Route path="/skillsets" element={<LegacyRedirect />} />
           <Route path="/ai" element={<LegacyRedirect />} />

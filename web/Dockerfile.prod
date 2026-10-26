@@ -6,7 +6,11 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-RUN npm run build
+# Baked into the bundle as the web build's version (#263); the UI warns when it differs
+# from the API's /api/v1/version.
+ARG CRYO_VERSION=""
+ARG CRYO_GIT_SHA=""
+RUN VITE_CRYO_VERSION="${CRYO_VERSION}" VITE_CRYO_GIT_SHA="${CRYO_GIT_SHA}" npm run build
 
 # Runs as UID 101 and cannot bind privileged ports, so nginx.conf listens on 8080.
 # Pinned by digest, not the mutable tag. The previous pin
@@ -31,6 +35,18 @@ ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
 ENV NGINX_ENVSUBST_FILTER="NGINX_LOCAL_RESOLVERS|CRYO_API_UPSTREAM|CRYO_WEB_HSTS"
 ENV CRYO_API_UPSTREAM=http://cryo-api:8000
 ENV CRYO_WEB_HSTS=""
+
+# Build identity labels (#263). release-supply-chain.yml passes the tag, commit and build
+# time. The bundle got the version in the build stage above.
+ARG CRYO_VERSION=""
+ARG CRYO_GIT_SHA=""
+ARG CRYO_BUILD_DATE=""
+LABEL org.opencontainers.image.title="cryo-web" \
+      org.opencontainers.image.source="https://github.com/tech-pw/cryo" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${CRYO_VERSION}" \
+      org.opencontainers.image.revision="${CRYO_GIT_SHA}" \
+      org.opencontainers.image.created="${CRYO_BUILD_DATE}"
 
 USER 101
 
