@@ -7,7 +7,7 @@ description: Explain a Cryo scan failure, a broken table, or a stale freshness n
 
 Separate a broken table from a scanner failure. The classifier is display-only. It does not change scan behavior.
 
-Read [cryo/scanner/failure_classifier.py](../../cryo/scanner/failure_classifier.py). Do not invent a category. The incident writeup is [docs/SCANNER_UNREADABLE_TABLES_2026-09-23.md](../SCANNER_UNREADABLE_TABLES_2026-09-23.md).
+Read [cryo/scanner/failure_classifier.py](../../cryo/scanner/failure_classifier.py). Do not invent a category.
 
 ## Categories
 

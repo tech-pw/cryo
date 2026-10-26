@@ -297,7 +297,7 @@ cryo/
 ## Community
 
 - **GitHub Issues** — Bug reports and feature requests. Use the forms.
-- **GitHub Discussions** — Questions, after the repository is public. The URL 404s while it is private.
+- **Questions** — See [docs/SUPPORT_POLICY.md](docs/SUPPORT_POLICY.md).
 - **Pull Requests** — Code contributions
 - **Security** — [SECURITY.md](SECURITY.md). Do not open a public issue.
 

@@ -7,7 +7,7 @@
 
 [![CI](https://github.com/tech-pw/cryo/actions/workflows/ci.yml/badge.svg)](https://github.com/tech-pw/cryo/actions/workflows/ci.yml) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-143E60)](./LICENSE) [![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-277ABE)](./docs/VERSIONING.md) ![Python 3.12](https://img.shields.io/badge/python-3.12-277ABE) ![React 19](https://img.shields.io/badge/web-React%2019%20%2B%20TypeScript-277ABE) [![Docs](https://img.shields.io/badge/docs-tech--pw.github.io%2Fcryo-68C1EA)](https://tech-pw.github.io/cryo/)
 
-**[Docs](https://tech-pw.github.io/cryo/)** · **[Quickstart](https://tech-pw.github.io/cryo/quickstart/)** · **[Architecture](./hld.md)** · **[What ships today](./docs/CAPABILITIES.md)** · **[Contributing](./CONTRIBUTING.md)**
+**[Docs](https://tech-pw.github.io/cryo/)** · **[Quickstart](https://tech-pw.github.io/cryo/quickstart/)** · **[Architecture](./docs/design/hld.md)** · **[What ships today](./docs/CAPABILITIES.md)** · **[Contributing](./CONTRIBUTING.md)**
 
 </div>
 
@@ -181,8 +181,8 @@ workers never adds parallel `OPTIMIZE`s.
   </tr>
 </table>
 
-Full component map and data flow: [`hld.md`](./hld.md). Schemas, interfaces and the planner
-algorithm: [`lld.md`](./lld.md).
+Full component map and data flow: [`docs/design/hld.md`](./docs/design/hld.md). Schemas, interfaces and the planner
+algorithm: [`docs/design/lld.md`](./docs/design/lld.md).
 
 ## Quick start
 
@@ -406,7 +406,7 @@ contribution.
 |---|---|
 | [Docs site](https://tech-pw.github.io/cryo/) | Quickstart, concepts, maintenance, engines, deployment, reference |
 | [`docs/CAPABILITIES.md`](./docs/CAPABILITIES.md) | Generated catalog, engine and operation matrix: what ships today |
-| [`plan.md`](./plan.md) · [`hld.md`](./hld.md) · [`lld.md`](./lld.md) | Vision and scope · components and data flow · schemas, interfaces and planner algorithm |
+| [`docs/design/hld.md`](./docs/design/hld.md) · [`docs/design/lld.md`](./docs/design/lld.md) | Components and data flow · schemas, interfaces and planner algorithm |
 | [`AGENTS.md`](./AGENTS.md) | Guardrails for contributors and AI agents, including the parity checklist |
 | [`docs/operator/`](./docs/operator/README.md) | Operator procedures for install and debug. They explain; they do not install or run maintenance |
 | [`docs/`](./docs/) | Execution plan, research and operational notes. Index: [`docs/README.md`](./docs/README.md) |

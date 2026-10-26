@@ -3,7 +3,7 @@
 // Two layouts: `graph` (lanes, cards, labelled edges) and `sequence` (lifelines + numbered messages).
 // Output is static inline SVG that takes every colour from CSS variables (see .dgm in site.css),
 // so one drawing serves light and dark. Node coordinates are authored by hand on purpose: it keeps
-// each diagram deliberate and reviewable. Sources: site/diagrams/*.json (Archify) and hld.md.
+// each diagram deliberate and reviewable. Sources: site/diagrams/*.json (Archify) and docs/design/hld.md.
 //
 // Diagrams are drawn close to the article width (about 820 units) so they render near 1:1 and the
 // 1.5px hairlines stay sharp. Visual language and references: docs/DOCS_SITE_DESIGN_RESEARCH_2026-10-05.md §10.
@@ -89,7 +89,8 @@ function mark(name, cx, cy, size = 16) {
   return `<path class="${cls}" d="${m.d}"${rule} transform="translate(${cx - size / 2} ${cy - size / 2}) scale(${k})"/>`;
 }
 
-// Text width estimates for IBM Plex at the sizes in site.css. Used only to warn at build time.
+// Text width estimates for IBM Plex at the sizes in site.css. Overflows are collected in
+// diagramWarnings and fail the build (site/scripts/build.mjs), so they can't come back (#225).
 const est = (s, mono, size) => String(s).length * size * (mono ? 0.6 : 0.52);
 
 function glyph(name, cx, cy, size = 16) {
@@ -498,12 +499,12 @@ export const diagrams = {
       { id: "web", label: "Web UI", sub: "operator UI", x: 480, y: 56, kind: "ui" },
       { id: "scanner", label: "Scanner", sub: "reads metadata", x: 32, y: 208, icon: "scan", href: "concepts/#scan-path" },
       { id: "postgres", label: "PostgreSQL", sub: "stats and audit", x: 256, y: 208, kind: "store" },
-      { id: "api", label: "API", sub: "serves the Web UI", x: 480, y: 208, icon: "braces", href: "reference/#public-surfaces" },
+      { id: "api", label: "API", sub: "serves the UI", x: 480, y: 208, icon: "braces", href: "reference/#public-surfaces" },
       { id: "planner", label: "Planner", sub: "builds the plan", x: 704, y: 208, icon: "plan", href: "maintenance/#chunking" },
-      { id: "scheduler", label: "Scheduler", sub: "starts due presets", x: 32, y: 312, icon: "clock" },
+      { id: "scheduler", label: "Scheduler", sub: "runs due presets", x: 32, y: 312, icon: "clock" },
       { id: "redis", label: "Redis", sub: "queue and locks", x: 256, y: 312, kind: "store", icon: "stack" },
       { id: "governor", label: "Governor", sub: "checks live load", x: 480, y: 312, icon: "gauge", marker: true, href: "maintenance/#admission" },
-      { id: "workers", label: "Workers", sub: "run one table each", x: 704, y: 312, icon: "cpu" },
+      { id: "workers", label: "Workers", sub: "one table each", x: 704, y: 312, icon: "cpu" },
       { id: "trino", label: "Trino", sub: "runs Trino SQL", x: 480, y: 464, kind: "engine", href: "engines/" },
       { id: "spark", label: "Spark on EMR", sub: "runs Spark SQL", x: 704, y: 464, kind: "engine", href: "engines/" },
       { id: "storage", label: "Object storage", sub: "Iceberg data files", x: 480, y: 572, w: 392, kind: "store", icon: "archive" },
@@ -539,8 +540,8 @@ export const diagrams = {
     nodes: [
       { id: "iceberg", label: "Iceberg REST", sub: "catalog", x: 32, y: 48, w: 176, kind: "source", icon: "book" },
       { id: "hive", label: "Hive or Glue", sub: "metastore", x: 32, y: 128, w: 176, kind: "source", icon: "layers" },
-      { id: "scanner", label: "Scanner", sub: "file counts and sizes", x: 340, y: 88, w: 192, icon: "scan", marker: true },
-      { id: "postgres", label: "PostgreSQL", sub: "table and partition stats", x: 612, y: 88, w: 192, kind: "store" },
+      { id: "scanner", label: "Scanner", sub: "file counts, sizes", x: 340, y: 88, w: 192, icon: "scan", marker: true },
+      { id: "postgres", label: "PostgreSQL", sub: "per-partition stats", x: 612, y: 88, w: 192, kind: "store" },
       { id: "storage", label: "Object storage", sub: "data files are never opened", x: 340, y: 212, w: 464, h: 52, kind: "ghost" },
     ],
     edges: [
@@ -642,7 +643,7 @@ export const diagrams = {
       { id: "dst", label: "Destination (write)", x: 16, y: 160, w: 864, h: 112, kind: "write" },
     ],
     nodes: [
-      { id: "scheduler", label: "Scheduler", sub: "finds due presets", x: 32, y: 56, w: 166, icon: "clock" },
+      { id: "scheduler", label: "Scheduler", sub: "due presets", x: 32, y: 56, w: 166, icon: "clock" },
       { id: "governor", label: "Governor", sub: "admits or defers", x: 254, y: 56, w: 166, icon: "gauge", marker: true },
       { id: "worker", label: "Worker", sub: "one table", x: 476, y: 56, w: 166, icon: "cpu" },
       { id: "planner", label: "Planner", sub: "builds the plan", x: 698, y: 56, w: 166, icon: "plan" },
@@ -668,7 +669,7 @@ export const diagrams = {
       { id: "paths", label: "Planner picks one path per run", x: 300, y: 16, w: 504, h: 256, kind: "cryo" },
     ],
     nodes: [
-      { id: "ranked", label: "Ranked partitions", sub: "most small files first", x: 32, y: 128, w: 196, kind: "source", icon: "bars" },
+      { id: "ranked", label: "Ranked partitions", sub: "by small-file count", x: 32, y: 128, w: 196, kind: "source", icon: "bars" },
       { id: "chunk", label: "Chunk under a GB budget", sub: "usually · a capped number of partitions per chunk", x: 316, y: 56, w: 472, icon: "boxes" },
       { id: "oversize", label: "Run the partition alone", sub: "when one partition is bigger than the budget", x: 316, y: 128, w: 472, icon: "expand" },
       { id: "bypass", label: "One full-table OPTIMIZE", sub: "when the whole table is small", x: 316, y: 200, w: 472, icon: "skip" },
@@ -693,7 +694,7 @@ export const diagrams = {
       { id: "worker", label: "Worker wants a job", sub: "pull model", x: 16, y: 100, w: 204, icon: "cpu" },
       { id: "governor", label: "Governor", sub: "decides", x: 272, y: 100, w: 168, icon: "gauge", marker: true },
       { id: "admit", label: "Admit", sub: "headroom available", x: 584, y: 36, w: 260, kind: "state", icon: "check", tone: "ok" },
-      { id: "defer", label: "Defer", sub: "cooldown, off-peak or no headroom", x: 584, y: 164, w: 260, kind: "state", icon: "pause", tone: "warn" },
+      { id: "defer", label: "Defer", sub: "cooldown, off-peak, no headroom", x: 584, y: 164, w: 260, kind: "state", icon: "pause", tone: "warn" },
       { id: "trino", label: "Trino", sub: "system.runtime.queries", code: "sub", x: 48, y: 292, w: 252, kind: "engine" },
       { id: "spark", label: "Spark on EMR", sub: "job slots", x: 340, y: 292, w: 252, kind: "engine" },
     ],
@@ -718,7 +719,7 @@ export const diagrams = {
       { id: "out", label: "SQL the engine receives", x: 588, y: 16, w: 240, h: 192, kind: "write" },
     ],
     nodes: [
-      { id: "planner", label: "Planner", sub: "operations and predicates", x: 32, y: 96, w: 216, icon: "plan", marker: true },
+      { id: "planner", label: "Planner", sub: "operations, predicates", x: 32, y: 96, w: 216, icon: "plan", marker: true },
       { id: "tr", label: "Trino renderer", sub: "engines/trino/sql.py", code: "sub", x: 320, y: 56, w: 212, icon: "code" },
       { id: "sr", label: "Spark renderer", sub: "engines/spark/sql.py", code: "sub", x: 320, y: 136, w: 212, icon: "code" },
       { id: "to", label: "EXECUTE optimize", sub: "Trino SQL", code: "label", x: 604, y: 56, w: 208, kind: "engine", icon: "terminal" },
@@ -769,7 +770,7 @@ export const diagrams = {
       { id: "governor", label: "Governor", sub: "leader-elected, bounds concurrency", x: 436, y: 128, w: 388, icon: "gauge", marker: true },
       { id: "worker", label: "Worker", sub: "scale for throughput, not concurrency", x: 32, y: 200, w: 388, icon: "cpu" },
       { id: "scan", label: "Scanner CronJob", sub: "separate from the scanner workers", x: 436, y: 200, w: 388, icon: "scan" },
-      { id: "pg", label: "PostgreSQL", sub: "state, stats, audit", x: 32, y: 368, w: 176, kind: "store" },
+      { id: "pg", label: "PostgreSQL", sub: "stats and audit", x: 32, y: 368, w: 176, kind: "store" },
       { id: "rd", label: "Redis", sub: "queue and locks", x: 224, y: 368, w: 176, kind: "store", icon: "stack" },
       { id: "tr", label: "Trino", sub: "Trino SQL", x: 456, y: 368, w: 176, kind: "engine" },
       { id: "sp", label: "Spark on EMR", sub: "Spark SQL", x: 648, y: 368, w: 176, kind: "engine" },
@@ -856,7 +857,7 @@ export const diagrams = {
       { from: "scheduler", to: "postgres", label: "create run and jobs", alt: "create the run and its jobs as queued", kind: "write" },
       { from: "scheduler", to: "redis", label: "enqueue jobs", kind: "write" },
       { from: "governor", to: "engine", label: "probe live load", alt: "probe live load: runtime.queries for Trino, job slots for EMR", kind: "ctl" },
-      { from: "governor", to: "redis", label: "compute free slots", alt: "compute free slots from caps, off-peak window, budget and cooldown", kind: "ctl" },
+      { from: "governor", to: "redis", label: "free slots", alt: "compute free slots from caps, off-peak window, budget and cooldown", kind: "ctl" },
       { from: "governor", to: "worker", label: "admit job", alt: "admit and dispatch the job", kind: "write" },
       { from: "worker", to: "postgres", label: "read latest scan", alt: "read the latest scan and partitions", kind: "read" },
       { from: "worker", to: "planner", label: "build plan", alt: "build the MaintenancePlan from mode and thresholds", kind: "write" },
@@ -868,11 +869,18 @@ export const diagrams = {
   },
 };
 
+/** Every text-overflow warning raised while rendering; the build fails when this is non-empty. */
+export const diagramWarnings = [];
+
 export function renderDiagram(name) {
   const spec = diagrams[name];
   if (!spec) throw new Error(`unknown diagram "${name}"`);
   const id = `dgm-${name}`;
-  const warn = (msg) => console.warn(`diagram ${name}: ${msg}`);
+  const warn = (msg) => {
+    const line = `diagram ${name}: ${msg}`;
+    diagramWarnings.push(line);
+    console.warn(line);
+  };
   const out = spec.type === "sequence" ? renderSequence(id, spec, warn) : renderGraph(id, spec, warn);
   return { ...out, title: spec.title, desc: spec.desc };
 }

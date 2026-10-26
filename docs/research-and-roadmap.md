@@ -15,7 +15,7 @@
 # Part 1 — What to build next (RECOMMENDATIONS)
 
 > Rewritten 2026-07-03. Grounded in three inputs: (1) the actual code in `cryo/` and the phase
-> status in [`todo.md`](../todo.md) / [`docs/current-state.md`](./current-state.md), (2)
+> status in [`docs/current-state.md`](./current-state.md), (2)
 > independently re-verified competitor research (see the caveats at the bottom — several numbers
 > in the previous draft of this doc were vendor marketing or unsupported by their own citations),
 > and (3) real Iceberg ecosystem facts checked against primary sources. Where a "competitor
@@ -186,7 +186,7 @@ Independently re-checked 2026-07-03 against primary sources:
 - [Iceberg issue #16217 — DROP COLUMN corruption](https://github.com/apache/iceberg/issues/16217)
 - [IOMETE — Iceberg production anti-patterns](https://iomete.com/resources/blog/apache-iceberg-production-antipatterns-2026)
 - [AWS Glue — Iceberg column statistics (Puffin/NDV)](https://docs.aws.amazon.com/glue/latest/dg/iceberg-column-statistics.html)
-- Internal: [`todo.md`](../todo.md), [`docs/current-state.md`](./current-state.md), [`docs/research-and-roadmap.md`](./research-and-roadmap.md)
+- Internal: [`docs/current-state.md`](./current-state.md), [`docs/research-and-roadmap.md`](./research-and-roadmap.md)
 
 ---
 

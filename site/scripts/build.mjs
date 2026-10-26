@@ -18,7 +18,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contributorItems, renderContributors } from "./contributors.mjs";
-import { renderDiagram } from "./diagrams.mjs";
+import { diagramWarnings, renderDiagram } from "./diagrams.mjs";
 import { highlight } from "./highlight.mjs";
 
 const SITE = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -553,6 +553,10 @@ for (const o of outputs) {
     mkdirSync(dirname(o.path), { recursive: true });
     writeFileSync(o.path, o.html);
   }
+}
+if (diagramWarnings.length) {
+  console.error(`${diagramWarnings.length} diagram text overflow(s). Widen the box or shorten the label in site/scripts/diagrams.mjs.`);
+  process.exit(1);
 }
 if (CHECK) {
   if (stale) {

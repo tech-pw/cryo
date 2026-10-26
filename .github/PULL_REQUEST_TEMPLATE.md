@@ -58,7 +58,7 @@ about: Submit a change to Cryo
 ## Docs updates
 
 <!-- Per docs/OSS_READINESS.md, every behavior change must update at least one of:
-     docs/, README.md, plan/hld/lld/todo.md. Which did you touch, and why? -->
+     docs/, README.md, docs/design/hld.md, docs/design/lld.md. Which did you touch, and why? -->
 
 - `docs/` updated in:
 - `README.md` updated in:

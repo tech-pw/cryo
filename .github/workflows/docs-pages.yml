@@ -33,7 +33,7 @@ jobs:
         run: node site/scripts/build.mjs --check
 
   deploy:
-    # Pages is unavailable while the repository is private, so deploy only once it is public.
+    # Pages needs a public repository, so a private fork or copy skips the deploy.
     if: >-
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && !github.event.repository.private

@@ -68,7 +68,7 @@ export const ACTIVE_RUN_STATUSES = new Set(["accepted", "queued", "running", "ad
 
 export type RunKindCategory = "scan" | "maintenance" | "other";
 
-/** Canonical run kind labels per `lld.md` §RunKind taxonomy. */
+/** Canonical run kind labels per `docs/design/lld.md` §RunKind taxonomy. */
 export const formatRunKind = (kind?: string | null): { label: string; category: RunKindCategory } => {
   const normalized = (kind ?? "").trim().toLowerCase();
   if (normalized === "scan") return { label: "Scan", category: "scan" };

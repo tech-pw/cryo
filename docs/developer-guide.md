@@ -168,11 +168,3 @@ When implementing service loops:
 ```
 
 Run focused tests first while developing, then the full suite before handing off.
-
-## Updating TODOs
-
-Update `todo.md` only for work that is actually implemented and verified. Use:
-
-- `[x]` for implemented and tested.
-- `[~]` for partial implementation or library core without production service wiring.
-- `[ ]` for not started.

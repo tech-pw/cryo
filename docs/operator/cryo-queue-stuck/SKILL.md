@@ -7,7 +7,7 @@ description: Explain a Cryo queue that is not draining. Use when jobs stay queue
 
 Decide whether work was never admitted, or was admitted and is waiting on a worker. Do not add capacity to clear a refusal.
 
-Read [docs/QUEUE_SCANNER_GOVERNOR_OVERHAUL_2026-09-22.md](../QUEUE_SCANNER_GOVERNOR_OVERHAUL_2026-09-22.md) and [docs/GOVERNOR_DEFERRED_CHURN_2026-09-23.md](../GOVERNOR_DEFERRED_CHURN_2026-09-23.md). Where the doc and the code disagree, the code wins. The September governor doc still shows the pre-fix enqueue path.
+Read the Governor and queue code (`cryo/governor/`, [cryo/queue/redis_queue.py](../../cryo/queue/redis_queue.py)). Where a doc and the code disagree, the code wins.
 
 ## Admit is not drain
 

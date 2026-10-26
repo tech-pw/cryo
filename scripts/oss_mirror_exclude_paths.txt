@@ -59,3 +59,8 @@ docs/open-items-2026-08-10.md
 docs/chat-b413e9e0-build-log.md
 docs/cryo_fix.md
 docs/AGENT_HANDOFF.md
+# Internal planning notes and internal CI, kept in GitLab only (#205).
+plan.md
+todo.md
+Jenkinsfile
+.gitlab-ci.yml

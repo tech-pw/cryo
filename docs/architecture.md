@@ -169,7 +169,7 @@ needs to run as a remote, shared service rather than a local subprocess next to 
 a future multi-tenant deployment mode) — not needed now.
 
 **Interoperability guarantee: golden-test parity across all three engines.** Trino and Spark
-renderers already have golden tests per `todo.md`. Extend the same pattern: one `MaintenancePlan`
+renderers already have golden tests. Extend the same pattern: one `MaintenancePlan`
 fixture, rendered/executed through Trino, Spark, and the native engine, asserted to produce
 equivalent results (file counts, bytes reclaimed) on the same seeded fixtures. This is what
 actually proves "swap in your own engine or use ours," not just a claim about the architecture.
@@ -687,4 +687,4 @@ still need completion.
 - [OmniMatch — GNN-based join discovery, VLDB 2025](https://arxiv.org/abs/2403.07653); [AutoG](https://arxiv.org/abs/2501.15282); [JOINT](https://arxiv.org/pdf/2509.07230); ["Graph Neural Networks for Databases" survey, IJCAI 2025](https://arxiv.org/pdf/2502.12908)
 - [Sawmill — causal diagnosis from logs, SIGMOD 2024](https://dl.acm.org/doi/10.14778/3705829.3705836); [Salimi — quantifying causal effects on query answering via do-calculus](https://arxiv.org/pdf/1603.02705)
 
-- Internal: [`research-and-roadmap.md`](./research-and-roadmap.md), [`todo.md`](../todo.md)
+- Internal: [`research-and-roadmap.md`](./research-and-roadmap.md)
