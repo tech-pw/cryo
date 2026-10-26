@@ -87,6 +87,31 @@ describe("mergeSkipColumns", () => {
     expect(changeIndex).toBeGreaterThan(merged.findIndex((column) => column.kind === "run" && column.run.run_id === "ra"));
     expect(changeIndex).toBeLessThan(merged.findIndex((column) => column.kind === "run" && column.run.run_id === "rb"));
   });
+
+  it("groups back-to-back config changes into one column, even across dropped skips", () => {
+    const runs = buildRunColumns(
+      [
+        run({ job_id: "a", run_id: "ra", started_at: "2026-10-01T23:00:00Z" }),
+        run({ job_id: "b", run_id: "rb", started_at: "2026-10-09T23:00:00Z" })
+      ],
+      []
+    );
+    const changes = changeColumns(
+      ["2026-10-02T10:00:00Z", "2026-10-02T11:00:00Z", "2026-10-04T10:00:00Z"].map((ts, index) => ({
+        id: `c${index}`,
+        action: "table_config_change",
+        status: "recorded",
+        ts,
+        detail: `change ${index}`
+      })) as never
+    );
+    const merged = mergeSkipColumns(runs, [skip("s1", "2026-10-03T23:00:00Z", "cooldown")], 0, changes);
+    const grouped = merged.filter((column) => column.kind === "change");
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0].kind === "change" && grouped[0].entries.map((entry) => entry.detail)).toEqual(["change 0", "change 1", "change 2"]);
+    expect(grouped[0].kind === "change" && grouped[0].detail).toBe("change 2");
+    expect(merged.map((column) => column.kind)).toEqual(["run", "change", "run"]);
+  });
 });
 
 describe("runModel", () => {
