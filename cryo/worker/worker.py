@@ -594,6 +594,7 @@ class Worker:
                     snapshot_id=active_intent.observed_snapshot_id,
                 )
             else:
+                shared_location = self._has_shared_location(job.table_id)
                 plan = build_execution_plan(
                     stats=table_data.stats,
                     partitions=table_data.partitions,
@@ -602,7 +603,8 @@ class Worker:
                     destination=destination,
                     operations=job.operations,
                     protected_snapshot_ids=_protected_snapshot_ids(job.table_id),
-                    has_shared_location=self._has_shared_location(job.table_id),
+                    has_shared_location=shared_location is True,
+                    shared_location_unverified=shared_location is None,
                     excluded_operations=job.excluded_operations,
                 )
                 self._store.save_plan(job.id, plan_to_dict(plan))
@@ -1410,11 +1412,14 @@ class Worker:
             job.table_id, job.id, self._lock_ttl_seconds
         ) or self._lock_store.acquire_table_lock(job.table_id, job.id, self._lock_ttl_seconds)
 
-    def _has_shared_location(self, table_id: str) -> bool:
+    def _has_shared_location(self, table_id: str) -> bool | None:
         """Whether this table's warehouse path overlaps another catalog entry's.
 
-        Optional on the store protocol so in-memory/test stores and older wiring keep
-        working -- see _shared_location_unknown for why the absent answer is "no overlap".
+        ``None`` means the lookup failed: the caller must treat the location as shared and
+        drop remove_orphan_files (fail closed, as the batch coordinator does with a stale
+        overlap snapshot). That is distinct from a store with no lookup method at all
+        (in-memory/test stores and older wiring), which keeps the "no overlap" default --
+        see _shared_location_unknown.
         """
         lookup = getattr(self._store, "has_shared_s3_location", None)
         if not callable(lookup):
@@ -1423,11 +1428,11 @@ class Worker:
             return bool(lookup(table_id))
         except Exception:
             logger.warning(
-                "Shared-location lookup failed for table %s; proceeding without the gate",
+                "Shared-location lookup failed for table %s; skipping remove_orphan_files",
                 table_id,
                 exc_info=True,
             )
-            return _shared_location_unknown()
+            return None
 
     def _renew_table_lock(self, job: MaintenanceJobRecord) -> bool:
         """Return whether this worker still holds the table lock -- CR-02: every call site
@@ -2711,11 +2716,12 @@ def _table_ref_from_stats(stats: Mapping[str, Any]) -> str | None:
 
 
 def _shared_location_unknown() -> bool:
-    """Default when the store can't answer whether a table's location overlaps another's.
+    """Default when the store has no shared-location lookup at all (in-memory/test stores,
+    older wiring).
 
-    False, i.e. "no known overlap", which preserves the pre-existing behavior. The gate is a
-    safety net over the procedure's own retention window; failing every orphan cleanup fleet
-    -wide because a reporting table is unavailable would trade a narrow risk for a broad one.
+    False, i.e. "no known overlap", which preserves the pre-existing behavior for wiring that
+    never had the check. A lookup that exists but *fails* is different: _has_shared_location
+    returns None and the plan drops remove_orphan_files (#197).
     """
     return False
 
