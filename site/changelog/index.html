@@ -62,6 +62,7 @@
 </ul>
 <h3 id="unreleased-fixed">Fixed<a class="anchor" href="#unreleased-fixed" aria-label="Link to Fixed">#</a></h3>
 <ul>
+  <li>The web UI's nginx now sends <code>Content-Security-Policy</code> (with <code>frame-ancestors 'none'</code>), <code>X-Frame-Options: DENY</code>, <code>X-Content-Type-Options: nosniff</code> and <code>Referrer-Policy</code> on every response, error pages included. <code>index.html</code> and SPA routes are <code>no-cache</code> so a deploy shows up at once. Hashed <code>/assets/*</code> files are cached for a year as <code>immutable</code>. HSTS is a chart value (<code>web.hsts</code>), off by default for installs without TLS (#260).</li>
   <li>Docs-vs-code drift: <code>docs/GOVERNANCE.md</code> previously asserted an Apache-2.0 <code>LICENSE</code> link whose target file did not exist.</li>
   <li><code>stats_compute_ndv: false</code> was ignored, so batch runs paid for a full-table <code>compute_table_stats</code> scan on every optimized table (31% of lane time).</li>
   <li>The Spark renderer dropped every <code>rewrite_position_deletes</code> parameter (partial progress).</li>
