@@ -46,6 +46,8 @@ def fleet_audit_query(
         .order_by(AuditLog.ts.desc(), AuditLog.id.desc())
         .limit(capped)
     )
+    # Sign-in audit rows carry attempted usernames; they are admin-only via /auth/audit.
+    stmt = stmt.where(~AuditLog.action.startswith("auth."))
     tenant_id = require_tenant(session)
     if tenant_id.int != 0:
         stmt = stmt.where(Table.tenant_id == tenant_id)

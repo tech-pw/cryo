@@ -29,6 +29,7 @@ import sqlglot
 from sqlglot import exp
 
 from cryo.domain.enums import PartitionTransform
+from cryo.observability.logging import quiet_sqlglot_logger
 from cryo.planner.partitions import (
     PartitionFieldSpec,
     date_to_transform_value,
@@ -130,6 +131,7 @@ def _safe_call(matcher: Callable[[Any], bool], value: Any) -> bool:
 
 
 def _matchers_for_query(query_text: str, field: PartitionFieldSpec) -> list[Callable[[Any], bool]]:
+    quiet_sqlglot_logger()  # never let sqlglot log the statement text (#165)
     try:
         parsed = sqlglot.parse_one(query_text, read="trino")
     except Exception:

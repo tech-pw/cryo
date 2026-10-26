@@ -1,0 +1,15 @@
+# Artifact Hub repository metadata for oci://ghcr.io/tech-pw/charts/cryo.
+# https://artifacthub.io/docs/topics/repositories/helm-charts/#oci-support
+#
+# The release workflow pushes this file to ghcr.io/tech-pw/charts/cryo:artifacthub.io
+# (media type application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml).
+# It lives outside deploy/helm/cryo on purpose so `helm package` does not ship it.
+#
+# repositoryID: filled in AFTER the repository is registered on artifacthub.io
+# (Control Panel > Repositories > Add, kind "Helm charts", URL oci://ghcr.io/tech-pw/charts/cryo).
+# Copy the ID Artifact Hub shows for the repository and replace the placeholder below.
+# Until then the release workflow skips pushing this file. With the real ID pushed,
+# Artifact Hub grants the Verified Publisher badge on its next scan.
+repositoryID: 00000000-0000-0000-0000-000000000000
+# owners: optional; lets these Artifact Hub users claim ownership of the repository.
+# Left empty until named maintainers are published (see MAINTAINERS.md).

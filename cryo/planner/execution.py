@@ -7,6 +7,7 @@ from uuid import UUID
 from cryo.domain.enums import EngineType, Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
 from cryo.planner.planner import build_plan
+from cryo.planner.schema_gates import gate_spark_time_columns
 
 
 class ExecutionDestination(Protocol):
@@ -45,6 +46,7 @@ def build_execution_plan(
     operations: tuple[OperationType, ...] | None,
     protected_snapshot_ids: Sequence[int] = (),
     has_shared_location: bool = False,
+    shared_location_unverified: bool = False,
     excluded_operations: Collection[str] = (),
 ) -> MaintenancePlan:
     plan_params = execution_plan_params(params, destination, stats)
@@ -74,8 +76,10 @@ def build_execution_plan(
     plan = gate_orphan_removal_on_shared_location(
         plan,
         has_shared_location=has_shared_location,
+        unverified=shared_location_unverified,
     )
     plan = gate_gc_disabled(plan, gc_disabled=gc_disabled_in_stats(stats))
+    plan = gate_spark_time_columns(plan, engine=destination.engine, stats=stats)
     plan = gate_engine_unsupported(plan, destination=destination)
     plan = gate_trino_semantics(plan, destination=destination)
     return gate_native_optimize_manifests(
@@ -193,12 +197,29 @@ def skip_operations_from_preset(
     return []
 
 
+_SHARED_LOCATION_NOTE = (
+    "Skipped remove_orphan_files: this table's S3 location overlaps another table's, "
+    "so unreferenced-file deletion could remove the other table's live data. Give the "
+    "table a unique location, then re-enable."
+)
+SHARED_LOCATION_UNVERIFIED_NOTE = (
+    "Skipped remove_orphan_files: the shared-location check failed, so Cryo could not confirm "
+    "this table's S3 location does not overlap another table's. Orphan removal runs again "
+    "once the check succeeds."
+)
+
+
 def gate_orphan_removal_on_shared_location(
     plan: MaintenancePlan,
     *,
     has_shared_location: bool,
+    unverified: bool = False,
 ) -> MaintenancePlan:
     """Drop remove_orphan_files when this table's S3 location overlaps another table's.
+
+    ``unverified`` means the overlap lookup itself failed. That is treated as shared (fail
+    closed, like the batch coordinator skipping orphan removal on a stale overlap snapshot)
+    with its own plan note, so the run says why orphan removal was skipped.
 
     remove_orphan_files lists everything under the table root and deletes whatever is not
     referenced by *this* table's metadata. When two catalog entries share a warehouse path --
@@ -216,7 +237,7 @@ def gate_orphan_removal_on_shared_location(
     The rest of the plan still runs: optimize, expire_snapshots, and optimize_manifests all
     operate through table metadata and never delete another table's files.
     """
-    if not has_shared_location:
+    if not has_shared_location and not unverified:
         return plan
     if all(
         operation.type is not OperationType.REMOVE_ORPHAN_FILES for operation in plan.operations
@@ -232,9 +253,7 @@ def gate_orphan_removal_on_shared_location(
         ),
         notes=(
             *plan.notes,
-            "Skipped remove_orphan_files: this table's S3 location overlaps another table's, "
-            "so unreferenced-file deletion could remove the other table's live data. Give the "
-            "table a unique location, then re-enable.",
+            _SHARED_LOCATION_NOTE if has_shared_location else SHARED_LOCATION_UNVERIFIED_NOTE,
         ),
     )
 

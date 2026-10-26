@@ -270,6 +270,7 @@ class Governor:
         self._enable_signal_triggers = enable_signal_triggers
         settings = get_settings()
         self._qpp_enabled = settings.qpp_enabled
+        self._qpp_fail_open = settings.qpp_fail_open
         self._roi_gate_enabled = settings.roi_gate_enabled
         self._roi_gate_shadow_mode = settings.roi_gate_shadow_mode
         self._roi_gate = ROIGate()
@@ -897,11 +898,20 @@ class Governor:
                 job=job,
             )
         except Exception as exc:
-            logger.warning("QPP gate failed for job %s: %s", job.id, exc)
             governor_qpp_decisions_total.labels(
                 destination=wave.destination_id, outcome="error"
             ).inc()
-            return None
+            if self._qpp_fail_open:
+                logger.warning(
+                    "QPP gate failed for job %s; admitting (qpp_fail_open): %s", job.id, exc
+                )
+                return None
+            # Fail closed like the PII gate: a check that could not run is not a pass. This
+            # gate runs after the table lock, so the deferral releases it like a refusal.
+            logger.warning("QPP gate failed for job %s; deferring: %s", job.id, exc)
+            self._lock_store.release_table_lock(job.table_id, job.id)
+            self._defer(job, "qpp_gate_check_failed")
+            return _DEFERRED
         if not qpp_admit:
             logger.info("Job %s deferred: QPP refused (p95=%.0fms)", job.id, predicted_p95_ms)
             governor_qpp_decisions_total.labels(
