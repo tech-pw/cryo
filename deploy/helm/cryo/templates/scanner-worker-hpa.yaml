@@ -41,12 +41,16 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ .Values.scannerWorker.autoscaling.targetCPUUtilizationPercentage }}
+    {{- with .Values.scannerWorker.autoscaling.targetMemoryUtilizationPercentage }}
+    # Opt-in only: see values.yaml. Idle CPython heaps keep memory above request, which
+    # held this HPA at maxReplicas when memory was always on.
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
-          averageUtilization: {{ .Values.scannerWorker.autoscaling.targetMemoryUtilizationPercentage }}
+          averageUtilization: {{ . }}
+    {{- end }}
   behavior:
     scaleDown:
       # The ad-hoc scan queue is bursty (a user clicking "Trigger scan" in the web UI), not

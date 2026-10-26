@@ -512,6 +512,15 @@ class Settings(BaseSettings):
         le=65535,
         description="HTTP port for /healthz and /metrics on background services.",
     )
+    daemon_tick_stall_seconds: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Background services report unhealthy on /healthz when a single loop tick has run "
+            "longer than this many seconds (0 disables the check). The Helm chart sets it per "
+            "service so its liveness probe restarts a hung scheduler, worker or scanner."
+        ),
+    )
     telemetry_ingest_on_startup: bool = Field(
         default=True,
         description="When true, scheduler attempts query-log ingest ticks if configured.",
