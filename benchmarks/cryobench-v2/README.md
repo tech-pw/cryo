@@ -44,18 +44,33 @@ The published data is enough to regenerate every analysis table:
 
 ```bash
 cd benchmarks/cryobench-v2
-for s in p1_analysis p2_analysis p3_analysis; do
+for s in p1_analysis p2_analysis p3_analysis cost_analysis; do
   python harness/analysis/$s.py
 done
 ```
 
-Each script reads `results/v2/data/` and writes `results/v2/analysis/`. The outputs
+Each script reads `results/v2/data/` (and, for the cost model,
+`results/v2/raw/v2-s3usage.log`) and writes `results/v2/analysis/`. The outputs
 are byte-identical to the ones committed here.
 
-> The `p1_operations.csv` table is the one output that depends on the **raw** logs
-> rather than the parsed data. The parsed data published here is the reduced set
-> that carries every event the analysis needs, so the table regenerates from it
-> too.
+`make cryobench-v2-check` runs the first three and then diffs the result against
+the committed output, so a drift in the published data fails rather than passing
+quietly.
+
+### The other scripts in `harness/analysis/`
+
+Not all of them run without the cluster or credentials. They are published so
+the pipeline is readable end to end, and each is labelled by what it needs:
+
+| Script | What it does | Needs |
+|---|---|---|
+| `parse_logs.py` | Splits the raw controller and pod-accounting logs into the per-event JSONL in `results/v2/data/`. Takes the raw and output directories as arguments. | the raw logs, which are not published |
+| `s3_usage.py` | Walks the object store and writes the per-prefix usage log. | AWS credentials |
+| `snapshot_audit.py` | Audits the snapshot chain in the warehouse. | AWS credentials |
+| `charts.py`, `site_charts.py` | Render the charts in `results/v2/analysis/charts/`. | the analysis output |
+
+The raw controller logs are 392 MB and are not published — they are the input
+to `parse_logs.py`, and the parsed data carries everything the analysis needs.
 
 ## Rerunning the benchmark
 

@@ -50,13 +50,15 @@ cryobench-fixture:
 # The outputs are byte-identical to the ones committed under
 # benchmarks/cryobench-v2/results/v2/analysis, so a diff here means the
 # published data no longer reproduces the published numbers.
+CRYOBENCH_V2_ANALYSIS = p1_analysis p2_analysis p3_analysis cost_analysis
+
 cryobench-v2:
-	cd benchmarks/cryobench-v2 && for s in p1_analysis p2_analysis p3_analysis; do \
+	cd benchmarks/cryobench-v2 && for s in $(CRYOBENCH_V2_ANALYSIS); do \
 		$(PYTHON) harness/analysis/$$s.py || exit 1; \
 	done
 
 cryobench-v2-check:
-	cd benchmarks/cryobench-v2 && for s in p1_analysis p2_analysis p3_analysis; do \
+	cd benchmarks/cryobench-v2 && for s in $(CRYOBENCH_V2_ANALYSIS); do \
 		$(PYTHON) harness/analysis/$$s.py || exit 1; \
 	done && git diff --exit-code -- benchmarks/cryobench-v2/results/v2/analysis
 
