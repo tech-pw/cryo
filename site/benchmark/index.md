@@ -92,9 +92,7 @@ Customer filters repaid the compaction compute after 538 runs, whole-table aggre
 This is the case that breaks naive schedules. A MERGE landed on the table every 200 seconds for two hours. The scheduled DAG's compactions collided with the writer and failed every time. Cryo converted delete files in small commits between writes and kept the table lean.
 
 - **No maintenance
-
 - **Scheduled Spark DAG
-
 - **Cryo
 
 *The no-maintenance and scheduled-DAG lines overlap because the DAG's work never committed. Ticks along the bottom mark Cryo's checks.*
@@ -122,7 +120,6 @@ Same rows, and aggregate queries ran in 0.58× the time.
 We ran a steady stream of dashboard-style queries against the 100 GiB table while Cryo rewrote 67 GiB of it, then compared with the same queries on an idle table.
 
 - **Idle table
-
 - **During Cryo compaction
 
 *p95 stayed within 0.88× to 1.04× of idle across every query, and p99 improved for all three. Zero query failures.*
@@ -131,19 +128,12 @@ We ran a steady stream of dashboard-style queries against the 100 GiB table whil
 
 | Measured outcome | No maintenance | Scheduled Spark DAG | Cryo |
 | --- | --- | --- | --- |
-
 | Fleet restored to healthy | No | 100% | 100% |
-
 | Leaves healthy tables alone | n/a | No48 pointless rewrites | Mostly10 not needed, none on healthy tables |
-
 | Keeps up with live CDC | No39 delete files | No3 of 3 failed | Yes3 to 6 delete files |
-
 | Data integrity | Intact | Intact | Intact |
-
 | Live-query p95 during maintenance | n/a | not measured | ≤ 4% slower |
-
 | Decides what to run | n/a | You do | Cryo does |
-
 | Grade, history and audit trail per table | No | Build it | Built in |
 
 ## Trade-offs
@@ -169,15 +159,10 @@ We filed what we hit: run status staying queued ([#153](https://github.com/tech-
 ## How we measured
 
 - **3 trials**per test, 95% confidence intervals
-
 - **100 GiB**largest single table
-
 - **2 hours**of continuous MERGE for CDC
-
 - **Every row**fingerprinted before and after
-
 - **Same stack**Spark 4.1 and Iceberg 1.11 on Kubernetes, for every contender
-
 - **Read-only**Trino for all query timing
 
 Cryo ran with default settings throughout. The protocol was written and frozen before any scored run, compute was measured from Kubernetes pod requests, and rewritten bytes came from Iceberg's own snapshot summaries. Discovery was also checked at fleet scale: all 100 tables in a 100-table catalog were discovered, with exact file counts, in about two and a half minutes.

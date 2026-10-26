@@ -239,6 +239,7 @@ class ScanWorker:
                         scan_summary.missing_table_reconcile_skipped
                     ),
                     "removed_tables": list(scan_summary.removed_tables),
+                    "new_tables_on_default": scan_summary.new_tables_on_default,
                 },
             )
             safe_publish(

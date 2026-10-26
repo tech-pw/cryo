@@ -187,6 +187,9 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
         "max_partitions_per_chunk",
         "max_chunks",
         "retention_days",
+        # Sub-day snapshot window for tables that commit so often that a 1-day window still
+        # leaves hundreds of snapshots. Overrides retention_days for expire_snapshots.
+        "retention_hours",
         "retain_last",
         "orphan_retention_days",
         "file_size_mb",
@@ -233,6 +236,8 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
         "partial_progress",
         "remove_dangling_deletes",
         "stream_results",
+        "skip_open_time_partition",
+        "use_table_target_size",
     ):
         if key in params and not isinstance(params[key], bool):
             errors.append(f"params.{key} must be a boolean")

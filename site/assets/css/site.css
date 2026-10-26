@@ -475,6 +475,25 @@ html[data-theme="dark"] .logo-mark {
     gap: 6px;
 }
 
+.hdr-ver {
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 9px;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.hdr-ver:hover {
+    color: var(--ink);
+    background: var(--surface-2);
+}
+
 .icon-btn,
 .hdr-menu {
     display: inline-grid;
@@ -1328,6 +1347,29 @@ h3:hover .anchor,
 
 .tabpanel> :last-child {
     margin-bottom: 0;
+}
+
+
+/* ---------- checklist ---------- */
+
+.checklist {
+    list-style: none;
+    padding-left: 0 !important;
+}
+
+.checklist>li {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+}
+
+.checklist input[type="checkbox"] {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--accent);
+    transform: translateY(2px);
 }
 
 
@@ -8381,6 +8423,9 @@ html[data-theme="dark"] .shot-dark {
         display: inline-grid;
     }
     .hdr-tabs {
+        display: none;
+    }
+    .hdr-ver {
         display: none;
     }
     .search-open {

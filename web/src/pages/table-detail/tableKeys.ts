@@ -17,6 +17,7 @@ export const tableKeys = {
   healthTrends: (id: string, token?: string | null, days = 30) =>
     ["table-health-trends", id, token, days] as const,
   maintenanceStatus: (id: string, token?: string | null) => ["table-maintenance-status", id, token] as const,
+  pathToA: (id: string, token?: string | null) => ["table-path-to-a", id, token] as const,
   effectivePreset: (id: string, token?: string | null) => ["effective-preset", id, token] as const,
   effectiveParams: (id: string, token?: string | null) => ["effective-params", id, token] as const,
   compatiblePresets: (id: string, token?: string | null) => ["compatible-presets", id, token] as const,

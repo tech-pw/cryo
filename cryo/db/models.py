@@ -813,6 +813,11 @@ class Preset(TimestampMixin, Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # #119: held (no scheduled runs, no fallthrough) while still configured; distinct from
+    # enabled=False, which retires the preset.
+    paused: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("cryo.tenants.id", ondelete="SET NULL"),
@@ -3001,6 +3006,11 @@ class LocalUser(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
+    # "admin" (added in Settings), "google" (first Google sign-in) or "bootstrap"
+    # (CRYO_GOOGLE_ADMIN_EMAILS). NULL for rows created before this was tracked.
+    created_via: Mapped[str | None] = mapped_column(Text)
+    last_login_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_login_method: Mapped[str | None] = mapped_column(Text)
 
 
 class AuthSettings(Base):

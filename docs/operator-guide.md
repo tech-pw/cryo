@@ -516,6 +516,24 @@ left a large table unmatched until someone looked by hand.
 | Rule priority/predicate regression | Fix the rule via `POST /api/v1/presets/{id}/rules`; re-run simulate to confirm `matched_count` |
 | Genuinely out-of-scope tables (temp/scratch/test) | Confirm via `cryo.scheduler.rules.is_ephemeral_maintenance_table` — these should stay unmatched, not force-matched |
 
+### Default and paused presets
+
+- **Default preset.** Every table with no pin and no matching rule is maintained by the
+  tenant's default preset, including tables the scanner discovers for the first time (the scan
+  run summary shows `new_tables_on_default`). It needs a schedule; the API rejects a default
+  without `schedule_cron`. Switch the default with *Default preset* in the preset form or
+  `POST /api/v1/presets/{id}/set-default`; only one preset can be the default.
+- **Pause** (`paused`) holds a preset: its tables keep it as their effective preset and wait.
+  Nothing is scheduled and nothing is re-routed. Manual runs need `override_pause: true`.
+  Jobs already queued when you pause are left to drain.
+- **Disable** (`enabled: false`) retires a preset: tables pinned to it fall through to rules,
+  then the default.
+- **Unset default** with no replacement leaves unassigned tables unmaintained (provenance
+  `none`). The preset form shows how many tables are affected before saving.
+- Every pause, resume, default switch and enable/disable writes an `audit_log` row
+  (`preset_paused`, `preset_resumed`, `preset_default_set`, `preset_default_unset`,
+  `preset_enabled`, `preset_disabled`) with the actor and affected-table count.
+
 ### API memory / OOM (cryo-api)
 
 **Symptoms:**

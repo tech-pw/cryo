@@ -534,7 +534,8 @@ Destinations answer where maintenance executes. Engines in `cryo/engines/`:
 
 - `cryo/engines/trino/` — Trino client, live load probe, statement execution.
 - `cryo/engines/spark/` — Spark SQL renderer + EMR execution adapter.
-- `cryo/engines/native/` — Rust/DataFusion adapter (experimental; scaffolded but unused).
+- `cryo/engines/native/` — adapter for the `cryo-engine-go` subprocess. The Rust crates this
+  section describes were removed on 2026-10-26.
 - `cryo/engines/flink/` — Flink table-maintenance config emitter (team-operated, not Cryo-executed).
 
 Sources and destinations are intentionally separate. A table can be discovered from one source and

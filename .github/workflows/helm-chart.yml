@@ -48,8 +48,10 @@ jobs:
 
       - name: Lint and render the source chart
         run: |
-          helm lint --strict "${CHART_DIR}"
-          helm template cryo "${CHART_DIR}" > /dev/null
+          # The source chart's images are unpinned (cryo:latest), and the default prod
+          # environment refuses to render without digests, so lint it as a local dev install.
+          helm lint --strict "${CHART_DIR}" --set global.env.CRYO_ENVIRONMENT=dev
+          helm template cryo "${CHART_DIR}" --set global.env.CRYO_ENVIRONMENT=dev > /dev/null
 
       - name: Artifact Hub metadata is valid YAML with a repositoryID
         run: yq -e '.repositoryID | test("^[0-9a-f-]{36}$")' deploy/helm/artifacthub-repo.yml
@@ -67,7 +69,9 @@ jobs:
           test "$(yq '.annotations["artifacthub.io/prerelease"]' "${scratch}/cryo/Chart.yaml")" = "true"
           test "$(yq '.image.digest' "${scratch}/cryo/values.yaml")" = "${CRYO_IMAGE_DIGEST}"
           helm lint --strict "${scratch}/cryo"
-          helm template cryo "${scratch}/cryo" --set global.env.CRYO_ENVIRONMENT=prod --set redis.enabled=false \
+          # A released chart must render with no overrides at all: prod default, pinned images.
+          helm template cryo "${scratch}/cryo" > /dev/null
+          helm template cryo "${scratch}/cryo" --set redis.enabled=false \
             | grep -F "ghcr.io/tech-pw/cryo@${CRYO_IMAGE_DIGEST}"
           helm package "${scratch}/cryo" --destination "${scratch}/dist"
           tar -tzf "${scratch}/dist/cryo-9.9.9-ci.1.tgz" | grep -Fx 'cryo/README.md'

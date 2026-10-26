@@ -9,6 +9,7 @@ import {
   type BlockingReasonRead,
 } from "../../api/maintenanceStatus";
 import { CompactionAnalysis } from "../../components/table-detail/maintenance/CompactionAnalysis";
+import { PathToAPanel } from "../../components/table-detail/maintenance/PathToAPanel";
 import { TableRunGrid } from "../../components/table-detail/runs/TableRunGrid";
 import { QueryErrorAlert } from "../../components/common";
 import { Badge } from "../../components/ui/badge";
@@ -203,12 +204,19 @@ export const MaintenanceTab = () => {
         </section>
       </div>
       <div className="td-mt-stage">
-        <p className="td-mt-kicker">2 · Choose an action</p>
+        <p className="td-mt-kicker">2 · Path to grade A</p>
+        <p className="td-mt-stage-description">
+          Every deduction on this table and the step that clears it, with the grade the next scan would give after each one.
+        </p>
+        <PathToAPanel tableId={tableId} />
+      </div>
+      <div className="td-mt-stage">
+        <p className="td-mt-kicker">3 · Choose an action</p>
         <p className="td-mt-stage-description">Review a plan before running maintenance. Nightly eligibility and on-demand execution have separate checks.</p>
         <TableMaintenanceActions tableId={tableId} />
       </div>
       <div className="td-mt-stage">
-        <p className="td-mt-kicker">3 · Follow the outcome</p>
+        <p className="td-mt-kicker">4 · Follow the outcome</p>
         <TableRunGrid tableId={tableId} />
       </div>
       <CompactionAnalysis tableId={tableId} />

@@ -110,6 +110,23 @@ jobs:
       - name: Normalize image name
         run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}${{ matrix.image-suffix }}" >> "$GITHUB_ENV"
 
+      # Build identity baked into every image as ENV + OCI labels (#263) and served by
+      # GET /api/v1/version. Tags report the tag (v0.1.6); main pushes report
+      # main-<12-char sha>. Build date is the commit time, so rebuilds of one commit match.
+      - name: Compute build identity
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::12}"
+          fi
+          {
+            echo "CRYO_VERSION=${version}"
+            echo "CRYO_BUILD_DATE=$(git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_ENV"
+        env:
+          TZ: UTC
+
       - name: Authenticate to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -124,6 +141,10 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
+          build-args: |
+            CRYO_VERSION=${{ env.CRYO_VERSION }}
+            CRYO_GIT_SHA=${{ github.sha }}
+            CRYO_BUILD_DATE=${{ env.CRYO_BUILD_DATE }}
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
@@ -271,7 +292,7 @@ jobs:
             artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
 
       - name: Upload packaged chart
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: "cryo-chart-${{ github.ref_name }}"
           path: "dist/cryo-*.tgz"

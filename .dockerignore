@@ -10,16 +10,6 @@ __pycache__
 web/node_modules
 web/dist
 
-# Neither crate is built or installed by this Dockerfile -- cryo_native is an optional
-# PyO3 extension cryo/engines/native/engine.py imports defensively (falls back to the
-# Go engine if unavailable), never compiled into this image; cryo-engine is the
-# separately-built Rust engine. Excluding both wholesale, not just */target, keeps
-# their own CVEs (e.g. Cargo.lock's pyo3 advisory, confirmed live 2026-10-12: Trivy
-# flagged cryo-native/Cargo.lock inside this image despite nothing in it ever running)
-# out of a scan that should only cover what this image actually executes.
-cryo-native
-cryo-engine
-
 deploy/helm/cryo/values-*.yaml
 docs/_private
 .env

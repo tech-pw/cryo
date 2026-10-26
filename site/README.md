@@ -5,7 +5,7 @@ Static site for GitHub Pages, served at `https://tech-pw.github.io/cryo/`.
 ```bash
 make docs-preview                    # rebuild, serve http://localhost:4173, rebuild on save
 make docs                            # render site/_src into site/ once (commit the output)
-node site/scripts/build.mjs --check  # fail if output is stale or a published asset is over 2 MB (CI runs this)
+node site/scripts/build.mjs --check  # fail if output is stale, a published asset is over 2 MB, or the published total is over 15 MB (CI runs this)
 ```
 
 `make docs-preview` watches `site/_src`, `site/scripts` and `site/assets`, regenerates the pages, and serves them with caching turned off. A browser refresh shows the latest edit. Set `DOCS_PORT` to use another port.
@@ -14,10 +14,11 @@ No dependencies. Node 22.
 
 | Path | What it is |
 |---|---|
-| `_src/site.json` | Navigation groups and site metadata |
+| `_src/site.json` | Navigation groups and site metadata. `version` is the latest release tag shown in the header and on the homepage; bump it when a tag is cut |
 | `_src/contributors.json` | Snapshot of GitHub contributors for the homepage credit |
 | `_src/pages/*.html` | Page fragments with front matter (`title`, `lede`, `description`, `updated`) |
-| `scripts/screens_webp.py` | Writes the WebP copy of each screenshot the site serves (`python3 site/scripts/screens_webp.py`, needs Pillow). Run it after re-capturing screenshots; the PNGs stay as the source and for `README.md`, and the Pages deploy leaves them out |
+| `scripts/changelog.mjs` | Renders `CHANGELOG.md` into the Changelog page at build time (rebuild after a changelog edit) |
+| `scripts/screens_webp.py` | Writes the WebP copy (1800 px wide) of each screenshot the site serves (`python3 site/scripts/screens_webp.py`, needs Pillow; `--all` rewrites every copy). Run it after re-capturing screenshots; the PNGs stay as the source and for `README.md`, and the Pages deploy leaves them out |
 | `scripts/build.mjs` | Generator: chrome, TOC, search index, sitemap, `llms.txt`, per-page `index.md` |
 | `scripts/contributors.mjs` | Refresh the contributor snapshot from GitHub (`node site/scripts/contributors.mjs`) |
 | `scripts/diagrams.mjs` | Diagram specs rendered to inline SVG at build time |

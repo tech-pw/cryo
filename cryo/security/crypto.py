@@ -5,18 +5,26 @@ from __future__ import annotations
 import base64
 import hashlib
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 from cryo.config import get_settings
 
 _PREFIX = "enc:"
 
 
-def _fernet() -> Fernet:
+def fernet_for(secret: str) -> Fernet:
+    digest = hashlib.sha256(secret.encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def _fernet() -> MultiFernet:
+    """Encrypts with secret_key; decrypts with secret_key, then secret_key_previous."""
     settings = get_settings()
-    digest = hashlib.sha256(settings.secret_key.encode("utf-8")).digest()
-    key = base64.urlsafe_b64encode(digest)
-    return Fernet(key)
+    keys = [fernet_for(settings.secret_key)]
+    previous = settings.secret_key_previous
+    if previous and previous != settings.secret_key:
+        keys.append(fernet_for(previous))
+    return MultiFernet(keys)
 
 
 def encrypt_secret(plaintext: str | None) -> str | None:

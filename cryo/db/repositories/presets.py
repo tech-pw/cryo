@@ -75,6 +75,7 @@ def preset_to_config(preset: Preset) -> PresetConfig:
         enabled=preset.enabled,
         schedule_cron=preset.schedule_cron,
         is_default=bool(preset.is_default),
+        paused=bool(preset.paused),
     )
 
 

@@ -1,7 +1,7 @@
 """tables.removed_from_catalog_at / removed_reason tombstone (#120)
 
 Revision ID: 20261026_1720
-Revises: 20261026_1300
+Revises: 20261026_1710
 Create Date: 2026-10-26 17:20:00.000000
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20261026_1720"
-down_revision = "20261026_1300"
+down_revision = "20261026_1710"
 branch_labels = None
 depends_on = None
 

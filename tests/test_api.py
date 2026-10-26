@@ -19,7 +19,9 @@ def test_healthz() -> None:
     response = _client().get("/healthz")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "environment": "test"}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["environment"] == "test"
 
 
 def test_preview_renders_trino_partition_filtered_sql() -> None:

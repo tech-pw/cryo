@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
@@ -16,6 +16,7 @@ from cryo.api.capabilities import router as capabilities_router
 from cryo.api.correlation_middleware import CorrelationMiddleware
 from cryo.api.cost_insights_routes import router as cost_insights_router
 from cryo.api.dashboard_routes import router as dashboard_router
+from cryo.api.deps import require_viewer
 from cryo.api.evidence_routes import router as evidence_router
 from cryo.api.extensions import router as extensions_router
 from cryo.api.maintenance_control import router as maintenance_control_router
@@ -40,6 +41,8 @@ from cryo.api.routes_explorer_views import router as explorer_views_router
 from cryo.api.routes_funnel import router as funnel_router
 from cryo.api.routes_impact import router as impact_router
 from cryo.api.routes_partition_access import router as partition_access_router
+from cryo.api.routes_path_to_a import router as path_to_a_router
+from cryo.api.routes_preset_lifecycle import router as preset_lifecycle_router
 from cryo.api.routes_property_recommendations import router as property_recommendations_router
 from cryo.api.routes_quality_constraints import router as quality_constraints_router
 from cryo.api.routes_skip_history import router as skip_history_router
@@ -51,6 +54,7 @@ from cryo.api.routes_table_maintenance import router as table_maintenance_router
 from cryo.api.s3_log_config_routes import router as s3_log_config_router
 from cryo.api.search_routes import router as search_router
 from cryo.api.slack_routes import router as slack_interactions_router
+from cryo.build_info import build_info, cached_schema_revision
 from cryo.config import Settings, get_settings
 from cryo.mcp.http import mount_mcp
 from cryo.observability.logging import configure_logging
@@ -155,7 +159,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/healthz", tags=["health"])
     def healthz() -> dict[str, str]:
+        # Liveness only: no database call, and no build identity for unauthenticated callers.
         return {"status": "ok", "environment": settings.environment}
+
+    @app.get("/api/v1/version", tags=["health"], dependencies=[Depends(require_viewer)])
+    def version() -> dict[str, str | None]:
+        """Which build is running (#263). Needs a viewer token: the exact build and schema
+        revision tell an attacker which advisories apply. schema_revision is the Alembic
+        revision in the database, null when the database can't be reached."""
+        return {**build_info().as_dict(), "schema_revision": cached_schema_revision()}
 
     @app.get("/readyz", tags=["health"])
     def readyz() -> dict[str, str]:
@@ -181,8 +193,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {"value": pending_scan_chunk_count(session)}
 
     app.include_router(api_router)
+    app.include_router(preset_lifecycle_router)
     app.include_router(assistant_router)
     app.include_router(property_recommendations_router)
+    app.include_router(path_to_a_router)
     app.include_router(table_config_router)
     app.include_router(smart_maintenance_router)
     app.include_router(sources_router)
