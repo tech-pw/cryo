@@ -221,3 +221,111 @@ def test_a_wave_with_nothing_queued_is_a_no_op():
     result = governor.run_wave(now=NOW)
 
     assert (result.admitted, result.deferred, result.blocked) == (0, 0, 0)
+
+
+def _uuid_job(job_id: str, operations: list[str]) -> MaintenanceJobRecord:
+    import uuid
+
+    job = _job(job_id, table_id=str(uuid.uuid4()))
+    job.plan = {"operations": [{"type": op} for op in operations]}
+    return job
+
+
+def test_an_abac_refusal_defers_the_job_instead_of_leaving_it_queued(monkeypatch):
+    """_gate_abac used to return the deferred sentinel without ever calling _defer, so the job
+    stayed queued, was re-read and re-refused every wave, and kept the head of the queue."""
+    job = _uuid_job("job-1", ["expire_snapshots"])
+    governor, queue, store, _ = _governor(jobs=[job])
+    monkeypatch.setattr(
+        "cryo.security.abac_enforcement.evaluate_maintenance_allowed",
+        lambda *_a, **_k: (False, "policy forbids expire_snapshots"),
+    )
+
+    result = governor.run_wave(now=NOW)
+
+    assert result.deferred == 1
+    assert result.admitted == 0
+    assert store.get_job("job-1").status is JobStatus.DEFERRED
+    assert store.get_job("job-1").error == "policy forbids expire_snapshots"
+    assert not queue.is_pending("job-1", DEST)
+
+
+def test_a_wave_reads_only_the_head_of_a_long_queue(monkeypatch):
+    monkeypatch.setattr("cryo.governor.governor._MAX_WAVE_PENDING_READ", 3)
+    jobs = [_job(f"job-{i}") for i in range(10)]
+    governor, queue, _, _ = _governor(jobs=jobs)
+
+    result = governor.run_wave(now=NOW)
+
+    assert result.admitted == 3
+    assert queue.pending_depth(DEST) == 7
+
+
+def test_backpressure_reports_the_real_queue_depth_not_the_bounded_read(monkeypatch):
+    monkeypatch.setattr("cryo.governor.governor._MAX_WAVE_PENDING_READ", 3)
+    jobs = [_job(f"job-{i}") for i in range(10)]
+    governor, _, _, _ = _governor(jobs=jobs)
+    monkeypatch.setattr(Governor, "_worker_drain_headroom", lambda self: 0)
+
+    result = governor.run_wave(now=NOW)
+
+    assert result.blocked == 10
+
+
+class _CountingStore(InMemoryJobStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.rebuilds = 0
+
+    def in_flight_counts(self):
+        self.rebuilds += 1
+        return {DEST: {"r1": 2}}
+
+
+class _ResettableQueue(InMemoryMaintenanceQueue):
+    def __init__(self) -> None:
+        super().__init__()
+        self.resets: list[tuple[str, dict[str, int]]] = []
+
+    def reset_in_flight(self, destination_id, counts):
+        self.resets.append((destination_id, dict(counts)))
+
+
+def test_in_flight_counters_are_rebuilt_on_a_timer_not_every_wave(monkeypatch):
+    clock = {"now": 1000.0}
+    monkeypatch.setattr("cryo.governor.governor.monotonic", lambda: clock["now"])
+    queue = _ResettableQueue()
+    queue.enqueue("seed", DEST)
+    store = _CountingStore()
+    governor = Governor(
+        queue,
+        InMemoryLockStore(),
+        store,
+        default_config=AdmissionConfig(),
+        session_factory=_null_session_factory,
+        enable_signal_triggers=False,
+    )
+
+    governor._maybe_rebuild_in_flight()
+    governor._maybe_rebuild_in_flight()
+    clock["now"] += 301
+    governor._maybe_rebuild_in_flight()
+
+    assert store.rebuilds == 2
+    assert queue.resets[0] == (DEST, {"r1": 2})
+
+
+def test_a_failed_in_flight_rebuild_never_breaks_the_wave(monkeypatch):
+    queue = _ResettableQueue()
+    store = _CountingStore()
+    store.in_flight_counts = lambda: (_ for _ in ()).throw(RuntimeError("db down"))  # type: ignore[method-assign]
+    governor = Governor(
+        queue,
+        InMemoryLockStore(),
+        store,
+        default_config=AdmissionConfig(),
+        session_factory=_null_session_factory,
+        enable_signal_triggers=False,
+    )
+
+    governor._maybe_rebuild_in_flight()

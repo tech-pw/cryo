@@ -1301,12 +1301,25 @@ class MaintenanceRunRequest(BaseModel):
     # passes (see cryo/scheduler/service.py's dispatch tick). Must be in the future.
     scheduled_at: datetime | None = None
     operations: list[str] | None = None
+    # Create the jobs even when a queued/running job already covers the same operations on the
+    # table. Without it those steps are skipped and reported in the response and run summary.
+    force: bool = False
+
+
+class SkippedTableOps(BaseModel):
+    """Operations a new run did not queue because an active job already covers them."""
+
+    table_id: uuid.UUID
+    operations: list[str]
+    covering_job_ids: list[str]
+    fully_skipped: bool
 
 
 class MaintenanceRunResponse(BaseModel):
     run_id: uuid.UUID
     job_ids: list[uuid.UUID]
     status: str
+    skipped: list[SkippedTableOps] = Field(default_factory=list)
 
 
 class ScannerConfigRead(OrmModel):

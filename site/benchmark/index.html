@@ -1,0 +1,757 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Benchmark · Cryo</title><meta name="description" content="Measured results from CryoBench V2. Cryo versus scheduled Spark and hand-run Spark on table health, a 100 GiB table, live CDC, and query impact, plus the trade-offs."><link rel="canonical" href="https://tech-pw.github.io/cryo/benchmark/"><link rel="alternate" type="text/markdown" href="../benchmark/index.md" title="Markdown version"><meta name="theme-color" content="#F5FAFD" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0F16" media="(prefers-color-scheme: dark)"><meta property="og:type" content="website"><meta property="og:site_name" content="Cryo"><meta property="og:title" content="Benchmark · Cryo"><meta property="og:description" content="Measured results from CryoBench V2. Cryo versus scheduled Spark and hand-run Spark on table health, a 100 GiB table, live CDC, and query impact, plus the trade-offs."><meta property="og:url" content="https://tech-pw.github.io/cryo/benchmark/"><meta property="og:image" content="https://tech-pw.github.io/cryo/assets/img/og.png"><meta name="twitter:card" content="summary_large_image"><link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="../assets/fonts/ibm-plex-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin><script>(function(){try{var t=localStorage.getItem("cryo-site-theme");if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}})()</script><link rel="stylesheet" href="../assets/css/site.css?v=f1b6aaac6a"></head><body class="docs" data-page="benchmark" data-root="../"><a class="skip" href="#main">Skip to content</a><header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><a class="logo" href="../" aria-label="Cryo home"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true"><g stroke-width="1.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
+    <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
+    <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
+    <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
+    <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
+    <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
+    <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
+    <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
+    <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="2" stroke-linecap="round" style="stroke:var(--cryo-mark-dash,#5C667A)">
+    <path d="M17 19.5L20 22.3"/>
+    <path d="M27.6 14.5L29 18"/>
+    <path d="M13.9 34.1L17.2 34.7"/>
+  </g>
+  <g stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
+    <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
+    <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="1.1">
+    <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
+    <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
+    <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
+  </g>
+  <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)"/>
+  <g stroke="#FFFFFF" stroke-linecap="round">
+    <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
+    <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><nav class="hdr-tabs" aria-label="Sections"><a class="hdr-tab" href="../quickstart/" aria-current="true">Get started</a><a class="hdr-tab" href="../concepts/">Concepts</a><a class="hdr-tab" href="../health/">Operate</a><a class="hdr-tab" href="../reference/">Reference</a></nav><div class="hdr-end"><button class="search-open" type="button" aria-label="Search the docs" aria-haspopup="dialog"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="so-text">Search</span><kbd class="so-kbd">⌘K</kbd></button><a class="icon-btn" href="https://github.com/tech-pw/cryo" aria-label="Cryo on GitHub"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><button class="icon-btn theme-toggle" type="button" aria-label="Toggle colour theme"><svg class="i-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="i-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></button></div></div></header><div class="shell"><nav class="side" id="side" aria-label="Documentation"><div class="side-in"><div class="nav-group"><p class="nav-label">Get started</p><ul><li><a class="nav-link" href="../">Overview</a></li><li><a class="nav-link" href="../quickstart/">Quickstart</a></li><li><a class="nav-link" href="../benchmark/" aria-current="page">Benchmark</a></li><li><a class="nav-link" href="../onboarding/">Connect a lakehouse</a></li></ul></div><div class="nav-group"><p class="nav-label">Concepts</p><ul><li><a class="nav-link" href="../concepts/">How Cryo fits</a></li><li><a class="nav-link" href="../architecture/">Architecture</a></li><li><a class="nav-link" href="../maintenance/">Maintenance</a></li></ul></div><div class="nav-group"><p class="nav-label">Operate</p><ul><li><a class="nav-link" href="../health/">Health and cost</a></li><li><a class="nav-link" href="../tables/">Tables</a></li><li><a class="nav-link" href="../table-detail/">Table detail</a></li><li><a class="nav-link" href="../engines/">Engines</a></li><li><a class="nav-link" href="../deployment/">Deployment</a></li></ul></div><div class="nav-group"><p class="nav-label">Reference</p><ul><li><a class="nav-link" href="../reference/">Reference</a></li></ul></div></div><button class="side-collapse" type="button" aria-label="Collapse sidebar" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg></button></nav><div class="scrim" hidden></div><main class="main" id="main"><article class="doc"><header class="doc-head"><nav class="crumbs" aria-label="Breadcrumb"><a href="../" aria-label="Cryo home"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></a><span class="crumb-sep" aria-hidden="true">›</span><span>Get started</span><span class="crumb-sep" aria-hidden="true">›</span><span class="crumb-here" aria-current="page">Benchmark</span></nav><h1>Benchmark</h1><p class="lede">We ran Cryo against the scheduled Spark jobs teams usually write for themselves, on real Iceberg tables, with three trials per test and every row checked afterwards. Here is what we measured.</p><div class="doc-meta"><span>Updated <time datetime="2026-10-23">2026-10-23</time></span><span class="dot" aria-hidden="true"></span><span>5 min read</span><span class="meta-links"><a href="https://github.com/tech-pw/cryo/edit/main/site/_src/pages/benchmark.html"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>Edit this page</a><button class="share-page" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"/></svg><span>Share</span></button><a href="https://github.com/tech-pw/cryo/issues/new?title=docs%3A%20Benchmark&body=Page%3A%20https%3A%2F%2Ftech-pw.github.io%2Fcryo%2Fbenchmark%2F%0A%0AWhat%20is%20wrong%20or%20missing%3F%0A&labels=documentation"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="13" rx="5"/><path d="M9 7a3 3 0 0 1 6 0M3 13h4M17 13h4M4 7l3 2M20 7l-3 2M4 19l3-2M20 19l-3-2"/></svg>Report an issue</a><a class="md-page" href="../benchmark/index.md">View as Markdown</a></span><button class="copy-page" type="button" data-md="../benchmark/index.md">Copy page</button></div></header><details class="toc-m"><summary>On this page</summary><ul><li class="toc-l2"><a href="#contenders">What we compared</a></li><li class="toc-l2"><a href="#decisions">It touches only the tables that need work</a></li><li class="toc-l3"><a href="#unnecessary-rewrites-per-trial">Unnecessary rewrites per trial</a></li><li class="toc-l3"><a href="#every-table-ended-healthy">Every table ended healthy</a></li><li class="toc-l2"><a href="#large-table">On a 100 GiB table, queries get faster</a></li><li class="toc-l3"><a href="#whatever-target-size-you-pick">Whatever target size you pick</a></li><li class="toc-l3"><a href="#same-output-as-hand-written-spark">Same output as hand-written Spark</a></li><li class="toc-l3"><a href="#queries-to-pay-back-the-rewrite">Queries to pay back the rewrite</a></li><li class="toc-l2"><a href="#cdc">Under live CDC, it keeps up</a></li><li class="toc-l3"><a href="#cryo-jobs-succeeded">Cryo jobs succeeded</a></li><li class="toc-l3"><a href="#dag-compactions-committed">DAG compactions committed</a></li><li class="toc-l3"><a href="#data-files-at-the-end">Data files at the end</a></li><li class="toc-l2"><a href="#foreground">Users don't feel it</a></li><li class="toc-l2"><a href="#scorecard">Scorecard</a></li><li class="toc-l2"><a href="#tradeoffs">Trade-offs</a></li><li class="toc-l2"><a href="#method">How we measured</a></li></ul></details><div class="prose"><div class="bm-kpis">
+  <div class="bm-kpi"><b>151 / 151</b><span>Cryo maintenance jobs succeeded</span><small>Across every test, with no failed or partial commits.</small></div>
+  <div class="bm-kpi"><b>0</b><span>rows lost or changed</span><small>Table fingerprints matched the untouched copy after every run.</small></div>
+  <div class="bm-kpi"><b>4.3×</b><span>fewer delete files under live CDC</span><small>Time-weighted average of 4.9 vs 20.9, while the scheduled DAG's compactions all failed.</small></div>
+  <div class="bm-kpi"><b>1.76×</b><span>faster queries on a 100 GiB table</span><small>Geometric mean of the whole query mix. Up to 4.3× on individual queries.</small></div>
+  <div class="bm-kpi"><b>79%</b><span>fewer pointless rewrites than a scheduled DAG</span><small>43% fewer unnecessary operations once snapshot expiry is counted.</small></div>
+  <div class="bm-kpi"><b>≤ 4%</b><span>p95 slowdown for live queries during compaction</span><small>Every live query stayed between 0.88× and 1.04× of idle, with zero failures.</small></div>
+</div>
+
+<h2 id="contenders">What we compared<a class="anchor" href="#contenders" aria-label="Link to What we compared">#</a></h2>
+<p>The real alternative to Cryo is usually not another product. It is a Spark job on a schedule that someone on the team wrote and now has to maintain. So that is what we measured Cryo against, using the same Spark and Iceberg versions and the same cluster.</p>
+<div class="bm-contenders">
+  <div class="bm-contender"><span class="bm-swatch" style="background:var(--bm-a0)"></span><b>No maintenance</b><p>The table as ingestion leaves it. Sets the baseline.</p></div>
+  <div class="bm-contender"><span class="bm-swatch" style="background:var(--bm-a1)"></span><b>Scheduled Spark DAG</b><p>Compact, rewrite manifests and expire snapshots on every table, every cycle. The common Airflow pattern.</p></div>
+  <div class="bm-contender"><span class="bm-swatch" style="background:var(--line-strong)"></span><b>Hand-run Spark</b><p>An engineer running the exact compaction SQL by hand, on the large-table test.</p></div>
+  <div class="bm-contender is-cryo"><span class="bm-swatch" style="background:var(--bm-cryo)"></span><b>Cryo</b><p>Default settings. Grades each table, plans only what it needs, runs it on Spark.</p></div>
+</div>
+<p>For a feature comparison with Amoro, LakeOps, Crunch, Databricks and managed cloud services, see <a href="../reference/">Reference</a>. This page reports only what we ran and measured.</p>
+
+<h2 id="decisions">It touches only the tables that need work<a class="anchor" href="#decisions" aria-label="Link to It touches only the tables that need work">#</a></h2>
+<p>We gave both approaches the same fleet: healthy tables, quiet ones, fragmenting ones, badly fragmented ones, and tables taking row updates. Over four cycles, the scheduled DAG rewrote everything it saw. Cryo left healthy tables alone and spent its work where the problems were.</p>
+<figure class="bm-figure">
+  <svg class="bm-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 300" role="img" aria-label="Decision grid. The scheduled DAG rewrote, re-manifested and expired every table every cycle, including healthy ones. Cryo left healthy tables alone, compacted the fragmented ones, and converted delete files on updated tables.">
+<text x="30.0" y="30.0" class="bm-colh" text-anchor="start">Table state</text>
+<text x="330.0" y="30.0" class="bm-colh" text-anchor="middle">Scheduled Spark DAG</text>
+<text x="560.0" y="30.0" class="bm-colh bm-cryo-t" text-anchor="middle">Cryo</text>
+<rect class="bm-row" x="16" y="40" width="688" height="44" rx="8"/>
+<text x="30.0" y="60.0" class="bm-rowh" text-anchor="start">Healthy</text>
+<text x="30.0" y="76.0" class="bm-rows" text-anchor="start">4 large files</text>
+<rect class="bm-chip bm-chip-waste" x="239.7" y="50" width="103.8" height="22" rx="11"/>
+<text x="291.6" y="65.0" class="bm-chipt bm-chip-waste-t" text-anchor="middle">16 not needed</text>
+<rect class="bm-chip bm-chip-exp" x="349.5" y="50" width="70.8" height="22" rx="11"/>
+<text x="384.9" y="65.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-chip bm-chip-exp" x="524.6" y="50" width="70.8" height="22" rx="11"/>
+<text x="560.0" y="65.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-row bm-row-alt" x="16" y="88" width="688" height="44" rx="8"/>
+<text x="30.0" y="108.0" class="bm-rowh" text-anchor="start">Quiet</text>
+<text x="30.0" y="124.0" class="bm-rows" text-anchor="start">12 small files</text>
+<rect class="bm-chip bm-chip-waste" x="239.7" y="98" width="103.8" height="22" rx="11"/>
+<text x="291.6" y="113.0" class="bm-chipt bm-chip-waste-t" text-anchor="middle">16 not needed</text>
+<rect class="bm-chip bm-chip-exp" x="349.5" y="98" width="70.8" height="22" rx="11"/>
+<text x="384.9" y="113.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-chip bm-chip-waste" x="473.0" y="98" width="97.2" height="22" rx="11"/>
+<text x="521.6" y="113.0" class="bm-chipt bm-chip-waste-t" text-anchor="middle">2 not needed</text>
+<rect class="bm-chip bm-chip-exp" x="576.2" y="98" width="70.8" height="22" rx="11"/>
+<text x="611.6" y="113.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-row" x="16" y="136" width="688" height="44" rx="8"/>
+<text x="30.0" y="156.0" class="bm-rowh" text-anchor="start">Fragmenting</text>
+<text x="30.0" y="172.0" class="bm-rows" text-anchor="start">150+ small files</text>
+<rect class="bm-chip bm-chip-ok" x="252.9" y="146" width="77.4" height="22" rx="11"/>
+<text x="291.6" y="161.0" class="bm-chipt bm-chip-ok-t" text-anchor="middle">16 useful</text>
+<rect class="bm-chip bm-chip-exp" x="336.3" y="146" width="70.8" height="22" rx="11"/>
+<text x="371.7" y="161.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-chip bm-chip-ok" x="486.2" y="146" width="70.8" height="22" rx="11"/>
+<text x="521.6" y="161.0" class="bm-chipt bm-chip-ok-t" text-anchor="middle">8 useful</text>
+<rect class="bm-chip bm-chip-exp" x="563.0" y="146" width="70.8" height="22" rx="11"/>
+<text x="598.4" y="161.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-row bm-row-alt" x="16" y="184" width="688" height="44" rx="8"/>
+<text x="30.0" y="204.0" class="bm-rowh" text-anchor="start">Badly fragmented</text>
+<text x="30.0" y="220.0" class="bm-rows" text-anchor="start">600+ small files</text>
+<rect class="bm-chip bm-chip-ok" x="252.9" y="194" width="77.4" height="22" rx="11"/>
+<text x="291.6" y="209.0" class="bm-chipt bm-chip-ok-t" text-anchor="middle">16 useful</text>
+<rect class="bm-chip bm-chip-exp" x="336.3" y="194" width="70.8" height="22" rx="11"/>
+<text x="371.7" y="209.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-chip bm-chip-ok" x="486.2" y="194" width="70.8" height="22" rx="11"/>
+<text x="521.6" y="209.0" class="bm-chipt bm-chip-ok-t" text-anchor="middle">8 useful</text>
+<rect class="bm-chip bm-chip-exp" x="563.0" y="194" width="70.8" height="22" rx="11"/>
+<text x="598.4" y="209.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-row" x="16" y="232" width="688" height="44" rx="8"/>
+<text x="30.0" y="252.0" class="bm-rowh" text-anchor="start">Row updates</text>
+<text x="30.0" y="268.0" class="bm-rows" text-anchor="start">delete files</text>
+<rect class="bm-chip bm-chip-waste" x="239.7" y="242" width="103.8" height="22" rx="11"/>
+<text x="291.6" y="257.0" class="bm-chipt bm-chip-waste-t" text-anchor="middle">16 not needed</text>
+<rect class="bm-chip bm-chip-exp" x="349.5" y="242" width="70.8" height="22" rx="11"/>
+<text x="384.9" y="257.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<rect class="bm-chip bm-chip-waste" x="473.0" y="242" width="97.2" height="22" rx="11"/>
+<text x="521.6" y="257.0" class="bm-chipt bm-chip-waste-t" text-anchor="middle">8 not needed</text>
+<rect class="bm-chip bm-chip-exp" x="576.2" y="242" width="70.8" height="22" rx="11"/>
+<text x="611.6" y="257.0" class="bm-chipt bm-chip-exp-t" text-anchor="middle">8 expiry</text>
+<text x="30.0" y="286.0" class="bm-foot" text-anchor="start">Operations per table class over 4 cycles, trial 7 (trials 8 and 9 identical). Expiry is snapshot expiry, a no-op inside a 2-hour test.</text>
+</svg>
+
+  <figcaption>Green chips are rewrites that fixed a real problem. Orange chips rewrote a table that was already healthy. Both approaches expire snapshots on every table by design.</figcaption>
+</figure>
+<div class="bm-split">
+  <div class="bm-panel">
+    <h3 id="unnecessary-rewrites-per-trial">Unnecessary rewrites per trial<a class="anchor" href="#unnecessary-rewrites-per-trial" aria-label="Link to Unnecessary rewrites per trial">#</a></h3>
+    <div class="bm-meter">
+      <div>Scheduled DAG<span><i class="is-a1" style="width:100%"></i></span><em>48</em></div>
+      <div>Cryo<span><i style="width:20.8%"></i></span><em>10</em></div>
+    </div>
+    <p style="margin-top:10px">Identical in all three trials. Counting snapshot expiry, it is 88 vs 50.</p>
+  </div>
+  <div class="bm-panel">
+    <h3 id="every-table-ended-healthy">Every table ended healthy<a class="anchor" href="#every-table-ended-healthy" aria-label="Link to Every table ended healthy">#</a></h3>
+    <div class="bm-meter">
+      <div>No maintenance<span><i class="is-a0" style="width:65.8%"></i></span><em>66%</em></div>
+      <div>Scheduled DAG<span><i class="is-a1" style="width:100%"></i></span><em>100%</em></div>
+      <div>Cryo<span><i style="width:100%"></i></span><em>100%</em></div>
+    </div>
+    <p style="margin-top:10px">Share of query runs that hit a healthy table. Cryo matched the brute-force DAG while doing less of the work nobody needed.</p>
+  </div>
+</div>
+
+<h2 id="large-table">On a 100 GiB table, queries get faster<a class="anchor" href="#large-table" aria-label="Link to On a 100 GiB table, queries get faster">#</a></h2>
+<p>One table, 100 GiB, fragmented the way streaming ingestion leaves it. One Cryo run at the default 256 MB target turned thousands of small files into a few hundred right-sized ones.</p>
+<figure class="bm-figure">
+  <svg class="bm-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 184" role="img" aria-label="Waffle chart. The 100 GiB table went from 7,594 data files, 7,234 of them under 32 MiB, to 690 files after one Cryo run.">
+<rect class="bm-dot-small" x="24.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="31.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="38.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="45.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="52.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="60.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="67.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="74.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="81.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="88.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="96.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="103.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="110.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="117.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="124.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="132.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="139.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="146.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="153.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="160.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="168.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="175.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="182.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="189.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="196.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="204.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="211.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="218.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="225.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="232.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="240.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="247.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="254.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="261.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="268.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="276.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="283.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="290.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="297.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="304.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="24.0" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="31.2" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="38.4" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="45.6" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="52.8" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="60.0" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="67.2" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="74.4" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="81.6" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="88.8" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="96.0" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="103.2" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="110.4" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="117.6" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="124.8" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="132.0" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="139.2" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="146.4" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="153.6" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="160.8" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="168.0" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="175.2" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="182.4" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="189.6" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="196.8" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="204.0" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="211.2" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="218.4" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="225.6" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="232.8" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="240.0" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="247.2" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="254.4" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="261.6" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="268.8" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="276.0" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="283.2" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="290.4" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="297.6" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="304.8" y="61.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="24.0" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="31.2" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="38.4" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="45.6" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="52.8" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="60.0" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="67.2" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="74.4" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="81.6" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="88.8" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="96.0" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="103.2" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="110.4" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="117.6" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="124.8" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="132.0" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="139.2" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="146.4" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="153.6" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="160.8" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="168.0" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="175.2" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="182.4" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="189.6" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="196.8" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="204.0" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="211.2" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="218.4" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="225.6" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="232.8" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="240.0" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="247.2" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="254.4" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="261.6" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="268.8" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="276.0" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="283.2" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="290.4" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="297.6" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="304.8" y="68.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="24.0" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="31.2" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="38.4" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="45.6" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="52.8" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="60.0" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="67.2" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="74.4" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="81.6" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="88.8" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="96.0" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="103.2" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="110.4" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="117.6" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="124.8" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="132.0" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="139.2" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="146.4" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="153.6" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="160.8" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="168.0" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="175.2" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="182.4" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="189.6" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="196.8" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="204.0" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="211.2" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="218.4" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="225.6" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="232.8" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="240.0" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="247.2" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="254.4" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="261.6" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="268.8" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="276.0" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="283.2" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="290.4" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="297.6" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="304.8" y="75.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="24.0" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="31.2" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="38.4" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="45.6" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="52.8" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="60.0" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="67.2" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="74.4" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="81.6" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="88.8" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="96.0" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="103.2" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="110.4" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="117.6" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="124.8" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="132.0" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="139.2" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="146.4" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="153.6" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="160.8" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="168.0" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="175.2" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="182.4" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="189.6" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="196.8" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="204.0" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="211.2" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="218.4" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="225.6" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="232.8" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="240.0" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="247.2" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="254.4" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="261.6" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="268.8" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="276.0" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="283.2" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="290.4" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="297.6" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="304.8" y="82.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="24.0" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="31.2" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="38.4" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="45.6" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="52.8" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="60.0" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="67.2" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="74.4" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="81.6" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="88.8" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="96.0" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="103.2" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="110.4" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="117.6" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="124.8" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="132.0" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="139.2" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="146.4" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="153.6" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="160.8" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="168.0" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="175.2" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="182.4" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="189.6" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="196.8" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="204.0" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="211.2" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="218.4" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="225.6" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="232.8" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="240.0" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="247.2" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="254.4" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="261.6" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="268.8" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="276.0" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="283.2" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="290.4" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="297.6" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="304.8" y="90.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="24.0" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="31.2" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="38.4" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="45.6" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="52.8" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="60.0" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="67.2" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="74.4" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="81.6" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="88.8" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="96.0" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="103.2" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="110.4" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="117.6" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="124.8" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="132.0" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="139.2" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="146.4" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="153.6" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="160.8" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="168.0" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="175.2" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="182.4" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="189.6" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="196.8" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="204.0" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="211.2" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="218.4" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="225.6" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="232.8" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="240.0" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="247.2" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="254.4" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="261.6" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="268.8" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="276.0" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="283.2" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="290.4" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="297.6" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="304.8" y="97.2" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="24.0" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="31.2" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="38.4" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="45.6" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="52.8" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="60.0" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="67.2" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="74.4" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="81.6" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="88.8" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="96.0" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="103.2" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="110.4" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="117.6" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="124.8" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="132.0" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="139.2" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="146.4" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="153.6" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="160.8" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="168.0" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="175.2" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="182.4" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="189.6" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="196.8" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="204.0" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="211.2" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="218.4" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="225.6" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="232.8" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="240.0" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="247.2" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="254.4" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="261.6" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="268.8" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="276.0" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="283.2" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="290.4" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="297.6" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="304.8" y="104.4" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="24.0" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="31.2" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="38.4" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="45.6" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="52.8" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="60.0" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="67.2" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="74.4" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="81.6" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="88.8" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="96.0" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="103.2" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="110.4" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="117.6" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="124.8" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="132.0" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="139.2" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="146.4" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="153.6" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="160.8" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="168.0" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="175.2" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="182.4" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="189.6" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="196.8" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="204.0" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="211.2" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="218.4" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="225.6" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="232.8" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="240.0" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="247.2" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="254.4" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="261.6" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="268.8" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="276.0" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="283.2" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="290.4" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="297.6" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="304.8" y="111.6" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="24.0" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="31.2" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="38.4" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="45.6" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="52.8" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="60.0" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="67.2" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="74.4" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="81.6" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="88.8" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="96.0" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="103.2" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="110.4" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="117.6" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="124.8" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="132.0" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="139.2" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="146.4" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="153.6" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="160.8" y="118.8" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="420.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-small" x="427.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="434.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="441.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="448.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="456.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="463.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="470.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="477.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="484.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="492.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="499.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="506.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="513.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="520.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="528.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="535.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="542.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="549.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="556.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="564.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="571.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="578.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="585.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="592.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="600.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="607.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="614.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="621.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="628.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="636.0" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="643.2" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="650.4" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="657.6" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<rect class="bm-dot-big" x="664.8" y="54.0" width="5.4" height="5.4" rx="1.2"/>
+<text x="24.0" y="36.0" class="bm-colh" text-anchor="start">Before: 7,594 data files</text>
+<text x="420.0" y="36.0" class="bm-colh bm-cryo-t" text-anchor="start">After Cryo: 690 data files</text>
+<text x="24.0" y="146.0" class="bm-rows" text-anchor="start">7,234 under 32 MiB, mean file 13.6 MiB</text>
+<text x="420.0" y="81.2" class="bm-rows" text-anchor="start">30 under 32 MiB, mean file 148 MiB</text>
+<path class="bm-arrow" d="M330,90h70m-10,-8l10,8l-10,8"/>
+<rect class="bm-dot-small" x="24" y="168" width="8" height="8" rx="1.5"/>
+<text x="38.0" y="176.0" class="bm-foot" text-anchor="start">small files (1 square = 20 files)</text>
+<rect class="bm-dot-big" x="230" y="168" width="8" height="8" rx="1.5"/>
+<text x="244.0" y="176.0" class="bm-foot" text-anchor="start">right-sized files</text>
+</svg>
+
+  <figcaption>67 GiB rewritten in one run of about 21 minutes. Same rows and same results, a tenth of the files.</figcaption>
+</figure>
+<figure class="bm-figure">
+  <p class="bm-figure-title">Query speed after one Cryo run</p>
+  <svg class="bm-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 348" role="img" aria-label="Bar chart of query speedups on the 100 GiB table after Cryo's default compaction: whole-table aggregate 3.6× faster, small-file day 4.3×, customer filter 3.4×, mid-size day 2×, full read 1.75×, large-file day unchanged, 7-day join 1.1× slower, single-row lookup 1.8× slower.">
+<line class="bm-base" x1="314.0" x2="314.0" y1="34" y2="326"/>
+<text x="314.0" y="26.0" class="bm-tick" text-anchor="middle">no change</text>
+<text x="218.0" y="59.0" class="bm-rowh" text-anchor="end">One day, small-file band</text>
+<rect class="bm-cryo-fill" x="314.0" y="46" width="280.3" height="20" rx="4"/>
+<text x="602.3" y="61.0" class="bm-val" text-anchor="start">4.34× faster</text>
+<text x="218.0" y="95.0" class="bm-rowh" text-anchor="end">Aggregate, whole table</text>
+<rect class="bm-cryo-fill" x="314.0" y="82" width="221.1" height="20" rx="4"/>
+<text x="543.1" y="97.0" class="bm-val" text-anchor="start">3.63× faster</text>
+<text x="218.0" y="131.0" class="bm-rowh" text-anchor="end">Customer filter, whole table</text>
+<rect class="bm-cryo-fill" x="314.0" y="118" width="204.8" height="20" rx="4"/>
+<text x="526.8" y="133.0" class="bm-val" text-anchor="start">3.44× faster</text>
+<text x="218.0" y="167.0" class="bm-rowh" text-anchor="end">One day, mid-size band</text>
+<rect class="bm-cryo-fill" x="314.0" y="154" width="80.3" height="20" rx="4"/>
+<text x="402.3" y="169.0" class="bm-val" text-anchor="start">1.96× faster</text>
+<text x="218.0" y="203.0" class="bm-rowh" text-anchor="end">Read every row</text>
+<rect class="bm-cryo-fill" x="314.0" y="190" width="62.7" height="20" rx="4"/>
+<text x="384.7" y="205.0" class="bm-val" text-anchor="start">1.75× faster</text>
+<text x="218.0" y="239.0" class="bm-rowh" text-anchor="end">One day, already-large files</text>
+<rect class="bm-neutral-fill" x="314.0" y="226" width="2.0" height="20" rx="4"/>
+<text x="322.2" y="241.0" class="bm-val" text-anchor="start">unchanged</text>
+<text x="218.0" y="275.0" class="bm-rowh" text-anchor="end">7-day join</text>
+<rect class="bm-slow-fill" x="305.2" y="262" width="8.8" height="20" rx="4"/>
+<text x="322.0" y="277.0" class="bm-val" text-anchor="start">1.1× slower</text>
+<text x="218.0" y="311.0" class="bm-rowh" text-anchor="end">Single-row lookup</text>
+<rect class="bm-slow-fill" x="275.8" y="298" width="38.2" height="20" rx="4"/>
+<text x="322.0" y="313.0" class="bm-val" text-anchor="start">1.8× slower</text>
+<text x="230.0" y="344.0" class="bm-foot" text-anchor="start">Median latency, untouched vs Cryo default (256 MB target), geometric mean of 3 trials.</text>
+</svg>
+
+  <figcaption>Scans and aggregates gained the most. Single-row lookups got slower because each one now opens a larger file; see <a href="#tradeoffs">trade-offs</a>.</figcaption>
+</figure>
+<div class="bm-split">
+  <div class="bm-panel"><span class="bm-big">1.73× – 1.83×</span><h3 id="whatever-target-size-you-pick">Whatever target size you pick<a class="anchor" href="#whatever-target-size-you-pick" aria-label="Link to Whatever target size you pick">#</a></h3><p>128, 256 and 512 MB targets all landed in this range for the whole query mix. The default is a safe choice.</p></div>
+  <div class="bm-panel"><span class="bm-big">690 = 690</span><h3 id="same-output-as-hand-written-spark">Same output as hand-written Spark<a class="anchor" href="#same-output-as-hand-written-spark" aria-label="Link to Same output as hand-written Spark">#</a></h3><p>Cryo's compaction produced exactly the same file count, bytes and results as an engineer running the same SQL by hand.</p></div>
+  <div class="bm-panel"><span class="bm-big">538 – 802</span><h3 id="queries-to-pay-back-the-rewrite">Queries to pay back the rewrite<a class="anchor" href="#queries-to-pay-back-the-rewrite" aria-label="Link to Queries to pay back the rewrite">#</a></h3><p>Customer filters repaid the compaction compute after 538 runs, whole-table aggregates after 588 and full reads after 802.</p></div>
+</div>
+
+<h2 id="cdc">Under live CDC, it keeps up<a class="anchor" href="#cdc" aria-label="Link to Under live CDC, it keeps up">#</a></h2>
+<p>This is the case that breaks naive schedules. A MERGE landed on the table every 200 seconds for two hours. The scheduled DAG's compactions collided with the writer and failed every time. Cryo converted delete files in small commits between writes and kept the table lean.</p>
+<figure class="bm-figure">
+  <ul class="bm-legend"><li><i class="k-a0"></i>No maintenance</li><li><i class="k-a1"></i>Scheduled Spark DAG</li><li><i class="k-cryo"></i>Cryo</li></ul>
+  <svg class="bm-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 330" role="img" aria-label="Line chart. Over two hours of MERGE ingestion, delete files rose steadily to 39 with no maintenance and with a scheduled Spark DAG, whose three compaction attempts all failed on commit conflicts. With Cryo checking every 10 minutes they peaked at 10 and, from its second run on, held between 3 and 6.">
+<line class="bm-grid" x1="52" x2="570" y1="284.0" y2="284.0"/>
+<text x="44.0" y="288.0" class="bm-tick" text-anchor="end">0</text>
+<line class="bm-grid" x1="52" x2="570" y1="219.0" y2="219.0"/>
+<text x="44.0" y="223.0" class="bm-tick" text-anchor="end">10</text>
+<line class="bm-grid" x1="52" x2="570" y1="154.0" y2="154.0"/>
+<text x="44.0" y="158.0" class="bm-tick" text-anchor="end">20</text>
+<line class="bm-grid" x1="52" x2="570" y1="89.0" y2="89.0"/>
+<text x="44.0" y="93.0" class="bm-tick" text-anchor="end">30</text>
+<line class="bm-grid" x1="52" x2="570" y1="24.0" y2="24.0"/>
+<text x="44.0" y="28.0" class="bm-tick" text-anchor="end">40</text>
+<text x="52.0" y="302.0" class="bm-tick" text-anchor="middle">0 min</text>
+<text x="138.3" y="302.0" class="bm-tick" text-anchor="middle">20 min</text>
+<text x="224.7" y="302.0" class="bm-tick" text-anchor="middle">40 min</text>
+<text x="311.0" y="302.0" class="bm-tick" text-anchor="middle">60 min</text>
+<text x="397.3" y="302.0" class="bm-tick" text-anchor="middle">80 min</text>
+<text x="483.7" y="302.0" class="bm-tick" text-anchor="middle">100 min</text>
+<text x="570.0" y="302.0" class="bm-tick" text-anchor="middle">120 min</text>
+<line class="bm-win-cryo" x1="100.2" x2="100.2" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="143.7" x2="143.7" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="186.7" x2="186.7" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="229.8" x2="229.8" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="273.0" x2="273.0" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="316.3" x2="316.3" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="359.5" x2="359.5" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="402.7" x2="402.7" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="445.9" x2="445.9" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="488.8" x2="488.8" y1="284" y2="278"/>
+<line class="bm-win-cryo" x1="532.2" x2="532.2" y1="284" y2="278"/>
+<path class="bm-line bm-a0" d="M53.2,284.0H58.3V258.0H72.1V251.5H86.5V245.0H100.9V238.5H115.3V232.0H129.7V225.5H144.1V219.0H158.5V212.5H172.9V206.0H187.2V199.5H201.6V193.0H216.1V186.5H230.4V180.0H244.8V173.5H259.2V167.0H273.6V160.5H288.0V154.0H302.4V147.5H316.8V141.0H331.2V134.5H345.6V128.0H359.9V121.5H374.3V115.0H388.7V108.5H403.1V102.0H417.5V95.5H431.9V89.0H446.3V82.5H460.7V76.0H475.1V69.5H489.5V63.0H503.9V56.5H518.3V50.0H532.7V43.5H547.1V37.0H561.5V30.5H565.8"/>
+<path class="bm-line bm-a1" d="M53.3,284.0H58.5V258.0H72.3V251.5H86.7V245.0H101.1V238.5H115.5V232.0H129.9V225.5H144.3V219.0H158.7V212.5H173.1V206.0H187.5V199.5H188.1V199.5H201.9V193.0H216.3V186.5H230.6V180.0H245.1V173.5H259.5V167.0H273.8V160.5H288.3V154.0H302.7V147.5H317.1V141.0H317.8V141.0H331.4V134.5H345.9V128.0H360.2V121.5H374.7V115.0H389.0V108.5H403.4V102.0H417.9V95.5H432.3V89.0H446.7V82.5H447.5V82.5H461.1V76.0H475.5V69.5H489.8V63.0H504.2V56.5H518.7V50.0H533.0V43.5H547.5V37.0H561.9V30.5H566.3"/>
+<path class="bm-line bm-cryo" d="M53.4,284.0H58.7V258.0H72.6V251.5H86.9V245.0H101.3V238.5H108.0V238.5H115.7V232.0H130.1V225.5H144.4V219.0H151.7V264.5H158.9V258.0H173.3V251.5H187.6V245.0H194.8V264.5H202.1V258.0H216.5V251.5H230.8V245.0H237.9V264.5H245.2V258.0H259.6V251.5H273.9V245.0H281.7V264.5H288.4V258.0H302.8V251.5H317.2V245.0H325.1V264.5H331.6V258.0H346.1V251.5H360.4V245.0H368.3V264.5H374.8V258.0H389.2V251.5H403.6V245.0H412.1V264.5H418.0V258.0H432.5V251.5H446.8V245.0H454.9V264.5H461.2V258.0H475.7V251.5H490.0V245.0H498.3V264.5H504.4V258.0H518.9V251.5H533.2V245.0H541.9V264.5H547.6V258.0H562.1V251.5H566.4"/>
+<g class="bm-fail"><circle cx="188.0" cy="199.5" r="7"/><path d="M185.0,196.5l6,6M191.0,196.5l-6,6"/></g>
+<g class="bm-fail"><circle cx="317.7" cy="141.0" r="7"/><path d="M314.7,138.0l6,6M320.7,138.0l-6,6"/></g>
+<g class="bm-fail"><circle cx="447.4" cy="82.5" r="7"/><path d="M444.4,79.5l6,6M450.4,79.5l-6,6"/></g>
+<text x="580.0" y="28.5" class="bm-lab bm-a0-t" text-anchor="start">No maintenance</text>
+<text x="580.0" y="44.5" class="bm-lab bm-a1-t" text-anchor="start">and scheduled DAG</text>
+<text x="580.0" y="255.5" class="bm-lab bm-cryo-t bm-strong" text-anchor="start">Cryo</text>
+<text x="52.0" y="16.0" class="bm-cap" text-anchor="start">Delete files on a table receiving a MERGE every 200 s</text>
+<text x="65.0" y="50.0" class="bm-note bm-fail-t" text-anchor="start">Scheduled compaction failed</text>
+<text x="65.0" y="65.0" class="bm-note bm-fail-t" text-anchor="start">3 of 3 times (commit conflicts)</text>
+<text x="328.3" y="193.0" class="bm-note bm-cryo-t" text-anchor="start">Cryo, checking every 10 min:</text>
+<text x="328.3" y="208.0" class="bm-note bm-cryo-t" text-anchor="start">held at 3 to 6 from its second run</text>
+</svg>
+
+  <figcaption>The no-maintenance and scheduled-DAG lines overlap because the DAG's work never committed. Ticks along the bottom mark Cryo's checks.</figcaption>
+</figure>
+<div class="bm-split">
+  <div class="bm-panel"><span class="bm-big">22 / 22</span><h3 id="cryo-jobs-succeeded">Cryo jobs succeeded<a class="anchor" href="#cryo-jobs-succeeded" aria-label="Link to Cryo jobs succeeded">#</a></h3><p>Every job finished while the writer kept committing.</p></div>
+  <div class="bm-panel"><span class="bm-big is-muted">0 / 3</span><h3 id="dag-compactions-committed">DAG compactions committed<a class="anchor" href="#dag-compactions-committed" aria-label="Link to DAG compactions committed">#</a></h3><p>All three failed validation against the concurrent MERGE.</p></div>
+  <div class="bm-panel"><span class="bm-big">40 → 3</span><h3 id="data-files-at-the-end">Data files at the end<a class="anchor" href="#data-files-at-the-end" aria-label="Link to Data files at the end">#</a></h3><p>Same rows, and aggregate queries ran in 0.58× the time.</p></div>
+</div>
+
+<h2 id="foreground">Users don't feel it<a class="anchor" href="#foreground" aria-label="Link to Users don't feel it">#</a></h2>
+<p>We ran a steady stream of dashboard-style queries against the 100 GiB table while Cryo rewrote 67 GiB of it, then compared with the same queries on an idle table.</p>
+<figure class="bm-figure">
+  <ul class="bm-legend"><li><i class="k-a0"></i>Idle table</li><li><i class="k-cryo"></i>During Cryo compaction</li></ul>
+  <svg class="bm-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" role="img" aria-label="Paired bars. p95 latency of live queries while idle and while Cryo compacted 67 GiB: point lookup 552 vs 485 ms, one-day scan 813 vs 808 ms, one-week scan 4,169 vs 4,195 ms.">
+<text x="138.0" y="62.0" class="bm-rowh" text-anchor="end">Point lookup</text>
+<rect class="bm-a0-fill" x="150" y="40" width="344.0" height="16" rx="4"/>
+<text x="502.0" y="53.0" class="bm-val" text-anchor="start">552 ms idle</text>
+<rect class="bm-cryo-fill" x="150" y="60" width="302.2" height="16" rx="4"/>
+<text x="460.2" y="73.0" class="bm-val" text-anchor="start">485 ms during Cryo compaction</text>
+<text x="138.0" y="118.0" class="bm-rowh" text-anchor="end">One-day scan</text>
+<rect class="bm-a0-fill" x="150" y="96" width="344.0" height="16" rx="4"/>
+<text x="502.0" y="109.0" class="bm-val" text-anchor="start">813 ms idle</text>
+<rect class="bm-cryo-fill" x="150" y="116" width="341.9" height="16" rx="4"/>
+<text x="499.9" y="129.0" class="bm-val" text-anchor="start">808 ms during Cryo compaction</text>
+<text x="138.0" y="174.0" class="bm-rowh" text-anchor="end">One-week scan</text>
+<rect class="bm-a0-fill" x="150" y="152" width="341.9" height="16" rx="4"/>
+<text x="499.9" y="165.0" class="bm-val" text-anchor="start">4,169 ms idle</text>
+<rect class="bm-cryo-fill" x="150" y="172" width="344.0" height="16" rx="4"/>
+<text x="502.0" y="185.0" class="bm-val" text-anchor="start">4,195 ms during Cryo compaction</text>
+<text x="150.0" y="214.0" class="bm-foot" text-anchor="start">p95 latency of live Trino queries, about 500 to 700 runs each, 0 failures.</text>
+</svg>
+
+  <figcaption>p95 stayed within 0.88× to 1.04× of idle across every query, and p99 improved for all three. Zero query failures.</figcaption>
+</figure>
+
+<h2 id="scorecard">Scorecard<a class="anchor" href="#scorecard" aria-label="Link to Scorecard">#</a></h2>
+<div class="tbl">
+<table class="bm-matrix">
+  <thead><tr><th>Measured outcome</th><th>No maintenance</th><th>Scheduled Spark DAG</th><th class="is-cryo">Cryo</th></tr></thead>
+  <tbody>
+    <tr><td>Fleet restored to healthy</td><td class="bm-n">No</td><td class="bm-y">100%</td><td class="bm-y is-cryo">100%</td></tr>
+    <tr><td>Leaves healthy tables alone</td><td class="bm-m">n/a</td><td class="bm-n">No<small>48 pointless rewrites</small></td><td class="bm-y is-cryo">Mostly<small>10 not needed, none on healthy tables</small></td></tr>
+    <tr><td>Keeps up with live CDC</td><td class="bm-n">No<small>39 delete files</small></td><td class="bm-n">No<small>3 of 3 failed</small></td><td class="bm-y is-cryo">Yes<small>3 to 6 delete files</small></td></tr>
+    <tr><td>Data integrity</td><td class="bm-y">Intact</td><td class="bm-y">Intact</td><td class="bm-y is-cryo">Intact</td></tr>
+    <tr><td>Live-query p95 during maintenance</td><td class="bm-m">n/a</td><td class="bm-m">not measured</td><td class="bm-y is-cryo">≤ 4% slower</td></tr>
+    <tr><td>Decides what to run</td><td class="bm-m">n/a</td><td class="bm-n">You do</td><td class="bm-y is-cryo">Cryo does</td></tr>
+    <tr><td>Grade, history and audit trail per table</td><td class="bm-n">No</td><td class="bm-n">Build it</td><td class="bm-y is-cryo">Built in</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="tradeoffs">Trade-offs<a class="anchor" href="#tradeoffs" aria-label="Link to Trade-offs">#</a></h2>
+<p>A benchmark you can trust shows the costs too. These are the ones we measured.</p>
+<div class="bm-tradeoffs">
+  <div class="bm-tradeoff"><b>Spark compute</b><p>Cryo used about twice the Spark compute of the scheduled DAG on small tables, and 1.67× hand-run SQL on the 100 GiB table. It starts one Spark application per operation and expires snapshots on every table. Compute is cheap next to engineer time, but Cryo is not a compute saver.</p></div>
+  <div class="bm-tradeoff"><b>Point lookups</b><p>Bigger files make single-row lookups slower (1.8× at 256 MB). If your workload is mostly point reads, use a smaller target or skip compaction for that table.</p></div>
+  <div class="bm-tradeoff"><b>Latency to start</b><p>Jobs waited a median of about 3 minutes in the queue before Spark started. Fine for maintenance; not built for second-level reaction.</p></div>
+  <div class="bm-tradeoff"><b>Rough edges</b><p>We filed what we hit: run status staying queued (<a href="https://github.com/tech-pw/cryo/issues/153">#153</a>), chunked scans skipping tables (<a href="https://github.com/tech-pw/cryo/issues/154">#154</a>), and missing file metrics on Spark-on-Kubernetes jobs (<a href="https://github.com/tech-pw/cryo/issues/155">#155</a>). None affected data integrity.</p></div>
+</div>
+
+<h2 id="method">How we measured<a class="anchor" href="#method" aria-label="Link to How we measured">#</a></h2>
+<ul class="bm-method">
+  <li><b>3 trials</b><span>per test, 95% confidence intervals</span></li>
+  <li><b>100 GiB</b><span>largest single table</span></li>
+  <li><b>2 hours</b><span>of continuous MERGE for CDC</span></li>
+  <li><b>Every row</b><span>fingerprinted before and after</span></li>
+  <li><b>Same stack</b><span>Spark 4.1 and Iceberg 1.11 on Kubernetes, for every contender</span></li>
+  <li><b>Read-only</b><span>Trino for all query timing</span></li>
+</ul>
+<p>Cryo ran with default settings throughout. The protocol was written and frozen before any scored run, compute was measured from Kubernetes pod requests, and rewritten bytes came from Iceberg's own snapshot summaries. Discovery was also checked at fleet scale: all 100 tables in a 100-table catalog were discovered, with exact file counts, in about two and a half minutes.</p>
+
+<aside class="callout callout-tip" role="note"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg><div class="callout-body"><p class="callout-title">Try it on your own tables</p>The fastest way to see this on your lake is the <a href="../quickstart/">Quickstart</a>. Point Cryo at a catalog, let it grade every table, and review the plan before anything runs.</div></aside>
+</div><aside class="community"><div><p class="cm-h">Stuck, or have an idea?</p><p>Cryo is built in the open. Ask in GitHub Discussions, open an issue, or send a pull request.</p></div><div class="cm-actions"><a class="btn btn-sm" href="https://github.com/tech-pw/cryo/discussions">Discussions</a><a class="btn btn-sm" href="https://github.com/tech-pw/cryo/issues">Issues</a><a class="btn btn-sm btn-primary" href="https://github.com/tech-pw/cryo"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>Star on GitHub</a></div></aside><nav class="pager" aria-label="Previous and next pages"><a class="pg pg-prev" href="../quickstart/"><span class="pg-k">Previous</span><span class="pg-t">Quickstart</span></a><a class="pg pg-next" href="../onboarding/"><span class="pg-k">Next</span><span class="pg-t">Connect a lakehouse</span></a></nav></article></main><aside class="toc" aria-label="On this page"><p class="toc-h">On this page</p><ul><li class="toc-l2"><a href="#contenders">What we compared</a></li><li class="toc-l2"><a href="#decisions">It touches only the tables that need work</a></li><li class="toc-l3"><a href="#unnecessary-rewrites-per-trial">Unnecessary rewrites per trial</a></li><li class="toc-l3"><a href="#every-table-ended-healthy">Every table ended healthy</a></li><li class="toc-l2"><a href="#large-table">On a 100 GiB table, queries get faster</a></li><li class="toc-l3"><a href="#whatever-target-size-you-pick">Whatever target size you pick</a></li><li class="toc-l3"><a href="#same-output-as-hand-written-spark">Same output as hand-written Spark</a></li><li class="toc-l3"><a href="#queries-to-pay-back-the-rewrite">Queries to pay back the rewrite</a></li><li class="toc-l2"><a href="#cdc">Under live CDC, it keeps up</a></li><li class="toc-l3"><a href="#cryo-jobs-succeeded">Cryo jobs succeeded</a></li><li class="toc-l3"><a href="#dag-compactions-committed">DAG compactions committed</a></li><li class="toc-l3"><a href="#data-files-at-the-end">Data files at the end</a></li><li class="toc-l2"><a href="#foreground">Users don't feel it</a></li><li class="toc-l2"><a href="#scorecard">Scorecard</a></li><li class="toc-l2"><a href="#tradeoffs">Trade-offs</a></li><li class="toc-l2"><a href="#method">How we measured</a></li></ul><a class="toc-top" href="#main">Back to top ↑</a></aside></div><footer class="foot"><div class="foot-in"><div class="foot-brand"><a class="logo" href="../"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true"><g stroke-width="1.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
+    <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
+    <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
+    <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
+    <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
+    <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
+    <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
+    <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
+    <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="2" stroke-linecap="round" style="stroke:var(--cryo-mark-dash,#5C667A)">
+    <path d="M17 19.5L20 22.3"/>
+    <path d="M27.6 14.5L29 18"/>
+    <path d="M13.9 34.1L17.2 34.7"/>
+  </g>
+  <g stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
+    <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
+    <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="1.1">
+    <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
+    <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
+    <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
+  </g>
+  <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)"/>
+  <g stroke="#FFFFFF" stroke-linecap="round">
+    <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
+    <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><p>Apache-2.0, self-hosted Iceberg maintenance. Every decision explained.</p></div><div><p class="foot-h">Docs</p><ul><li><a href="../quickstart/">Quickstart</a></li><li><a href="../benchmark/">Benchmark</a></li><li><a href="../concepts/">Concepts</a></li><li><a href="../architecture/">Architecture</a></li><li><a href="../reference/">Reference</a></li></ul></div><div><p class="foot-h">Operate</p><ul><li><a href="../maintenance/">Maintenance</a></li><li><a href="../health/">Health and cost</a></li><li><a href="../engines/">Engines</a></li><li><a href="../deployment/">Deployment</a></li></ul></div><div><p class="foot-h">Project</p><ul><li><a href="https://github.com/tech-pw/cryo">GitHub</a></li><li><a href="https://github.com/tech-pw/cryo/issues">Issues</a></li><li><a href="../llms.txt">llms.txt</a></li><li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 licence</a></li></ul></div></div><p class="foot-fine">Apache, Apache Iceberg, Iceberg and Apache Spark are trademarks of The Apache Software Foundation. Other names may be trademarks of their respective owners.</p></footer><dialog class="search" id="search" aria-label="Search the docs"><form method="dialog" class="search-box"><div class="search-field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="search-input" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="search-list"><kbd>Esc</kbd></div><ul class="search-list" id="search-list" role="listbox"></ul><p class="search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to open</span></p></form></dialog><script src="../assets/js/site.js?v=af4e3140cc" defer></script></body></html>
