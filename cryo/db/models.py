@@ -652,6 +652,9 @@ class TableAlertSubscription(Base):
         UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
     )
     email: Mapped[str] = mapped_column(Text, nullable=False)
+    # Principal subject that created the subscription; only it (or an admin) may delete it.
+    # NULL on rows created before this was recorded.
+    created_by: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
