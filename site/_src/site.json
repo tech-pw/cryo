@@ -88,6 +88,10 @@
           "label": "Backup and restore"
         },
         {
+          "slug": "configuration",
+          "label": "Configuration"
+        },
+        {
           "slug": "troubleshooting",
           "label": "Troubleshooting"
         }

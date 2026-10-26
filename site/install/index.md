@@ -270,7 +270,7 @@ This removes the Deployments, Services, CronJobs, ServiceAccount and RBAC that t
 
 ## Where to go next
 
-SecurityRoles, OIDC claims, the dev token and a hardening checklist.DeploymentWhat the release runs and what it requests.Connect a lakehouseAdd the first source and run the first scan.
+SecurityRoles, OIDC claims, the dev token and a hardening checklist.DeploymentWhat the release runs and what it requests.Connect a lakehouseAdd the first source and run the first scan.ConfigurationEvery environment variable and Helm value.
 
 Source: https://tech-pw.github.io/cryo/install/
 Markdown: https://tech-pw.github.io/cryo/install/index.md

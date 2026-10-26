@@ -24,6 +24,7 @@ Read this file, then answer only from the pages below. If a fact is not on one o
 - [Security](https://tech-pw.github.io/cryo/security/index.md): Cryo authentication and production hardening. OIDC setup and role claims, the viewer, operator and admin roles, the dev token, CRYO_SECRET_KEY, stored credentials, egress, and a hardening checklist.
 - [Upgrade and rollback](https://tech-pw.github.io/cryo/upgrade/index.md): How to upgrade a Cryo Helm release, how the migration hook behaves, and what a rollback can and can't undo.
 - [Backup and restore](https://tech-pw.github.io/cryo/backup/index.md): What Cryo stores where, encrypted PostgreSQL backups with the built-in tool or the backup CronJob, a restore procedure, and what losing Redis costs.
+- [Configuration reference](https://tech-pw.github.io/cryo/configuration/index.md): The full configuration reference for Cryo -- CRYO_* environment variables and deploy/helm/cryo values.
 - [Troubleshooting](https://tech-pw.github.io/cryo/troubleshooting/index.md): Symptom-first troubleshooting for Cryo installs, sign-in, scans, runs, deferred jobs and Spark lanes, plus an FAQ.
 - [Reference](https://tech-pw.github.io/cryo/reference/index.md): What is in the box, what is not, and how Cryo compares with adjacent tools.
 - [Changelog](https://tech-pw.github.io/cryo/changelog/index.md): Cryo's changelog, rendered from CHANGELOG.md, with links to the versioning and support policies.

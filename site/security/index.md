@@ -139,7 +139,7 @@ Don't open a public issue with details. Follow [SECURITY.md](https://github.com/
 
 ## Where to go next
 
-Install on KubernetesA production install with these settings.DeploymentWhat the release runs and what it requests.
+Install on KubernetesA production install with these settings.DeploymentWhat the release runs and what it requests.ConfigurationEvery environment variable and Helm value.
 
 Source: https://tech-pw.github.io/cryo/security/
 Markdown: https://tech-pw.github.io/cryo/security/index.md
