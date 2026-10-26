@@ -1,205 +1,285 @@
 ---
 title: Troubleshooting
-description: Common Cryo problems -- scans that find no tables, runs stuck in queued, deferred jobs, OOMKilled pods, and login failures -- with the command that checks each one.
+description: Symptom-first troubleshooting for Cryo installs, sign-in, scans, runs, deferred jobs and Spark lanes, plus an FAQ.
 canonical: https://tech-pw.github.io/cryo/troubleshooting/
 updated: 2026-10-26
 ---
 
 # Troubleshooting
 
-Symptoms first. Each entry says what you see, how to check it, and what to change.
+Start from what you see. Each entry gives the likely cause, where to check it, and the fix. A short FAQ follows.
 
-Cryo has runbooks in the repository for the detailed cases. This page is the short version: find the symptom, check it, fix it. The full operator guide is in [docs/operator-guide.md](https://github.com/tech-pw/cryo/blob/main/docs/operator-guide.md).
+Most answers are on the job itself. Open **Runs**, then the run, then the job. A deferred or failed job shows its reason there. The commands below assume the release name `cryo` in namespace `cryo`.
 
-## Scanning
+## Install and upgrade
 
-### The scan finds no tables
+### Helm fails with `production requires image.digest`
 
-**What you see:** the scan completes with zero tables, or the registry stays empty.
+**Cause**
 
-**Check:** the source must be enabled and must have credentials that resolve. A scan with no source, or with a source whose secrets fail to resolve, reports success and finds nothing.
+With `CRYO_ENVIRONMENT=prod`, the chart refuses to render until every enabled image is pinned by digest. The same check covers `migration`, `web`, `redis`, `native` and `spark.k8s`.
 
-**terminal**
+**Check**
 
-```
-$ curl -s http://<api>/api/v1/sources -H "Authorization: Bearer $TOKEN" | jq '.[] | {id, enabled, type}'
-$ curl -s http://<api>/api/v1/scans -H "Authorization: Bearer $TOKEN" | jq '.items[0] | {status, tables_scanned, error}'
-```
+`helm template cryo ./deploy/helm/cryo -f cryo-values.yaml` names the missing value.
 
-**Fix:** enable the source, then re-scan. If credentials are the problem, the scan's audit rows carry the auth error. In the UI, open the source and run *Test connection*.
+**Fix**
 
-### Table stats are stale
+Set that digest. See [Install](https://tech-pw.github.io/cryo/install/#install).
 
-**What you see:** `scan_at` on a table is old, and the grade does not move after a scan.
+### The migration hook fails or times out
 
-**Check:** the scanner CronJob runs on a schedule, and the scanner consumes a queue. Both can stall independently of a manual scan.
+**Cause**
 
-**terminal**
+Most often a lock. Migrations use `lock_timeout=10s`, so a long-open transaction on a Cryo table makes them fail instead of wait. Wrong database credentials, or a missing `pgcrypto` privilege on a first install, also fail here.
 
-```
-$ kubectl -n cryo get cronjob
-$ curl -s http://<api>/api/v1/metrics -H "Authorization: Bearer $TOKEN" | grep -E '^cryo_scanner_(errors|tables_scanned)'
-```
+**Check**
 
-**Fix:** check the CronJob's last schedule and the scanner worker's logs. A scan triggered manually from the UI bypasses the scheduler, so it is the quickest way to separate "the scan is broken" from "the schedule is broken".
+`kubectl -n cryo logs job/cryo-migrate-<revision>`. For locks, look for sessions left `idle in transaction`: `SELECT pid, state, xact_start, query FROM pg_stat_activity WHERE datname = current_database() AND state LIKE 'idle in transaction%';`
 
-### A scan fails on one table
+**Fix**
 
-**What you see:** a scan reports failed, or one table's stats never update while the rest are fine.
+End the blocking session, then run the same `helm upgrade` again. The failed chain was rolled back as one transaction, so nothing is half-applied. See [How the migration hook behaves](https://tech-pw.github.io/cryo/upgrade/#migrations).
 
-**Check:** Cryo isolates per-table failures on purpose — one bad table does not fail the batch. The reason is on that table's detail page and in the audit log.
+## Sign-in
 
-**Fix:** read the audit row. The usual causes are a partition the catalog cannot describe, a file whose metadata will not parse, or a table the engine cannot read. Skipping the table is the correct behaviour; the batch should still succeed.
+### The login page won't load, and `/api/v1/auth/config` returns 503
+
+**Cause**
+
+The detail `OIDC issuer discovery failed` means the API couldn't fetch `CRYO_OIDC_ISSUER_URL/.well-known/openid-configuration`.
+
+**Check**
+
+`kubectl -n cryo exec deploy/cryo-api -- sh -c 'curl -sS "$CRYO_OIDC_ISSUER_URL/.well-known/openid-configuration"'` fetches it from inside the pod, with the pod's own setting.
+
+**Fix**
+
+Correct the issuer URL, or allow egress from the cluster to it.
+
+### You come back from the identity provider and aren't signed in
+
+**Cause**
+
+`Code exchange failed` (400) means a wrong client secret, or a `CRYO_OIDC_REDIRECT_URI` that doesn't match the URI registered at the provider. A 401 with `Invalid bearer token` afterwards means Cryo rejected the provider's access token. It may not be a JWT, its `aud` or `iss` may not match, or it may carry no Cryo role.
+
+**Check**
+
+Decode the access token (it's a JWT) and compare `iss`, `aud` and the role claims with [OIDC setup](https://tech-pw.github.io/cryo/security/#oidc).
+
+**Fix**
+
+Set `CRYO_OIDC_AUDIENCE` to the token's audience, or configure the provider to issue a JWT access token. Then emit a role named exactly `viewer`, `operator` or `admin` in `roles`, `groups` or one of the other claims Cryo reads.
+
+### Dev sign-in returns 503
+
+**Cause**
+
+This is intended. The dev token route is off in `prod`.
+
+**Check**
+
+`/api/v1/auth/config` reports `"dev_token_enabled":false`.
+
+**Fix**
+
+Sign in through OIDC. Don't set `CRYO_ALLOW_DEV_TOKEN_IN_PROD` to work around it. See [The dev token](https://tech-pw.github.io/cryo/security/#dev-token).
+
+## Scans
+
+### A scan finds no tables
+
+**Cause**
+
+If **Discovered** is 0, the problem is the catalog or the schema filter, not storage. Common causes are a wrong catalog name or warehouse, catalog credentials that can list nothing, or **Schemas for maintenance** set to schemas that don't exist.
+
+**Check**
+
+Open **Scans** (`/scans`), then the scan, and read its live log. Run the connection test on the source under **Settings → Connections**.
+
+**Fix**
+
+Correct the source and scan again. See [The first scan](https://tech-pw.github.io/cryo/onboarding/#scan).
+
+### Tables are discovered but fail to scan
+
+**Cause**
+
+Cryo found the tables but couldn't read their files. `AccessDenied` on an S3 path is a credentials problem. On EKS, the usual cause is a ServiceAccount without an `eks.amazonaws.com/role-arn` annotation.
+
+**Check**
+
+The first failure in the scan's live log usually explains the rest. The storage step on the source shows which buckets are readable.
+
+**Fix**
+
+Grant read access, or set `serviceAccount.annotations`. See [S3 authentication](https://tech-pw.github.io/cryo/onboarding/#auth).
+
+### A table stays unreadable after a rescan
+
+**Cause**
+
+Two categories are permanent. `metadata_not_found` means the catalog points at a metadata file that isn't in storage. `manifest_missing` means a manifest list the metadata names is gone. A query engine fails the same way. `permission_denied` isn't permanent: an IAM change fixes it.
+
+**Check**
+
+The table's last scan error, on the table's row in **Tables** and on its detail page.
+
+**Fix**
+
+The table's owners repoint the catalog entry or restore the table. Rescanning doesn't help. Don't drop the table because of this error alone.
 
 ## Runs and jobs
 
-### A run stays queued
+### Tables have grades, but no maintenance runs happen
 
-**What you see:** a run sits in `queued` and never starts. `cryo_governor_queue_depth` climbs.
+**Cause**
 
-**Check:** the governor admits work against live engine load, so a queued run may be a deliberate deferral rather than a fault. Look at the admission decision, then at the engine.
+Scanning never schedules maintenance. A table needs a preset, and no preset is assigned by default.
 
-**terminal**
+**Check**
 
-```
-$ curl -s http://<api>/api/v1/metrics -H "Authorization: Bearer $TOKEN" | grep '^cryo_governor_admission_decisions_total'
-$ curl -s http://<api>/api/v1/metrics -H "Authorization: Bearer $TOKEN" | grep '^cryo_governor_queue_depth'
-```
+**Presets** (`/presets`) lists each preset, what it applies to and its schedule.
 
-**Fix:** if the outcome is `deferred`, the reason is on the job: engine at capacity, off-peak window closed, a cooldown from a recent run, or the budget for that wave is spent. Waiting is the fix. If the outcome is `admitted` and nothing runs, the problem is the worker — check that the worker pods are ready and that Redis is reachable from them.
+**Fix**
+
+Assign a preset. See [Maintenance](https://tech-pw.github.io/cryo/maintenance/).
+
+### A job is deferred with `Destructive operation requires approval`
+
+**Cause**
+
+`expire_snapshots`, `expire_data` and `remove_orphan_files` need an approval for that table and those parameters. The governor creates the approval request when it defers the job.
+
+**Check**
+
+**Governance** (`/governance`) lists the pending approvals.
+
+**Fix**
+
+Approve it or reject it. Waiting, requeueing and adding workers don't clear it.
 
 ### A job is deferred with `table_locked`
 
-**What you see:** a job is deferred and names a table lock.
+**Cause**
 
-**Check:** another run holds the lock on that table. That is the guardrail doing its job — two runs on one table would race.
+Another job holds this table's lock, so the two can't rewrite the same table at once. It's usually a job from another run that's still running.
 
-**Fix:** wait for the other run to finish. If the other run is itself stuck, find it in the runs list and cancel it. The lock expires on its own if the holding process dies, so this resolves without intervention in most cases.
+**Check**
 
-### Heavy work never runs
+Look in **Runs** for another run with a job still running on the same table. The deferred job is retried on later governor waves.
 
-**What you see:** standard and deep runs are deferred, always, and never run overnight.
+**Fix**
 
-**Check:** the off-peak window. It is read in the install's display time zone, and equal bounds disable the gate entirely.
+Usually nothing. It runs when the other job finishes. If the holder will never finish, the governor reaps stale running jobs and their locks after the lock TTL (six hours).
 
-**terminal**
+### Jobs stay queued and nothing runs
 
-```
-$ curl -s http://<api>/api/v1/governor/offpeak-window -H "Authorization: Bearer $TOKEN" | jq
-```
+**Cause**
 
-**Fix:** set the window to hours when your engine is quiet. If the window is set but the run is still deferred, check `CRYO_DISPLAY_TIMEZONE` — the window is not in the browser's time zone, and it is not in UTC unless you set it there.
+Either work isn't being admitted, or it's admitted and no worker picks it up. A worker runs one job at a time. A pause, an approval, a budget or ROI refusal, or the engine's slot cap keeps work from being admitted, and more workers don't change that.
 
-### A table has no effective preset
+**Check**
 
-**What you see:** a table needs compaction but nothing is scheduled for it. It gets zero recurring maintenance, silently.
+Each job's deferral reason names the gate that refused it. Control Room (`/control-room`) shows active pauses. Then check that the governor and workers are running: `kubectl -n cryo get pods -l app.kubernetes.io/component=governor`, then the same for `worker`, and read `kubectl -n cryo logs deploy/cryo-governor --tail=50`.
 
-**Check:** a table resolves to a preset by pin, then by rule, then by the default. If none of the three matches, it is unmaintained.
+**Fix**
 
-**terminal**
+Clear the gate the reason names. Add workers only when jobs are admitted and waiting with no deferral reason.
 
-```
-$ curl -s "http://<api>/api/v1/tables?filter=needs_compaction=true" -H "Authorization: Bearer $TOKEN" | jq '.items[].id'
-$ curl -s http://<api>/api/v1/presets -H "Authorization: Bearer $TOKEN" | jq '.[] | {id, name, enabled, is_default}'
-```
+### Daily runs fire twice, at odd times
 
-**Fix:** enable the fleet-wide catchall preset and give it a `schedule_cron`, or pin the table to a preset. A *simulate* on the preset shows how many tables it would cover before you commit.
+**Cause**
 
-## Pods and resources
+Redis restarted. The scheduler's "last fire" markers live only in Redis, so after a restart a daily preset or the daily scan can fire again within 24 hours. This is a known issue, [#177](https://github.com/tech-pw/cryo/issues/177).
 
-### A pod is OOMKilled
+**Check**
 
-**What you see:** `cryo-api`, `cryo-worker` or `cryo-governor` restarts with `OOMKilled`.
+Compare the extra run's start time with the Redis pod's start time: `kubectl -n cryo get pod -l app.kubernetes.io/component=redis -o wide`.
 
-**Check:** which pod, and what it was doing. The API and the governor have historically been the memory-hungry ones: the governor's per-tick admission work scales with queue depth, and the API's dashboard queries fan out across the fleet.
+**Fix**
 
-**terminal**
+Keep Redis stable until #177 is fixed. See [Losing Redis](https://tech-pw.github.io/cryo/backup/#redis).
 
-```
-$ kubectl -n cryo get pods -o json | jq -r '.items[] | select(.status.containerStatuses[0].lastState.terminated.reason=="OOMKilled") | .metadata.name'
-$ kubectl -n cryo top pods --sort-by=memory | head -10
-```
+### Tables show `skipped` at the end of a nightly run
 
-**Fix:** raise that service's memory limit in the chart's values, and check the cause rather than only the symptom. A governor that is OOMing on a deep queue needs a bounded admission scan, not a bigger box forever. The scanner worker OOMs on a catalog with too many partitions per chunk — reduce the chunk count for that source.
+**Cause**
 
-### A pod is not ready
+The run hit its deadline before reaching them. They weren't lost and didn't fail.
 
-**What you see:** a deployment has fewer ready replicas than it should, and the rollout never completes.
+**Check**
 
-**Check:** the probe. The chart's probes are on by default and they check the real dependency, so a pod that cannot reach PostgreSQL will never become ready.
+The run's summary and the skipped jobs' reasons.
 
-**terminal**
+**Fix**
 
-```
-$ kubectl -n cryo describe pod -l app=cryo-api | sed -n '/Events/,$p'
-```
+Nothing urgent, because the next night picks them up. If it happens every night, add lanes or narrow the preset.
 
-**Fix:** the events name the failing dependency. A migration job that has not finished will hold the whole release back — check the migration job first when a fresh install will not come up.
+## Spark lanes
 
-### Two governors are active, or none
+### A lane is `OOMKilled` or exits with 137
 
-**What you see:** duplicate admissions, or a governor that is running but admitting nothing.
+**Cause**
 
-**Check:** the governor and scheduler are leader-elected through a Redis lease. Only the leader acts.
+The lane pod ran out of memory. The JVM heap is 60% of the pod limit, and the rest is for off-heap memory and the runner. A Java 21 lane can also fail with `OutOfMemoryError: Java heap space` and `Retried waiting for GCLocker too often` while the heap is mostly free.
 
-**terminal**
+**Check**
 
-```
-$ redis-cli GET cryo:leader:governor
-$ redis-cli GET cryo:leader:scheduler
-```
+`kubectl -n cryo describe pod <lane-pod>` shows the termination reason. The job's error names the table that was running.
 
-**Fix:** if the lease is held by a pod that is gone, it expires on its own. Restarting the governor pod clears it immediately.
+**Fix**
 
-## Access
+A table that died mid-run is marked failed and isn't retried on the same pod size. Tables the lane hadn't started go to a replacement lane. Lane pods are capped by `maintenance.laneMaxMemMib`, which defaults to 16384.
 
-### Sign-in fails
+### A Spark pod fails with `exec format error`
 
-**What you see:** the right password is refused, or sign-in returns 429.
+**Cause**
 
-**Check:** failed sign-ins are throttled and counted in Redis. Five failures for one account, or twenty from one IP, inside the window lock it out — and the correct password is refused until the window ends.
+The Spark image is amd64-only, and the pod landed on an arm64 node.
 
-**terminal**
+**Check**
 
-```
-$ curl -s http://<api>/api/v1/auth/audit -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.items[0:5]'
-```
+The `nodeSelector` on the Spark wrapper Job, not on Cryo's own Deployments, which are pinned separately.
 
-**Fix:** wait out the window, or clear the counter in Redis. The audit rows name the account, the method, the reason and the client IP; the password is never stored. A successful sign-in clears the count for that account.
+**Fix**
 
-### The dev token is off and you have no other way in
+Don't set `kubernetes.io/arch` to `arm64` in the Spark destination's node selector or in `CRYO_SPARK_K8S_NODE_SELECTOR`. Leave it unset, and Cryo adds `amd64`.
 
-**What you see:** the UI has no sign-in form, and the API rejects every token.
+### Creating a Job or Secret fails with 403
 
-**Check:** in `staging` and `prod` the dev token is off unless `CRYO_ALLOW_DEV_TOKEN_IN_PROD=true`. If OIDC is not configured either, there is no way in.
+**Cause**
 
-**Fix:** configure OIDC, local sign-in or Google sign-in. If you must get in first, set `CRYO_ALLOW_DEV_TOKEN_IN_PROD=true` temporarily, use it once, then turn it off — it lets anyone who can reach the API grant themselves any role.
+The worker's ServiceAccount can't create the lane Job or the driver Secret. That RBAC is only rendered when `native.enabled` or `spark.k8s.enabled` is true.
+
+**Check**
+
+`kubectl -n cryo get role,rolebinding` shows whether a Role exists that grants `batch/jobs` create and `secrets` create, delete and patch.
+
+**Fix**
+
+Turn on the lane you use, `native.enabled` or `spark.k8s.enabled`, pin its image digest in `prod`, and upgrade.
 
 ## FAQ
 
-### How is this different from running OPTIMIZE on a cron?
+**How is this different from running `OPTIMIZE` on a cron?**
 
-A cron runs one statement over a table you picked. Cryo grades every table, plans the work in the order that reclaims the most space first, budgets it against live engine load, runs it on the engine you already run, and records why each decision was made. It also does the cleanup operations a single OPTIMIZE leaves behind — snapshot expiry, orphan-file removal, manifest rewrite — which is where most of the reclaimed storage actually comes from.
+A cron runs the same statement against the same tables whatever their state. Cryo scans every table, grades it, and plans only the work it needs, scoped to partitions where it can. It runs operations in a fixed safe order. A governor admits work against your engines' live capacity, and every job leaves an audit row. See [How Cryo fits](https://tech-pw.github.io/cryo/concepts/).
 
-### Is it safe on production?
+**Is it safe to point at production?**
 
-Cryo only writes when a run says it will, and every operation is audited. Snapshot expiry is the operation to look at first: it is reversible only until the underlying data is gone. Start with a preset scoped to one schema, keep `CRYO_MAINTENANCE_WRITES_ENABLED=false` while you watch the plans, and turn it on per destination once the plans look right.
+Scanning is read-only. Destructive operations (snapshot expiry, data expiry and orphan-file removal) need an approval for each table by default, and a pause stops new work before it's submitted. Cryo is pre-1.0. Start with a preset on a few tables you own, and read [Security](https://tech-pw.github.io/cryo/security/) first.
 
-### Which engines are supported?
+**Which engines are supported?**
 
-Trino and Spark on Kubernetes (EMR or the operator), plus the native Go compactor that ships in the main image. The planner emits no SQL — it produces a plan, and each engine renders it in its own dialect. See [Engines](https://tech-pw.github.io/cryo/engines/).
+Trino, Apache Spark (EMR Serverless, or Spark on Kubernetes run by Cryo), and a native engine for compaction, which is in beta. For Flink, Cryo generates a maintenance config but doesn't submit the job. See [Engines](https://tech-pw.github.io/cryo/engines/).
 
-### Does the scanner read my data?
+**Which catalogs?**
 
-No. The scanner reads catalog metadata and object listings. It does not open data files. It does need permission to list the table's objects in the object store, so scope its credentials to the namespaces it should see.
+Iceberg REST, Hive Metastore, AWS Glue, Polaris and Nessie. Unity Catalog and JDBC catalogs are rejected. See [Catalog types](https://tech-pw.github.io/cryo/onboarding/#catalogs).
 
-### What happens if Redis is lost?
+## Still stuck
 
-The queue, the leases and the live counters are in Redis. Losing it loses queued work and the leader leases; the durable state — tables, stats, jobs, audit — is in PostgreSQL. The scheduler and governor re-elect, and the next scheduled run rebuilds the queue. A run that was mid-flight when Redis went away is reconciled from PostgreSQL rather than resumed.
-
-## Where to go next
-
-Security and authenticationRoles, the dev token and what to turn on before exposing an install.Configuration referenceEvery environment variable and Helm value.DeploymentInstall the chart and the resources it needs.
+Search the [issues](https://github.com/tech-pw/cryo/issues), or open one with the symptom, the job's reason and the relevant log lines. Remove hostnames, credentials and table names you can't share. For a security problem, follow [SECURITY.md](https://github.com/tech-pw/cryo/blob/main/SECURITY.md) instead.
 
 Source: https://tech-pw.github.io/cryo/troubleshooting/
 Markdown: https://tech-pw.github.io/cryo/troubleshooting/index.md

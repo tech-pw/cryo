@@ -70,7 +70,9 @@ class SQLSchedulerStore:
         with self._session_factory() as session:
             presets = [
                 preset
-                for preset in session.scalars(select(Preset).where(Preset.enabled.is_(True)))
+                for preset in session.scalars(
+                    select(Preset).where(Preset.enabled.is_(True), Preset.paused.is_(False))
+                )
                 if preset.schedule_cron
             ]
             last_cron_runs = _last_cron_run_by_preset(session, [p.id for p in presets])

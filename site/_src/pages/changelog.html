@@ -1,54 +1,11 @@
 ---
 title: Changelog
-lede: What changed in each Cryo release. The full changelog is in the repository.
-description: Cryo's release history -- what was added, changed and fixed in each version.
+lede: What changed in Cryo, generated from CHANGELOG.md at build time. Releases are tagged on GitHub; the version in the header is the latest tag.
+description: Cryo's changelog, rendered from CHANGELOG.md, with links to the versioning and support policies.
 updated: 2026-10-26
 ---
-<callout type="note" title="Cryo is pre-1.0">
-  <p>Package, chart and web versions are <code>0.1.x</code>. A minor release may change the HTTP API, the Helm values, the database schema or the engine SQL, and there is no still-working deprecation window. The changelog says when it does. See <a href="https://github.com/tech-pw/cryo/blob/main/docs/VERSIONING.md">docs/VERSIONING.md</a>.</p>
+<callout type="note" title="Versions and support">
+<p>Cryo is pre-1.0. The latest release is <a href="%%RELEASE_URL%%">%%VERSION%%</a>, and fixes go to the newest release line only; older tags aren't patched. How version numbers move is in <a href="https://github.com/tech-pw/cryo/blob/main/docs/VERSIONING.md">docs/VERSIONING.md</a>; what support covers is in <a href="https://github.com/tech-pw/cryo/blob/main/docs/SUPPORT_POLICY.md">docs/SUPPORT_POLICY.md</a>. All tags are on the <a href="https://github.com/tech-pw/cryo/tags">tags page</a>.</p>
 </callout>
-<p>The authoritative changelog is <a href="https://github.com/tech-pw/cryo/blob/main/CHANGELOG.md">CHANGELOG.md</a> in the repository. It follows <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a> and <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-
-<h2 id="unreleased">Unreleased</h2>
-<h3>Added</h3>
-<ul>
-  <li>The public Helm chart README, NOTES and a permissive values schema, plus issue forms, CodeQL, the labeler and zizmor workflows.</li>
-  <li><code>SECURITY.md</code> with GitHub Security Advisory routing and a supported-versions table.</li>
-  <li><code>CODE_OF_CONDUCT.md</code> (Contributor Covenant 2.1).</li>
-  <li>The bug and feature issue templates, and a pull-request template.</li>
-</ul>
-<h3>Security</h3>
-<ul>
-  <li>Failed password and Google sign-ins are throttled per account (5 in 15 minutes) and per client IP (20), counted in Redis so the limit holds across replicas. A locked attempt gets <code>429</code> with <code>Retry-After</code>. Every failure is audited as <code>auth.login_failed</code>.</li>
-  <li><code>/docs</code>, <code>/redoc</code> and <code>/openapi.json</code> are off by default in <code>prod</code>, and <code>CRYO_METRICS_BEARER_TOKEN</code> protects the scraper's <code>/metrics</code>.</li>
-</ul>
-<h3>Changed</h3>
-<ul>
-  <li>The docs site homepage tells the story of one 1 TB table over 30 days of decay, then through each operation in order, with a cost shown at every step.</li>
-  <li><code>LICENSE</code> and the chart's licence are now the verbatim Apache 2.0 text, so GitHub can identify the licence.</li>
-  <li>GitHub is now the only source of truth. The GitLab-to-GitHub mirror sync is gone, so a pull request merged here is no longer overwritten.</li>
-  <li>CI installs dependencies from <code>uv.lock</code> — the same lock the image ships — instead of resolving the newest releases on every run, and builds the Go engine for the scanner parity tests.</li>
-  <li>New brand mark: ice cubes fusing into one solid cube. Updated in the docs site, the web app, the favicon and the README images.</li>
-  <li>The README is rebuilt around images: a hero banner, the maintenance flow, product screenshots and the architecture, each with a light and a dark version.</li>
-  <li>Spark maintenance lanes run <code>local[N,3]</code> task retries, cap the driver's status store, bulk-delete S3 keys in batches, retry throttled calls, and may schedule on spot capacity with on-demand fallback.</li>
-</ul>
-<h3>Fixed</h3>
-<ul>
-  <li>The web UI's nginx now sends a Content-Security-Policy, <code>X-Frame-Options: DENY</code>, <code>X-Content-Type-Options: nosniff</code> and a Referrer-Policy on every response, including error pages. Hashed assets are cached for a year as immutable.</li>
-  <li><code>stats_compute_ndv: false</code> was ignored, so batch runs paid for a full-table statistics scan on every optimized table — 31% of lane time.</li>
-  <li>The Spark renderer dropped every <code>rewrite_position_deletes</code> parameter, so the operation did nothing.</li>
-  <li>Spark <code>expire_snapshots</code> on a table with protected snapshots called a procedure Iceberg does not have.</li>
-  <li>A batch lane whose pod was deleted — eviction, drain, spot reclaim — was never noticed, and stranded its tables until the run deadline.</li>
-  <li>Maintenance runs stayed <code>queued</code> forever after all their jobs finished, because the finalizer only looked at <code>running</code> runs.</li>
-</ul>
-
-<h2 id="releases">Releases</h2>
-<p>The published releases are on <a href="https://github.com/tech-pw/cryo/releases">GitHub</a>, and the tags are <code>v0.1.0</code> through <code>v0.1.5</code>. Each release publishes signed images with an SBOM, and the Helm chart for that release is pinned to its image digests.</p>
-<p>Pre-release history predates the changelog. See the <a href="https://github.com/tech-pw/cryo/commits/main">commit history</a> for the full record.</p>
-
-<h2 id="read-next">Where to go next</h2>
-<linkcards>
-  <linkcard href="@/upgrade/">Upgrade and rollback">Moving between releases, and what a rollback cannot undo.</linkcard>
-  <linkcard href="@/install/">Install on Kubernetes">A first install, or a fresh environment.</linkcard>
-  <linkcard href="@/contributing/">Contributing">How to propose a change.</linkcard>
-</linkcards>
+<p>The <code>v0.1.x</code> tags were cut before the changelog had per-release sections, so their changes are still listed under Unreleased. Compare two tags on GitHub, for example <a href="https://github.com/tech-pw/cryo/compare/v0.1.4...v0.1.5">v0.1.4...v0.1.5</a>, to see exactly what shipped between them.</p>
+<changelog />

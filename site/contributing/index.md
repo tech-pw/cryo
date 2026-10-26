@@ -1,117 +1,85 @@
 ---
 title: Contributing
-description: Contributing to Cryo -- setup, the test suite, the conventions the codebase follows, and the review process.
+description: How to set up a Cryo development environment, run the tests and the docs build, and get a pull request merged.
 canonical: https://tech-pw.github.io/cryo/contributing/
 updated: 2026-10-26
 ---
 
 # Contributing
 
-How to propose a change to Cryo, and what happens after you open the pull request.
+Issues and pull requests live on GitHub. Set up a dev environment, run the checks that match what you touched, and open a focused pull request against main.
 
-The full guide is [CONTRIBUTING.md](https://github.com/tech-pw/cryo/blob/main/CONTRIBUTING.md) in the repository. This page is the short version.
+This page is a summary. The full guide, with coding standards and the migration rules, is [CONTRIBUTING.md](https://github.com/tech-pw/cryo/blob/main/CONTRIBUTING.md). Everyone taking part follows the [Code of Conduct](https://github.com/tech-pw/cryo/blob/main/CODE_OF_CONDUCT.md). Report security problems privately as described in [SECURITY.md](https://github.com/tech-pw/cryo/blob/main/SECURITY.md), never in a public issue.
 
-## Set up
+## How a pull request gets merged
 
-You need Python 3.12+, Node 22+ (for the UI), Docker and Docker Compose. Go 1.25.5 only if you touch the native compactor. Java 17+ only if you run PySpark — the test suite does not need it.
+[tech-pw/cryo](https://github.com/tech-pw/cryo) on GitHub is the source of truth. Pull requests are reviewed and merged there.
+
+### Open an issue or pick one
+
+For anything bigger than a small fix, open an issue first so the change can be discussed before you write it. Starter work is labelled [good first issue](https://github.com/tech-pw/cryo/labels/good%20first%20issue).
+
+### Open a pull request
+
+Fork, branch from `main`, and open the pull request against `tech-pw/cryo`. GitHub Actions runs lint, type checks, tests and the docs check on it.
+
+### Review and merge
+
+A maintainer reviews it. Keep the pull request focused on one change and link the issue it fixes with `Fixes #N`. Once checks are green and it's approved, a maintainer squash-merges it into `main`.
+
+The "Edit this page" link at the bottom of every docs page opens GitHub's editor, and your edit becomes a pull request the same way.
+
+## Development setup
+
+You need Python 3.12+, Node 22 for the web UI and the docs site, Docker with Compose for the local stack, and Git. Go 1.25 is needed only for the native compactor in `engine-go/`, Rust only for `cryo-engine/`, and Java 17+ only to run PySpark.
 
 **terminal**
 
 ```
-$ git clone https://github.com/tech-pw/cryo.git
-$ cd cryo
+$ git clone https://github.com/YOUR_USERNAME/cryo.git && cd cryo
+$ python3.12 -m venv .venv && source .venv/bin/activate
 $ make install
-$ make test
+$ ./start-local.sh start
 ```
 
-For the full local stack — a datalake with a catalog, Trino and Spark, plus Cryo's own dependencies and observability — use `./start-local.sh start`. That runs the migrations too. `make up` starts the containers only.
+`make install` installs the package with its dev extras. `./start-local.sh start` brings up the dev datalake (MinIO, Iceberg REST, Hive Metastore, Trino, Spark), Postgres and Redis, and the observability stack, then runs the Alembic migrations. `make up` starts the containers only, without migrating or seeding. For the UI and API without the datalake, run `make api` and `make web-dev` against a local Postgres and Redis.
 
-## Run the tests
+## Tests and checks
 
-| Command | Runs |
+| Command | What it checks |
 | --- | --- |
+| `make test` | Python unit tests (pytest, in-memory SQLite; no Docker stack needed) |
+| `make lint`, `make typecheck` | ruff lint and format check, mypy. `make format` fixes what it can. |
+| `make web-quality` | Web UI type check, CSS size budget and unit tests |
+| `make web-test` | Web UI unit tests only (vitest) |
+| `make test-engine-go` | Go native compactor tests |
+| `cargo test` in `cryo-engine/` | Rust engine tests |
 
-| `make test` | The Python suite. In-memory SQLite; it does not need the local stack. |
+`make test` isn't everything CI runs. Run the rows that match the parts you touched.
 
-| `make lint` | Ruff check and format check. |
+## Docs site
 
-| `make typecheck` | mypy. |
+These pages are built from `site/_src/pages/*.html` with navigation in `site/_src/site.json`. The generator has no dependencies beyond Node 22. Commit the generated output along with your source edit; CI fails when they don't match.
 
-| `make web-test` | The frontend suite. |
+**terminal**
 
-| `make test-engine-go` | The Go engine's tests. |
+```
+$ make docs-preview
+$ make docs
+$ node site/scripts/build.mjs --check
+```
 
-make test is not all the tests
+`make docs-preview` serves the site on `http://localhost:4173` and rebuilds on save. `make docs` renders once. The changelog page comes from `CHANGELOG.md`, so rebuild the site when you add a changelog entry. More detail is in [site/README.md](https://github.com/tech-pw/cryo/blob/main/site/README.md).
 
-CI also runs the Go engine tests — including with `-race` — and the frontend tests. A green `make test` is not a green build.
+## Commits and pull requests
 
-## Conventions
+- Use conventional commit messages: `feat(scanner): …`, `fix(planner): …`, `docs: …`, `test: …`, `refactor: …`, `chore: …`.
+- Add tests for new behaviour and update the docs in the same pull request.
+- Add a line under `[Unreleased]` in `CHANGELOG.md` for anything a user or operator would notice.
+- Alembic migrations are additive first, one concern per revision. Read the migration section of CONTRIBUTING.md before adding one.
+- Fill in the pull request template, and add screenshots for UI changes.
 
-- Python: PEP 8, enforced by Ruff, with type hints checked by mypy. Google-style docstrings on public APIs.
-
-- TypeScript: strict, functional components with hooks. The package has no ESLint or Prettier script — `npm run typecheck` is the check.
-
-- SQL: keywords uppercase, identifiers lowercase with underscores.
-
-- Commits are conventional: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `perf`.
-
-### Migrations
-
-Cryo's schema policy is **additive-first**. Prefer adding a column over altering a type, renaming or dropping. If a destructive change is unavoidable, write it in two revisions — add, backfill, switch, cleanup — so it can be paused between each.
-
-- One concern per revision. A column add, an index and a constraint do not belong in one revision.
-
-- Every `downgrade()` must restore the previous schema. If a revision is genuinely irreversible, leave the downgrade empty and say so in the docstring.
-
-- UUID primary keys, server-side `gen_random_uuid()`.
-
-- Everything in the `cryo` schema, and every migration operation passes `schema="cryo"`.
-
-- No backfill data in a migration. Backfill in a separate one-off script, or in a follow-up revision gated on a column's presence.
-
-Test the migration: upgrade head against an empty database, downgrade base, upgrade head again, and check the schema matches.
-
-## Open the pull request
-
-### Branch
-
-One focused change per branch, named for the change: `feat/…`, `fix/…`, `docs/…`, `ci/…`.
-
-### Test
-
-Add tests for the new behaviour. A renderer change needs a golden test — an input plan and the expected SQL. Partition-predicate maths needs parity tests.
-
-### Document
-
-Update the docs the change makes wrong. The project brain is in `docs/`, and `todo.md` tracks what is still open.
-
-### Open it
-
-Describe what changed and why, and how you tested it. Link the issue it closes.
-
-GitHub is the source of truth
-
-Pull requests merged here are the change. There is no separate mirror to port them to.
-
-## Review
-
-A maintainer reviews every pull request. Address the feedback, and once it is approved it is merged. CI must be green — every check reports on every pull request, including the docs ones.
-
-If you are unsure whether something is wanted, open an issue first. Discussion is cheaper than a pull request that gets rewritten.
-
-## Security
-
-Do not open a public issue for a security-sensitive finding. Use [GitHub Security Advisory](https://github.com/tech-pw/cryo/security/advisories/new), which stays private until a fix is published.
-
-## Community
-
-- [GitHub Issues](https://github.com/tech-pw/cryo/issues) — bugs and feature requests.
-
-- [GitHub Discussions](https://github.com/tech-pw/cryo/discussions) — questions, design discussion and show-and-tell.
-
-- [Code of Conduct](https://github.com/tech-pw/cryo/blob/main/CODE_OF_CONDUCT.md) — the Contributor Covenant 2.1.
-
-## Where to go next
+ChangelogWhat changed, release by release.IssuesReport a bug or propose a feature with the issue forms.
 
 Source: https://tech-pw.github.io/cryo/contributing/
 Markdown: https://tech-pw.github.io/cryo/contributing/index.md

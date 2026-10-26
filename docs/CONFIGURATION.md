@@ -19,6 +19,7 @@ print.
 | `CRYO_DATABASE_URL` | `str` | *(set from a secret)* | Holds a credential. Set it from a secret store, never from a committed file. - |
 | `CRYO_REDIS_URL` | `str` | *(set from a secret)* | Holds a credential. Set it from a secret store, never from a committed file. - |
 | `CRYO_SECRET_KEY` | `str` | *(set from a secret)* | Holds a credential. Set it from a secret store, never from a committed file. - |
+| `CRYO_SECRET_KEY_PREVIOUS` | `str \| None` | *(unset)* | Holds a credential. Set it from a secret store, never from a committed file. Key stored secrets were encrypted with before a rotation. Decryption tries secret_key first, then this; `cryo rotate-secret-key` re-encrypts with secret_key, after which this can be removed. It may be the old default. |
 | `CRYO_JWT_SECRET` | `str \| None` | *(set from a secret)* | Holds a credential. Set it from a secret store, never from a committed file. HS256 secret for API JWTs. Defaults to secret_key when unset. |
 | `CRYO_ENFORCE_TENANT_ISOLATION` | `bool` | `false` | When true, every JWT must carry tenant_id and queries are scoped. |
 | `CRYO_OIDC_ISSUER_URL` | `str \| None` | *(unset)* | OIDC issuer URL (production SSO). Enables RS256 IdP token verification. |

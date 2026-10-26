@@ -65,6 +65,13 @@ def build_scheduled_run(
 ) -> ScheduledRunDraft:
     current = now or datetime.now(UTC)
     mode = Mode(preset.mode)
+    if preset.paused or not preset.enabled:
+        return ScheduledRunDraft(
+            id=str(uuid4()),
+            preset_id=preset.id,
+            trigger=trigger,
+            deadline_at=_deadline_at(preset, current),
+        )
     candidates = tables_for_preset(preset, tables, presets, rules, assignments, now=current)
     candidates = drop_recently_maintained(candidates, preset)
     if exclude_table_ids:

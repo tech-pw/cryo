@@ -1,82 +1,74 @@
 ---
 title: Upgrade and rollback
-lede: How to move a Cryo release forward, what a downgrade can and cannot undo, and how to check the migration path before you upgrade.
-description: Upgrading Cryo on Kubernetes -- the migration hook, checking the migration path, and the limits of a rollback.
+lede: Upgrade one released version at a time, with a database backup taken first. Migrations run before any pod changes. Rolling back the chart doesn't roll back the schema.
+description: How to upgrade a Cryo Helm release, how the migration hook behaves, and what a rollback can and can't undo.
 updated: 2026-10-26
 ---
-<h2 id="upgrade">Upgrade</h2>
-<p><code>helm upgrade</code> runs <code>alembic upgrade head</code> as a <code>pre-install,pre-upgrade</code> hook and blocks the release until that Job finishes. It does not delete the external database or the warehouse.</p>
-<codeblock lang="bash" title="terminal">
-$ helm upgrade --install cryo oci://ghcr.io/tech-pw/charts/cryo --version 0.1.6 \
-    --namespace cryo \
-    --set global.envFromSecret=cryo-secrets
-$ kubectl -n cryo rollout status deployment/cryo-api --timeout=180s
-</codeblock>
-<p>Pin the digests. The image tag is static, so a rollout without a digest change can leave pods running the old image while the chart reports success.</p>
-
-<h2 id="migration-path">Check the migration path first</h2>
-<p>Cryo renders the complete Alembic graph in both directions for every signed release. Run it before you upgrade, not after something fails:</p>
-<codeblock lang="bash" title="terminal">
-$ python scripts/build_upgrade_rollback_evidence.py \
-    --revision "$(git rev-parse HEAD)" \
-    --output build/upgrade-rollback-evidence.json
-</codeblock>
-<p>The record fingerprints transaction-wrapped PostgreSQL SQL for <code>base → head</code> and <code>head → base</code>. It catches disconnected revisions, missing downgrade paths, and migrations that cannot render before an image is released.</p>
-<callout type="note" title="What offline rendering proves, and what it does not">
-  <p>It is repository evidence, not a deployed rollback claim. It does not prove data preservation, application compatibility, availability, or duration. A production drill is still required: upgrade a restored database, verify representative Cryo records and API health, roll back, verify them again, and record the service impact.</p>
-</callout>
-
 <h2 id="before">Before you upgrade</h2>
+<ul>
+  <li><strong>Pick a released tag.</strong> Upgrade to a <code>v*</code> tag, never to <code>main</code> or <code>latest</code>. The chart and both images come from that same tag. See <a href="https://github.com/tech-pw/cryo/tags">tags</a> and <a href="https://github.com/tech-pw/cryo/blob/main/CHANGELOG.md">CHANGELOG.md</a>.</li>
+  <li><strong>Back up the database.</strong> This is the only complete way back. See <a href="@/backup/">Backup and restore</a>.</li>
+  <li><strong>Record the schema revision</strong> you're on now, so you know where a schema downgrade would have to go:</li>
+</ul>
+<codeblock lang="bash" title="terminal">
+$ kubectl -n cryo exec deploy/cryo-api -- alembic current
+</codeblock>
+
+<h2 id="upgrade">Upgrade</h2>
 <steps>
-  <step title="Take a backup">
-    <p>See <a href="@/backup/">Backup and restore</a>. A downgrade can be blocked by a migration that drops a column; a backup is what makes that recoverable.</p>
+  <step title="Get the new chart and digests">
+    <p>These are the same commands as <a href="@/install/#install">Install</a>, with the new tag.</p>
+    <codeblock lang="bash" title="terminal">
+$ export CRYO_VERSION=v0.1.5
+$ git clone --depth 1 --branch "$CRYO_VERSION" https://github.com/tech-pw/cryo.git "cryo-$CRYO_VERSION"
+$ cd "cryo-$CRYO_VERSION"
+$ export CRYO_DIGEST=$(crane digest "ghcr.io/tech-pw/cryo:$CRYO_VERSION")
+$ export CRYO_WEB_DIGEST=$(crane digest "ghcr.io/tech-pw/cryo-web:$CRYO_VERSION")
+    </codeblock>
   </step>
-  <step title="Check the changelog">
-    <p>Cryo is pre-1.0. A minor release may change the HTTP API, the Helm values, the database schema or the engine SQL, and there is no still-working deprecation window. The changelog says so — read it.</p>
+  <step title="Update the values file">
+    <p>Set the three <code>tag</code> values in your <code>cryo-values.yaml</code> to the new version. Compare your file with the new chart's <code>deploy/helm/cryo/values.yaml</code> for renamed or added settings.</p>
   </step>
-  <step title="Check the off-peak window">
-    <p>A migration that rewrites a large table runs on your database, not on your engine. The governor's off-peak window does not apply to it.</p>
-  </step>
-  <step title="Verify the chart renders">
-    <p><code>helm template</code> needs no cluster and catches a broken template before the hook runs.</p>
+  <step title="Render, then upgrade">
+    <codeblock lang="bash" title="terminal">
+$ helm template cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest="$CRYO_DIGEST" --set migration.image.digest="$CRYO_DIGEST" --set web.image.digest="$CRYO_WEB_DIGEST" > /dev/null
+$ helm upgrade cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest="$CRYO_DIGEST" --set migration.image.digest="$CRYO_DIGEST" --set web.image.digest="$CRYO_WEB_DIGEST" --wait --timeout 15m
+    </codeblock>
+    <p class="expect">Done when Helm prints <code>STATUS: deployed</code> and <code>alembic current</code> shows a revision ending in <code>(head)</code>.</p>
   </step>
 </steps>
 
-<h2 id="rollback">Rollback</h2>
-<p>Roll back the release:</p>
-<codeblock lang="bash" title="terminal">
-$ helm rollback cryo <revision> --namespace cryo
-</codeblock>
-<p>The pre-upgrade hook runs again on the way down, so the database is migrated back with the previous release's Alembic graph.</p>
-
-<h3 id="rollback-limits">What a rollback cannot undo</h3>
-<p>Three things survive a rollback, and two of them are not reversible:</p>
-<div class="tbl">
-<table>
-  <thead><tr><th>Survives the rollback</th><th>Why, and what to do</th></tr></thead>
-  <tbody>
-    <tr>
-      <td><strong>Data written by the new release</strong></td>
-      <td>Maintenance that ran under the new version has already rewritten data files, expired snapshots and removed orphans. The old release does not undo it. If the new version did something you did not want, restore from a backup.</td>
-    </tr>
-    <tr>
-      <td><strong>Irreversible migrations</strong></td>
-      <td>A migration that drops or renames a column cannot be reversed by Alembic's <code>downgrade()</code>. Cryo's policy is additive-first precisely so this stays rare, and every revision documents when it is not. Check the evidence file above before you rely on a downgrade.</td>
-    </tr>
-    <tr>
-      <td><strong>Queue and lease state</strong></td>
-      <td>Redis is reconstructable. The scheduler and governor re-elect and the next scheduled run rebuilds the queue.</td>
-    </tr>
-  </tbody>
-</table>
-</div>
-<callout type="warn" title="A rollback is not a restore">
-  <p>Rolling back moves the application and the schema back. It does not bring back expired snapshots or rewritten data files. If the rollback is because the new version wrote something wrong, restore the database from a backup and assess the warehouse separately.</p>
+<h2 id="migrations">How the migration hook behaves</h2>
+<p>A <code>pre-upgrade</code> hook Job, <code>cryo-migrate-&lt;revision&gt;</code>, runs <code>alembic upgrade head</code> with the new image before any Deployment changes. While it runs, the old version keeps serving.</p>
+<dl>
+  <dt>One transaction</dt>
+  <dd>The whole chain of pending migrations runs in a single PostgreSQL transaction. If any step fails, none of them is applied, and the schema stays on the old revision.</dd>
+  <dt>Fails fast on locks</dt>
+  <dd>Migrations connect with <code>lock_timeout=10s</code>. If a long-running transaction holds a table lock, the migration fails instead of queueing behind it and blocking every reader. The Job retries up to <code>migration.backoffLimit</code> (2) times.</dd>
+  <dt>A failed hook fails the release</dt>
+  <dd>Helm marks the release failed, and the Deployments stay on the old version. The Job and its log are kept: <code>kubectl -n cryo logs job/cryo-migrate-&lt;revision&gt;</code>.</dd>
+</dl>
+<callout type="caution" title="A clean log isn't proof">
+  <p>A log that prints <code>Running upgrade …</code> and exits 0 doesn't prove the schema changed. Check <code>alembic current</code>, or read <code>cryo.alembic_version</code> directly.</p>
 </callout>
+
+<h2 id="rollback">Rollback</h2>
+<p><code>helm rollback</code> puts the old Deployments back, but it doesn't run the migration hook, which only runs on install and upgrade. The schema stays at the newer revision, and the old code runs against it. That's usually fine when the new migrations only added tables or columns. It isn't fine when a migration renamed, dropped or retyped something the old code reads.</p>
+<p>In order of preference:</p>
+<ol>
+  <li><strong>Roll forward.</strong> Fix the problem with a newer release or a values change, and leave the schema alone.</li>
+  <li><strong>Restore the backup</strong> you took before the upgrade, then <code>helm rollback</code>. This is the only path that brings back data exactly as it was. Anything Cryo recorded after the backup is lost, including runs and audit rows. See <a href="@/backup/#restore">Restore</a>.</li>
+  <li><strong>Downgrade the schema, then roll back the chart.</strong> Every migration has a downgrade path, but a downgrade that drops a column or a table drops its data too. Scale down the writers first (see <a href="@/backup/#restore">Restore</a>), run the downgrade with the <em>new</em> image, which has the migration files, and then roll back:</li>
+</ol>
+<codeblock lang="bash" title="terminal">
+$ kubectl -n cryo exec deploy/cryo-api -- alembic downgrade REVISION_YOU_RECORDED
+$ helm rollback cryo --namespace cryo
+</codeblock>
+<p>Schema rollback is checked offline: the release workflow renders the whole migration graph from base to head and back again. That proves the downgrade SQL exists and renders. It doesn't prove your data survives it, so restore from a backup when in doubt.</p>
 
 <h2 id="read-next">Where to go next</h2>
 <linkcards>
-  <linkcard href="@/backup/" title="Backup and restore">Taking a backup, and what to do with one.</linkcard>
-  <linkcard href="@/install/" title="Install on Kubernetes">A first install, or a fresh environment.</linkcard>
-  <linkcard href="@/changelog/">Changelog">What changed in each release.</linkcard>
+  <linkcard href="@/backup/" title="Backup and restore">Take the backup this page tells you to take.</linkcard>
+  <linkcard href="@/install/" title="Install on Kubernetes">The install these commands assume.</linkcard>
+  <linkcard href="@/troubleshooting/" title="Troubleshooting">A failed migration and other symptoms.</linkcard>
 </linkcards>
