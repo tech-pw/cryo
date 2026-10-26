@@ -14,6 +14,7 @@ from cryo.planner.partitions import (
     DEFAULT_RENDERABLE_CAPABILITIES,
     PartitionFieldSpec,
     build_predicate,
+    is_open_time_partition,
     partition_fields_from_stats,
 )
 from cryo.planner.ttl import plan_expire_data
@@ -265,6 +266,7 @@ def _optimize_operations(
     params: Mapping[str, Any],
     notes: list[str],
 ) -> list[Operation]:
+    params = _with_table_target_size(params, stats, notes)
     min_small_files = int(params.get("min_small_files", 128))
     delete_ratio_trigger = float(params.get("delete_ratio_trigger", 0))
     delete_file_pct = float(stats.get("delete_file_pct") or 0)
@@ -431,10 +433,18 @@ def _candidate_partitions(
     notes: list[str],
     params: Mapping[str, Any] | None = None,
 ) -> list[OptimizeCandidate]:
+    from datetime import UTC, datetime
+
     params = params or {}
     idle_hours = int(params.get("partition_write_idle_hours") or 0)
+    skip_open = params.get("skip_open_time_partition", True) is not False
+    today = datetime.now(UTC).date()
     candidates: list[OptimizeCandidate] = []
     for row in partitions:
+        if skip_open and is_open_time_partition(fields, row, today):
+            partition_value = row.get("partition_value", row.get("partition_values", "<unknown>"))
+            notes.append(f"Skipped open partition {partition_value}: it is the current period.")
+            continue
         if idle_hours > 0 and not _partition_is_cold(row, idle_hours):
             partition_value = row.get("partition_value", row.get("partition_values", "<unknown>"))
             notes.append(
@@ -473,6 +483,37 @@ def _candidate_partitions(
             )
         )
     return candidates
+
+
+_MIB = 1024 * 1024
+
+
+def _with_table_target_size(
+    params: Mapping[str, Any], stats: Mapping[str, Any], notes: list[str]
+) -> Mapping[str, Any]:
+    """Compact toward the table's own write.target-file-size-bytes when it sets one.
+
+    The scanner counts files below that property as "below target". Rewriting to a smaller
+    preset size leaves every output file below target, so the count can never reach zero.
+    An explicit target_file_size_bytes on the preset or table override still wins.
+    """
+    if params.get("target_file_size_bytes") or params.get("use_table_target_size") is False:
+        return params
+    table_target = _optional_int(stats.get("target_file_size_bytes"))
+    if table_target is None:
+        return params
+    preset_target = int(params.get("file_size_mb", 256)) * _MIB
+    if table_target == preset_target:
+        return params
+    notes.append(
+        f"Compacting to the table's own target file size ({table_target // _MIB} MB) "
+        f"instead of the workflow's {preset_target // _MIB} MB."
+    )
+    return {
+        **params,
+        "target_file_size_bytes": table_target,
+        "file_size_mb": max(1, table_target // _MIB),
+    }
 
 
 def _optimize_operation(
@@ -891,6 +932,14 @@ def _expire_params(
         "retention_days": retention_days,
         "retain_last": int(params.get("retain_last", 1)),
     }
+    retention_hours = _optional_int(params.get("retention_hours"))
+    if retention_hours is not None and retention_hours < retention_days * 24:
+        out["retention_hours"] = retention_hours
+        if notes is not None:
+            notes.append(
+                f"Snapshot window set to {retention_hours}h by retention_hours "
+                f"(tighter than retention_days={retention_days})."
+            )
     if protected_snapshot_ids:
         out["protected_snapshot_ids"] = sorted(set(int(s) for s in protected_snapshot_ids))
     return out

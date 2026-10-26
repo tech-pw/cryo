@@ -379,6 +379,10 @@ def _as_datetime(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
+def grade_for_score(score: int) -> str:
+    return _grade(score)
+
+
 def _grade(score: int) -> str:
     if score >= 90:
         return "A"

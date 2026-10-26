@@ -86,7 +86,12 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
 
 
 def _render_expire(table_ref: str, params: dict[str, Any]) -> str:
-    retention_days = int(params.get("retention_days", 7))
+    retention_hours = params.get("retention_hours")
+    threshold = (
+        f"{int(retention_hours)}h"
+        if retention_hours
+        else f"{int(params.get('retention_days', 7))}d"
+    )
     retain_last = int(params.get("retain_last", 1))
     # Trino 483 expire_snapshots cannot keep a specific snapshot id, and it has no
     # set_snapshots procedure. Emitting one used to fail the whole expire (and the
@@ -94,7 +99,7 @@ def _render_expire(table_ref: str, params: dict[str, Any]) -> str:
     return (
         f"ALTER TABLE {table_ref} "
         "EXECUTE expire_snapshots("
-        f"retention_threshold => '{retention_days}d', retain_last => {retain_last})"
+        f"retention_threshold => '{threshold}', retain_last => {retain_last})"
     )
 
 
