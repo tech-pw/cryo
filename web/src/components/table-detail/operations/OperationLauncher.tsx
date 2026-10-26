@@ -127,7 +127,11 @@ export const OperationLauncherProvider = ({ tableId, tableName, children }: { ta
       next.set("tab", "maintenance");
       next.set("run", result.run_id);
       setSearchParams(next, { replace: false });
-      window.setTimeout(() => document.getElementById("maintenance-runs")?.scrollIntoView({ behavior: "smooth", block: "start" }), 250);
+      window.setTimeout(() => {
+        // The timer can outlive the page (and a test's jsdom); skip the scroll once document is gone.
+        if (typeof document === "undefined") return;
+        document.getElementById("maintenance-runs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 250);
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
       void queryClient.invalidateQueries({ queryKey: ["table-runs", tableId] });
       void queryClient.invalidateQueries({ queryKey: ["table-audit", tableId] });
