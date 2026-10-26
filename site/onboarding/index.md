@@ -18,7 +18,6 @@ Connecting a catalog tells Cryo *what tables exist*. Scanning reads those tables
 Cryo reads catalogs and object storage. It needs two things that are often owned by different people, so collect both before you start:
 
 - **Catalog endpoint** — a REST URI, a Hive Metastore thrift address, or an AWS region for Glue.
-
 - **Read access to the buckets your tables live in** — an IAM role is the production answer. Catalog access alone is not enough: the catalog records *where* tables are, object storage holds the files Cryo measures.
 
 ## Connect a catalog
@@ -57,15 +56,10 @@ Each type needs a different endpoint. Everything else on the form is shared.
 
 | Type | Catalog URI | Notes |
 | --- | --- | --- |
-
 | REST catalog | `http://host:8181` | Any Iceberg REST implementation. Pass OAuth credentials or custom headers through **Advanced properties**. |
-
 | Hive Metastore | `thrift://host:9083` | Cryo reads table locations over Thrift directly, so it still sees tables whose Iceberg metadata will not load. Warehouse is inferred for this type. |
-
 | AWS Glue | Not used | No URI field. Region comes from the storage section; **Warehouse** takes an `s3://` path. |
-
 | Apache Polaris | `http://host:8181/api/catalog` | REST under the hood. Credentials go in Advanced properties. |
-
 | Project Nessie | `http://host:19120/api/v1` | REST under the hood. Branch or ref selection belongs in Advanced properties. |
 
 ## S3 authentication
@@ -74,11 +68,8 @@ Three methods, in the order you should prefer them.
 
 | Method | Use when | Fields |
 | --- | --- | --- |
-
 | **Default credentials** | Production. Cryo runs with an IAM role (IRSA on EKS, instance profile on EC2) and needs no secrets in its database. | Region. Optionally an endpoint. |
-
 | **Access key + secret** | Local development and MinIO. Avoid in production — the secret is stored, and rotating it means editing every lakehouse that uses it. | Access key ID, secret access key. Usually a custom endpoint and path-style access. |
-
 | **Assume IAM role** | The buckets live in another AWS account. | Role ARN. External ID and session name optional. |
 
 A catalog that connects can still fail every scan
@@ -102,11 +93,8 @@ Connecting stores configuration. Scanning is what produces data — until a scan
 For every table in scope the scanner records the facts maintenance decisions are made from:
 
 - **File counts and sizes** — total files, how many fall below the small-file threshold, and bytes on disk. This is what drives compaction decisions.
-
 - **Snapshots and manifests** — how much history has accumulated, which is what expiry and manifest rewrites act on.
-
 - **Partition layout** — so maintenance can target individual partitions instead of rewriting whole tables.
-
 - **A health grade** — the letter grade on Home and Tables, derived from the measurements above.
 
 Scanning is read-only. It never rewrites data, and it does not schedule maintenance: that needs a preset assigned to the table.
@@ -119,13 +107,9 @@ The progress panel distinguishes four outcomes, and the difference matters when 
 
 | Counter | Meaning |
 | --- | --- |
-
 | **Discovered** | Tables the catalog reported in scope. If this is zero, the problem is the catalog or the schema filter, not storage. |
-
 | **Scanned** | Tables successfully measured. These are the rows that appear in the UI. |
-
 | **Skipped** | Deliberately not measured — most often unchanged since the last scan. |
-
 | **Failed** | Tables Cryo could not read. The live log names the table and the reason. |
 
 Reading a failure count
@@ -139,9 +123,7 @@ A high failure count with a healthy **Discovered** number almost always means st
 ## After the first scan
 
 - **Tables** lists every scanned table with its grade and the counts behind it.
-
 - **Home** shows last night's maintenance, what needs you next, and grades across the fleet.
-
 - **Runs** keeps the receipt for each scan, including what failed and why.
 
 Nothing is maintained yet. Assign a preset to decide what Cryo is allowed to do, then see [Maintenance](https://tech-pw.github.io/cryo/maintenance/) for how plans are built and admitted.

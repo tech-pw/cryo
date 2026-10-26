@@ -178,7 +178,7 @@ $ helm upgrade --install cryo ./deploy/helm/cryo --namespace cryo -f cryo-values
 </codeblock>
 
 <h2 id="upgrade">Upgrade</h2>
-<p>Back up the database first, because migrations only move forward. Then repeat the install with the new tag: check out its chart, look up its digests, change the three <code>tag</code> values in <code>cryo-values.yaml</code>, render, and run <code>helm upgrade --install</code>. The migration hook runs before any pod changes.</p>
+<p>Back up the database first. Then repeat the install with the new tag: check out its chart, look up its digests, change the three <code>tag</code> values in <code>cryo-values.yaml</code>, render, and run <code>helm upgrade --install</code>. The migration hook runs before any pod changes. <a href="@/upgrade/">Upgrade and rollback</a> has the details and the limits of a rollback.</p>
 
 <h2 id="uninstall">Uninstall</h2>
 <codeblock lang="bash" title="terminal">

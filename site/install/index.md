@@ -15,18 +15,29 @@ This page uses the settings from [Security](https://tech-pw.github.io/cryo/secur
 
 ## What you need
 
-Kubernetes
-Version 1.27 or newer (the chart's `kubeVersion` is `>=1.27.0-0`), with amd64 nodes. The published images are amd64-only, so every Cryo pod gets a `kubernetes.io/arch: amd64` node selector.
-Tools
-Helm 3, `kubectl`, `git`, `openssl`, and `crane` to look up image digests.
-PostgreSQL
+**Kubernetes**
+
+Version 1.27 or newer (the chart's `kubeVersion` is `>=1.27.0-0`), with **amd64 nodes**. The published images are amd64-only, so every Cryo pod gets a `kubernetes.io/arch: amd64` node selector.
+
+**Tools**
+
+Helm 3, `kubectl`, `git`, `openssl`, and [`crane`](https://github.com/google/go-containerregistry/tree/main/cmd/crane) to look up image digests.
+
+**PostgreSQL**
+
 An external database and a user that owns it. Cryo keeps its tables in a schema called `cryo` in that database. The first migration runs `CREATE EXTENSION IF NOT EXISTS pgcrypto`, so either give the user that privilege or create the extension first. `pgvector` is optional. Without it, the migration logs a warning and AI search falls back to a slower path. The local stack runs PostgreSQL 16.
-Redis
-An external Redis for the job queue. Postgres is the source of truth, so Redis doesn't need persistence. You can use the chart's single in-namespace Redis instead (see Using the bundled Redis).
-An OIDC client
-A confidential client at your identity provider with redirect URI `https://<your-cryo-host>/login/callback`. Its access tokens must carry a Cryo role. Security lists the exact claims.
-Network
-Cryo's pods must be able to reach PostgreSQL, Redis, your catalogs, your engines (Trino or Spark), the object storage that holds the table files, and the OIDC issuer. Security has the full list.
+
+**Redis**
+
+An external Redis for the job queue. Postgres is the source of truth, so Redis doesn't need persistence. You can use the chart's single in-namespace Redis instead (see [Using the bundled Redis](#bundled-redis)).
+
+**An OIDC client**
+
+A confidential client at your identity provider with redirect URI `https://<your-cryo-host>/login/callback`. Its access tokens must carry a Cryo role. [Security](https://tech-pw.github.io/cryo/security/#oidc) lists the exact claims.
+
+**Network**
+
+Cryo's pods must be able to reach PostgreSQL, Redis, your catalogs, your engines (Trino or Spark), the object storage that holds the table files, and the OIDC issuer. [Security](https://tech-pw.github.io/cryo/security/#egress) has the full list.
 
 ## Install
 
@@ -239,7 +250,7 @@ $ helm upgrade --install cryo ./deploy/helm/cryo --namespace cryo -f cryo-values
 
 ## Upgrade
 
-Back up the database first, because migrations only move forward. Then repeat the install with the new tag: check out its chart, look up its digests, change the three `tag` values in `cryo-values.yaml`, render, and run `helm upgrade --install`. The migration hook runs before any pod changes.
+Back up the database first. Then repeat the install with the new tag: check out its chart, look up its digests, change the three `tag` values in `cryo-values.yaml`, render, and run `helm upgrade --install`. The migration hook runs before any pod changes. [Upgrade and rollback](https://tech-pw.github.io/cryo/upgrade/) has the details and the limits of a rollback.
 
 ## Uninstall
 
@@ -252,13 +263,9 @@ $ helm uninstall cryo --namespace cryo
 This removes the Deployments, Services, CronJobs, ServiceAccount and RBAC that the release created. These are left behind:
 
 - **The database.** The `cryo` schema stays in PostgreSQL, with its run history, audit rows and stored connections. Drop it yourself if you want them gone.
-
 - **Redis keys** in your external Redis. The bundled Redis has no volume, so its data goes when its pod does.
-
 - **The Secret** `cryo-secrets` and the namespace, because you created them outside the chart.
-
 - **Runtime Jobs** started by the native or Spark lanes. They aren't part of the release and are removed through `ttlSecondsAfterFinished`. Check with `kubectl -n cryo get jobs,pods`.
-
 - **Changes to your tables.** Maintenance that already ran is permanent. Compacted files and expired snapshots don't come back.
 
 ## Where to go next

@@ -1,0 +1,151 @@
+---
+title: Troubleshooting
+lede: Start from what you see. Each entry gives the likely cause, where to check it, and the fix. A short FAQ follows.
+description: Symptom-first troubleshooting for Cryo installs, sign-in, scans, runs, deferred jobs and Spark lanes, plus an FAQ.
+updated: 2026-10-26
+---
+<p>Most answers are on the job itself. Open <strong>Runs</strong>, then the run, then the job. A deferred or failed job shows its reason there. The commands below assume the release name <code>cryo</code> in namespace <code>cryo</code>.</p>
+
+<h2 id="install">Install and upgrade</h2>
+
+<h3 id="render-digest">Helm fails with <code>production requires image.digest</code></h3>
+<dl>
+  <dt>Cause</dt><dd>With <code>CRYO_ENVIRONMENT=prod</code>, the chart refuses to render until every enabled image is pinned by digest. The same check covers <code>migration</code>, <code>web</code>, <code>redis</code>, <code>native</code> and <code>spark.k8s</code>.</dd>
+  <dt>Check</dt><dd><code>helm template cryo ./deploy/helm/cryo -f cryo-values.yaml</code> names the missing value.</dd>
+  <dt>Fix</dt><dd>Set that digest. See <a href="@/install/#install">Install</a>.</dd>
+</dl>
+
+<h3 id="migration-failed">The migration hook fails or times out</h3>
+<dl>
+  <dt>Cause</dt><dd>Most often a lock. Migrations use <code>lock_timeout=10s</code>, so a long-open transaction on a Cryo table makes them fail instead of wait. Wrong database credentials, or a missing <code>pgcrypto</code> privilege on a first install, also fail here.</dd>
+  <dt>Check</dt><dd><code>kubectl -n cryo logs job/cryo-migrate-&lt;revision&gt;</code>. For locks, look for sessions left <code>idle in transaction</code>: <code>SELECT pid, state, xact_start, query FROM pg_stat_activity WHERE datname = current_database() AND state LIKE 'idle in transaction%';</code></dd>
+  <dt>Fix</dt><dd>End the blocking session, then run the same <code>helm upgrade</code> again. The failed chain was rolled back as one transaction, so nothing is half-applied. See <a href="@/upgrade/#migrations">How the migration hook behaves</a>.</dd>
+</dl>
+
+<h2 id="sign-in">Sign-in</h2>
+
+<h3 id="oidc-discovery">The login page won't load, and <code>/api/v1/auth/config</code> returns 503</h3>
+<dl>
+  <dt>Cause</dt><dd>The detail <code>OIDC issuer discovery failed</code> means the API couldn't fetch <code>CRYO_OIDC_ISSUER_URL/.well-known/openid-configuration</code>.</dd>
+  <dt>Check</dt><dd><code>kubectl -n cryo exec deploy/cryo-api -- sh -c 'curl -sS "$CRYO_OIDC_ISSUER_URL/.well-known/openid-configuration"'</code> fetches it from inside the pod, with the pod's own setting.</dd>
+  <dt>Fix</dt><dd>Correct the issuer URL, or allow egress from the cluster to it.</dd>
+</dl>
+
+<h3 id="login-loop">You come back from the identity provider and aren't signed in</h3>
+<dl>
+  <dt>Cause</dt><dd><code>Code exchange failed</code> (400) means a wrong client secret, or a <code>CRYO_OIDC_REDIRECT_URI</code> that doesn't match the URI registered at the provider. A 401 with <code>Invalid bearer token</code> afterwards means Cryo rejected the provider's access token. It may not be a JWT, its <code>aud</code> or <code>iss</code> may not match, or it may carry no Cryo role.</dd>
+  <dt>Check</dt><dd>Decode the access token (it's a JWT) and compare <code>iss</code>, <code>aud</code> and the role claims with <a href="@/security/#oidc">OIDC setup</a>.</dd>
+  <dt>Fix</dt><dd>Set <code>CRYO_OIDC_AUDIENCE</code> to the token's audience, or configure the provider to issue a JWT access token. Then emit a role named exactly <code>viewer</code>, <code>operator</code> or <code>admin</code> in <code>roles</code>, <code>groups</code> or one of the other claims Cryo reads.</dd>
+</dl>
+
+<h3 id="dev-token-503">Dev sign-in returns 503</h3>
+<dl>
+  <dt>Cause</dt><dd>This is intended. The dev token route is off in <code>prod</code>.</dd>
+  <dt>Check</dt><dd><code>/api/v1/auth/config</code> reports <code>"dev_token_enabled":false</code>.</dd>
+  <dt>Fix</dt><dd>Sign in through OIDC. Don't set <code>CRYO_ALLOW_DEV_TOKEN_IN_PROD</code> to work around it. See <a href="@/security/#dev-token">The dev token</a>.</dd>
+</dl>
+
+<h2 id="scans">Scans</h2>
+
+<h3 id="no-tables">A scan finds no tables</h3>
+<dl>
+  <dt>Cause</dt><dd>If <strong>Discovered</strong> is 0, the problem is the catalog or the schema filter, not storage. Common causes are a wrong catalog name or warehouse, catalog credentials that can list nothing, or <strong>Schemas for maintenance</strong> set to schemas that don't exist.</dd>
+  <dt>Check</dt><dd>Open <strong>Scans</strong> (<code>/scans</code>), then the scan, and read its live log. Run the connection test on the source under <strong>Settings → Connections</strong>.</dd>
+  <dt>Fix</dt><dd>Correct the source and scan again. See <a href="@/onboarding/#scan">The first scan</a>.</dd>
+</dl>
+
+<h3 id="scan-failed">Tables are discovered but fail to scan</h3>
+<dl>
+  <dt>Cause</dt><dd>Cryo found the tables but couldn't read their files. <code>AccessDenied</code> on an S3 path is a credentials problem. On EKS, the usual cause is a ServiceAccount without an <code>eks.amazonaws.com/role-arn</code> annotation.</dd>
+  <dt>Check</dt><dd>The first failure in the scan's live log usually explains the rest. The storage step on the source shows which buckets are readable.</dd>
+  <dt>Fix</dt><dd>Grant read access, or set <code>serviceAccount.annotations</code>. See <a href="@/onboarding/#auth">S3 authentication</a>.</dd>
+</dl>
+
+<h3 id="unreadable">A table stays unreadable after a rescan</h3>
+<dl>
+  <dt>Cause</dt><dd>Two categories are permanent. <code>metadata_not_found</code> means the catalog points at a metadata file that isn't in storage. <code>manifest_missing</code> means a manifest list the metadata names is gone. A query engine fails the same way. <code>permission_denied</code> isn't permanent: an IAM change fixes it.</dd>
+  <dt>Check</dt><dd>The table's last scan error, on the table's row in <strong>Tables</strong> and on its detail page.</dd>
+  <dt>Fix</dt><dd>The table's owners repoint the catalog entry or restore the table. Rescanning doesn't help. Don't drop the table because of this error alone.</dd>
+</dl>
+
+<h2 id="runs">Runs and jobs</h2>
+
+<h3 id="no-runs">Tables have grades, but no maintenance runs happen</h3>
+<dl>
+  <dt>Cause</dt><dd>Scanning never schedules maintenance. A table needs a preset, and no preset is assigned by default.</dd>
+  <dt>Check</dt><dd><strong>Presets</strong> (<code>/presets</code>) lists each preset, what it applies to and its schedule.</dd>
+  <dt>Fix</dt><dd>Assign a preset. See <a href="@/maintenance/">Maintenance</a>.</dd>
+</dl>
+
+<h3 id="needs-approval">A job is deferred with <code>Destructive operation requires approval</code></h3>
+<dl>
+  <dt>Cause</dt><dd><code>expire_snapshots</code>, <code>expire_data</code> and <code>remove_orphan_files</code> need an approval for that table and those parameters. The governor creates the approval request when it defers the job.</dd>
+  <dt>Check</dt><dd><strong>Governance</strong> (<code>/governance</code>) lists the pending approvals.</dd>
+  <dt>Fix</dt><dd>Approve it or reject it. Waiting, requeueing and adding workers don't clear it.</dd>
+</dl>
+
+<h3 id="table-locked">A job is deferred with <code>table_locked</code></h3>
+<dl>
+  <dt>Cause</dt><dd>Another job holds this table's lock, so the two can't rewrite the same table at once. It's usually a job from another run that's still running.</dd>
+  <dt>Check</dt><dd>Look in <strong>Runs</strong> for another run with a job still running on the same table. The deferred job is retried on later governor waves.</dd>
+  <dt>Fix</dt><dd>Usually nothing. It runs when the other job finishes. If the holder will never finish, the governor reaps stale running jobs and their locks after the lock TTL (six hours).</dd>
+</dl>
+
+<h3 id="queued">Jobs stay queued and nothing runs</h3>
+<dl>
+  <dt>Cause</dt><dd>Either work isn't being admitted, or it's admitted and no worker picks it up. A worker runs one job at a time. A pause, an approval, a budget or ROI refusal, or the engine's slot cap keeps work from being admitted, and more workers don't change that.</dd>
+  <dt>Check</dt><dd>Each job's deferral reason names the gate that refused it. Control Room (<code>/control-room</code>) shows active pauses. Then check that the governor and workers are running: <code>kubectl -n cryo get pods -l app.kubernetes.io/component=governor</code>, then the same for <code>worker</code>, and read <code>kubectl -n cryo logs deploy/cryo-governor --tail=50</code>.</dd>
+  <dt>Fix</dt><dd>Clear the gate the reason names. Add workers only when jobs are admitted and waiting with no deferral reason.</dd>
+</dl>
+
+<h3 id="double-runs">Daily runs fire twice, at odd times</h3>
+<dl>
+  <dt>Cause</dt><dd>Redis restarted. The scheduler's "last fire" markers live only in Redis, so after a restart a daily preset or the daily scan can fire again within 24 hours. This is a known issue, <a href="https://github.com/tech-pw/cryo/issues/177">#177</a>.</dd>
+  <dt>Check</dt><dd>Compare the extra run's start time with the Redis pod's start time: <code>kubectl -n cryo get pod -l app.kubernetes.io/component=redis -o wide</code>.</dd>
+  <dt>Fix</dt><dd>Keep Redis stable until #177 is fixed. See <a href="@/backup/#redis">Losing Redis</a>.</dd>
+</dl>
+
+<h3 id="deadline-skip">Tables show <code>skipped</code> at the end of a nightly run</h3>
+<dl>
+  <dt>Cause</dt><dd>The run hit its deadline before reaching them. They weren't lost and didn't fail.</dd>
+  <dt>Check</dt><dd>The run's summary and the skipped jobs' reasons.</dd>
+  <dt>Fix</dt><dd>Nothing urgent, because the next night picks them up. If it happens every night, add lanes or narrow the preset.</dd>
+</dl>
+
+<h2 id="spark">Spark lanes</h2>
+
+<h3 id="oom">A lane is <code>OOMKilled</code> or exits with 137</h3>
+<dl>
+  <dt>Cause</dt><dd>The lane pod ran out of memory. The JVM heap is 60% of the pod limit, and the rest is for off-heap memory and the runner. A Java 21 lane can also fail with <code>OutOfMemoryError: Java heap space</code> and <code>Retried waiting for GCLocker too often</code> while the heap is mostly free.</dd>
+  <dt>Check</dt><dd><code>kubectl -n cryo describe pod &lt;lane-pod&gt;</code> shows the termination reason. The job's error names the table that was running.</dd>
+  <dt>Fix</dt><dd>A table that died mid-run is marked failed and isn't retried on the same pod size. Tables the lane hadn't started go to a replacement lane. Lane pods are capped by <code>maintenance.laneMaxMemMib</code>, which defaults to 16384.</dd>
+</dl>
+
+<h3 id="exec-format">A Spark pod fails with <code>exec format error</code></h3>
+<dl>
+  <dt>Cause</dt><dd>The Spark image is amd64-only, and the pod landed on an arm64 node.</dd>
+  <dt>Check</dt><dd>The <code>nodeSelector</code> on the Spark wrapper Job, not on Cryo's own Deployments, which are pinned separately.</dd>
+  <dt>Fix</dt><dd>Don't set <code>kubernetes.io/arch</code> to <code>arm64</code> in the Spark destination's node selector or in <code>CRYO_SPARK_K8S_NODE_SELECTOR</code>. Leave it unset, and Cryo adds <code>amd64</code>.</dd>
+</dl>
+
+<h3 id="forbidden">Creating a Job or Secret fails with 403</h3>
+<dl>
+  <dt>Cause</dt><dd>The worker's ServiceAccount can't create the lane Job or the driver Secret. That RBAC is only rendered when <code>native.enabled</code> or <code>spark.k8s.enabled</code> is true.</dd>
+  <dt>Check</dt><dd><code>kubectl -n cryo get role,rolebinding</code> shows whether a Role exists that grants <code>batch/jobs</code> create and <code>secrets</code> create, delete and patch.</dd>
+  <dt>Fix</dt><dd>Turn on the lane you use, <code>native.enabled</code> or <code>spark.k8s.enabled</code>, pin its image digest in <code>prod</code>, and upgrade.</dd>
+</dl>
+
+<h2 id="faq">FAQ</h2>
+<dl>
+  <dt>How is this different from running <code>OPTIMIZE</code> on a cron?</dt>
+  <dd>A cron runs the same statement against the same tables whatever their state. Cryo scans every table, grades it, and plans only the work it needs, scoped to partitions where it can. It runs operations in a fixed safe order. A governor admits work against your engines' live capacity, and every job leaves an audit row. See <a href="@/concepts/">How Cryo fits</a>.</dd>
+  <dt>Is it safe to point at production?</dt>
+  <dd>Scanning is read-only. Destructive operations (snapshot expiry, data expiry and orphan-file removal) need an approval for each table by default, and a pause stops new work before it's submitted. Cryo is pre-1.0. Start with a preset on a few tables you own, and read <a href="@/security/">Security</a> first.</dd>
+  <dt>Which engines are supported?</dt>
+  <dd>Trino, Apache Spark (EMR Serverless, or Spark on Kubernetes run by Cryo), and a native engine for compaction, which is in beta. For Flink, Cryo generates a maintenance config but doesn't submit the job. See <a href="@/engines/">Engines</a>.</dd>
+  <dt>Which catalogs?</dt>
+  <dd>Iceberg REST, Hive Metastore, AWS Glue, Polaris and Nessie. Unity Catalog and JDBC catalogs are rejected. See <a href="@/onboarding/#catalogs">Catalog types</a>.</dd>
+</dl>
+
+<h2 id="still-stuck">Still stuck</h2>
+<p>Search the <a href="https://github.com/tech-pw/cryo/issues">issues</a>, or open one with the symptom, the job's reason and the relevant log lines. Remove hostnames, credentials and table names you can't share. For a security problem, follow <a href="https://github.com/tech-pw/cryo/blob/main/SECURITY.md">SECURITY.md</a> instead.</p>

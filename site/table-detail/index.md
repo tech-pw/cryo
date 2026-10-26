@@ -21,17 +21,11 @@ cryo.local/tables/analytics.events
 
 | Part | What it shows |
 | --- | --- |
-
 | Breadcrumb | Tables, then the lakehouse (source), the namespace and the table. **Copy link** copies a link to the current tab. |
-
 | Name and badges | Table format, the partition column (or *Unpartitioned*), the health score with its grade letter, and the owner. |
-
 | Summary tiles | **Table size**, **Files**, **Compaction candidates** (small files, also as a share of all files), **Snapshots**, and **Maintenance workflow**: the preset that maintains the table, how it was assigned, and its engine. |
-
 | Activity line | When the scanner last read the table, the last commit, the latest maintenance action, and a **Storage location** disclosure with a copy button. |
-
 | Run maintenance | Runs the table's workflow now, or previews it when you can't run it. The arrow opens the actions menu. |
-
 | Table settings | The gear icon. Opens compliance, the maintenance hold, ownership and alert subscribers. |
 
 cryo.local/tables/analytics.events
@@ -60,21 +54,13 @@ Each tab owns one question. The address bar carries the open tab as `?tab=`, so 
 
 | Tab | The question it answers | Sections |
 | --- | --- | --- |
-
 | [Overview](#overview) | Why is the score what it is, and what fixes it? | Score, Layout checks, File layout, History & activity, Health over time, Context |
-
 | [Schema & files](#schema-files) | What is the table made of? | Columns, Files, Small-file candidates over scans, Delete files, Layout, Partitions |
-
 | [Snapshots](#snapshots) | What changed, and what is being kept? | Snapshot history, Commits, Excluded from Cryo expiry |
-
 | [Maintenance](#maintenance) | Will it be maintained tonight, and what happened last time? | Readiness, Choose an action, Follow the outcome, Compaction analysis |
-
 | [Config](#config) | What rules is it maintained by? | Maintenance settings, Scheduling window, Table configuration |
-
 | [Usage](#usage) | Who reads it, and which parts? | Query activity, Partition access, Table relationships, Similar schemas |
-
 | [Quality](#quality) | Is the data fresh and complete? | Freshness vs target, What changed?, Quality rules |
-
 | [Cost & Savings](#cost) | What does it cost to store, and what would maintenance give back? | What this table costs, Where storage accumulates, Ways to save, Archive cold partitions |
 
 ## Overview

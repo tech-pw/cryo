@@ -14,9 +14,10 @@ No dependencies. Node 22.
 
 | Path | What it is |
 |---|---|
-| `_src/site.json` | Navigation groups and site metadata |
+| `_src/site.json` | Navigation groups and site metadata. `version` is the latest release tag shown in the header and on the homepage; bump it when a tag is cut |
 | `_src/contributors.json` | Snapshot of GitHub contributors for the homepage credit |
 | `_src/pages/*.html` | Page fragments with front matter (`title`, `lede`, `description`, `updated`) |
+| `scripts/changelog.mjs` | Renders `CHANGELOG.md` into the Changelog page at build time (rebuild after a changelog edit) |
 | `scripts/screens_webp.py` | Writes the WebP copy of each screenshot the site serves (`python3 site/scripts/screens_webp.py`, needs Pillow). Run it after re-capturing screenshots; the PNGs stay as the source and for `README.md`, and the Pages deploy leaves them out |
 | `scripts/build.mjs` | Generator: chrome, TOC, search index, sitemap, `llms.txt`, per-page `index.md` |
 | `scripts/contributors.mjs` | Refresh the contributor snapshot from GitHub (`node site/scripts/contributors.mjs`) |

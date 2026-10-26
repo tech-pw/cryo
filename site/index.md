@@ -9,16 +9,27 @@ updated: 2026-10-06
 
 Cryo reads your Apache Iceberg catalogs, ranks what is worth doing from real query workload, and admits the work to its native engine when the cluster has headroom. Reading and writing never share a code path, and every run leaves a receipt.
 
-Pre-1.0 · Apache-2.0→
+v0.1.5 · Pre-1.0 · Apache-2.0→
 
 # Keep every table healthy without deciding when or how.
 
 Cryo reads your catalogs, plans compaction and cleanup, and admits the work to its native engine when the cluster has headroom — every decision explained.
 
-Operations7
-Engines2
-SQL in planner0
-Receipt per action1
+**Operations**
+
+7
+
+**Engines**
+
+2
+
+**SQL in planner**
+
+0
+
+**Receipt per action**
+
+1
 
 Start with the quickstart
 See how it fits together
@@ -26,47 +37,26 @@ See how it fits together
 Runs against the stack you already have:
 
 - Apache Iceberg
-
 - Iceberg REST
-
 - Hive Metastore
-
 - AWS Glue
-
 - Trino
-
 - Spark on EMR
-
 - PostgreSQL
-
 - Redis
-
 - Helm
-
 - Kubernetes
-
 - Amazon S3
-
 - Apache Iceberg
-
 - Iceberg REST
-
 - Hive Metastore
-
 - AWS Glue
-
 - Trino
-
 - Spark on EMR
-
 - PostgreSQL
-
 - Redis
-
 - Helm
-
 - Kubernetes
-
 - Amazon S3
 
 What Cryo does
@@ -83,22 +73,34 @@ TABLE BEFORE
 
 chunk 1 · 38 GB
 
-Files
+**Files**
+
 2,140
-Avg size
+
+**Avg size**
+
 18 MB
-Small files
+
+**Small files**
+
 2,140
 
 Scan · metadata only
 
-manifests read
+**manifests read**
+
 212
-data files listed
+
+**data files listed**
+
 2,140
-partition size
+
+**partition size**
+
 38 GB
-data files opened
+
+**data files opened**
+
 0
 
 Plan · 1 chunk
@@ -125,31 +127,37 @@ Receipt · audit log
 
 ✓`optimize` succeeded
 
-engine
+**engine**
+
 trino-b
-duration
+
+**duration**
+
 4m 12s
-files
+
+**files**
+
 2,140 → 152
 
 TABLE AFTER
 receipt
 
-Files
+**Files**
+
 152
-Avg size
+
+**Avg size**
+
 256 MB
-Small files
+
+**Small files**
+
 0
 
 - **01 Scan** Reads metadata. Never opens data files.
-
 - **02 Plan** Fits the partition into a size-budgeted chunk.
-
 - **03 Admit** Waits for a free slot on a Trino coordinator.
-
 - **04 Rewrite** OPTIMIZE on this partition only, never the whole table.
-
 - **05 Receipt** Logs what ran, where, how long, and what changed.
 
 The rewrite stays partition-aware and load-aware. [See the maintenance flow →](https://tech-pw.github.io/cryo/maintenance/)
@@ -296,19 +304,12 @@ One run took the table from $110.72 to $23.53 a month. Each step wrote an audit 
 
 | Operation | Saved per month |
 | --- | --- |
-
 | `convert_deletes` | $8.64 |
-
 | `optimize` | $43.13 |
-
 | `compute_statistics` | better joins |
-
 | `optimize_manifests` | faster planning |
-
 | `expire_snapshots` | $33.12 |
-
 | `remove_orphan_files` | $2.30 |
-
 | Saved | $87.19 |
 
 6 operations · 6 audit rows · 0 skipped
@@ -323,38 +324,39 @@ Guarantees
 
 These are design rules of the platform, not options you switch on.
 
-Read stays apart from write
+**Read stays apart from write**
+
 Sources are where tables live. Destinations are where work runs. They have separate tables, configs and code.
+
 How the split works
 
-The plan contains no SQL
+**The plan contains no SQL**
+
 The planner emits operations and partition predicates. Trino and Spark each render their own dialect.
+
 Engines and renderers
 
-Engine load decides concurrency
+**Engine load decides concurrency**
+
 The governor probes live Trino and Spark load before admitting work. Adding workers does not add parallel rewrites.
+
 How admission works
 
-Every action leaves a receipt
+**Every action leaves a receipt**
+
 Table, operation, engine, status and duration are written to an audit row, whether the run succeeded or not.
+
 Who does what
 
 audit log · live example
 
 - `optimize`analytics.events*succeeded*4m 12s
-
 - `expire_snapshots`analytics.events*succeeded*18s
-
 - `optimize`billing.invoices*deferred · trino busy*—
-
 - `remove_orphan_files`analytics.events*succeeded*51s
-
 - `optimize_manifests`crm.accounts*succeeded*9s
-
 - `optimize`billing.invoices*succeeded*2m 40s
-
 - `compute_statistics`crm.accounts*succeeded*22s
-
 - `expire_snapshots`ops.metrics*failed · retried*3s
 
 ## See it on a demo lake
@@ -385,11 +387,8 @@ Thirty seconds
 The same people who keep the lake write the tool that maintains it.
 
 - 01 [Aamir Siddiqui](https://github.com/aamirpw306) Data Platform
-
 - 02 [Shubham Maurya](https://github.com/ShubhamMaurya9) Data Platform
-
 - 03 [Piyush Kumar](https://github.com/piyush-kumar20) Data Platform
-
 - 04 [Niteesh Kumar Pandey](https://github.com/niteesh-pw) Data Platform
 
 Source: https://tech-pw.github.io/cryo/

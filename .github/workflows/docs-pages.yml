@@ -5,10 +5,12 @@ on:
     branches: [main, gitlab-main]
     paths:
       - "site/**"
+      - "CHANGELOG.md"
       - ".github/workflows/docs-pages.yml"
   pull_request:
     paths:
       - "site/**"
+      - "CHANGELOG.md"
       - ".github/workflows/docs-pages.yml"
   workflow_dispatch:
 
