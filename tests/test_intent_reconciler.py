@@ -202,7 +202,7 @@ class _JobStore:
         return type(
             "Job",
             (),
-            {"id": job_id, "destination_id": "primary-destination"},
+            {"id": job_id, "destination_id": "primary-destination", "run_created_at": None},
         )()
 
     def mark_status(
@@ -220,5 +220,6 @@ class _Queue:
     def __init__(self) -> None:
         self.enqueued: list[tuple[str, str]] = []
 
-    def enqueue(self, job_id: str, destination_id: str) -> None:
+    def enqueue(self, job_id: str, destination_id: str, priority: int = 0) -> None:
+        del priority
         self.enqueued.append((job_id, destination_id))

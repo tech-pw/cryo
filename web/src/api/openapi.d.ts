@@ -7097,6 +7097,8 @@ export interface components {
             physical_bytes_scanned: number;
             /** Physical Gb Scanned */
             physical_gb_scanned: number;
+            /** Estimated Scan Cost Usd */
+            estimated_scan_cost_usd?: number | null;
         };
         /**
          * CostAttributionRead
@@ -7134,6 +7136,8 @@ export interface components {
             physical_bytes_scanned: number;
             /** Physical Gb Scanned */
             physical_gb_scanned: number;
+            /** Estimated Scan Cost Usd */
+            estimated_scan_cost_usd?: number | null;
         };
         /** CostByBucketItem */
         CostByBucketItem: {
@@ -7233,6 +7237,13 @@ export interface components {
              * @default 0
              */
             total_realized_savings_usd: number;
+            /** Query Request Savings Usd Month */
+            query_request_savings_usd_month?: number | null;
+            /**
+             * Query Request Savings Tables
+             * @default 0
+             */
+            query_request_savings_tables: number;
         };
         /** CostForecastRead */
         CostForecastRead: {
@@ -9291,6 +9302,11 @@ export interface components {
             scheduled_at?: string | null;
             /** Operations */
             operations?: string[] | null;
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
         };
         /** MaintenanceRunResponse */
         MaintenanceRunResponse: {
@@ -9303,6 +9319,8 @@ export interface components {
             job_ids: string[];
             /** Status */
             status: string;
+            /** Skipped */
+            skipped?: components["schemas"]["SkippedTableOps"][];
         };
         /** MaintenanceSafetySummary */
         MaintenanceSafetySummary: {
@@ -12257,6 +12275,23 @@ export interface components {
              */
             evaluated_at: string;
         };
+        /**
+         * SkippedTableOps
+         * @description Operations a new run did not queue because an active job already covers them.
+         */
+        SkippedTableOps: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Operations */
+            operations: string[];
+            /** Covering Job Ids */
+            covering_job_ids: string[];
+            /** Fully Skipped */
+            fully_skipped: boolean;
+        };
         /** SlackConfigCreate */
         SlackConfigCreate: {
             /** Name */
@@ -13153,6 +13188,11 @@ export interface components {
              * @default web-table-operation
              */
             trigger: string | null;
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
         };
         /** TableOperationsRead */
         TableOperationsRead: {
@@ -14002,6 +14042,13 @@ export interface components {
              * @default 0
              */
             total_physical_gb_scanned: number;
+            /** Total Estimated Scan Cost Usd */
+            total_estimated_scan_cost_usd?: number | null;
+            /**
+             * Scan Cost Priced Days
+             * @default 0
+             */
+            scan_cost_priced_days: number;
         };
     };
     responses: never;

@@ -75,6 +75,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   not have (`set_snapshot_ref`); it now tags the snapshot with `CREATE OR REPLACE TAG`.
 - A batch lane whose pod was deleted (eviction, drain, spot reclaim) was never noticed and
   stranded its tables until the run deadline.
+- Maintenance runs stayed `queued` forever after all their jobs finished: the run finalizer
+  only looked at `running` runs, and maintenance runs are created `queued`. Finalizing also
+  no longer drops the run's `actor`, requested `operations` and `correlation_id` from its
+  summary.
 
 ## [0.0.0] — Initial public release
 
