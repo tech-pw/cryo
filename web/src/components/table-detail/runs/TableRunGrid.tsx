@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, CheckCircle2, Circle, Loader2, MinusCircle, Play, RefreshCw, XCircle } from "lucide-react";
+import { ArrowUpRight, CheckCircle2, Circle, Loader2, MinusCircle, Play, RefreshCw, SlidersHorizontal, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getTableAudit, getTableRuns, getTableSkipEvaluations } from "../../../api/client";
@@ -65,6 +65,14 @@ const manualTriggerLabel = (trigger?: string | null): string =>
 const skipRange = (column: SkipColumn) =>
   column.count === 1 ? shortDate(column.lastAt) : `${shortDate(column.firstAt)} – ${shortDate(column.lastAt)}`;
 
+const ROUTINE_CHANGE_STATUS = new Set(["recorded", "ok", "succeeded"]);
+const notableStatus = (status: string) => Boolean(status) && !ROUTINE_CHANGE_STATUS.has(status.toLowerCase());
+
+const changeLabel = (column: ChangeColumn) =>
+  column.entries.length === 1
+    ? `${column.label} · ${formatTime(column.startedAt)}`
+    : `${column.entries.length} config changes · ${shortDate(column.entries[0].startedAt)} – ${shortDate(column.startedAt)}`;
+
 const skipLabel = (column: SkipColumn) =>
   `Not selected ${skipRange(column)}, ${skipReasonText(column.reason).title}${column.count > 1 ? `, ${column.count} nights` : ""}`;
 
@@ -105,7 +113,12 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
   const peak = Math.max(1, ...runColumns.map((column) => column.durationMs ?? 0));
   const requestedRun = searchParams.get("run");
   const selected =
-    columns.find((column) => column.key === requestedRun || (column.kind === "run" && column.run.run_id === requestedRun)) ??
+    columns.find(
+      (column) =>
+        column.key === requestedRun ||
+        (column.kind === "run" && column.run.run_id === requestedRun) ||
+        (column.kind === "change" && column.entries.some((entry) => entry.key === requestedRun))
+    ) ??
     [...columns].reverse().find((column) => column.kind === "run") ??
     columns[columns.length - 1] ??
     null;
@@ -120,6 +133,7 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
     active: allColumns.filter((column) => isActiveTone(column.tone)).length
   };
   const shownChanges = columns.filter((column): column is ChangeColumn => column.kind === "change");
+  const changeCount = shownChanges.reduce((sum, column) => sum + column.entries.length, 0);
   const shownSkips = columns.filter((column): column is SkipColumn => column.kind === "skip");
   const skippedWithWork = shownSkips.filter((column) => column.hadWork).reduce((sum, column) => sum + column.count, 0);
 
@@ -141,7 +155,7 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
                 </span>
               </>
             ) : null}
-            {shownChanges.length ? <> · {shownChanges.length} config change{shownChanges.length === 1 ? "" : "s"}</> : null}
+            {changeCount ? <> · {changeCount} config change{changeCount === 1 ? "" : "s"}</> : null}
           </p>
         </div>
         <div className="td-runs-tools">
@@ -169,7 +183,12 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
       ) : (
         <>
           <div className="td-grid-scroll">
-            <div className="td-grid" style={{ gridTemplateColumns: `minmax(112px, max-content) repeat(${columns.length}, 20px)` }}>
+            <div
+              className="td-grid"
+              style={{
+                gridTemplateColumns: `minmax(112px, max-content) ${columns.map((column) => (column.kind === "change" ? "14px" : "20px")).join(" ")}`
+              }}
+            >
               <div className="td-grid-label td-grid-label--bars">Duration</div>
               {columns.map((column) =>
                 column.kind === "change" ? (
@@ -178,11 +197,13 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
                     type="button"
                     className="td-grid-bar td-grid-bar--change"
                     data-selected={selected?.key === column.key || undefined}
-                    aria-label={`${column.label} on ${shortDate(column.startedAt)}`}
-                    title={`${formatTime(column.startedAt)} · ${column.label}`}
+                    aria-label={changeLabel(column)}
+                    title={changeLabel(column)}
                     onClick={() => select(column)}
                   >
-                    <span />
+                    <span className="td-grid-change-badge">
+                      {column.entries.length > 1 ? column.entries.length : <SlidersHorizontal size={9} strokeWidth={2.5} aria-hidden="true" />}
+                    </span>
                   </button>
                 ) : column.kind === "skip" ? (
                   <button
@@ -237,7 +258,9 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
             </li>
             {shownChanges.length ? (
               <li className="td-grid-legend-change">
-                <i aria-hidden="true" />
+                <span className="td-grid-change-badge" aria-hidden="true">
+                  <SlidersHorizontal size={9} strokeWidth={2.5} />
+                </span>
                 Config change
               </li>
             ) : null}
@@ -282,8 +305,8 @@ const GridRow = ({
             type="button"
             className="td-grid-cell td-grid-cell--change"
             data-selected={selectedKey === column.key || undefined}
-            aria-label={`${column.label} on ${shortDate(column.startedAt)}`}
-            title={`${formatTime(column.startedAt)} · ${column.label}`}
+            aria-label={changeLabel(column)}
+            title={changeLabel(column)}
             onClick={() => onSelect(column)}
           />
         );
@@ -374,20 +397,35 @@ const ChangeDetailPanel = ({ column }: { column: ChangeColumn }) => (
   <div className="td-run-detail td-run-detail--change">
     <div className="td-run-summary">
       <p className="td-run-status">
-        <Circle size={14} aria-hidden="true" /> {column.label}
-        {column.status && column.status !== "recorded" ? ` · ${column.status}` : ""}
+        <SlidersHorizontal size={14} aria-hidden="true" />{" "}
+        {column.entries.length === 1 ? column.label : `${column.entries.length} config changes between runs`}
       </p>
-      <dl>
-        <div>
-          <dt>When</dt>
-          <dd>{formatTime(column.startedAt)}</dd>
-        </div>
-        <div>
-          <dt>By</dt>
-          <dd>{column.actor ?? "Not recorded"}</dd>
-        </div>
-      </dl>
-      {column.detail ? <pre className="td-run-statement">{column.detail}</pre> : null}
+      <ol className="td-change-list">
+        {[...column.entries].reverse().map((entry) => (
+          <li key={entry.key}>
+            <dl>
+              <div>
+                <dt>When</dt>
+                <dd>{formatTime(entry.startedAt)}</dd>
+              </div>
+              <div>
+                <dt>By</dt>
+                <dd>{entry.actor ?? "Not recorded"}</dd>
+              </div>
+              {column.entries.length > 1 || notableStatus(entry.status) ? (
+                <div>
+                  <dt>Change</dt>
+                  <dd>
+                    {entry.label}
+                    {notableStatus(entry.status) ? ` · ${entry.status}` : ""}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+            {entry.detail ? <pre className="td-run-statement">{entry.detail}</pre> : null}
+          </li>
+        ))}
+      </ol>
     </div>
   </div>
 );
