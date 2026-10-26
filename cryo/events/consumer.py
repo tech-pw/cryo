@@ -62,6 +62,10 @@ class TableCommitConsumer:
             "delete_files_added": event.delete_files_added,
             "equality_delete_files_added": event.equality_delete_files_added,
             "position_delete_files_added": event.position_delete_files_added,
+            "delete_files_removed": event.delete_files_removed,
+            "equality_delete_files_removed": event.equality_delete_files_removed,
+            "position_delete_files_removed": event.position_delete_files_removed,
+            "snapshots_added": event.snapshots_added,
         }
         return self._stream.publish(self._stream_name, payload)
 
@@ -136,4 +140,8 @@ def _parse_event(payload: dict[str, Any]) -> TableCommitted:
         delete_files_added=int(payload.get("delete_files_added") or 0),
         equality_delete_files_added=int(payload.get("equality_delete_files_added") or 0),
         position_delete_files_added=int(payload.get("position_delete_files_added") or 0),
+        delete_files_removed=int(payload.get("delete_files_removed") or 0),
+        equality_delete_files_removed=int(payload.get("equality_delete_files_removed") or 0),
+        position_delete_files_removed=int(payload.get("position_delete_files_removed") or 0),
+        snapshots_added=int(payload.get("snapshots_added") or 0),
     )

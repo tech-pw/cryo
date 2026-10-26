@@ -18,8 +18,10 @@ def test_metadata_to_data_ratio_helper() -> None:
     assert metadata_to_data_ratio(150, 1000) == 0.15
 
 
-def test_metadata_to_data_ratio_zero_data_bytes_is_zero() -> None:
-    assert metadata_to_data_ratio(1_000_000, 0) == 0.0
+def test_metadata_to_data_ratio_zero_data_bytes_is_worst_case() -> None:
+    # All metadata, no live data: worst case, not perfect (issue #191).
+    assert metadata_to_data_ratio(1_000_000, 0) == 1.0
+    assert metadata_to_data_ratio(0, 0) == 0.0
 
 
 def test_health_score_deducts_warn_metadata_ratio() -> None:

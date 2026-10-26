@@ -113,7 +113,9 @@ def compute_health_score(
             "small_file_pct",
             "Small-file fragmentation",
             thresholds,
-            lambda value, limit: f"{value:.1f}% small files (exceeds threshold of {limit:.0f}%)",
+            lambda value, limit: (
+                f"{value:.1f}% compactable small files (exceeds threshold of {limit:.0f}%)"
+            ),
         )
     score = _deduct(
         score,

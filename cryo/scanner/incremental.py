@@ -24,6 +24,29 @@ class CommitDelta:
     equality_delete_files_added: int = 0
     position_delete_files_added: int = 0
     committed_at: datetime | None = None
+    # Removal counterparts, so a publisher that sends real delete-file deltas can bring
+    # delete_file_pct back down (a rewrite or expire removes delete files too).
+    delete_files_removed: int = 0
+    equality_delete_files_removed: int = 0
+    position_delete_files_removed: int = 0
+    snapshots_added: int = 0
+
+    @property
+    def carries_file_deltas(self) -> bool:
+        return any(
+            (
+                self.files_added,
+                self.files_removed,
+                self.bytes_added,
+                self.bytes_removed,
+                self.delete_files_added,
+                self.delete_files_removed,
+                self.equality_delete_files_added,
+                self.equality_delete_files_removed,
+                self.position_delete_files_added,
+                self.position_delete_files_removed,
+            )
+        )
 
 
 def _safe_int(value: Any) -> int:
@@ -74,6 +97,14 @@ def apply_commit_delta(
 
     Returns ``False`` when this event is stale (``snapshot_id`` already applied) or when
     the table has no scanner baseline yet.
+
+    ``scan_at`` is deliberately left alone: it is when the table was last *measured*. A
+    commit event moves the watermark and ``last_snapshot_committed_at`` but recomputes no
+    grade, score, small-file count or reclaimable bytes, so advancing ``scan_at`` made a hot
+    table look freshly scanned with days-old health and passed every staleness check
+    (``max_stats_age``, ``stale_stats``) indefinitely (issue #188). The commit is recorded in
+    ``raw.commits_since_scan`` instead, and the maintenance-eval enqueue that follows the
+    event is what triggers a re-score.
     """
     stats = session.get(TableStats, delta.table_id)
     if stats is None:
@@ -87,7 +118,6 @@ def apply_commit_delta(
     committed_at = (delta.committed_at or observed_now).astimezone(UTC)
 
     stats.snapshot_watermark = delta.snapshot_id
-    stats.scan_at = observed_now
     stats.last_snapshot_committed_at = committed_at
     stats.total_files = max(
         0, _safe_int(stats.total_files) + delta.files_added - delta.files_removed
@@ -98,16 +128,24 @@ def apply_commit_delta(
     stats.total_size_gb = updated_total_bytes / 1024**3
 
     existing_delete_files = _safe_int(stats.total_delete_files)
-    stats.total_delete_files = max(0, existing_delete_files + delta.delete_files_added)
+    stats.total_delete_files = max(
+        0, existing_delete_files + delta.delete_files_added - delta.delete_files_removed
+    )
 
     stats.equality_delete_files = max(
         0,
-        _safe_int(stats.equality_delete_files) + delta.equality_delete_files_added,
+        _safe_int(stats.equality_delete_files)
+        + delta.equality_delete_files_added
+        - delta.equality_delete_files_removed,
     )
     stats.position_delete_files = max(
         0,
-        _safe_int(stats.position_delete_files) + delta.position_delete_files_added,
+        _safe_int(stats.position_delete_files)
+        + delta.position_delete_files_added
+        - delta.position_delete_files_removed,
     )
+    if delta.snapshots_added > 0:
+        stats.total_snapshots = _safe_int(stats.total_snapshots) + delta.snapshots_added
 
     if stats.total_files > 0:
         stats.delete_file_pct = min(
@@ -153,11 +191,22 @@ def apply_commit_delta(
                 "delete_files_added": delta.delete_files_added,
                 "equality_delete_files_added": delta.equality_delete_files_added,
                 "position_delete_files_added": delta.position_delete_files_added,
+                "delete_files_removed": delta.delete_files_removed,
+                "equality_delete_files_removed": delta.equality_delete_files_removed,
+                "position_delete_files_removed": delta.position_delete_files_removed,
+                "snapshots_added": delta.snapshots_added,
             },
         }
     )
     raw["smart_maintenance"] = smart_payload
     raw["commit_event_history"] = history
     raw["last_snapshot_committed_at"] = committed_at.isoformat()
+    # Health fields (grade, score, small files, reclaimable bytes) are as of scan_at; this
+    # counts commits applied on top of that measurement. A full scan rewrites raw and resets it.
+    raw["commits_since_scan"] = _safe_int(raw.get("commits_since_scan")) + 1
+    if not delta.carries_file_deltas:
+        raw["watermark_only_commits_since_scan"] = (
+            _safe_int(raw.get("watermark_only_commits_since_scan")) + 1
+        )
     stats.raw = raw
     return True
