@@ -106,6 +106,7 @@ describe("runModel", () => {
   it("tells scheduled from manual triggers", () => {
     expect(isManualTrigger("cron")).toBe(false);
     expect(isManualTrigger("scheduler")).toBe(false);
+    expect(isManualTrigger("schedule_backlog")).toBe(false);
     expect(isManualTrigger("web-table-operation")).toBe(true);
     expect(isManualTrigger(null)).toBe(true);
   });

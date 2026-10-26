@@ -239,7 +239,9 @@ here. `.claude/` and `.agents/skills/` are gitignored local state. Do not put a 
 - Governor engine-slot admission is not worker drain capacity. A worker runs one job at a time,
   so the fleet drains at roughly (replicas / job duration); admitting against engine capacity
   alone buries the claim queue under work no worker can reach. Scheduled runs need a table-count
-  cap (`budget_hint` / `max_jobs_per_scheduled_run`), and a waiting-but-healthy backlog must
+  cap (`budget_hint` / `max_jobs_per_scheduled_run`); the remainder is reached by backlog
+  batches (`scheduler_backlog_drain_*`) that fire only once the preset's in-flight jobs fall
+  to the low-water mark, never by raising the cap. A waiting-but-healthy backlog must
   never be treated as a failed dispatch. The backpressure signal is the admitted stream's
   undelivered depth, and worker presence comes from the Redis Streams consumer group.
 - Trino "hot table" ranking should read `QueryLog` first, but a Source with
