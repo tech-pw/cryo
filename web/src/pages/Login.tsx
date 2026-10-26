@@ -9,12 +9,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Segmented } from "../components/ui/segmented";
-import { useGoogleIdentityServices } from "../hooks/useGoogleIdentityServices";
-import { roleOptions, useAuth } from "../lib/auth";
+import { GoogleSignInButton } from "../components/GoogleSignInButton";
+import { roleOptions, SESSION_ENDED_MESSAGE, useAuth } from "../lib/auth";
 import { cn } from "../lib/cn";
 
 const SIGN_IN_RECOVERY_HINT =
-  "Check your username and role, then try again. Contact your administrator if this continues.";
+  "Check your sign-in details, then try again. Contact your administrator if this continues.";
 
 const PANEL =
   "login-panel relative w-full max-w-[400px] overflow-hidden border-white/40 bg-[color-mix(in_srgb,var(--primitive-surface)_72%,transparent)] shadow-[var(--shadow-card)] backdrop-blur-[20px] backdrop-saturate-[180%] motion-reduce:animate-none dark:border-white/10";
@@ -33,16 +33,19 @@ export const Login = () => {
     devTokenEnabled,
     devTokenEnabledInProd,
     passwordLoginEnabled,
-    googleClientId
+    googleClientId,
+    googleHostedDomain,
+    googleAutoProvision
   } = useAuth();
   const [subject, setSubject] = useState("operator");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<RoleToken>("operator");
-  const [googleError, setGoogleError] = useState<string | null>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const errorRef = useRef<HTMLDivElement | null>(null);
   const roleHintId = useId();
-  const { requestIdToken } = useGoogleIdentityServices();
+  const signInWithGoogleToken = (idToken: string) => {
+    void signInWithGoogle(idToken).catch(() => undefined);
+  };
 
   useEffect(() => {
     if (error) {
@@ -62,14 +65,14 @@ export const Login = () => {
             </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-4 px-6 pb-8">
-            {error || googleError ? (
+            {error ? (
               <div ref={errorRef} tabIndex={-1} className="focus-visible:outline-none">
                 <Alert
                   variant="error"
                   title="Sign-in failed"
                   description={
                     <>
-                      <p>{error ?? googleError}</p>
+                      <p>{error}</p>
                       <p className="mt-1">
                         Try again, or contact your administrator if single sign-on keeps failing.
                       </p>
@@ -78,20 +81,7 @@ export const Login = () => {
                 />
               </div>
             ) : null}
-            {googleClientId ? (
-              <Button
-                variant="secondary"
-                className={cn(FIELD, "w-full")}
-                onClick={() => {
-                  setGoogleError(null);
-                  requestIdToken(googleClientId)
-                    .then((idToken) => signInWithGoogle(idToken))
-                    .catch((err: Error) => setGoogleError(err.message));
-                }}
-              >
-                Sign in with Google
-              </Button>
-            ) : null}
+            {googleClientId ? <GoogleSignInButton clientId={googleClientId} onCredential={signInWithGoogleToken} /> : null}
             <Button variant="primary" loading={submitting} className={cn(FIELD, "w-full")} onClick={startOidcSignIn}>
               <Lock aria-hidden="true" />
               Sign in with SSO
@@ -107,11 +97,13 @@ export const Login = () => {
     );
   }
 
+  const formSignInEnabled = devTokenEnabled || passwordLoginEnabled;
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const typedPassword = document.getElementById("login-password");
     const passwordValue = typedPassword instanceof HTMLInputElement ? typedPassword.value : password;
-    if (passwordLoginEnabled && passwordValue.trim()) {
+    if (passwordLoginEnabled && (passwordValue.trim() || !devTokenEnabled)) {
       void signInWithPassword(subject, passwordValue);
       return;
     }
@@ -128,9 +120,26 @@ export const Login = () => {
             <p className="text-sm leading-5 text-muted-foreground">Iceberg maintenance for this datalake.</p>
           </div>
         </CardHeader>
-        <CardContent className="px-6 pb-8">
+        <CardContent className="flex flex-col gap-4 px-6 pb-8">
+          {googleClientId ? (
+            <>
+              <GoogleSignInButton clientId={googleClientId} onCredential={signInWithGoogleToken} />
+              {googleAutoProvision && googleHostedDomain ? (
+                <p className="-mt-2 text-center text-xs leading-4 text-muted-foreground">
+                  New accounts on {googleHostedDomain} start with viewer access.
+                </p>
+              ) : null}
+              {formSignInEnabled ? (
+                <div className="flex items-center gap-3 text-xs text-muted-foreground" role="separator">
+                  <span className="h-px flex-1 bg-border" />
+                  or
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+              ) : null}
+            </>
+          ) : null}
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            {!devTokenEnabled ? (
+            {!formSignInEnabled && !googleClientId ? (
               <Alert
                 variant="warning"
                 title="Dev sign-in is disabled"
@@ -151,7 +160,11 @@ export const Login = () => {
                 }
               />
             ) : null}
-            {error ? (
+            {error === SESSION_ENDED_MESSAGE ? (
+              <div ref={errorRef} tabIndex={-1} className="focus-visible:outline-none">
+                <Alert variant="info" title="Signed out" description={error} />
+              </div>
+            ) : error ? (
               <div ref={errorRef} tabIndex={-1} className="focus-visible:outline-none">
                 <Alert
                   variant="error"
@@ -165,89 +178,94 @@ export const Login = () => {
                 />
               </div>
             ) : null}
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="login-subject">Username</Label>
-              <div className="relative">
-                <User
-                  className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <Input
-                  id="login-subject"
-                  className={cn(FIELD, "pl-9")}
-                  value={subject}
-                  onChange={(event) => setSubject(event.target.value)}
-                  placeholder="your.name"
-                  autoComplete="username"
-                  required
-                />
-              </div>
-            </div>
-            {passwordLoginEnabled ? (
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="login-password">Password</Label>
-                <div className="relative">
-                  <Input
-                    id="login-password"
-                    className={cn(FIELD, "pr-10")}
-                    type={passwordVisible ? "text" : "password"}
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    autoComplete="current-password"
-                    placeholder="Password"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-1 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-[var(--radius-default)] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-[var(--focus-ring-color)]"
-                    aria-label={passwordVisible ? "Hide password" : "Show password"}
-                    aria-pressed={passwordVisible}
-                    onClick={() => setPasswordVisible((visible) => !visible)}
-                  >
-                    {passwordVisible ? <EyeOff className="size-4" aria-hidden="true" /> : <Eye className="size-4" aria-hidden="true" />}
-                  </button>
+            {formSignInEnabled ? (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="login-subject">Username</Label>
+                  <div className="relative">
+                    <User
+                      className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      id="login-subject"
+                      className={cn(FIELD, "pl-9")}
+                      value={subject}
+                      onChange={(event) => setSubject(event.target.value)}
+                      placeholder="your.name"
+                      autoComplete="username"
+                      required
+                    />
+                  </div>
                 </div>
-              </div>
+                {passwordLoginEnabled ? (
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="login-password">Password</Label>
+                    <div className="relative">
+                      <Input
+                        id="login-password"
+                        className={cn(FIELD, "pr-10")}
+                        type={passwordVisible ? "text" : "password"}
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        autoComplete="current-password"
+                        placeholder="Password"
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-1 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-[var(--radius-default)] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-[var(--focus-ring-width)] focus-visible:ring-[var(--focus-ring-color)]"
+                        aria-label={passwordVisible ? "Hide password" : "Show password"}
+                        aria-pressed={passwordVisible}
+                        onClick={() => setPasswordVisible((visible) => !visible)}
+                      >
+                        {passwordVisible ? <EyeOff className="size-4" aria-hidden="true" /> : <Eye className="size-4" aria-hidden="true" />}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {devTokenEnabled ? (
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="login-role">Role</Label>
+                    <Segmented
+                      block
+                      className="h-[var(--control-height-lg)] [&_button]:h-full"
+                      value={role}
+                      options={roleOptions}
+                      onChange={(next) => setRole(next as RoleToken)}
+                    />
+                    <select
+                      id="login-role"
+                      tabIndex={-1}
+                      className="sr-only"
+                      value={role}
+                      aria-describedby={passwordLoginEnabled ? roleHintId : undefined}
+                      onChange={(event) => setRole(event.target.value as RoleToken)}
+                      required
+                    >
+                      {roleOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    {passwordLoginEnabled ? (
+                      <p id={roleHintId} className="text-xs leading-4 text-muted-foreground">
+                        Used only when signing in without a password.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                <Button
+                  type="submit"
+                  variant="primary"
+                  loading={submitting}
+                  className={cn(FIELD, "w-full")}
+                >
+                  <Lock aria-hidden="true" />
+                  {passwordLoginEnabled && (password.trim() || !devTokenEnabled) ? "Sign in with password" : "Sign in"}
+                </Button>
+              </>
             ) : null}
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="login-role">Role</Label>
-              <Segmented
-                block
-                className="h-[var(--control-height-lg)] [&_button]:h-full"
-                value={role}
-                options={roleOptions}
-                onChange={(next) => setRole(next as RoleToken)}
-              />
-              <select
-                id="login-role"
-                tabIndex={-1}
-                className="sr-only"
-                value={role}
-                aria-describedby={passwordLoginEnabled ? roleHintId : undefined}
-                onChange={(event) => setRole(event.target.value as RoleToken)}
-                required
-              >
-                {roleOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              {passwordLoginEnabled ? (
-                <p id={roleHintId} className="text-xs leading-4 text-muted-foreground">
-                  Used only when signing in without a password.
-                </p>
-              ) : null}
-            </div>
-            <Button
-              type="submit"
-              variant="primary"
-              loading={submitting}
-              disabled={!devTokenEnabled}
-              className={cn(FIELD, "w-full")}
-            >
-              <Lock aria-hidden="true" />
-              {passwordLoginEnabled && password.trim() ? "Sign in with password" : "Sign in"}
-            </Button>
             <p className="text-center text-xs leading-4 text-muted-foreground">
               {devTokenEnabledInProd
                 ? "Development sign-in is enabled on this production install. Choose a role and sign in."

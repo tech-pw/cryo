@@ -292,7 +292,7 @@ jobs:
             artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
 
       - name: Upload packaged chart
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: "cryo-chart-${{ github.ref_name }}"
           path: "dist/cryo-*.tgz"

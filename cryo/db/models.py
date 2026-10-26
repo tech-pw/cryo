@@ -211,6 +211,13 @@ class Table(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # #120: set when a complete catalog listing no longer contains the table. The row is a
+    # tombstone (inactive, hidden from /tables by default); a later listing that has the
+    # table again clears it. Nothing is hard-deleted.
+    removed_from_catalog_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), index=True
+    )
+    removed_reason: Mapped[str | None] = mapped_column(Text)
     # Tracks scans that fail to even read the table (e.g. a stale dbt __dbt_tmp pointer whose
     # metadata.json was deleted), as distinct from a table that scans fine but needs maintenance.
     # consecutive_scan_failures resets to 0 on any successful scan -- a single transient blip
@@ -806,6 +813,11 @@ class Preset(TimestampMixin, Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # #119: held (no scheduled runs, no fallthrough) while still configured; distinct from
+    # enabled=False, which retires the preset.
+    paused: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("cryo.tenants.id", ondelete="SET NULL"),
@@ -3003,6 +3015,11 @@ class LocalUser(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
+    # "admin" (added in Settings), "google" (first Google sign-in) or "bootstrap"
+    # (CRYO_GOOGLE_ADMIN_EMAILS). NULL for rows created before this was tracked.
+    created_via: Mapped[str | None] = mapped_column(Text)
+    last_login_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_login_method: Mapped[str | None] = mapped_column(Text)
 
 
 class AuthSettings(Base):

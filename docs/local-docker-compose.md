@@ -31,10 +31,9 @@ the bundled Linux `cryo-engine` binary instead of trying to spawn it from macOS:
 START_CRYO_DOCKER=1 ./start-local.sh start
 ```
 
-The checked-in `cryo-engine/target/release/cryo-engine` artifact is Linux ARM64. Docker Desktop on
-Apple Silicon runs Linux ARM64 containers by default, so that binary is compatible there. For an
-AMD64 Linux node or Kubernetes pod, build or provide a Linux AMD64 `cryo-engine` binary in the image
-or set the native destination `config.binary_path` to a compatible binary.
+The image builds the Go engine (`engine-go`) for the container's platform and links it as
+`cryo-engine`. For a binary outside the image, build it with `make` from `engine-go` for the target
+platform and set the native destination `config.binary_path` to it.
 
 Equivalent Docker-only full stack:
 

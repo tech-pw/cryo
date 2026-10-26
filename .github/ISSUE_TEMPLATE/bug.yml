@@ -42,7 +42,7 @@ body:
       label: Cryo version
       description: >-
         Settings > About > "Copy for a bug report", or the output of
-        `curl -s <cryo-url>/api/v1/version`. Latest tag only is supported until 1.0.
+        Settings > About in the UI, or `curl -s -H "Authorization: Bearer $TOKEN" <cryo-url>/api/v1/version`. Latest tag only is supported until 1.0.
       placeholder: "Cryo api v0.1.6 (abcdef1), schema ...; web v0.1.6 (abcdef1)"
     validations:
       required: true

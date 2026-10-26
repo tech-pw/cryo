@@ -124,6 +124,8 @@ export interface PresetRead {
   enabled: boolean;
   guardrails: JsonObject;
   is_default?: boolean;
+  // #119: held (no scheduled runs, no fallthrough) while still configured; enabled=false retires.
+  paused?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -194,6 +196,8 @@ export interface TableRead {
   location?: string | null;
   first_seen_at: string;
   is_active: boolean;
+  removed_from_catalog_at?: string | null;
+  removed_reason?: string | null;
   consecutive_scan_failures?: number;
   last_scan_error?: string | null;
   last_scan_error_at?: string | null;
@@ -799,6 +803,8 @@ export interface JobRead {
   error?: string | null;
   plan?: JsonObject | null;
   force_admit?: boolean;
+  /** Executed steps from `cryo.job_steps`, when the payload includes them. */
+  steps?: RunStepRead[] | null;
 }
 
 export interface RunStepRead {

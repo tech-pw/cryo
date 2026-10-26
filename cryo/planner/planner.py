@@ -14,6 +14,7 @@ from cryo.planner.partitions import (
     DEFAULT_RENDERABLE_CAPABILITIES,
     PartitionFieldSpec,
     build_predicate,
+    is_open_time_partition,
     partition_fields_from_stats,
 )
 from cryo.planner.ttl import plan_expire_data
@@ -459,15 +460,25 @@ def _candidate_partitions(
     notes: list[str],
     params: Mapping[str, Any] | None = None,
 ) -> list[OptimizeCandidate]:
+    from datetime import UTC, datetime
+
     params = params or {}
     idle_hours = int(params.get("partition_write_idle_hours") or 0)
+    skip_open = params.get("skip_open_time_partition", True) is not False
+    today = datetime.now(UTC).date()
     candidates: list[OptimizeCandidate] = []
     for row in partitions:
+        # Activity first: a partition written recently reports why. The calendar check then
+        # catches a current period that is quiet right now but will take more appends.
         if idle_hours > 0 and not _partition_is_cold(row, idle_hours):
             partition_value = row.get("partition_value", row.get("partition_values", "<unknown>"))
             notes.append(
                 f"Skipped hot partition {partition_value}: writes within last {idle_hours}h."
             )
+            continue
+        if skip_open and is_open_time_partition(fields, row, today):
+            partition_value = row.get("partition_value", row.get("partition_values", "<unknown>"))
+            notes.append(f"Skipped open partition {partition_value}: it is the current period.")
             continue
         small_files = _small_files(row)
         if small_files < min_small_files:
@@ -556,7 +567,9 @@ def resolve_optimize_params(
     appends is not the one rewritten. An explicit value (including 0) wins.
     """
     resolved = dict(params)
-    table_mb = table_target_file_size_mb(stats)
+    table_mb = (
+        None if params.get("use_table_target_size") is False else table_target_file_size_mb(stats)
+    )
     explicit_bytes = params.get("target_file_size_bytes")
     explicit_mb = params.get("file_size_mb")
     if explicit_bytes is None and explicit_mb is None:
@@ -997,6 +1010,14 @@ def _expire_params(
         "retention_days": retention_days,
         "retain_last": int(params.get("retain_last", 1)),
     }
+    retention_hours = _optional_int(params.get("retention_hours"))
+    if retention_hours is not None and retention_hours < retention_days * 24:
+        out["retention_hours"] = retention_hours
+        if notes is not None:
+            notes.append(
+                f"Snapshot window set to {retention_hours}h by retention_hours "
+                f"(tighter than retention_days={retention_days})."
+            )
     if protected_snapshot_ids:
         out["protected_snapshot_ids"] = sorted(set(int(s) for s in protected_snapshot_ids))
     return out

@@ -463,8 +463,15 @@ export const OperationsHome = () => {
               )}
               {row.original.isScanner || row.original.isNightly ? (
                 <Badge variant="secondary">System</Badge>
-              ) : row.original.enabled ? null : (
-                <Badge variant="outline">Paused</Badge>
+              ) : (
+                <>
+                  {row.original.preset?.is_default ? <Badge variant="default">Default</Badge> : null}
+                  {!row.original.enabled ? (
+                    <Badge variant="outline">Disabled</Badge>
+                  ) : row.original.preset?.paused ? (
+                    <Badge variant="outline">Paused</Badge>
+                  ) : null}
+                </>
               )}
             </div>
             <span className="ops-workflow-desc">{row.original.description}</span>

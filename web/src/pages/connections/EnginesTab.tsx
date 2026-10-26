@@ -189,7 +189,7 @@ export const EnginesTab = () => {
     <div className="flex flex-col gap-8">
       <ConnectionSection
         title="Cryo engines"
-        description="Shipped with Cryo and run inside this deployment: the native iceberg-go / iceberg-rust engine and Spark on Kubernetes."
+        description="Shipped with Cryo and run inside this deployment: the native iceberg-go engine and Spark on Kubernetes."
         note={
           role === "viewer"
             ? VIEWER_REASON

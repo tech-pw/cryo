@@ -4,7 +4,7 @@ about: Submit a change to Cryo
 ---
 
 <!-- Thanks for sending a PR. The sections below match the parity-checklist in
-     agents.md §5 — answering them explicitly catches most review back-and-forth. -->
+     AGENTS.md §5 — answering them explicitly catches most review back-and-forth. -->
 
 ## Summary
 
@@ -24,7 +24,7 @@ about: Submit a change to Cryo
 - [ ] Docs / comments only
 - [ ] Tests only
 
-## Parity checklist (per `agents.md` §5)
+## Parity checklist (per `AGENTS.md` §5)
 
 <!-- If you answered yes to any of these, the corresponding behavior must NOT change. -->
 

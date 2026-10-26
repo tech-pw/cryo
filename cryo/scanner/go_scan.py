@@ -284,6 +284,11 @@ def table_analysis_from_go_payload(
         "first_updated_at": last_snapshot_committed_at,
         "manifest_count": manifest_count,
         "avg_file_size_mb": avg_file_size_mb,
+        # The size scales the count-based health limits (file count, partition count,
+        # manifest count) so a large table is not permanently penalised for having the
+        # number of files its own layout requires. Without it the scale is always 1
+        # (issue #288).
+        "total_size_gb": round(total_size_bytes / GB, 6),
         "total_partitions": total_partitions,
         "partition_skew_ratio": skew,
         "avg_files_per_partition": avg_files_per_partition,

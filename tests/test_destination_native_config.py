@@ -11,9 +11,14 @@ from cryo.api.schemas import (
 from cryo.domain.enums import EngineType
 
 
-def test_validate_native_engine_config_accepts_go_and_rust() -> None:
+def test_validate_native_engine_config_accepts_go() -> None:
     validate_native_engine_config(EngineType.NATIVE, {"engine_impl": "go"})
-    validate_native_engine_config(EngineType.NATIVE, {"engine_impl": "rust"})
+
+
+def test_validate_native_engine_config_rejects_rust() -> None:
+    """The Rust cryo-engine was removed. A new destination cannot select it."""
+    with pytest.raises(ValueError, match="engine_impl must be 'go'"):
+        validate_native_engine_config(EngineType.NATIVE, {"engine_impl": "rust"})
 
 
 def test_validate_native_engine_config_rejects_unknown_impl() -> None:
