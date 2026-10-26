@@ -2994,6 +2994,11 @@ class LocalUser(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
+    # "admin" (added in Settings), "google" (first Google sign-in) or "bootstrap"
+    # (CRYO_GOOGLE_ADMIN_EMAILS). NULL for rows created before this was tracked.
+    created_via: Mapped[str | None] = mapped_column(Text)
+    last_login_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_login_method: Mapped[str | None] = mapped_column(Text)
 
 
 class AuthSettings(Base):
