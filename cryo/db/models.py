@@ -872,6 +872,15 @@ class TableAssignment(Base):
 
 class MaintenanceRun(Base):
     __tablename__ = "runs"
+    __table_args__ = (
+        Index("ix_runs_cron_preset", "preset_id", postgresql_where=text("trigger = 'cron'")),
+        Index(
+            "ix_runs_cron_kind_created",
+            "kind",
+            "created_at",
+            postgresql_where=text("trigger = 'cron'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
