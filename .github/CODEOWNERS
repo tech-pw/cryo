@@ -1,2 +1,4 @@
-# Named owners are not assigned yet. See docs/GOVERNANCE.md.
-# Do not invent a GitHub team here.
+# Code owners for tech-pw/cryo. Keep in sync with MAINTAINERS.md.
+# The last matching pattern wins.
+
+*   @aamir306 @aamirpw306

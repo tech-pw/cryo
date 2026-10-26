@@ -71,10 +71,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         environment=settings.environment,
     )
     init_tracing(settings, service_name=f"{settings.otel_service_name}-api")
+    docs_served = settings.api_docs_served()
     app = FastAPI(
         title=settings.app_name,
         version=__version__,
         lifespan=lifespan,
+        # #262: the schema lists every route and model; prod keeps it private by default.
+        docs_url="/docs" if docs_served else None,
+        redoc_url="/redoc" if docs_served else None,
+        openapi_url="/openapi.json" if docs_served else None,
         openapi_tags=[
             {"name": "health", "description": "Service health checks."},
             {"name": "dashboards", "description": "Aggregated datalake health and cost views."},

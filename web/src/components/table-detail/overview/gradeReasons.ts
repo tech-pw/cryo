@@ -5,6 +5,14 @@ export interface HealthDeduction {
   reason: string;
 }
 
+/** Structural table-design issue from cryo/scanner/health.py::compute_design_findings (#264). Never scored. */
+export interface DesignFinding {
+  label: string;
+  severity: string;
+  reason: string;
+  recommendation: string;
+}
+
 export interface TrendPoint {
   at: string;
   value: number | null;
@@ -62,6 +70,53 @@ export function readDeductions(raw: unknown): HealthDeduction[] | null {
     return deduction ? [deduction] : [];
   });
   return parsed.length > 0 ? parsed : null;
+}
+
+export function readDesignFindings(raw: unknown): DesignFinding[] {
+  if (!raw || typeof raw !== "object") return [];
+  const value = (raw as { health_design_findings?: unknown }).health_design_findings;
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    if (typeof row.label !== "string" || !row.label.trim()) return [];
+    return [
+      {
+        label: row.label.trim(),
+        severity: typeof row.severity === "string" ? row.severity : "warning",
+        reason: typeof row.reason === "string" ? row.reason : "",
+        recommendation: typeof row.recommendation === "string" ? row.recommendation : ""
+      }
+    ];
+  });
+}
+
+const SUCCESS_STATUSES = new Set(["ok", "success", "succeeded", "completed"]);
+
+/**
+ * True when the most recent successful maintenance action was followed by a scan whose grade
+ * matches the last scan before it (#264), so the page can say why the grade didn't move.
+ */
+export function gradeUnchangedAfterMaintenance(
+  points: readonly { at: string; grade: string | null }[],
+  audit: readonly { ts?: unknown; created_at?: unknown; status?: unknown }[]
+): boolean {
+  const runAt = audit.reduce<number | null>((latest, row) => {
+    const status = typeof row.status === "string" ? row.status.trim().toLowerCase() : "";
+    if (!SUCCESS_STATUSES.has(status)) return latest;
+    const at = validTimestamp(row.ts) ?? validTimestamp(row.created_at);
+    const ms = at ? Date.parse(at) : Number.NaN;
+    if (!Number.isFinite(ms)) return latest;
+    return latest == null || ms > latest ? ms : latest;
+  }, null);
+  if (runAt == null) return false;
+  const graded = points
+    .filter((point) => typeof point.grade === "string" && point.grade.trim() && Number.isFinite(Date.parse(point.at)))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const before = [...graded].reverse().find((point) => Date.parse(point.at) <= runAt);
+  const after = graded.find((point) => Date.parse(point.at) > runAt);
+  if (!before || !after) return false;
+  return before.grade?.trim().toUpperCase() === after.grade?.trim().toUpperCase();
 }
 
 export function sortDeductions(items: readonly HealthDeduction[]): HealthDeduction[] {

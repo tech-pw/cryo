@@ -17,6 +17,15 @@ All notable changes to Cryo will be documented in this file. The format is based
 - Docs site: the header shows the latest release tag (`version` in `site/_src/site.json`), and
   new Changelog (rendered from this file) and Contributing pages.
 
+### Security
+- Failed password and Google sign-ins are throttled per account (5 in 15 minutes) and per client
+  IP (20), using Redis so the limit holds across replicas. Locked attempts get `429` with
+  `Retry-After`, and the sign-in page says how long to wait. Each failure is audited as
+  `auth.login_failed` (admin-only `GET /api/v1/auth/audit`) and counted in
+  `cryo_auth_login_failures_total`. `/docs`, `/redoc` and `/openapi.json` are off by default in
+  `prod` (`CRYO_API_DOCS_ENABLED`). `CRYO_METRICS_BEARER_TOKEN` protects the scraper `/metrics`.
+  See the operator guide (#262).
+
 ### Changed
 - Docs site homepage: "Compact first, then clean up" is replaced by a scroll-driven story of one
   1 TB table. It decays for 30 days, then goes through each operation in order while a pinned

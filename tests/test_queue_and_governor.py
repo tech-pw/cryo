@@ -7,17 +7,26 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
 from cryo.db.repositories.intents import set_pause_state
 from cryo.domain.enums import EngineType, JobStatus, Mode
 from cryo.domain.intents import IntentStatus
-from cryo.governor.admission import AdmissionConfig
+from cryo.governor.admission import IST, AdmissionConfig
 from cryo.governor.governor import Governor
 from cryo.governor.native_admit import NativeAdmitResult
 from cryo.queue.locks import InMemoryLockStore
 from cryo.queue.redis_queue import InMemoryMaintenanceQueue
 from cryo.worker.worker import DestinationConfig, InMemoryJobStore, MaintenanceJobRecord
+
+
+@pytest.fixture(autouse=True)
+def _ist_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These waves were written against the old hard-coded IST off-peak gate (20:00 UTC is
+    01:30 IST, inside 0-7). Since #183 the gate uses CRYO_DISPLAY_TIMEZONE; pin it to IST."""
+    monkeypatch.setattr("cryo.display_time.display_zone", lambda: IST)
+
 
 _WAVE_NOW = datetime(2026, 6, 29, 20, 0, tzinfo=UTC)
 

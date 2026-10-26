@@ -11,10 +11,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from cryo.api.app import create_app
-from cryo.config import Settings
+from cryo.config import DEFAULT_SECRET_KEY, Settings
 
 
 def _client() -> TestClient:
@@ -22,11 +24,22 @@ def _client() -> TestClient:
     return TestClient(app)
 
 
-def _settings(*, environment: str, allow_dev_token_in_prod: bool = False) -> Settings:
+_REAL_KEY = "k" * 48
+
+
+def _settings(
+    *,
+    environment: str,
+    allow_dev_token_in_prod: bool = False,
+    oidc_issuer_url: str | None = None,
+) -> Settings:
     return Settings(
         _env_file=None,
         environment=environment,
         allow_dev_token_in_prod=allow_dev_token_in_prod,
+        oidc_issuer_url=oidc_issuer_url,
+        secret_key=_REAL_KEY,
+        jwt_secret=_REAL_KEY,
     )
 
 
@@ -95,3 +108,52 @@ def test_auth_config_dev_token_enabled_in_prod_only_when_prod_and_opted_in() -> 
     assert staging_response.status_code == 200
     assert staging_response.json()["dev_token_enabled"] is True
     assert staging_response.json()["dev_token_enabled_in_prod"] is False
+
+
+def test_dev_token_disabled_in_staging() -> None:
+    with patch("cryo.api.auth_routes.get_settings") as mock_settings:
+        mock_settings.return_value = _settings(environment="staging")
+        response = _client().post("/api/v1/auth/token", json={"role": "admin"})
+
+    assert response.status_code == 503
+
+
+def test_dev_token_disabled_once_oidc_is_configured() -> None:
+    with patch("cryo.api.auth_routes.get_settings") as mock_settings:
+        mock_settings.return_value = _settings(
+            environment="dev", oidc_issuer_url="https://idp.example.com"
+        )
+        response = _client().post("/api/v1/auth/token", json={"role": "admin"})
+
+    assert response.status_code == 503
+
+
+@pytest.mark.parametrize("environment", ["staging", "prod"])
+@pytest.mark.parametrize("field", ["secret_key", "jwt_secret"])
+@pytest.mark.parametrize("value", [DEFAULT_SECRET_KEY, "short-key"])
+def test_settings_refuse_default_or_short_keys_outside_dev(
+    environment: str, field: str, value: str
+) -> None:
+    kwargs = {"secret_key": _REAL_KEY, "jwt_secret": _REAL_KEY, field: value}
+    with pytest.raises(ValidationError, match=f"CRYO_{field.upper()}"):
+        Settings(_env_file=None, environment=environment, **kwargs)
+
+
+@pytest.mark.parametrize("environment", ["dev", "test"])
+def test_settings_keep_the_default_key_in_dev_and_test(environment: str) -> None:
+    settings = Settings(
+        _env_file=None,
+        environment=environment,
+        secret_key=DEFAULT_SECRET_KEY,
+        jwt_secret=None,
+    )
+
+    assert settings.secret_key == DEFAULT_SECRET_KEY
+
+
+def test_settings_accept_a_real_key_in_prod() -> None:
+    settings = Settings(
+        _env_file=None, environment="prod", secret_key=_REAL_KEY, jwt_secret=_REAL_KEY
+    )
+
+    assert settings.secret_key == _REAL_KEY
