@@ -474,8 +474,12 @@ def _older_than_expr(params: dict[str, Any]) -> str:
     # parameter binder rejects that expression form for CALL procedure args with
     # "IllegalArgumentException: number of args and params must match after binding"
     # (confirmed live, 2026-07-24). Computing the cutoff here sidesteps it entirely.
-    retention_days = int(params.get("retention_days", 7))
-    computed_cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+    retention_hours = params.get("retention_hours")
+    if retention_hours:
+        window = timedelta(hours=int(retention_hours))
+    else:
+        window = timedelta(days=int(params.get("retention_days", 7)))
+    computed_cutoff = datetime.now(UTC) - window
     return f"TIMESTAMP '{_timestamp_string(computed_cutoff)}'"
 
 

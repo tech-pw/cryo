@@ -1,3 +1,4 @@
+import { useAuth } from "../../lib/auth";
 import { toast } from "sonner";
 
 import { QueryErrorAlert } from "../../components/common";
@@ -10,7 +11,7 @@ const orUnknown = (value: string | null | undefined) => value || "unknown";
 
 /** Settings > About: which API, schema and web build are running (#263). */
 export const About = () => {
-  const version = useApiVersion();
+  const version = useApiVersion(useAuth().token);
   const web = webBuild();
   const api = version.data;
   const summary = buildSummary(web, api);

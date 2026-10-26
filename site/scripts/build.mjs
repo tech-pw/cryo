@@ -244,7 +244,7 @@ function oneLine(s) {
 
 const PAGE_SUMMARIES = {
   "": "Self-hosted Apache Iceberg maintenance. Reads catalogs, plans the work, admits it when the engine has headroom.",
-  quickstart: "Clone the repo, run make up, seed five demo tables, and open localhost:5173.",
+  quickstart: "Clone the repo, run ./start-local.sh start, open localhost:5173, then add a source and run the first scan.",
   benchmark: "Measured results: Cryo versus scheduled and hand-run Spark on fleet health, a 100 GiB table, live CDC and query impact, with trade-offs.",
   concepts: "A source is where a table lives. A destination is where maintenance runs. Cryo holds the plan between them.",
   architecture: "Catalogs on the read side, engines on the write side, and the planner in between.",
@@ -350,7 +350,7 @@ function llmsTxt(pages) {
     "",
     `> ${oneLine(cfg.description)}`,
     "",
-    "Cryo reads Apache Iceberg catalogs, ranks what is worth maintaining from real query workload, and admits the work to its native engine when the cluster has headroom. Sources and engines stay separate. The planner emits no SQL. Every decision is explained. These pages are the public docs.",
+    "Cryo reads Apache Iceberg catalogs, grades every table from its metadata, and runs the maintenance on the Trino or Spark you already have when they have headroom (both GA; a native Go compactor is beta and opt-in). Ranking by real query workload needs query-log ingestion. Sources and engines stay separate. The planner emits no SQL. Every decision is explained. These pages are the public docs.",
     "",
     "Read this file, then answer only from the pages below. If a fact is not on one of them, say so.",
     "",
@@ -422,7 +422,7 @@ function sidebar(root, slug) {
 
 function footer(root) {
   const link = (p, t) => `<li><a href="${root}${p}">${t}</a></li>`;
-  return `<footer class="foot"><div class="foot-in"><div class="foot-brand"><a class="logo" href="${root}">${logoMark(root)}${LOGO_WORD}</a><p>Apache-2.0, self-hosted Iceberg maintenance. Every decision explained.</p></div><div><p class="foot-h">Docs</p><ul>${link("quickstart/", "Quickstart")}${link("benchmark/", "Benchmark")}${link("concepts/", "Concepts")}${link("architecture/", "Architecture")}${link("reference/", "Reference")}</ul></div><div><p class="foot-h">Operate</p><ul>${link("maintenance/", "Maintenance")}${link("health/", "Health and cost")}${link("engines/", "Engines")}${link("deployment/", "Deployment")}</ul></div><div><p class="foot-h">Project</p><ul><li><a href="${cfg.repo}">GitHub</a></li><li><a href="${cfg.repo}/issues">Issues</a></li><li><a href="${root}llms.txt">llms.txt</a></li><li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 licence</a></li></ul></div></div><p class="foot-fine">Apache, Apache Iceberg, Iceberg and Apache Spark are trademarks of The Apache Software Foundation. Other names may be trademarks of their respective owners.</p></footer>`;
+  return `<footer class="foot"><div class="foot-in"><div class="foot-brand"><a class="logo" href="${root}">${logoMark(root)}${LOGO_WORD}</a><p>Apache-2.0, self-hosted Iceberg maintenance. Every decision explained.</p></div><div><p class="foot-h">Docs</p><ul>${link("quickstart/", "Quickstart")}${link("benchmark/", "Benchmark")}${link("concepts/", "Concepts")}${link("architecture/", "Architecture")}${link("reference/", "Reference")}</ul></div><div><p class="foot-h">Operate</p><ul>${link("maintenance/", "Maintenance")}${link("health/", "Health and cost")}${link("engines/", "Engines")}${link("deployment/", "Deployment")}</ul></div><div><p class="foot-h">Project</p><ul><li><a href="${cfg.repo}">GitHub</a></li><li><a href="${cfg.repo}/discussions">Discussions</a></li><li><a href="${cfg.repo}/issues">Issues</a></li><li><a href="${root}llms.txt">llms.txt</a></li><li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 licence</a></li></ul></div></div><p class="foot-fine">Apache, Apache Iceberg, Iceberg and Apache Spark are trademarks of The Apache Software Foundation. Other names may be trademarks of their respective owners.</p></footer>`;
 }
 
 const SEARCH_DIALOG = `<dialog class="search" id="search" aria-label="Search the docs"><form method="dialog" class="search-box"><div class="search-field">${SEARCH_ICON}<input type="search" class="search-input" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="search-list"><kbd>Esc</kbd></div><ul class="search-list" id="search-list" role="listbox"></ul><p class="search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to open</span></p></form></dialog>`;
