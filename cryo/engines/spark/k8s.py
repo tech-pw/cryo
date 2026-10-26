@@ -35,9 +35,12 @@ from cryo.engines.k8s_cost_labels import cost_attribution_labels
 from cryo.engines.k8s_security import container_security_context, pod_security_context
 from cryo.engines.native.job_state import current_k8s_namespace
 from cryo.engines.spark.sizing import (
+    DRIVER_MEMORY_OVERHEAD_MIB,
     ExecutorProfile,
     cap_deadline_seconds_for_table,
     cap_dispatch_profile,
+    driver_max_result_size_mib,
+    lightweight_driver_heap_mib,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,9 +154,12 @@ class SparkK8sConfig:
             image_pull_policy=str(_get("image_pull_policy") or "IfNotPresent"),
             image_pull_secrets=pull_secrets,
             service_account=str(_get("service_account") or "default"),
-            catalog_uri=_get("catalog_uri"),
-            catalog_warehouse=_get("catalog_warehouse"),
-            catalog_impl=str(_get("catalog_impl") or "rest"),
+            # A destination row stores these at the top level of config. The nested
+            # spark_k8s block and the env var still win, but a value that exists only at
+            # the top level must not be dropped (issue #149, 2026-10-21).
+            catalog_uri=_get("catalog_uri") or config.get("catalog_uri"),
+            catalog_warehouse=_get("catalog_warehouse") or config.get("catalog_warehouse"),
+            catalog_impl=str(_get("catalog_impl") or config.get("catalog_impl") or "rest"),
             s3_endpoint=_get("s3_endpoint"),
             s3_access_key=_get("s3_access_key"),
             s3_secret_key=_get("s3_secret_key"),
@@ -223,6 +229,8 @@ class SparkK8sClient:
         destination_id: str | None = None,
         operation: str | None = None,
         total_size_gb: float | None = None,
+        total_files: int | None = None,
+        oom_steps: int = 0,
     ) -> str:
         cfg = self._config
         runner_args = [
@@ -244,8 +252,13 @@ class SparkK8sClient:
             job_name=job_name,
             destination_id=destination_id,
             operation=operation,
-            extra_confs=catalog_io_confs(catalog, cfg.catalog_warehouse),
+            extra_confs=_merge_confs(
+                catalog_io_confs(catalog, cfg.catalog_warehouse),
+                driver_pressure_confs(operation, total_files=total_files, oom_steps=oom_steps),
+            ),
             total_size_gb=total_size_gb,
+            total_files=total_files,
+            oom_steps=oom_steps,
         )
 
     def submit_repair_missing_files(
@@ -298,8 +311,16 @@ class SparkK8sClient:
         operation: str | None = None,
         extra_confs: Mapping[str, str] | None = None,
         total_size_gb: float | None = None,
+        total_files: int | None = None,
+        oom_steps: int = 0,
     ) -> str:
-        cfg = _capped_submit_config(self._config, operation=operation, total_size_gb=total_size_gb)
+        cfg = _capped_submit_config(
+            self._config,
+            operation=operation,
+            total_size_gb=total_size_gb,
+            total_files=total_files,
+            oom_steps=oom_steps,
+        )
         k8s_job_name = f"cryo-spark-{uuid.uuid4().hex[:10]}"
         driver_pod_name = f"{k8s_job_name}-driver"
 
@@ -345,14 +366,17 @@ class SparkK8sClient:
             f"spark.kubernetes.executor.request.cores={cfg.executor_cpu_milli / 1000.0:.3f}",
             "--conf",
             f"spark.kubernetes.executor.limit.cores={cfg.executor_cpu_milli / 1000.0:.3f}",
+            # Spark 4.1.2 BasicDriverFeatureStep / BasicExecutorFeatureStep set the
+            # container request and limit to heap + memoryOverhead. Neither reads
+            # spark.kubernetes.*.limit.memory or *.request.memory. The previous driver
+            # limit conf, set equal to the heap, was unused by Spark and did not reserve
+            # the 384MiB overhead. cryo-spark-069a3d881f-driver was OOMKilled (exit 137,
+            # 2026-10-19) with no JVM OutOfMemoryError. Pin the overhead Spark does add.
+            # Do not set the undocumented memory request/limit confs.
             "--conf",
-            f"spark.kubernetes.driver.request.memory={cfg.driver_mem_mib}m",
+            f"spark.driver.memoryOverhead={DRIVER_MEMORY_OVERHEAD_MIB}m",
             "--conf",
-            f"spark.kubernetes.driver.limit.memory={cfg.driver_mem_mib}m",
-            "--conf",
-            f"spark.kubernetes.executor.request.memory={cfg.executor_mem_mib}m",
-            "--conf",
-            f"spark.kubernetes.executor.limit.memory={cfg.executor_mem_mib}m",
+            f"spark.executor.memoryOverhead={DRIVER_MEMORY_OVERHEAD_MIB}m",
             # Wrapper Job already has do-not-disrupt; driver/executor pods are created by
             # spark-submit and need the same annotation or Karpenter consolidation can
             # SIGTERM them mid-rewrite (example-cluster 2026-08-12: run 3af23a9f,
@@ -557,6 +581,13 @@ class SparkK8sClient:
             )
         if phase == "Failed":
             detail = _read_pod_log_tail(driver_pod_name, self._config.namespace)
+            # A cgroup SIGKILL leaves INFO in the driver log and the reason on the
+            # container status. truncate_error_message keeps the head, so the reason
+            # has to be in front or the UI shows broadcast lines and the retry cannot
+            # tell an OOM from a SQL error.
+            reason = _container_termination_reason(pod)
+            if reason:
+                detail = f"{reason}\n{detail}" if detail else reason
             return JobRunResult(job_run_id=job_id, state=JobRunState.FAILED, state_details=detail)
         return JobRunResult(job_run_id=job_id, state=JobRunState.RUNNING)
 
@@ -592,6 +623,11 @@ class SparkK8sClient:
             detail = _read_pod_log_tail(
                 job_id, self._config.namespace, label_selector=f"job-name={job_id}"
             )
+            # Driver already gone: the wrapper watcher is the only place Spark prints
+            # "termination reason: OOMKilled". Front-load the exact prefix the retry
+            # matches. A log that already starts with the word OOMKilled but not
+            # "OOMKilled exit " would otherwise miss the step-up.
+            detail = _prefix_oomkilled(detail)
             return JobRunResult(job_run_id=job_id, state=JobRunState.FAILED, state_details=detail)
         if status.succeeded and status.succeeded >= 1:
             # Wrapper finished but we never saw a driver pod -- don't trust that as success.
@@ -703,6 +739,41 @@ class SparkK8sClient:
         self.cleanup_credentials_secret(job_id)
 
 
+def driver_pressure_confs(
+    operation: str | None,
+    *,
+    total_files: int | None,
+    oom_steps: int = 0,
+) -> dict[str, str]:
+    """Confs for expire/orphan only. Other ops must not inherit the broadcast disable.
+
+    Iceberg 1.11 ExpireSnapshotsSparkAction.expireFiles anti-joins every retained file
+    against the delete candidates. Users who got past the driver kill needed
+    ``spark.sql.autoBroadcastJoinThreshold=-1`` (ICEBERG-3703, ICEBERG-13737). That does
+    not shrink the anti-join. ``snapshot_ids`` would not either: the valid-file side is
+    built with a null id set. Scan stats have a file count, not snapshot ids, and the
+    planner must not read the catalog to get them.
+
+    Above 200k files one CALL still builds that full anti-join. The heap ceiling is the
+    stop, not a second CALL. Scan stats have no snapshot ids to split on, and splitting
+    would not shrink the retained-file side anyway.
+    """
+    if operation not in {"expire_snapshots", "remove_orphan_files"}:
+        return {}
+    heap = lightweight_driver_heap_mib(total_files=total_files, oom_steps=oom_steps)
+    return {
+        "spark.sql.autoBroadcastJoinThreshold": "-1",
+        "spark.driver.maxResultSize": f"{driver_max_result_size_mib(heap)}m",
+    }
+
+
+def _merge_confs(*parts: Mapping[str, str]) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    for part in parts:
+        merged.update(part)
+    return merged
+
+
 def catalog_io_confs(catalog: str, warehouse: str | None) -> dict[str, str]:
     """Spark confs that tune the catalog's S3FileIO; empty unless the warehouse is on S3.
 
@@ -720,7 +791,12 @@ def catalog_io_confs(catalog: str, warehouse: str | None) -> dict[str, str]:
 
 
 def _capped_submit_config(
-    cfg: SparkK8sConfig, *, operation: str | None, total_size_gb: float | None = None
+    cfg: SparkK8sConfig,
+    *,
+    operation: str | None,
+    total_size_gb: float | None = None,
+    total_files: int | None = None,
+    oom_steps: int = 0,
 ) -> SparkK8sConfig:
     profile = cap_dispatch_profile(
         ExecutorProfile(
@@ -732,6 +808,8 @@ def _capped_submit_config(
         ),
         operation=operation,
         total_size_gb=total_size_gb,
+        total_files=total_files,
+        oom_steps=oom_steps,
     )
     return replace(
         cfg,
@@ -987,3 +1065,41 @@ def _read_pod_log_tail(
     except Exception:  # noqa: BLE001 - best-effort diagnostics only
         pass
     return None
+
+
+def _container_termination_reason(pod: Any) -> str | None:
+    """Kernel reason from containerStatuses, not from the log.
+
+    OOMKilled is a cgroup event. The JVM does not print it. Spark's watcher prints
+    ``termination reason: OOMKilled`` on the wrapper, which we do not read while the
+    driver pod still exists. Read the status the kubelet already recorded.
+
+    Exit 137 alone is not enough. Eviction and preemption also SIGKILL. Only a
+    recorded reason of OOMKilled may grow the next driver.
+    """
+    statuses = getattr(getattr(pod, "status", None), "container_statuses", None) or []
+    for status in statuses:
+        terminated = getattr(getattr(status, "state", None), "terminated", None)
+        if terminated is None:
+            continue
+        reason = getattr(terminated, "reason", None)
+        if reason != "OOMKilled":
+            continue
+        exit_code = getattr(terminated, "exit_code", None)
+        code = exit_code if exit_code is not None else 137
+        return f"OOMKilled exit {code}"
+    return None
+
+
+def _prefix_oomkilled(detail: str | None) -> str | None:
+    """Put ``OOMKilled exit 137`` at the front when the wrapper log is the only signal.
+
+    Matching the bare word anywhere would step up a SQL error that mentioned the
+    watcher line. A log that already starts with the word but not the exit prefix
+    still needs the prefix, or the retry predicate misses it.
+    """
+    if not detail or "OOMKilled" not in detail:
+        return detail
+    if detail.startswith("OOMKilled exit "):
+        return detail
+    return f"OOMKilled exit 137\n{detail}"

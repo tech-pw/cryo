@@ -101,3 +101,16 @@ def test_reconcile_leaves_unrelated_locks_alone() -> None:
 
     assert lock_store.is_table_locked("running-table")
     assert not lock_store.is_table_locked("orphaned-table")
+
+
+def test_reconcile_preserves_lock_for_admitted_job() -> None:
+    """The governor takes the lock at admission, while the job still waits for a worker."""
+    lock_store = InMemoryLockStore()
+    lock_store.acquire_table_lock("t1", "job-a", 3600)
+    job_store = InMemoryJobStore()
+    job_store.add_job(_job("job-a", JobStatus.ADMITTED))
+    wiring = SimpleNamespace(lock_store=lock_store, job_store=job_store)
+
+    GovernorRunner()._reconcile_orphaned_table_locks(wiring)
+
+    assert lock_store.is_table_locked("t1")

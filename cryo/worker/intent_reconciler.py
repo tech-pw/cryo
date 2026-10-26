@@ -20,6 +20,7 @@ from cryo.observability.metrics import (
 )
 from cryo.observability.tracing import trace_operation
 from cryo.queue.redis_queue import MaintenanceQueue
+from cryo.scheduler.scheduler import fifo_priority
 from cryo.worker.orphan_recovery import probe_engine_op_state
 from cryo.worker.worker import JobStore
 
@@ -169,7 +170,9 @@ class IntentReconciler:
                 continue
             job = self._jobs.get_job(effect.job_id)
             self._jobs.mark_status(effect.job_id, JobStatus.QUEUED, error=None)
-            self._queue.enqueue(effect.job_id, job.destination_id)
+            self._queue.enqueue(
+                effect.job_id, job.destination_id, fifo_priority(job.run_created_at)
+            )
             resumed += 1
         result = IntentReconciliationResult(
             examined=len(effects),

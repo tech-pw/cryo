@@ -1,0 +1,29 @@
+<svg class="bm-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 348" role="img" aria-label="Bar chart of query speedups on the 100 GiB table after Cryo's default compaction: whole-table aggregate 3.6× faster, small-file day 4.3×, customer filter 3.4×, mid-size day 2×, full read 1.75×, large-file day unchanged, 7-day join 1.1× slower, single-row lookup 1.8× slower.">
+<line class="bm-base" x1="314.0" x2="314.0" y1="34" y2="326"/>
+<text x="314.0" y="26.0" class="bm-tick" text-anchor="middle">no change</text>
+<text x="218.0" y="59.0" class="bm-rowh" text-anchor="end">One day, small-file band</text>
+<rect class="bm-cryo-fill" x="314.0" y="46" width="280.3" height="20" rx="4"/>
+<text x="602.3" y="61.0" class="bm-val" text-anchor="start">4.34× faster</text>
+<text x="218.0" y="95.0" class="bm-rowh" text-anchor="end">Aggregate, whole table</text>
+<rect class="bm-cryo-fill" x="314.0" y="82" width="221.1" height="20" rx="4"/>
+<text x="543.1" y="97.0" class="bm-val" text-anchor="start">3.63× faster</text>
+<text x="218.0" y="131.0" class="bm-rowh" text-anchor="end">Customer filter, whole table</text>
+<rect class="bm-cryo-fill" x="314.0" y="118" width="204.8" height="20" rx="4"/>
+<text x="526.8" y="133.0" class="bm-val" text-anchor="start">3.44× faster</text>
+<text x="218.0" y="167.0" class="bm-rowh" text-anchor="end">One day, mid-size band</text>
+<rect class="bm-cryo-fill" x="314.0" y="154" width="80.3" height="20" rx="4"/>
+<text x="402.3" y="169.0" class="bm-val" text-anchor="start">1.96× faster</text>
+<text x="218.0" y="203.0" class="bm-rowh" text-anchor="end">Read every row</text>
+<rect class="bm-cryo-fill" x="314.0" y="190" width="62.7" height="20" rx="4"/>
+<text x="384.7" y="205.0" class="bm-val" text-anchor="start">1.75× faster</text>
+<text x="218.0" y="239.0" class="bm-rowh" text-anchor="end">One day, already-large files</text>
+<rect class="bm-neutral-fill" x="314.0" y="226" width="2.0" height="20" rx="4"/>
+<text x="322.2" y="241.0" class="bm-val" text-anchor="start">unchanged</text>
+<text x="218.0" y="275.0" class="bm-rowh" text-anchor="end">7-day join</text>
+<rect class="bm-slow-fill" x="305.2" y="262" width="8.8" height="20" rx="4"/>
+<text x="322.0" y="277.0" class="bm-val" text-anchor="start">1.1× slower</text>
+<text x="218.0" y="311.0" class="bm-rowh" text-anchor="end">Single-row lookup</text>
+<rect class="bm-slow-fill" x="275.8" y="298" width="38.2" height="20" rx="4"/>
+<text x="322.0" y="313.0" class="bm-val" text-anchor="start">1.8× slower</text>
+<text x="230.0" y="344.0" class="bm-foot" text-anchor="start">Median latency, untouched vs Cryo default (256 MB target), geometric mean of 3 trials.</text>
+</svg>

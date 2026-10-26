@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Iterator
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -807,6 +808,13 @@ def test_maintenance_run_accepts_filter_selection(monkeypatch: Any) -> None:
             # so every selected table is unexcluded; this test asserts job_ids == [job_id]
             # with no exclusions involved.
             return []
+
+        def execute(self, _statement: object) -> Any:
+            # active_coverage() -- no active jobs exist, so nothing is deduped.
+            return SimpleNamespace(all=lambda: [])
+
+        def begin_nested(self) -> Any:
+            return nullcontext()
 
         def add(self, model: object) -> None:
             if isinstance(model, MaintenanceJob):
