@@ -1,0 +1,105 @@
+---
+title: Security and authentication
+lede: Cryo runs destructive maintenance against production data and stores catalog, cloud and database credentials. This page covers who can reach it, how a request is authenticated, and what to turn on before you expose it.
+description: Authentication, roles, the dev token, secret encryption, network expectations and how to report a vulnerability in Cryo.
+updated: 2026-10-26
+---
+<h2 id="roles">Roles</h2>
+<p>Cryo has three roles. A request carries a token; the token maps to a role; the role decides what the request may do.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Role</th><th>Can do</th><th>Cannot do</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Viewer</strong></td><td>Read tables, runs, jobs, health and cost. See the fleet dashboard.</td><td>Change anything.</td></tr>
+    <tr><td><strong>Operator</strong></td><td>Everything a viewer can, plus assign presets, start maintenance runs, and approve queued work.</td><td>Change credentials, users, or global settings.</td></tr>
+    <tr><td><strong>Admin</strong></td><td>Everything an operator can, plus manage connections, destinations, users and roles.</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+<callout type="note" title="Least privilege by default">
+  <p>Run the day-to-day operator with an operator token. Keep the admin token for connection changes and onboarding.</p>
+</callout>
+
+<h2 id="authentication">How a request is authenticated</h2>
+<p>The API accepts three kinds of credential. Which ones are live depends on how the install is configured.</p>
+<steps>
+  <step title="OIDC (production)">
+    <p>Set <code>CRYO_OIDC_ISSUER_URL</code>, <code>CRYO_OIDC_CLIENT_ID</code> and <code>CRYO_OIDC_CLIENT_SECRET</code>. The UI redirects to your identity provider, and the API verifies the resulting token against the issuer's JWKS. Role mapping comes from the user's record in Cryo's own database — the provider authenticates, Cryo authorizes.</p>
+  </step>
+  <step title="Local sign-in">
+    <p>Password sign-in is enabled per install from <strong>Settings → Access</strong>, not from an environment variable. Cryo then manages its own users, with passwords hashed and stored in its own <code>cryo.users</code> table. This is fine for a single-tenant install and a step down from OIDC.</p>
+  </step>
+  <step title="Google sign-in">
+    <p>Google sign-in is also configured from <strong>Settings → Access</strong>. When it is enabled and no Cryo user exists yet, a Google identity listed in <code>CRYO_GOOGLE_ADMIN_EMAILS</code> becomes the first admin on first sign-in. That is how a fresh install bootstraps its first admin without a dev token.</p>
+  </step>
+</steps>
+
+<h2 id="dev-token">The dev token</h2>
+<callout type="warn" title="The dev token is not authentication">
+  <p><code>POST /api/v1/auth/token</code> returns a token for a role you name in the request body. There is no password, no identity check and no record of who asked. Anyone who can reach that endpoint can become an admin.</p>
+</callout>
+<p>Cryo enables the dev token in <code>dev</code> and <code>test</code> so the UI and the end-to-end tests work without an identity provider. It is <strong>off</strong> in <code>staging</code> and <code>prod</code> unless you set <code>CRYO_ALLOW_DEV_TOKEN_IN_PROD=true</code>.</p>
+<p>If you set that flag, you have chosen to run an install where anyone who can reach the API can grant themselves any role. Turn it off as soon as OIDC, local sign-in or Google sign-in works, and check it after every upgrade — the flag is opt-in, so it stays on until something turns it off.</p>
+<codeblock lang="bash" title="terminal">
+$ kubectl -n cryo get deploy cryo-api -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CRYO_ALLOW_DEV_TOKEN_IN_PROD")].value}'
+</codeblock>
+
+<h2 id="secrets">Secrets at rest</h2>
+<p>Connection secrets — S3 credentials, database URLs, catalog passwords — are stored in PostgreSQL. They are encrypted with Fernet before they are written, using <code>CRYO_SECRET_KEY</code>.</p>
+<callout type="warn" title="CRYO_SECRET_KEY is the master key">
+  <p>Every stored secret is unreadable without it. The default value is <code>dev-only-change-me</code> and Cryo refuses to start in <code>staging</code> or <code>prod</code> with that value or with anything shorter than 32 characters. Set your own before the first real connection, and keep it in a secret store: anyone with the key and database access can decrypt every stored credential.</p>
+</callout>
+<p>The same key signs the API's own HS256 tokens, so a leaked key means both leaked secrets and forgeable sessions. <code>CRYO_JWT_SECRET</code> overrides it for token signing alone, which separates the two risks if you need them apart.</p>
+<p>Changing the key makes every stored secret unreadable. To roll it, re-encrypt with the old key still available, then remove the old one.</p>
+
+<h2 id="network">Network and egress</h2>
+<p>Cryo is an outbound client. It reaches the catalogs it reads and the engines it runs work on, and it does not accept inbound connections from them.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>From</th><th>To</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>Cryo pods</td><td>PostgreSQL</td><td>State, audit and job records.</td></tr>
+    <tr><td>Cryo pods</td><td>Redis</td><td>Queue, leases and live counters.</td></tr>
+    <tr><td>Cryo pods</td><td>Catalogs (HMS, Glue, REST, Polaris, Nessie)</td><td>Reading table lists and metadata.</td></tr>
+    <tr><td>Cryo pods</td><td>Trino, Spark, EMR</td><td>Running maintenance.</td></tr>
+    <tr><td>Cryo pods</td><td>Object storage (S3)</td><td>Reading and writing Iceberg data files.</td></tr>
+    <tr><td>Browser</td><td>Cryo API and web</td><td>The only inbound path.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Kubernetes NetworkPolicies in the chart restrict pod-to-pod traffic. The default policy allows the ingress the API and web need and denies the rest, but it does not restrict egress — an engine or a catalog on a private network has to be reachable from the pod network.</p>
+<callout type="note" title="Running on EKS">
+  <p>Give the pods an IRSA role rather than node instance credentials. Set <code>serviceAccount.annotations["eks.amazonaws.com/role-arn"]</code> in the chart's values, and configure the S3 connection with no static keys. Without it, scans fail with <code>AccessDenied</code> well after onboarding reported success.</p>
+</callout>
+
+<h2 id="hardening">Checklist before exposing an install</h2>
+<steps>
+  <step title="Turn the dev token off">
+    <p>Set <code>CRYO_ALLOW_DEV_TOKEN_IN_PROD=false</code>, or leave it unset in <code>prod</code>. Confirm with the command above.</p>
+  </step>
+  <step title="Set a real secret key">
+    <p>Generate at least 32 characters, keep it in a secret store, and never commit it. Cryo refuses to start in staging and prod with the published default, but a copied one is not rejected.</p>
+  </step>
+  <step title="Configure OIDC, local sign-in or Google sign-in">
+    <p>Otherwise the only way in is the dev token.</p>
+  </step>
+  <step title="Require a token on the API">
+    <p>Endpoints that expose operational state require a viewer token, and the API's OpenAPI documentation is private in <code>prod</code>.</p>
+  </step>
+  <step title="Keep the ingress behind TLS">
+    <p>The chart's Ingress and TLS are opt-in. Terminate TLS at the ingress and register the redirect URI your provider expects in <code>CRYO_OIDC_REDIRECT_URI</code>.</p>
+  </step>
+  <step title="Check what the scanner reads">
+    <p>The scanner reads catalog metadata. It does not open data files, but it does read the object listing. Narrow the catalog permissions to the namespaces Cryo should see.</p>
+  </step>
+</steps>
+
+<h2 id="reporting">Reporting a vulnerability</h2>
+<p>Do not open a public issue. Open a <a href="https://github.com/tech-pw/cryo/security/advisories/new">GitHub Security Advisory</a> instead — it is visible only to the maintainers until a fix is published. See <a href="https://github.com/tech-pw/cryo/blob/main/SECURITY.md">SECURITY.md</a> for what to include and the response targets.</p>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/deployment/" title="Deployment">Install the chart and the resources it needs.</linkcard>
+  <linkcard href="@/configuration/" title="Configuration reference">Every environment variable and Helm value.</linkcard>
+  <linkcard href="@/troubleshooting/" title="Troubleshooting">Symptoms, causes and fixes.</linkcard>
+</linkcards>

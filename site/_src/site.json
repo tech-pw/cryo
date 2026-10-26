@@ -69,6 +69,14 @@
         {
           "slug": "deployment",
           "label": "Deployment"
+        },
+        {
+          "slug": "configuration",
+          "label": "Configuration"
+        },
+        {
+          "slug": "security",
+          "label": "Security"
         }
       ]
     },
@@ -79,6 +87,10 @@
         {
           "slug": "reference",
           "label": "Reference"
+        },
+        {
+          "slug": "troubleshooting",
+          "label": "Troubleshooting"
         }
       ]
     }

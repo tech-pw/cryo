@@ -143,6 +143,9 @@ jobs:
       - name: Verify capability contract documentation
         run: python -m cryo.capabilities.generate_docs --check
 
+      - name: Verify configuration reference documentation
+        run: python -m cryo.capabilities.generate_config_reference --check
+
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
