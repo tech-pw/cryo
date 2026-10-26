@@ -14,6 +14,8 @@ All notable changes to Cryo will be documented in this file. The format is based
 - `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
 - `.github/ISSUE_TEMPLATE/` (bug, feature) and `.github/PULL_REQUEST_TEMPLATE.md`.
 - Initial `CHANGELOG.md`.
+- Docs site: the header shows the latest release tag (`version` in `site/_src/site.json`), and
+  new Changelog (rendered from this file) and Contributing pages.
 
 ### Security
 - Failed password and Google sign-ins are throttled per account (5 in 15 minutes) and per client
