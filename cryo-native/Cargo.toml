@@ -15,7 +15,7 @@ harness = false
 
 [dependencies]
 # Apache Arrow and DataFusion for columnar processing
-arrow = { version = "59", features = ["prettyprint"] }
+arrow = { version = "60", features = ["prettyprint"] }
 datafusion = "55"
 parquet = { version = "59", features = ["arrow", "async"] }
 

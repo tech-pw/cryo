@@ -37,7 +37,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-query": "^5.0.0",
     "@tanstack/react-table": "^8.21.3",
-    "@tanstack/react-virtual": "^3.14.9",
+    "@tanstack/react-virtual": "^3.14.17",
     "@types/d3-force": "^3.0.10",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
