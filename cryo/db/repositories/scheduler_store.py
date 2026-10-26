@@ -35,7 +35,12 @@ from cryo.db.repositories.presets import (
 from cryo.db.repositories.sources import table_in_source_scope
 from cryo.intents.binding import build_and_bind_job_intent
 from cryo.observability.correlation import correlation_summary
-from cryo.planner.job_coverage import ActiveJob, dedupe_key, effective_operations
+from cryo.planner.job_coverage import (
+    IN_FLIGHT_JOB_STATUSES,
+    ActiveJob,
+    dedupe_key,
+    effective_operations,
+)
 from cryo.scheduler.cron import db_instant
 from cryo.scheduler.rules import (
     PresetConfig,
@@ -216,6 +221,32 @@ class SQLSchedulerStore:
     def active_coverage(self) -> dict[str, list[ActiveJob]]:
         with self._session_factory() as session:
             return active_coverage(session)
+
+    def preset_backlog_state(self, preset_id: str, since: datetime) -> tuple[int, set[str]]:
+        """(queued/admitted/running jobs of the preset, tables it has had a job for since
+        `since`). The second set is what keeps a backlog batch from retrying a table the same
+        cron period already attempted, whatever that attempt's outcome."""
+        preset_uuid = uuid.UUID(preset_id)
+        with self._session_factory() as session:
+            in_flight = session.scalar(
+                select(func.count())
+                .select_from(MaintenanceJob)
+                .join(MaintenanceRun, MaintenanceRun.id == MaintenanceJob.run_id)
+                .where(
+                    MaintenanceRun.preset_id == preset_uuid,
+                    MaintenanceJob.status.in_(IN_FLIGHT_JOB_STATUSES),
+                )
+            )
+            attempted = session.scalars(
+                select(MaintenanceJob.table_id)
+                .join(MaintenanceRun, MaintenanceRun.id == MaintenanceJob.run_id)
+                .where(
+                    MaintenanceRun.preset_id == preset_uuid,
+                    MaintenanceRun.created_at >= since,
+                )
+                .distinct()
+            ).all()
+        return int(in_flight or 0), {str(table_id) for table_id in attempted}
 
     def persist_run(self, run: ScheduledRunDraft) -> set[str]:
         """Store the run and its jobs; returns ids of jobs dropped because a concurrent run

@@ -6,7 +6,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from cryo.domain.enums import EngineType, Mode, OperationType
-from cryo.domain.models import MaintenancePlan
+from cryo.domain.models import MaintenancePlan, Operation
 from cryo.planner.planner import build_plan
 
 
@@ -78,6 +78,7 @@ def build_execution_plan(
     )
     plan = gate_gc_disabled(plan, gc_disabled=gc_disabled_in_stats(stats))
     plan = gate_engine_unsupported(plan, destination=destination)
+    plan = gate_trino_semantics(plan, destination=destination)
     return gate_native_optimize_manifests(
         plan,
         operations=operations,
@@ -313,6 +314,83 @@ def gate_engine_unsupported(
         plan,
         operations=tuple(op for op in plan.operations if op.type not in unsupported),
         notes=(*plan.notes, *dict.fromkeys(unsupported[op.type] for op in dropped)),
+    )
+
+
+TRINO_PROTECTED_EXPIRE_NOTE = (
+    "Skipped expire_snapshots: {count} snapshot(s) on this table are excluded from Cryo expiry, "
+    "and Trino's expire_snapshots cannot keep a specific snapshot, so running it could delete "
+    "them. Route the table to a Spark destination, which tags them first, or remove the "
+    "exclusions."
+)
+TRINO_CONVERT_DELETES_NOTE = (
+    "convert_deletes runs as OPTIMIZE on Trino: Trino has no delete-file-threshold rewrite, so "
+    "this rewrites small data files and files with deletes across {scope}. It is planned and "
+    "recorded as optimize."
+)
+TRINO_CONVERT_DELETES_REDUNDANT_NOTE = (
+    "Dropped convert_deletes: on Trino it is the same table-wide OPTIMIZE this plan already runs."
+)
+
+
+def _engine_value(destination: ExecutionDestination) -> str:
+    engine = destination.engine
+    return engine.value if isinstance(engine, EngineType) else str(engine).lower()
+
+
+def gate_trino_semantics(
+    plan: MaintenancePlan,
+    *,
+    destination: ExecutionDestination,
+) -> MaintenancePlan:
+    """Make a Trino plan say what Trino will actually do (issue #198).
+
+    - Trino's expire_snapshots has no way to keep a given snapshot id, so a table with
+      protected snapshots skips expire on Trino, with a plan note, instead of silently
+      expiring the snapshot the operator protected.
+    - Trino has no convert-deletes procedure. The renderer runs it as OPTIMIZE, a data
+      rewrite, so the plan, the cost estimate and the run record call it optimize. When the
+      plan already has a table-wide optimize, the duplicate is dropped.
+    """
+    if _engine_value(destination) != EngineType.TRINO.value:
+        return plan
+    operations: list[Operation] = []
+    notes: list[str] = []
+    has_table_wide_optimize = any(
+        op.type is OperationType.OPTIMIZE and not op.predicates for op in plan.operations
+    )
+    changed = False
+    for op in plan.operations:
+        if op.type is OperationType.EXPIRE_SNAPSHOTS and op.params.get("protected_snapshot_ids"):
+            notes.append(
+                TRINO_PROTECTED_EXPIRE_NOTE.format(count=len(op.params["protected_snapshot_ids"]))
+            )
+            changed = True
+            continue
+        if op.type is OperationType.CONVERT_DELETES:
+            changed = True
+            if has_table_wide_optimize and not op.predicates:
+                notes.append(TRINO_CONVERT_DELETES_REDUNDANT_NOTE)
+                continue
+            scope = "the selected partitions" if op.predicates else "the whole table"
+            notes.append(TRINO_CONVERT_DELETES_NOTE.format(scope=scope))
+            operations.append(
+                Operation(
+                    OperationType.OPTIMIZE,
+                    {**op.params, "planned_as": OperationType.CONVERT_DELETES.value},
+                    op.predicates,
+                )
+            )
+            has_table_wide_optimize = has_table_wide_optimize or not op.predicates
+            continue
+        operations.append(op)
+    if not changed:
+        return plan
+    return MaintenancePlan(
+        table_ref=plan.table_ref,
+        mode=plan.mode,
+        operations=tuple(operations),
+        notes=(*plan.notes, *dict.fromkeys(notes)),
     )
 
 

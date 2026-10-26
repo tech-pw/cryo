@@ -4,13 +4,14 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from uuid import uuid4
 
 from cryo.db.session import SessionLocal
 from cryo.planner.job_coverage import (
     ACTIVE_JOB_STATUSES,
+    IN_FLIGHT_JOB_STATUSES,
     ActiveJob,
     effective_operations,
 )
@@ -20,6 +21,7 @@ from cryo.scheduler.cron import cron_is_due
 from cryo.scheduler.routing import build_destinations_index, resolve_destination
 from cryo.scheduler.rules import PresetConfig, PresetRule, TableAssignment, TableCandidate
 from cryo.scheduler.scheduler import (
+    BACKLOG_TRIGGER,
     ScheduledRunDraft,
     build_scheduled_run,
     enqueue_run,
@@ -148,6 +150,7 @@ class SchedulerService:
         self._last_dark_table_detection: datetime | None = None
         self._last_cost_attribution: datetime | None = None
         self._last_trino_cost_pricing: datetime | None = None
+        self._last_backlog_batch: dict[str, datetime] = {}
 
     def tick(self, *, now: datetime | None = None) -> SchedulerTickResult:
         """One scheduler cycle: dispatch real maintenance work first, diagnostics/telemetry
@@ -183,6 +186,13 @@ class SchedulerService:
 
         self._dispatch_scheduled_runs(current)
         result = self._dispatch_due_presets(current)
+        drained = self._drain_backlog(current)
+        if drained.runs_created:
+            result = SchedulerTickResult(
+                runs_created=result.runs_created + drained.runs_created,
+                jobs_enqueued=result.jobs_enqueued + drained.jobs_enqueued,
+                preset_ids=result.preset_ids + drained.preset_ids,
+            )
 
         self._expire_stale_approval_requests()
 
@@ -277,39 +287,122 @@ class SchedulerService:
                 self._store.mark_preset_run(preset.id, current)
                 continue
 
-            failure_history: dict[str, dict[str, int]] = {}
-            if preset.guardrails.get("adaptive_routing"):
-                get_failures = getattr(self._store, "consecutive_engine_failures", None)
-                if get_failures is not None:
-                    failure_history = get_failures([job.table_id for job in run.jobs])
-            routed_jobs = _apply_routing(
-                run, preset, tables, destinations, failure_history=failure_history
-            )
-            not_persisted = self._store.persist_run(routed_jobs) or ()
-            if not_persisted:
-                routed_jobs = replace(
-                    routed_jobs,
-                    jobs=tuple(job for job in routed_jobs.jobs if job.id not in set(not_persisted)),
-                )
-            if coverage is not None:
-                for job in routed_jobs.jobs:
-                    coverage.setdefault(job.table_id, []).append(
-                        ActiveJob(
-                            job_id=job.id,
-                            operations=effective_operations(
-                                job.mode, job_operations=job.operations
-                            ),
-                        )
-                    )
-            # created_at=current (the tick's own now, not a fresh datetime.now() call) so
-            # this run's fifo_priority reflects its real logical creation time -- see
-            # fifo_priority's own docstring for why every enqueue call site defaulting to
-            # priority=0 left cross-run admission order effectively random by job UUID.
-            enqueue_run(routed_jobs, self._queue, created_at=current)
+            enqueued = self._submit_run(run, preset, tables, destinations, coverage, current)
             self._store.mark_preset_run(preset.id, current)
 
             runs_created += 1
-            jobs_enqueued += len(routed_jobs.jobs)
+            jobs_enqueued += enqueued
+            fired.append(preset.id)
+
+        return SchedulerTickResult(
+            runs_created=runs_created,
+            jobs_enqueued=jobs_enqueued,
+            preset_ids=tuple(fired),
+        )
+
+    def _submit_run(
+        self,
+        run: ScheduledRunDraft,
+        preset: PresetConfig,
+        tables: list[TableCandidate],
+        destinations: Any,
+        coverage: dict[str, list[ActiveJob]] | None,
+        current: datetime,
+    ) -> int:
+        """Route, persist and enqueue a built run; returns the number of jobs enqueued."""
+        failure_history: dict[str, dict[str, int]] = {}
+        if preset.guardrails.get("adaptive_routing"):
+            get_failures = getattr(self._store, "consecutive_engine_failures", None)
+            if get_failures is not None:
+                failure_history = get_failures([job.table_id for job in run.jobs])
+        routed_jobs = _apply_routing(
+            run, preset, tables, destinations, failure_history=failure_history
+        )
+        not_persisted = self._store.persist_run(routed_jobs) or ()
+        if not_persisted:
+            routed_jobs = replace(
+                routed_jobs,
+                jobs=tuple(job for job in routed_jobs.jobs if job.id not in set(not_persisted)),
+            )
+        if coverage is not None:
+            for job in routed_jobs.jobs:
+                coverage.setdefault(job.table_id, []).append(
+                    ActiveJob(
+                        job_id=job.id,
+                        operations=effective_operations(job.mode, job_operations=job.operations),
+                    )
+                )
+        # created_at=current (the tick's own now, not a fresh datetime.now() call) so
+        # this run's fifo_priority reflects its real logical creation time -- see
+        # fifo_priority's own docstring for why every enqueue call site defaulting to
+        # priority=0 left cross-run admission order effectively random by job UUID.
+        enqueue_run(routed_jobs, self._queue, created_at=current)
+        return len(routed_jobs.jobs)
+
+    def _drain_backlog(self, current: datetime) -> SchedulerTickResult:
+        """Schedule the next batch of a capped preset once its previous batch has drained.
+
+        The per-run cap exists because one 6,117-job cron run overran the engines and most of
+        it aged out unrun. Capping alone left the engines idle for most of the day while
+        thousands of matching tables waited for the next night, and the same top-ranked
+        tables won every night. Draining in cap-sized batches, only when the preset's queue
+        is nearly empty, keeps the queue as short as the cap while still reaching every
+        candidate. Tables already attempted since the last cron fire are excluded, so a
+        failing table is retried next period, not every batch.
+        """
+        from cryo.config import get_settings
+
+        settings = get_settings()
+        backlog_state = getattr(self._store, "preset_backlog_state", None)
+        if not settings.scheduler_backlog_drain_enabled or not callable(backlog_state):
+            return SchedulerTickResult()
+
+        min_gap = timedelta(seconds=settings.scheduler_backlog_drain_interval_seconds)
+        ready: list[tuple[PresetConfig, int, set[str]]] = []
+        for preset, last_cron_at in self._store.list_due_presets(current):
+            if last_cron_at is None or not preset.guardrails.get("backlog_drain", True):
+                continue
+            budget = self._scheduled_run_budget(preset)
+            if budget is None:
+                continue
+            last_batch = self._last_backlog_batch.get(preset.id)
+            if last_batch is not None and current - last_batch < min_gap:
+                continue
+            in_flight, attempted = backlog_state(preset.id, last_cron_at)
+            if in_flight > settings.scheduler_backlog_drain_low_water:
+                continue
+            ready.append((preset, budget, attempted))
+        if not ready:
+            return SchedulerTickResult()
+
+        tables = self._store.list_tables()
+        presets = self._store.list_presets()
+        rules = self._store.list_rules()
+        assignments = self._store.list_assignments()
+        destinations = build_destinations_index(self._store.list_destinations())
+        coverage = self._load_active_coverage()
+
+        runs_created = 0
+        jobs_enqueued = 0
+        fired: list[str] = []
+        for preset, budget, attempted in ready:
+            self._last_backlog_batch[preset.id] = current
+            run = build_scheduled_run(
+                preset,
+                tables,
+                presets,
+                rules,
+                assignments,
+                trigger=BACKLOG_TRIGGER,
+                budget_hint=budget,
+                now=current,
+                active_coverage=coverage,
+                exclude_table_ids=attempted,
+            )
+            if not run.jobs:
+                continue
+            jobs_enqueued += self._submit_run(run, preset, tables, destinations, coverage, current)
+            runs_created += 1
             fired.append(preset.id)
 
         return SchedulerTickResult(
@@ -1462,6 +1555,8 @@ class InMemorySchedulerStore:
         self.destinations: list[dict[str, Any]] = []
         self.last_runs: dict[str, datetime] = {}
         self.runs: list[ScheduledRunDraft] = []
+        self.run_created_at: dict[str, datetime] = {}
+        self.clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
     def list_due_presets(self, now: datetime) -> list[tuple[PresetConfig, datetime | None]]:
         del now
@@ -1500,8 +1595,20 @@ class InMemorySchedulerStore:
                 )
         return coverage
 
+    def preset_backlog_state(self, preset_id: str, since: datetime) -> tuple[int, set[str]]:
+        in_flight = 0
+        attempted: set[str] = set()
+        for run in self.runs:
+            if run.preset_id != preset_id:
+                continue
+            if self.run_created_at.get(run.id, since) >= since:
+                attempted.update(job.table_id for job in run.jobs)
+            in_flight += sum(1 for job in run.jobs if job.status.value in IN_FLIGHT_JOB_STATUSES)
+        return in_flight, attempted
+
     def persist_run(self, run: ScheduledRunDraft) -> None:
         self.runs.append(run)
+        self.run_created_at[run.id] = self.clock()
 
     def mark_preset_run(self, preset_id: str, run_at: datetime) -> None:
         self.last_runs[preset_id] = run_at
