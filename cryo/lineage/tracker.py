@@ -20,6 +20,7 @@ from sqlalchemy.types import TIMESTAMP
 from cryo.db.base import Base
 from cryo.db.model_utils import qualified_table_name
 from cryo.db.models import TimestampMixin
+from cryo.observability.logging import quiet_sqlglot_logger
 
 
 class LineageEdge(TimestampMixin, Base):
@@ -98,6 +99,7 @@ def _parse_tables_sqlglot(query_text: str) -> list[tuple[str, str]]:
 
     tables: list[tuple[str, str]] = []
     parsed = None
+    quiet_sqlglot_logger()  # never let sqlglot log the statement text (#165)
     for dialect in ("trino", "spark", "hive", "postgres"):
         try:
             parsed = sqlglot.parse_one(query_text, read=dialect)

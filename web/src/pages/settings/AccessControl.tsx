@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 
+import { ConfirmAction } from "../../components/confirm";
 import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -276,13 +277,40 @@ export const AccessControl = () => {
                     <option value="operator">operator</option>
                     <option value="admin">admin</option>
                   </select>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => patchUser.mutate({ id: user.id, disabled: !user.disabled })}
-                  >
-                    {user.disabled ? "Enable" : "Disable"}
-                  </Button>
+                  {user.disabled ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      loading={patchUser.isPending && patchUser.variables?.id === user.id}
+                      disabled={patchUser.isPending && patchUser.variables?.id === user.id}
+                      onClick={() => patchUser.mutate({ id: user.id, disabled: false })}
+                    >
+                      Enable
+                    </Button>
+                  ) : (
+                    <ConfirmAction
+                      title={`Disable ${user.username}?`}
+                      description={`${user.username} is signed out of Cryo and can't sign in again until an admin enables the account.`}
+                      okText="Disable user"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={async () => {
+                        try {
+                          await patchUser.mutateAsync({ id: user.id, disabled: true });
+                        } catch {
+                          // onError already shows the message above the list.
+                        }
+                      }}
+                    >
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        loading={patchUser.isPending && patchUser.variables?.id === user.id}
+                        disabled={patchUser.isPending && patchUser.variables?.id === user.id}
+                      >
+                        Disable
+                      </Button>
+                    </ConfirmAction>
+                  )}
                 </li>
               ))}
             </ul>

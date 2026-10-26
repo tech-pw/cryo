@@ -19,6 +19,7 @@ import type { QualityConstraintCreate, QualityConstraintRead } from "../../api/t
 import { useAuth } from "../../lib/auth";
 import { useWriteControl } from "../../lib/useWriteControl";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
+import { ConfirmAction } from "../confirm";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
@@ -324,19 +325,30 @@ export const QualityConstraints = () => {
                 toggle.mutate(rule);
               }}
             />
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label={`Delete ${rule.name}`}
+            <ConfirmAction
+              title={`Delete the rule "${rule.name}"?`}
+              description="The rule and its results are removed from this table. This can't be undone."
+              okText="Delete rule"
+              okButtonProps={{ danger: true }}
               disabled={!constraintAccess.allowed}
-              title={constraintAccess.reason ?? undefined}
-              onClick={() => {
-                if (!constraintAccess.allowed) return;
-                remove.mutate(rule);
+              onConfirm={async () => {
+                try {
+                  await remove.mutateAsync(rule);
+                } catch {
+                  // onError already shows a toast.
+                }
               }}
             >
-            <Trash2 aria-hidden="true" className="size-4" />
-          </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={`Delete ${rule.name}`}
+                disabled={!constraintAccess.allowed || (remove.isPending && remove.variables?.id === rule.id)}
+                title={constraintAccess.reason ?? undefined}
+              >
+                <Trash2 aria-hidden="true" className="size-4" />
+              </Button>
+            </ConfirmAction>
           {constraintAccess.reason ? (
             <span className="max-w-40 text-[11px] text-muted-foreground">{constraintAccess.reason}</span>
           ) : null}

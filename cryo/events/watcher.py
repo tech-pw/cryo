@@ -24,6 +24,10 @@ class TableCommitted:
     delete_files_added: int = 0
     equality_delete_files_added: int = 0
     position_delete_files_added: int = 0
+    delete_files_removed: int = 0
+    equality_delete_files_removed: int = 0
+    position_delete_files_removed: int = 0
+    snapshots_added: int = 0
 
 
 class TableCommitWatcher:
@@ -59,8 +63,14 @@ class TableCommitWatcher:
             previous = self._last_seen.get(table_ref)
             self._last_seen[table_ref] = snapshot_id
             if previous is not None and snapshot_id != previous:
+                # Watermark-only: the probe sees a new snapshot id but no file or byte
+                # deltas. apply_commit_delta records the commit without pretending the
+                # table was re-measured (issue #188).
                 event = TableCommitted(
-                    table_ref=table_ref, snapshot_id=snapshot_id, observed_at=current
+                    table_ref=table_ref,
+                    snapshot_id=snapshot_id,
+                    observed_at=current,
+                    parent_snapshot_id=previous,
                 )
                 self._publish(event)
                 events.append(event)

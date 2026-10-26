@@ -109,6 +109,9 @@ See `lld.md` §1 for the full tree. Quick map:
 When touching scanner/planner/governor/engines, keep all of these (ported from today):
 
 - Partition-aware OPTIMIZE from **pre-computed scan data** (no live `$files` scans on hot paths).
+  One deliberate exception: the Trino engine sums `file_size_in_bytes` from `"table$files"`
+  before and after expire_snapshots / optimize / convert_deletes / expire_data to record
+  `actual_bytes_freed`. It is best-effort (failure means unmeasured) and never drives planning.
 - **GB-budgeted chunking** + **max partitions/chunk** cap (avoid Trino `FilterNode` complexity).
 - **Oversize partition runs alone**; **small-table bypass** (single full-table OPTIMIZE).
 - Partition **transform handling**: identity/day/month/year + `$partitions` introspection.

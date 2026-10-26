@@ -13,12 +13,7 @@ on:
       - "docs/**"
       - "**.md"
       - "site/**"
-  # GitHub Actions does not reliably fire push events for force-pushes (confirmed live,
-  # 2026-10-12: a force-push to main from the OSS sync job produced no CI run at all,
-  # and this workflow has no other way to re-run against current main since dispatch
-  # didn't exist). The OSS mirror is force-pushed on every sync by design (see
-  # scripts/sync_oss_mirror.sh) -- this restores a manual way to get a CI result on
-  # current main without needing an unrelated push to trigger one.
+  # Manual trigger: re-run CI against current main without needing an unrelated push.
   workflow_dispatch:
 
 concurrency:
@@ -55,10 +50,25 @@ jobs:
           gitleaks version
 
       - name: Scan git history for secrets
+        # fetch-depth: 0 fetches every branch, and gitleaks with no --log-opts runs
+        # `git log --all`, so one unrelated branch's finding used to fail every PR.
+        # A PR scans only its own commits (base..merge ref). Pushes to main and manual
+        # runs scan the full history of the checked-out ref.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            log_opts="--full-history origin/${BASE_REF}..HEAD"
+          else
+            log_opts="--full-history HEAD"
+          fi
+          echo "gitleaks log range: ${log_opts}"
           gitleaks detect \
             --source . \
             --config .gitleaks.toml \
+            --log-opts="${log_opts}" \
             --redact \
             --verbose \
             --exit-code 1
