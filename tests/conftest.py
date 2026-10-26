@@ -205,6 +205,22 @@ def _test_jwt_secret() -> None:
     ensure_test_jwt_secret()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_fleet_insights_cache() -> Iterator[None]:
+    """The /advanced/anomalies and /advanced/signals responses are cached per process (#259);
+    each test gets its own in-memory database, so a cached fleet result must not leak."""
+    import sys
+
+    def clear() -> None:
+        module = sys.modules.get("cryo.api.advanced_routes")
+        if module is not None:
+            module.clear_fleet_insights_cache()
+
+    clear()
+    yield
+    clear()
+
+
 @pytest.fixture()
 def _session_maker() -> Iterator[sessionmaker]:
     """Shared engine/sessionmaker setup backing both the `session` and `session_factory`
