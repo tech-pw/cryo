@@ -33,7 +33,8 @@ spec:
         - name: redis
           image: {{ include "cryo.imageRef" .Values.redis.image | quote }}
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
-          {{- include "cryo.containerSecurityContext" $ | nindent 10 }}
+          securityContext:
+            {{- toYaml (merge (dict "readOnlyRootFilesystem" true) $.Values.containerSecurityContext) | nindent 12 }}
           args:
             - --maxmemory
             - {{ .Values.redis.maxmemory | quote }}
@@ -49,6 +50,9 @@ spec:
               containerPort: {{ .Values.redis.port }}
           resources:
             {{- toYaml .Values.redis.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
           readinessProbe:
             tcpSocket:
               port: redis
@@ -57,6 +61,10 @@ spec:
             tcpSocket:
               port: redis
             initialDelaySeconds: {{ .Values.redis.probe.livenessInitialDelaySeconds }}
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
