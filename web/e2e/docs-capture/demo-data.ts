@@ -134,8 +134,7 @@ const matchesFilter = (table: DemoTable, filter: string): boolean => {
 export function demoTablesFunnel() {
   const nodes = [
     ["active", "Active tables", 14],
-    ["scan_failing", "Scan failing", 1],
-    ["scanned", "Scanned", 13],
+    ["not_in_run", "Not in this run", 1],
     ["no_work", "No work needed", 6],
     ["needs_work", "Needs work", 7],
     ["skip_cooldown", "Cooldown", 1, "skipped"],
@@ -157,13 +156,12 @@ export function demoTablesFunnel() {
       id,
       label,
       count,
-      view: view ?? (id === "scan_failing" ? "scan-issues" : id === "needs_work" ? "needs-work" : null)
+      view: view ?? (id === "needs_work" ? "needs-work" : null)
     })),
     links: [
-      link("active", "scan_failing", 1),
-      link("active", "scanned", 13),
-      link("scanned", "no_work", 6),
-      link("scanned", "needs_work", 7),
+      link("active", "not_in_run", 1),
+      link("active", "no_work", 6),
+      link("active", "needs_work", 7),
       link("needs_work", "skip_cooldown", 1),
       link("needs_work", "skip_budget_cap", 1),
       link("needs_work", "skip_excluded", 1),
