@@ -400,11 +400,19 @@ redis:
     fsGroup: 1000
 
 migration:
+  # The migration job runs the API image (image.repository plus image.digest, or image.tag)
+  # unless you set a separate migration image here. Leave repository and digest empty to
+  # follow the API image: the old defaults (cryo:latest) ignored image.digest and the
+  # pre-install hook could not pull (issue #140).
   image:
-    repository: cryo
-    tag: latest
+    # Set to run migrations from a different image. Empty follows image.repository.
+    repository: ""
+    # Used only with an explicit repository above. Empty falls back to image.tag.
+    tag: ""
+    # Set alone to pin the API repository at a different digest. Empty follows image.digest.
     digest: ""
-    pullPolicy: Always # see the comment on image.pullPolicy above
+    # Empty follows image.pullPolicy.
+    pullPolicy: ""
   # Alembic occasionally needs more than one attempt against a cold/just-provisioned
   # database (e.g. a connection racing the DB's own readiness) before the pre-install/
   # pre-upgrade hook gives up and blocks the release.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -95,7 +96,7 @@ class TrinoEngine:
         table_ref = table_ref_raw if isinstance(table_ref_raw, str) else None
         measure_bytes = stmt.action in _BYTES_MEASURABLE_VIA_FILES_DIFF and table_ref is not None
         try:
-            for setup_sql in self.session_setup():
+            for setup_sql in self._statement_session_setup(stmt, coordinator):
                 cursor.execute(setup_sql)
             bytes_before = (
                 _live_file_bytes(cursor, table_ref) if measure_bytes and table_ref else None
@@ -212,6 +213,34 @@ class TrinoEngine:
             cursor.close()
             connection.close()
 
+    def _statement_session_setup(
+        self, stmt: RenderedStatement, coordinator: TrinoCoordinator
+    ) -> list[str]:
+        """Engine-wide session setup, then the statement's own catalog session properties.
+
+        Catalog properties are qualified by the catalog the statement targets: the first part
+        of a three-part table_ref, else the coordinator's default catalog. With neither, they
+        are left out and Trino applies its own floor, which is what happened before #139.
+        """
+        setup = list(self.session_setup())
+        properties = stmt.metadata.get("catalog_session_properties")
+        if not isinstance(properties, dict) or not properties:
+            return setup
+        table_ref = stmt.metadata.get("table_ref")
+        catalog = _catalog_of(table_ref) if isinstance(table_ref, str) else None
+        catalog = catalog or coordinator.catalog
+        if not catalog:
+            logger.warning(
+                "No catalog for %s; leaving Trino's default retention floor in place",
+                stmt.action.value,
+            )
+            return setup
+        qualifier = _session_identifier(catalog)
+        for name, value in properties.items():
+            escaped = str(value).replace("'", "''")
+            setup.append(f"SET SESSION {qualifier}.{_session_identifier(str(name))} = '{escaped}'")
+        return setup
+
     def _coordinator(self, ctx: ExecCtx | None) -> TrinoCoordinator:
         replica = getattr(ctx, "replica", None)
         if replica:
@@ -238,6 +267,47 @@ def _live_file_bytes(cursor: Any, table_ref: str) -> int | None:
     except Exception:  # noqa: BLE001 - measurement is best-effort, never fatal
         logger.debug("Live $files byte sum failed for %s", table_ref, exc_info=True)
         return None
+
+
+def _split_ref(table_ref: str) -> list[str]:
+    """Split a dotted reference into unquoted parts. Double-quoted parts may contain dots."""
+    parts: list[str] = []
+    current: list[str] = []
+    quoted = False
+    i = 0
+    while i < len(table_ref):
+        char = table_ref[i]
+        if quoted:
+            if char == '"' and table_ref[i + 1 : i + 2] == '"':
+                current.append('"')
+                i += 1
+            elif char == '"':
+                quoted = False
+            else:
+                current.append(char)
+        elif char == '"':
+            quoted = True
+        elif char == ".":
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        i += 1
+    parts.append("".join(current))
+    return parts
+
+
+def _catalog_of(table_ref: str) -> str | None:
+    parts = _split_ref(table_ref)
+    if len(parts) >= 3 and parts[0]:
+        return parts[0]
+    return None
+
+
+def _session_identifier(name: str) -> str:
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        return name
+    return '"' + name.replace('"', '""') + '"'
 
 
 def _query_id(cursor: object) -> str | None:
