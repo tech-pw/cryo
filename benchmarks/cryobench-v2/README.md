@@ -120,7 +120,7 @@ provenance against the internal repository matches the first.
 | `<benchmark-cluster>` | the EKS cluster the benchmark ran on |
 | `cryo-bench` | the Kubernetes namespace the benchmark ran in |
 | `<region>` | the AWS region |
-| `<node>` | the EKS node hostnames, which carried private IPs |
+| `<node-N>` | the EKS node hostnames, which carried private IPs. Each node keeps its own number, so pods that shared a node still read as shared |
 | `<home>` | the local home directory, in recorded paths |
 | `<internal-host>`, `<internal-domain>` | internal infrastructure hostnames |
 
