@@ -38,4 +38,4 @@ injection remain open. A 30-day soak report must retain the generated manifest, 
 environment inventory, Prometheus export, fault results, and failures; it must not replace missing
 production evidence with this fixture.
 
-See also [`BENCHMARK_RESEARCH_AND_DESIGN_2026-10-06.md`](./BENCHMARK_RESEARCH_AND_DESIGN_2026-10-06.md) for the maintenance-benchmark design. The fixture is not that benchmark.
+The fixture is not a maintenance benchmark.

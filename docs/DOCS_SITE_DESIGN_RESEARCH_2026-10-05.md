@@ -1,9 +1,8 @@
 # Docs site design research and redesign spec (2026-10-05)
 
 Scope: `site/` (the public GitHub Pages docs). This replaces the visual and navigation layer; the
-information on the pages is kept. Earlier thinking lives in
-[`DOCS_SITE_CREATIVE_PLAN_2026-09-30.md`](./DOCS_SITE_CREATIVE_PLAN_2026-09-30.md); this document
-supersedes it where they disagree, because these numbers were measured on live sites.
+information on the pages is kept. This document supersedes the earlier creative plan where they
+disagree, because these numbers were measured on live sites.
 
 Working state for anyone continuing the redesign:
 [`DOCS_SITE_REDESIGN_HANDOFF_2026-10-05.md`](./DOCS_SITE_REDESIGN_HANDOFF_2026-10-05.md).

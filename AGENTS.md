@@ -1,7 +1,7 @@
 # AGENTS.md — Guide for AI Agents working on Cryo
 
 This file orients an AI coding agent (and humans) working in this repo. Read it before making
-changes. For *what* we're building and *why*, read `plan.md`, `hld.md`, and `lld.md` first.
+changes. For *how* Cryo is built, read `docs/design/hld.md` and `docs/design/lld.md` first.
 
 ---
 
@@ -10,7 +10,7 @@ changes. For *what* we're building and *why*, read `plan.md`, `hld.md`, and `lld
 **Cryo** — a self-hosted **Apache Iceberg maintenance & health platform**. It consolidates Iceberg
 table maintenance (compaction/optimize, snapshot expiry, orphan-file removal, manifest rewrite),
 datalake health/observability, and ad-hoc maintenance behind a Python backend + React UI, deployable to
-Kubernetes. It replaces a set of Airflow DAGs + dbt macros (see `hld.md` §9 for the mapping).
+Kubernetes. It replaces a set of Airflow DAGs + dbt macros (see `docs/design/hld.md` §9 for the mapping).
 
 **Hard requirements (do not violate):**
 - **No Airflow.** Scheduling/orchestration lives in the platform (`scheduler/` + `governor/`).
@@ -24,28 +24,27 @@ Kubernetes. It replaces a set of Airflow DAGs + dbt macros (see `hld.md` §9 for
 
 ## 2. Source-of-truth docs (read order)
 
-1. `plan.md` — vision, scope, decisions, phases, assumptions.
-2. `hld.md` — components, data flow, deployment, separation of concerns.
-3. `lld.md` — schemas, interfaces, planner algorithm, rendered SQL, API surface.
-4. `todo.md` — the phased task checklist; keep it updated as you complete work.
+1. `docs/design/hld.md` — components, data flow, deployment, separation of concerns.
+2. `docs/design/lld.md` — schemas, interfaces, planner algorithm, rendered SQL, API surface.
+3. `docs/CAPABILITIES.md` — what ships today (generated; edit the capability manifest, not the Markdown).
+4. `docs/README.md` — index of the docs. Track planned work in GitHub Issues; there are no
+   `plan.md` or `todo.md` files in this repository.
 5. `docs/` — persistent project brain. Always keep it current with fixes, implementations,
    new features, design decisions, operational notes, and any project knowledge future agents
    or maintainers will need. If you're picking up work with no other context, start at
-   [`docs/EXECUTION_PLAN.md`](./docs/EXECUTION_PLAN.md) — it sequences everything in
-   `docs/research-and-roadmap.md Part 1`, `docs/research-and-roadmap.md Part 4`, and
-   `docs/architecture.md` into an ordered, actionable plan.
+   `docs/research-and-roadmap.md` (Parts 1 and 4) and `docs/architecture.md`.
 6. This file — conventions & guardrails.
 7. [`docs/LOCAL_DEV_ONLY_INVENTORY.md`](./docs/LOCAL_DEV_ONLY_INVENTORY.md) — ad-hoc local datalake
    components that must not ship to prod; **update in the same PR** when adding new dev-only scripts
    or compose services.
 
-When in doubt about maintenance semantics, match the planner and engine contracts in `lld.md`.
+When in doubt about maintenance semantics, match the planner and engine contracts in `docs/design/lld.md`.
 
 ---
 
 ## 3. Project layout (where things go)
 
-See `lld.md` §1 for the full tree. Quick map:
+See `docs/design/lld.md` §1 for the full tree. Quick map:
 
 | Area | Path | Notes |
 |------|------|-------|
@@ -74,7 +73,7 @@ See `lld.md` §1 for the full tree. Quick map:
   scanner and engine execution can be sync (they're I/O bound on external systems).
 - Layering: `api → repositories → db`, `worker → planner + engines`, `governor → engines (probe) +
   queue`. **Domain/planner never import db/engine clients.**
-- Naming mirrors `lld.md` (`MaintenancePlan`, `Operation`, `PartitionPredicate`, `OperationType`,
+- Naming mirrors `docs/design/lld.md` (`MaintenancePlan`, `Operation`, `PartitionPredicate`, `OperationType`,
   `EngineType`, `Mode`). Don't invent parallel vocabularies.
 - Secrets: never log them; never return them from the API; encrypt at rest.
 - Don't add narrating comments; comment only non-obvious intent/trade-offs (e.g. why a chunk cap
@@ -91,7 +90,7 @@ See `lld.md` §1 for the full tree. Quick map:
   the backend OpenAPI schema (don't hand-write API types).
 - Reuse `web/src/components/ui/` Radix primitives and the shared TanStack `DataTable`; do not add
   Ant Design or one-off table implementations.
-- Bulk selection sends a **filter spec**, never a list of page IDs (see `lld.md` §12/§13).
+- Bulk selection sends a **filter spec**, never a list of page IDs (see `docs/design/lld.md` §12/§13).
 
 ### Database
 - All tables in schema `cryo`. Every schema change = an Alembic migration (additive-first).
@@ -99,7 +98,7 @@ See `lld.md` §1 for the full tree. Quick map:
 
 ### Git / MRs
 - Conventional commits: `feat|fix|chore|docs|refactor|test`. Reference issues `#<id>`.
-- Small, focused MRs. Update docs (`docs/`, `plan/hld/lld/todo/README`) when behavior changes.
+- Small, focused MRs. Update docs (`docs/`, `docs/design/hld.md`, `docs/design/lld.md`, `README.md`) when behavior changes.
 - **Only commit when explicitly asked.**
 
 ---
@@ -129,7 +128,7 @@ When touching scanner/planner/governor/engines, keep all of these (ported from t
   session tuning before Trino OPTIMIZE only uses supported session properties
   (`task_min_writer_count`, `writer_scaling_min_data_processed`).
 
-If you must change any of these, call it out explicitly and update `lld.md` + parity tests.
+If you must change any of these, call it out explicitly and update `docs/design/lld.md` + parity tests.
 
 ---
 
@@ -171,13 +170,13 @@ Use the specialized editor tools for files; reserve the shell for git/build/test
 ---
 
 ## 7. Definition of done (per change)
-1. Code matches `lld.md` contracts and the parity checklist (§5).
+1. Code matches `docs/design/lld.md` contracts and the parity checklist (§5).
 2. `make lint && make typecheck && make test` pass; new logic has tests (planner/renderers = golden
    + parity tests).
 3. New SQL paths covered for **both** engines if applicable.
 4. Migrations included for schema changes; API changes reflected in OpenAPI (frontend types regen).
-5. Docs updated (`docs/` as the persistent project brain, `todo.md` checkboxes, and
-   `lld.md`/`hld.md` if behavior/contracts changed).
+5. Docs updated (`docs/` as the persistent project brain, and
+   `docs/design/lld.md`/`docs/design/hld.md` if behavior/contracts changed).
 6. No secrets in logs/responses; destructive ops guarded by guardrails + `force` (audited).
 
 ---

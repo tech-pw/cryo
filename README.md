@@ -9,7 +9,7 @@
 
 [![CI](https://github.com/tech-pw/cryo/actions/workflows/ci.yml/badge.svg)](https://github.com/tech-pw/cryo/actions/workflows/ci.yml) [![GitHub stars](https://img.shields.io/github/stars/tech-pw/cryo?style=flat&color=277ABE)](https://github.com/tech-pw/cryo/stargazers) [![Latest tag](https://img.shields.io/github/v/tag/tech-pw/cryo?sort=semver&label=version&color=277ABE)](https://github.com/tech-pw/cryo/tags) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-143E60)](./LICENSE) [![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-277ABE)](./docs/VERSIONING.md) [![Docs](https://img.shields.io/badge/docs-tech--pw.github.io%2Fcryo-68C1EA)](https://tech-pw.github.io/cryo/)
 
-**[Docs](https://tech-pw.github.io/cryo/)** · **[Quickstart](https://tech-pw.github.io/cryo/quickstart/)** · **[Architecture](./hld.md)** · **[What ships today](./docs/CAPABILITIES.md)** · **[Contributing](./CONTRIBUTING.md)**
+**[Docs](https://tech-pw.github.io/cryo/)** · **[Quickstart](https://tech-pw.github.io/cryo/quickstart/)** · **[Architecture](./docs/design/hld.md)** · **[What ships today](./docs/CAPABILITIES.md)** · **[Contributing](./CONTRIBUTING.md)**
 
 Free and self-hosted. Runs on the Trino or Spark you already have. **[Try it locally in one command ↓](#quick-start)**
 
@@ -317,8 +317,8 @@ workers never adds parallel `OPTIMIZE`s.
   </tr>
 </table>
 
-Full component map and data flow: [`hld.md`](./hld.md). Schemas, interfaces and the planner
-algorithm: [`lld.md`](./lld.md).
+Full component map and data flow: [`docs/design/hld.md`](./docs/design/hld.md). Schemas, interfaces and the planner
+algorithm: [`docs/design/lld.md`](./docs/design/lld.md).
 
 ## Install on Kubernetes
 
@@ -483,7 +483,7 @@ contribution.
 |---|---|
 | [Docs site](https://tech-pw.github.io/cryo/) | Quickstart, concepts, maintenance, engines, deployment, reference |
 | [`docs/CAPABILITIES.md`](./docs/CAPABILITIES.md) | Generated catalog, engine and operation matrix: what ships today |
-| [`plan.md`](./plan.md) · [`hld.md`](./hld.md) · [`lld.md`](./lld.md) | Vision and scope · components and data flow · schemas, interfaces and planner algorithm |
+| [`docs/design/hld.md`](./docs/design/hld.md) · [`docs/design/lld.md`](./docs/design/lld.md) | Components and data flow · schemas, interfaces and planner algorithm |
 | [`AGENTS.md`](./AGENTS.md) | Guardrails for contributors and AI agents, including the parity checklist |
 | [`docs/operator/`](./docs/operator/README.md) | Operator procedures for install and debug. They explain; they do not install or run maintenance |
 | [`docs/`](./docs/) | Execution plan, research and operational notes. Index: [`docs/README.md`](./docs/README.md) |

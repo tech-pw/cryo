@@ -1,10 +1,9 @@
 # Cryo — Open Source Governance (pre-v1)
 
 Cryo is licensed under the [Apache License 2.0](../LICENSE). The canonical
-repository is [github.com/tech-pw/cryo](https://github.com/tech-pw/cryo). That
-repository is private until the public flip.
+repository is [github.com/tech-pw/cryo](https://github.com/tech-pw/cryo).
 
-This document describes the intended governance once the repository is public. It does **not** establish a
+This document describes how the project is governed. It does **not** establish a
 full Apache-style PMC, CLA, or foundation structure — that overhead is deferred until external
 contributor volume justifies it (see [`research-and-roadmap.md`](./research-and-roadmap.md) Part 5).
 
@@ -13,7 +12,7 @@ contributor volume justifies it (see [`research-and-roadmap.md`](./research-and-
 | Area | Process |
 |------|---------|
 | **Code changes** | GitHub pull requests; maintainer review + CI green |
-| **Roadmap / architecture** | `plan.md`, `hld.md`, `lld.md`, `docs/EXECUTION_PLAN.md` |
+| **Roadmap / architecture** | `docs/design/hld.md`, `docs/design/lld.md`, `docs/research-and-roadmap.md` |
 | **Releases** | Tag on `main`; release notes in GitHub Releases |
 | **Security issues** | Private disclosure to maintainers (GitHub Security Advisories when enabled) |
 

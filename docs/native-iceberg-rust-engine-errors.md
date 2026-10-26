@@ -225,7 +225,6 @@ Severity: Low
 
 Several docs describe the native engine as complete or first-class while the execute paths are partial:
 
-- `docs/EXECUTION_PLAN.md`
 - `docs/current-state.md`
 - `docs/ARCHITECTURE_AND_AI_STRATEGY.md`
 - `cryo-engine/README.md`

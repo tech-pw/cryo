@@ -154,7 +154,6 @@ outcome, and `score_delta_7d`. The explorer filter grammar also accepts the comp
 active, then scanned / scan failing / not scanned, then needs work / no work, then the skip
 reasons or selected, then succeeded / failed / in progress. It counts tables, not operations.
 Each node includes a `view` that names the explorer triage view listing those tables.
-See `docs/TABLES_PAGE_REDESIGN_2026-10-18.md`.
 
 Table configuration (the table detail Config tab):
 
@@ -185,7 +184,6 @@ PUT  /api/v1/tables/{table_id}/config/operations
   - A high-risk batch needs `confirm: true` and a reason of at least 8 characters.
   - A change whose `expected_value` no longer matches is rejected.
 
-See `docs/TABLE_CONFIG_INVENTORY_2026-10-17.md`.
 
 `compatible-presets` returns presets whose destination can maintain this table's catalog.
 Non-Trino destinations are always included. Trino destinations are included only when the

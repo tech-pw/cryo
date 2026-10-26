@@ -815,8 +815,7 @@ finalize run summary
   and no earlier gate (lock, pause, intent, approval) still holds.
 - **In-flight counters** are rebuilt from Postgres every 5 minutes; `defer()` returns the slot of an
   admitted/running job. Wave, purge and reaper scans are bounded and oldest-first.
-- **Duplicate maintenance**: jobs for the same table are deduped by operation (see
-  `docs/GOVERNOR_FIXES_AND_JOB_DEDUPE_2026-10-22.md`). Ad-hoc runs skip covered steps and report
+- **Duplicate maintenance**: jobs for the same table are deduped by operation. Ad-hoc runs skip covered steps and report
   them (`force` overrides), cron runs filter before the budget cut, and a succeeded job supersedes
   queued jobs whose operations it covered.
 
@@ -946,7 +945,7 @@ GET   /api/v1/tables/{id}/config                             # curated settings 
 POST  /api/v1/tables/{id}/config/preview                     # risk/warnings/blocks per staged change
 POST  /api/v1/tables/{id}/config/apply                       # operator (admin for min_role=admin);
         # one PyIceberg txn on the Source catalog + cryo.* overrides; audited; high risk needs
-        # confirm + reason; stale expected_value rejected. See docs/TABLE_CONFIG_INVENTORY_2026-10-17.md
+        # confirm + reason; stale expected_value rejected.
 PUT   /api/v1/tables/{id}/config/operations                  # operator; per-table operation exclusions
         # (§11.3); audited; excluding a high-risk op needs confirm
 GET   /api/v1/dashboards/datalake                             # grade dist, cost, drift, totals

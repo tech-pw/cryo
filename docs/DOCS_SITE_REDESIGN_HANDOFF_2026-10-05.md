@@ -170,7 +170,7 @@ A diagonal segment is a bug.
 Deleted and must stay deleted: `site/assets/js/charts.js`, `site/assets/js/index.json`,
 `site/scripts/build-search-index.mjs`.
 
-[`DOCS_SITE_CREATIVE_PLAN_2026-09-30.md`](./DOCS_SITE_CREATIVE_PLAN_2026-09-30.md) is superseded.
+The earlier creative plan is superseded.
 It describes the chart engine and embedded Archify frames. Do not implement it.
 
 ## What was verified
