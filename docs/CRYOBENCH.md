@@ -1,12 +1,19 @@
-# CryoBench evidence harness
+# CryoBench fixture (synthetic inputs)
 
-CryoBench is Cryo's reproducible input and evidence format. It does not turn synthetic runs into
-production claims.
+> [!NOTE]
+> **This is not the published benchmark.** The measured results (Cryo versus scheduled and hand-run
+> Spark on fleet health, a 100 GiB table, live CDC and query impact) are the **CryoBench V2
+> benchmark** on the docs site: <https://tech-pw.github.io/cryo/benchmark/>. The V2 harness and raw
+> results are not in this repository yet; that is tracked in
+> [#273](https://github.com/tech-pw/cryo/issues/273). This page describes the **CryoBench
+> fixture**, a deterministic synthetic fleet and fault matrix used as test input. It produces no
+> performance numbers.
 
-A rendered summary of the current fixture -- fleet percentiles, size classes, the fault matrix,
-and the seed/digest needed to regenerate it -- is published at
-<https://claude.ai/code/artifact/4c62713f-e2ef-4b83-9659-425f6679614f>. Regenerate the fixture
-locally and compare digests rather than trusting that page's numbers.
+The CryoBench fixture is Cryo's reproducible input and evidence format. It does not turn synthetic
+runs into production claims.
+
+There is no hosted summary of the fixture. Regenerate it locally: the fixture records its seed and
+SHA-256 workload digest, so two runs of the same version can be compared by digest.
 
 Generate the default customer-shaped fleet and control-plane fault matrix:
 
