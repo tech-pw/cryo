@@ -167,6 +167,33 @@ We filed what we hit: run status staying queued ([#153](https://github.com/tech-
 
 Cryo ran with default settings throughout. The protocol was written and frozen before any scored run, compute was measured from Kubernetes pod requests, and rewritten bytes came from Iceberg's own snapshot summaries. Discovery was also checked at fleet scale: all 100 tables in a 100-table catalog were discovered, with exact file counts, in about two and a half minutes.
 
+## Hardware and versions
+
+The numbers above were measured on one cluster. The protocol, the harness, the raw per-trial data and the analysis scripts are all in the repository, so you can check them — or rerun the tests.
+
+| | |
+| --- | --- |
+| Nodes | 6 |
+| Node type | `r6a.8xlarge` — 32 vCPU, 128 GiB, on-demand |
+| Region | `ap-south-1` (Mumbai) |
+| Spark | 4.1.2 |
+| Iceberg | 1.11.0 |
+| Trino | 480, read-only, 6 vCPU / 20 GiB guaranteed |
+| Object store | S3 Standard |
+
+The benchmark used about 48 vCPU on average for about 24 hours in total, across every phase.
+
+[**The harness is in the repository**](https://github.com/tech-pw/cryo/tree/main/benchmarks/cryobench-v2) — the frozen protocol, the phase controllers, the raw per-trial data and the analysis scripts. Every analysis table on this page regenerates from the published data:
+
+**terminal**
+
+```
+$ cd benchmarks/cryobench-v2
+$ for s in p1_analysis p2_analysis p3_analysis; do python harness/analysis/$s.py; done
+```
+
+The [claims register](https://github.com/tech-pw/cryo/blob/main/benchmarks/cryobench-v2/CLAIMS.md) says what each phase does and does not establish. It also records the claims this benchmark does *not* support — that compaction always improves latency, that Cryo saves compute, that it maintains tables faster than a scheduled job — which is the more useful half of the result.
+
 Try it on your own tables
 
 The fastest way to see this on your lake is the Quickstart. Point Cryo at a catalog, let it grade every table, and review the plan before anything runs.
