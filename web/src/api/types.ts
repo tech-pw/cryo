@@ -801,6 +801,8 @@ export interface JobRead {
   error?: string | null;
   plan?: JsonObject | null;
   force_admit?: boolean;
+  /** Executed steps from `cryo.job_steps`, when the payload includes them. */
+  steps?: RunStepRead[] | null;
 }
 
 export interface RunStepRead {
