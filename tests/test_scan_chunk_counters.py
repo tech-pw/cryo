@@ -1,6 +1,6 @@
 """Regression tests for scan chunk claim + scanned/chunk counter accounting.
 
-These cover the data-dev-eks failure mode where a chunk could be claimed twice
+These cover the failure mode where a chunk could be claimed twice
 (Redis + DB fallback), progress counters accumulated across attempts, and the
 run stayed at 100% with chunks_remaining=1 while scanned exceeded discovered.
 """
