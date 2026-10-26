@@ -36,11 +36,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { MetricTile } from "../components/ui/stat";
 import { Skeleton } from "../components/ui/skeleton";
 import { useAuth } from "../lib/auth";
-import { formatDuration } from "../lib/format";
+import { formatDateTime, formatDuration } from "../lib/format";
 import { engineTagColor, formatEngineLabel, isNativeStatement } from "../lib/engines";
-import { isScanRun, shortRunId, targetLabel } from "../lib/operations";
+import { isScanRun, shortRunId } from "../lib/operations";
 import { cn } from "../lib/cn";
 import "./jobDetail.css";
+import { useRunWorkflow } from "./operations/useRunWorkflow";
 
 interface JobDetail extends JobDetailDashboard {}
 
@@ -251,12 +252,7 @@ export const JobDetail = () => {
   });
 
   const scan = isScanRun(run.data);
-  const workflowName = scan ? "Scanner" : run.data ? targetLabel(run.data) : "Workflow";
-  const workflowLink = scan
-    ? "/runs/scanner"
-    : run.data?.preset_id
-      ? `/runs/workflows/${run.data.preset_id}`
-      : "/runs";
+  const { name: workflowName, link: workflowLink } = useRunWorkflow(run.data);
 
   return (
     <div className="job-detail-page">
@@ -391,7 +387,7 @@ export const JobDetail = () => {
                         {Math.round(diagnosisRecord.confidence * 100)}% confidence)
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Diagnosed {new Date(diagnosisRecord.diagnosed_at).toLocaleString()}
+                        Diagnosed {formatDateTime(diagnosisRecord.diagnosed_at)}
                         {diagnosisRecord.skillset_id
                           ? ` • Skillset ${diagnosisRecord.skillset_id}`
                           : diagnosisRecord.observation_id
@@ -555,11 +551,11 @@ export const JobDetail = () => {
                     { label: "Replica", value: data.replica || "—" },
                     {
                       label: "Started At",
-                      value: data.started_at ? new Date(data.started_at).toLocaleString() : "—"
+                      value: data.started_at ? formatDateTime(data.started_at) : "—"
                     },
                     {
                       label: "Completed At",
-                      value: data.completed_at ? new Date(data.completed_at).toLocaleString() : "In progress"
+                      value: data.completed_at ? formatDateTime(data.completed_at) : "In progress"
                     }
                   ]}
                 />

@@ -268,8 +268,13 @@ class SchedulerService:
         jobs_enqueued = 0
         fired: list[str] = []
 
+        # Cron runs in the install zone (#183), the same zone the off-peak gate uses.
+        from cryo.display_time import display_zone
+
         for preset, last_run_at in due_presets:
-            if not cron_is_due(preset.schedule_cron, now=current, last_run_at=last_run_at):
+            if not cron_is_due(
+                preset.schedule_cron, now=current, last_run_at=last_run_at, tz=display_zone()
+            ):
                 continue
 
             run = build_scheduled_run(
@@ -825,6 +830,11 @@ class SchedulerService:
                     generate_layout_recommendation(session, table_id)
                     generated += 1
                 except Exception as exc:  # noqa: BLE001
+                    # A failed statement aborts the transaction. Without the rollback every
+                    # later table failed with InFailedSqlTransaction, hiding the real error
+                    # behind ~400 cascade warnings a day (#255). generate_layout_recommendation
+                    # commits each table, so this only discards the failed table's work.
+                    session.rollback()
                     logger.warning(
                         "Layout recommendation generation failed for table %s: %s",
                         table_id,
@@ -1563,7 +1573,7 @@ class InMemorySchedulerStore:
         return [
             (preset, self.last_runs.get(preset.id))
             for preset in self.presets
-            if preset.enabled and preset.schedule_cron
+            if preset.enabled and not preset.paused and preset.schedule_cron
         ]
 
     def list_tables(self) -> list[TableCandidate]:

@@ -6,7 +6,11 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-RUN npm run build
+# Baked into the bundle as the web build's version (#263); the UI warns when it differs
+# from the API's /api/v1/version.
+ARG CRYO_VERSION=""
+ARG CRYO_GIT_SHA=""
+RUN VITE_CRYO_VERSION="${CRYO_VERSION}" VITE_CRYO_GIT_SHA="${CRYO_GIT_SHA}" npm run build
 
 # Runs as UID 101 and cannot bind privileged ports, so nginx.conf listens on 8080.
 # Pinned by digest, not the mutable tag. The previous pin
@@ -19,15 +23,35 @@ RUN npm run build
 # CVEs for this upstream image.
 FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
 
+# Alpine ships fixes between upstream nginx-unprivileged rebuilds. On 2026-10-26 the pinned
+# digest above still had brotli-libs 1.2.0 (CVE-2026-111497) and curl/libcurl 8.22
+# (CVE-2026-92392), both HIGH with fixes in the 3.24 repo, which failed the release Trivy gate.
+USER root
+RUN apk upgrade --no-cache
 COPY --from=build /app/dist /usr/share/nginx/html
 # envsubst at start: NGINX_LOCAL_RESOLVERS from the pod's /etc/resolv.conf, and
 # CRYO_API_UPSTREAM from Helm (API Service FQDN). Do not bake kube-dns here.
+# CRYO_WEB_HSTS is the Strict-Transport-Security value; empty (the default) sends no HSTS.
+# It must stay defined: an unsubstituted ${CRYO_WEB_HSTS} would fail nginx's config check.
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 RUN rm -f /etc/nginx/conf.d/default.conf
 
 ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
-ENV NGINX_ENVSUBST_FILTER="NGINX_LOCAL_RESOLVERS|CRYO_API_UPSTREAM"
+ENV NGINX_ENVSUBST_FILTER="NGINX_LOCAL_RESOLVERS|CRYO_API_UPSTREAM|CRYO_WEB_HSTS"
 ENV CRYO_API_UPSTREAM=http://cryo-api:8000
+ENV CRYO_WEB_HSTS=""
+
+# Build identity labels (#263). release-supply-chain.yml passes the tag, commit and build
+# time. The bundle got the version in the build stage above.
+ARG CRYO_VERSION=""
+ARG CRYO_GIT_SHA=""
+ARG CRYO_BUILD_DATE=""
+LABEL org.opencontainers.image.title="cryo-web" \
+      org.opencontainers.image.source="https://github.com/tech-pw/cryo" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${CRYO_VERSION}" \
+      org.opencontainers.image.revision="${CRYO_GIT_SHA}" \
+      org.opencontainers.image.created="${CRYO_BUILD_DATE}"
 
 USER 101
 

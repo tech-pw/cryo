@@ -148,7 +148,16 @@ def upgrade() -> None:
     op.execute("ALTER TABLE cryo.jobs ADD COLUMN IF NOT EXISTS operations JSONB")
     op.execute("ALTER TABLE cryo.jobs ADD COLUMN IF NOT EXISTS dedupe_key TEXT")
 
-    _backfill_and_retire_duplicates()
+    if op.get_context().as_sql:
+        # Offline (`alembic upgrade --sql`, used by the release evidence job) has no rows to
+        # read: the backfill needs live data, so the rendered script carries a note instead.
+        # Apply this revision online; the index build below fails on a queue that still
+        # holds duplicate active jobs.
+        op.get_context().impl.static_output(
+            "-- 20261022_1200: duplicate active-job backfill runs only online (alembic upgrade)"
+        )
+    else:
+        _backfill_and_retire_duplicates()
 
     # CONCURRENTLY: jobs is written by every worker; a plain CREATE INDEX blocks those writes.
     # A previous attempt that failed mid-build leaves an INVALID index of the same name, which

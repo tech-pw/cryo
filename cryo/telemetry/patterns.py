@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -416,7 +416,16 @@ def get_table_query_patterns(
         session.scalar(
             select(func.count(QueryLog.id)).where(
                 QueryLog.table_id == table_id,
-                func.jsonb_array_length(QueryLog.filter_columns) > 1,
+                # CASE, not AND: PostgreSQL does not promise AND short-circuits, and
+                # jsonb_array_length raises on the JSON null the curator used to store (#255).
+                case(
+                    (
+                        func.jsonb_typeof(QueryLog.filter_columns) == "array",
+                        func.jsonb_array_length(QueryLog.filter_columns),
+                    ),
+                    else_=0,
+                )
+                > 1,
             )
         )
         or 0

@@ -1,0 +1,84 @@
+{{- /* Optional NetworkPolicies; see networkPolicy in values.yaml. */ -}}
+{{- if .Values.networkPolicy.enabled }}
+{{- if .Values.redis.enabled }}
+---
+# The chart's Redis has no auth: only this release's pods may connect.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cryo.fullname" . }}-redis
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cryo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "cryo.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.redis.port }}
+          protocol: TCP
+{{- end }}
+{{- with .Values.networkPolicy.api.from }}
+---
+# API: this release's pods (web proxy, workers) plus networkPolicy.api.from.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cryo.fullname" $ }}-api
+  labels:
+    {{- include "cryo.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cryo.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "cryo.selectorLabels" $ | nindent 14 }}
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: {{ $.Values.api.port }}
+          protocol: TCP
+    # Prometheus scrape port, from anywhere (scrapers live in other namespaces).
+    - ports:
+        - port: {{ $.Values.observability.metricsPort }}
+          protocol: TCP
+{{- end }}
+{{- with .Values.networkPolicy.egress }}
+---
+# Egress for every Cryo pod: DNS, this release's pods, and networkPolicy.egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cryo.fullname" $ }}-egress
+  labels:
+    {{- include "cryo.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cryo.selectorLabels" $ | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        {{- toYaml $.Values.networkPolicy.dnsPorts | nindent 8 }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cryo.selectorLabels" $ | nindent 14 }}
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+{{- end }}

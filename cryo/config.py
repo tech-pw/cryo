@@ -3,8 +3,11 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_SECRET_KEY = "dev-only-change-me"
+MIN_SECRET_KEY_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -21,7 +24,15 @@ class Settings(BaseSettings):
     environment: Literal["dev", "test", "staging", "prod"] = "dev"
     database_url: str = "postgresql+psycopg://cryo:cryo@localhost:5432/cryo"
     redis_url: str = "redis://localhost:6379/0"
-    secret_key: str = "dev-only-change-me"
+    secret_key: str = DEFAULT_SECRET_KEY
+    secret_key_previous: str | None = Field(
+        default=None,
+        description=(
+            "Key stored secrets were encrypted with before a rotation. Decryption tries "
+            "secret_key first, then this; `cryo rotate-secret-key` re-encrypts with "
+            "secret_key, after which this can be removed. It may be the old default."
+        ),
+    )
     jwt_secret: str | None = Field(
         default=None,
         description="HS256 secret for API JWTs. Defaults to secret_key when unset.",
@@ -58,6 +69,15 @@ class Settings(BaseSettings):
             "identity check) enabled even when environment=='prod'. Only for bridging the gap "
             "before OIDC is configured -- anyone who can reach the API can self-grant any role "
             "while this is true. Turn off once oidc_issuer_url is set."
+        ),
+    )
+    google_admin_emails: str = Field(
+        default="",
+        description=(
+            "Comma-separated Google emails that become Cryo admins on their first Google "
+            "sign-in when no Cryo user exists for them. Bootstraps the first admin once "
+            "Google sign-in is enabled and dev tokens are turned off. Does not change the "
+            "role of an existing user."
         ),
     )
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
@@ -280,6 +300,31 @@ class Settings(BaseSettings):
         ),
     )
     scan_dead_table_lookback_days: int = Field(default=30, ge=1)
+    scan_remove_missing_tables_enabled: bool = Field(
+        default=True,
+        description=(
+            "Tombstone registry rows whose table is no longer in a complete catalog listing "
+            "(#120): removed_from_catalog_at is set and the table goes inactive. Reversible: a "
+            "table that shows up again is restored on the next scan. Nothing is hard-deleted."
+        ),
+    )
+    scan_missing_table_max_fraction: float = Field(
+        default=0.2,
+        ge=0,
+        le=1,
+        description=(
+            "Mass-removal guard: if one scan would remove more than this share of a source's "
+            "registered tables, it removes none and records why. Ignored for at most "
+            "scan_missing_table_guard_min_count removals, so small catalogs still reconcile."
+        ),
+    )
+    scan_missing_table_max_count: int = Field(
+        default=500,
+        ge=0,
+        description="Mass-removal guard: never remove more than this many tables per source "
+        "per scan; above it, remove none and record why.",
+    )
+    scan_missing_table_guard_min_count: int = Field(default=5, ge=0)
     dispatch_heartbeat_stall_minutes: int = Field(
         default=1560,
         ge=1,
@@ -377,6 +422,17 @@ class Settings(BaseSettings):
     query_gets_per_file: float = Field(default=1.0, ge=0)
 
     # Equal start/end disables the off-peak gate (heavy modes may run anytime).
+    display_timezone: str = Field(
+        default="UTC",
+        description=(
+            "IANA time zone for the install (CRYO_DISPLAY_TIMEZONE), for example "
+            "'Asia/Kolkata' or 'Europe/Berlin'. Cron presets, the destination off-peak "
+            "window and run report clocks all use it, so a schedule and its off-peak window "
+            "always agree. Exposed to the web app via /api/v1/runtime. Before #183 the off-peak "
+            "gate and reports were hard-coded to IST while cron ran in UTC; set this to "
+            "'Asia/Kolkata' to keep the old off-peak behavior."
+        ),
+    )
     offpeak_start_ist: int = Field(default=0, ge=0, le=23)
     offpeak_end_ist: int = Field(default=0, ge=0, le=23)
     default_per_replica_optimize_cap: int = Field(default=5, gt=0)
@@ -511,6 +567,15 @@ class Settings(BaseSettings):
         ge=1024,
         le=65535,
         description="HTTP port for /healthz and /metrics on background services.",
+    )
+    daemon_tick_stall_seconds: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Background services report unhealthy on /healthz when a single loop tick has run "
+            "longer than this many seconds (0 disables the check). The Helm chart sets it per "
+            "service so its liveness probe restarts a hung scheduler, worker or scanner."
+        ),
     )
     telemetry_ingest_on_startup: bool = Field(
         default=True,
@@ -863,6 +928,51 @@ class Settings(BaseSettings):
         gt=0,
         description="Burst capacity for expensive API endpoint rate limiting.",
     )
+    auth_login_throttle_enabled: bool = Field(
+        default=True,
+        description=(
+            "Throttle failed password and Google sign-ins per account and per client IP. "
+            "Counters live in Redis so the limit holds across API replicas."
+        ),
+    )
+    auth_login_max_failures: int = Field(
+        default=5,
+        gt=0,
+        description="Failed sign-ins for one account within the window before it gets 429.",
+    )
+    auth_login_ip_max_failures: int = Field(
+        default=20,
+        gt=0,
+        description=(
+            "Failed sign-ins from one client IP (any account) within the window before it "
+            "gets 429. Higher than the per-account limit so offices behind one NAT still work."
+        ),
+    )
+    auth_login_window_seconds: int = Field(
+        default=15 * 60,
+        gt=0,
+        description="Length of the failed sign-in window, and the longest a lockout lasts.",
+    )
+    api_docs_enabled: bool | None = Field(
+        default=None,
+        description=(
+            "Serve /docs, /redoc and /openapi.json. Unset means on everywhere except "
+            "CRYO_ENVIRONMENT=prod, where the schema (every route and model) stays private."
+        ),
+    )
+    metrics_bearer_token: str | None = Field(
+        default=None,
+        description=(
+            "When set, the API's root /metrics requires 'Authorization: Bearer <token>' "
+            "(set bearer_token / credentials in the Prometheus scrape config). Unset keeps "
+            "it open for in-cluster scrapers; do not route it through a public Ingress."
+        ),
+    )
+
+    def api_docs_served(self) -> bool:
+        if self.api_docs_enabled is not None:
+            return self.api_docs_enabled
+        return self.environment != "prod"
 
     # Alerting integrations
     pagerduty_routing_key: str | None = Field(
@@ -1466,6 +1576,23 @@ class Settings(BaseSettings):
         ge=1,
         description="Default workload forecast horizon for smart-maintenance API endpoints.",
     )
+
+    @model_validator(mode="after")
+    def _require_real_keys_outside_dev(self) -> Settings:
+        # secret_key signs HS256 API tokens and is the Fernet key for stored connection
+        # secrets, so the published default makes both forgeable/readable.
+        if self.environment not in {"staging", "prod"}:
+            return self
+        for name in ("secret_key", "jwt_secret"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if value == DEFAULT_SECRET_KEY or len(value) < MIN_SECRET_KEY_LENGTH:
+                raise ValueError(
+                    f"CRYO_{name.upper()} must be set to a random value of at least "
+                    f"{MIN_SECRET_KEY_LENGTH} characters when CRYO_ENVIRONMENT={self.environment}"
+                )
+        return self
 
 
 @lru_cache

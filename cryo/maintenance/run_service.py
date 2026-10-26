@@ -86,6 +86,24 @@ def start_maintenance_run(
     preset = session.get(api_routes.Preset, payload.preset_id)
     if preset is None:
         raise HTTPException(status_code=400, detail="Preset does not exist")
+    if getattr(preset, "paused", False):
+        if not payload.override_pause:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Preset {preset.name} is paused. Resume it, or pass override_pause=true "
+                    "to run it once anyway (audited)."
+                ),
+            )
+        session.add(
+            api_routes.AuditLog(
+                action="preset_pause_overridden",
+                status="OK",
+                engine="cryo",
+                detail=f"preset={preset.name} preset_id={preset.id} manual run while paused",
+                actor=principal.subject,
+            )
+        )
 
     requested_ops: list[str] = []
     if preset is not None:

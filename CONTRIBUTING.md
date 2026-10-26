@@ -94,7 +94,7 @@ make test-engine-go
 cd engine-go && CGO_ENABLED=0 go test -v ./internal/ops -run TestName
 ```
 
-`make test` is not "all tests". CI also runs `cargo test` and `make web-test`.
+`make test` is not "all tests". CI also runs the Go engine tests (`go test ./...` in `engine-go`) and `make web-test`.
 Opt-in stacks: `make test-hms-integration`, `make test-native-e2e-local-go`.
 
 ### 4. Code Quality
@@ -117,8 +117,7 @@ make format
 We welcome many types of contributions:
 
 - **Bug reports** — Found a bug? Open an issue with details
-- **Questions** — Ask in [GitHub Discussions](https://github.com/tech-pw/cryo/discussions) (Q&A)
-- **Feature requests** — Have an idea? Start a thread in [Discussions → Ideas](https://github.com/tech-pw/cryo/discussions/categories/ideas), or open a feature issue once it's concrete
+- **Feature requests** — Have an idea? Open an issue for discussion
 - **Documentation** — Improve docs, fix typos, add examples
 - **Code** — Fix bugs, implement features, improve performance
 - **Tests** — Add test coverage, improve test quality
@@ -298,7 +297,7 @@ cryo/
 ## Community
 
 - **GitHub Issues** — Bug reports and feature requests. Use the forms.
-- **Questions** — See [docs/SUPPORT_POLICY.md](docs/SUPPORT_POLICY.md).
+- **GitHub Discussions** — Questions, design discussion and show-and-tell.
 - **Pull Requests** — Code contributions
 - **Security** — [SECURITY.md](SECURITY.md). Do not open a public issue.
 

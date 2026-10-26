@@ -13,7 +13,7 @@ updated: 2026-10-26
   <dt>Helm chart</dt>
   <dd>The chart lives at <code>deploy/helm/cryo</code> and each release tag publishes it to <code>oci://ghcr.io/tech-pw/charts/cryo</code>, signed with cosign keyless. Defaults are committed, and overrides are per environment.</dd>
   <dt>Stores</dt>
-  <dd>PostgreSQL and Redis are required. Both are external to the chart, so you can bring managed services.</dd>
+  <dd>PostgreSQL and Redis are required. PostgreSQL is always external, so you can use a managed service. Redis can be external too, or you can use the chart's single in-namespace Redis, which has no volume.</dd>
   <dt>Engines</dt>
   <dd>Engines stay outside the chart. Cryo reaches them through source and destination configs stored in the database.</dd>
 </dl>
@@ -45,12 +45,16 @@ $ helm install cryo oci://ghcr.io/tech-pw/charts/cryo --version X.Y.Z --namespac
 $ make deployment-footprint
 </codeblock>
 
-<callout type="note" title="Public shape, not a runbook">
-  <p>This page describes the shape of a deployment. It is not a production runbook.</p>
+<callout type="caution" title="Chart defaults are not a production install">
+  <p>This page describes the shape of a deployment. The chart's defaults and the local stack are for development only. A default install has no OIDC and uses the published default <code>CRYO_SECRET_KEY</code>. Follow <a href="@/install/">Install on Kubernetes</a> for a production install, and check <a href="@/security/">Security</a> before anyone else can reach it.</p>
 </callout>
 
 <h2 id="read-next">Where to go next</h2>
 <linkcards>
+  <linkcard href="@/install/" title="Install on Kubernetes">A pinned, production Helm install, step by step.</linkcard>
+  <linkcard href="@/security/" title="Security">Sign-in, roles, secrets and a hardening checklist.</linkcard>
+  <linkcard href="@/upgrade/" title="Upgrade and rollback">Move between releases, and what a rollback undoes.</linkcard>
+  <linkcard href="@/backup/" title="Backup and restore">What to back up, and a restore you can practise.</linkcard>
   <linkcard href="@/architecture/" title="Architecture">The system context these workloads implement.</linkcard>
   <linkcard href="@/engines/" title="Engines">How the same plan renders as Trino or Spark SQL.</linkcard>
   <linkcard href="@/quickstart/" title="Quickstart">Run the same components locally with Docker first.</linkcard>

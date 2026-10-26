@@ -8,7 +8,8 @@ import {
   patchPreset,
   listPresetRules,
   createPresetRule,
-  deletePresetRule
+  deletePresetRule,
+  simulatePreset
 } from "../../api/client";
 import type { DestinationRead, PresetRead, PresetWrite, UUID } from "../../api/types";
 import { ConfirmAction } from "../confirm";
@@ -24,18 +25,33 @@ import { InputNumber } from "../ui/input-number";
 import { Label } from "../ui/label";
 import { Select } from "../ui/select";
 import { Switch } from "../ui/switch";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "../ui/alert-dialog";
 import { DataTable } from "../ui/data-table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { useAuth } from "../../lib/auth";
 import {
   formatDestinationLabel,
   isNativeDestination,
-  nativeRustOptimizeTooltip,
   nativeSupportsOperation,
   nativeUnsupportedOpTooltip,
   resolveNativeEngineImpl
 } from "../../lib/engines";
-import { formValuesToPresetWrite, presetToFormValues, validatePresetFormValues, type PresetFormValues } from "../../lib/presetForm";
+import {
+  formValuesToPresetWrite,
+  presetLifecycleWarning,
+  presetToFormValues,
+  validatePresetFormValues,
+  type PresetFormValues
+} from "../../lib/presetForm";
 import { validateOperationOrder } from "../../lib/operationOrder";
 import { tableFiltersToPredicate, type TableFilterState } from "../../lib/predicate";
 
@@ -101,12 +117,7 @@ export const PresetConfigForm = ({
 
   const operationOptions = operations.map((operation) => {
     const supported = !isNative || nativeSupportsOperation(operation, nativeImpl ?? "go");
-    const tooltip =
-      operation === "optimize_manifests"
-        ? nativeUnsupportedOpTooltip
-        : operation === "optimize"
-          ? nativeRustOptimizeTooltip
-          : undefined;
+    const tooltip = operation === "optimize_manifests" ? nativeUnsupportedOpTooltip : undefined;
     return { operation, supported, tooltip };
   });
 
@@ -122,7 +133,9 @@ export const PresetConfigForm = ({
     }
   ];
 
-  const submit = (values: PresetFormValues) => {
+  const [pendingSave, setPendingSave] = useState<{ body: PresetWrite; message: string } | null>(null);
+
+  const submit = async (values: PresetFormValues) => {
     const errors = validatePresetFormValues(values);
     if (errors) {
       for (const [key, message] of Object.entries(errors)) {
@@ -130,7 +143,18 @@ export const PresetConfigForm = ({
       }
       return;
     }
-    save.mutate(formValuesToPresetWrite(values, preset));
+    const body = formValuesToPresetWrite(values, preset);
+    if (preset && presetLifecycleWarning(preset, values, null)) {
+      let covered: number | null = null;
+      try {
+        covered = (await simulatePreset(api, preset.id)).matched_count;
+      } catch {
+        covered = null;
+      }
+      setPendingSave({ body, message: presetLifecycleWarning(preset, values, covered) ?? "" });
+      return;
+    }
+    save.mutate(body);
   };
 
   if (loading) return null;
@@ -222,6 +246,35 @@ export const PresetConfigForm = ({
               />
               <Label htmlFor="preset-enabled">Enabled</Label>
             </div>
+            <div className="flex items-center gap-2 pt-6">
+              <Switch
+                id="preset-paused"
+                disabled={disabled}
+                checked={form.watch("paused")}
+                onCheckedChange={(checked) => form.setValue("paused", checked)}
+              />
+              <Label htmlFor="preset-paused">Paused</Label>
+            </div>
+          </div>
+          <p className="-mt-2 text-xs text-muted-foreground">
+            Paused holds this preset&apos;s tables: they keep it and wait, nothing runs. Turning
+            Enabled off retires the preset, and its pinned tables fall through to rules or the default.
+          </p>
+
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="preset-default"
+                disabled={disabled}
+                checked={form.watch("is_default")}
+                onCheckedChange={(checked) => form.setValue("is_default", checked)}
+              />
+              <Label htmlFor="preset-default">Default preset</Label>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Runs for every table that has no pinned preset and matches no rule, including newly
+              discovered tables. Needs a schedule. Only one preset can be the default.
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -308,6 +361,25 @@ export const PresetConfigForm = ({
         </form>
       </FormProvider>
       {preset ? <PresetRulesSection presetId={preset.id} /> : null}
+      <AlertDialog open={pendingSave !== null} onOpenChange={(open) => (open ? null : setPendingSave(null))}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Change who maintains these tables?</AlertDialogTitle>
+            <AlertDialogDescription>{pendingSave?.message}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingSave(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingSave) save.mutate(pendingSave.body);
+                setPendingSave(null);
+              }}
+            >
+              Save preset
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

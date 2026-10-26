@@ -18,16 +18,12 @@ patched. Pin your deployment to a tagged release when you need a stable target.
 
 ## Reporting a vulnerability
 
-Report vulnerabilities privately through GitHub: open the repository's **Security** tab and
-choose **Report a vulnerability**, or go straight to the [private advisory form][gh-sa]. The
-report is visible only to you and the maintainers until a fix is published, and we coordinate
-the fix, the advisory and any CVE with you there.
-
-If that form isn't available to you, open a public issue that says only that you have a
-security report and asks a maintainer to contact you. Do not include any details of the
-vulnerability in it. Do not send findings to a guessed or personal address; no security mailbox
-is published. Route non-security support questions according to
-[`docs/SUPPORT_POLICY.md`](./docs/SUPPORT_POLICY.md).
+Open a [GitHub Security Advisory][gh-sa] against this repository. Advisories are visible
+only to the maintainer team until a fix is published, and private vulnerability reporting
+is enabled, so the report never becomes a public issue. Do not file a public GitHub issue
+for a security-sensitive finding, and do not send findings to a guessed or personal
+address. No fallback security mailbox is published. Route non-security support questions
+according to [`docs/SUPPORT_POLICY.md`](./docs/SUPPORT_POLICY.md).
 
 When reporting, please include:
 
@@ -55,17 +51,36 @@ issues (after triage, not before):
 ## Dev token and the platform key
 
 `POST /api/v1/auth/token` self-issues `viewer`, `operator`, or `admin` with no identity check
-while the dev token is on. That route stays on unless `CRYO_ENVIRONMENT=prod`. Configuring OIDC
-does not turn it off. `CRYO_ALLOW_DEV_TOKEN_IN_PROD` reopens it on `environment=prod`.
+while the dev token is on. The route is on only when `CRYO_ENVIRONMENT` is `dev` or `test` and
+no `CRYO_OIDC_ISSUER_URL` is set. `CRYO_ALLOW_DEV_TOKEN_IN_PROD` turns it back on in any
+environment.
 
-The chart default is `CRYO_ENVIRONMENT: dev`. A default `helm install` is not an OIDC install.
-A public install must set `prod`, leave the dev-token override false, and set an issuer before
-the API is reachable.
+The chart defaults to `CRYO_ENVIRONMENT: prod`. A bare `helm install` refuses to render until
+every enabled image is pinned by digest, and the API refuses to start without a real
+`CRYO_SECRET_KEY`. Setting `dev` for a throwaway install re-opens the route unless an OIDC issuer
+is set.
 
-`CRYO_SECRET_KEY` defaults to `dev-only-change-me` when unset. HS256 API tokens fall back to that
-key. A deployment that omits the secret accepts tokens signed with the published default.
+`CRYO_SECRET_KEY` defaults to `dev-only-change-me`. It signs HS256 API tokens (unless
+`CRYO_JWT_SECRET` is set) and encrypts stored connection secrets. In `staging` and `prod`, every
+Cryo process refuses to start when `CRYO_SECRET_KEY` or `CRYO_JWT_SECRET` is the default or
+shorter than 32 characters.
 
 Issued tokens expire in 24 hours. There is no published revocation list.
+
+## Rotating CRYO_SECRET_KEY
+
+`CRYO_SECRET_KEY` encrypts stored connection secrets, so changing it alone makes them
+unreadable. Roll it over in three steps:
+
+1. Deploy with the new value as `CRYO_SECRET_KEY` and the old one as
+   `CRYO_SECRET_KEY_PREVIOUS`. Every process now reads both.
+2. Run `cryo rotate-secret-key` (dry run: counts per table and column, no values), then
+   `cryo rotate-secret-key --apply`. It writes nothing if any value is unreadable with either key.
+   A second dry run reports 0.
+3. Remove `CRYO_SECRET_KEY_PREVIOUS` and redeploy.
+
+HS256 API tokens signed with the old key stop validating at step 1 unless `CRYO_JWT_SECRET` is
+set separately, so users sign in again.
 
 ## Cryptography
 

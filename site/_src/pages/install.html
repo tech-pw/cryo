@@ -1,0 +1,202 @@
+---
+title: Install on Kubernetes
+lede: Install a released Cryo with Helm, against your own PostgreSQL and Redis, with the dev token off and every image pinned by digest. Then sign in, add a source and run the first scan.
+description: Production Helm install for Cryo. Prerequisites, the Secret, a secure values file, helm upgrade --install, migrations, verification, upgrade and uninstall.
+updated: 2026-10-26
+---
+<callout type="important" title="Read Security first">
+  <p>This page uses the settings from <a href="@/security/">Security</a>: <code>CRYO_ENVIRONMENT=prod</code>, a random <code>CRYO_SECRET_KEY</code> of at least 32 characters, and OIDC for sign-in. Nothing here turns on the dev token.</p>
+</callout>
+
+<h2 id="before">What you need</h2>
+<dl>
+  <dt>Kubernetes</dt>
+  <dd>Version 1.27 or newer (the chart's <code>kubeVersion</code> is <code>&gt;=1.27.0-0</code>), with <strong>amd64 nodes</strong>. The published images are amd64-only, so every Cryo pod gets a <code>kubernetes.io/arch: amd64</code> node selector.</dd>
+  <dt>Tools</dt>
+  <dd>Helm 3, <code>kubectl</code>, <code>git</code>, <code>openssl</code>, and <a href="https://github.com/google/go-containerregistry/tree/main/cmd/crane"><code>crane</code></a> to look up image digests.</dd>
+  <dt>PostgreSQL</dt>
+  <dd>An external database and a user that owns it. Cryo keeps its tables in a schema called <code>cryo</code> in that database. The first migration runs <code>CREATE EXTENSION IF NOT EXISTS pgcrypto</code>, so either give the user that privilege or create the extension first. <code>pgvector</code> is optional. Without it, the migration logs a warning and AI search falls back to a slower path. The local stack runs PostgreSQL 16.</dd>
+  <dt>Redis</dt>
+  <dd>An external Redis for the job queue. Postgres is the source of truth, so Redis doesn't need persistence. You can use the chart's single in-namespace Redis instead (see <a href="#bundled-redis">Using the bundled Redis</a>).</dd>
+  <dt>An OIDC client</dt>
+  <dd>A confidential client at your identity provider with redirect URI <code>https://&lt;your-cryo-host&gt;/login/callback</code>. Its access tokens must carry a Cryo role. <a href="@/security/#oidc">Security</a> lists the exact claims.</dd>
+  <dt>Network</dt>
+  <dd>Cryo's pods must be able to reach PostgreSQL, Redis, your catalogs, your engines (Trino or Spark), the object storage that holds the table files, and the OIDC issuer. <a href="@/security/#egress">Security</a> has the full list.</dd>
+</dl>
+
+<h2 id="install">Install</h2>
+<steps>
+  <step title="Pick a version and get its chart">
+    <p>The chart isn't in a Helm repository. Take it from the git tag that matches the image tag, so the chart and the images come from the same release. This page uses <code>v0.1.5</code>. Use the newest <code>v*</code> tag, and use it everywhere this page says <code>v0.1.5</code>.</p>
+    <codeblock lang="bash" title="terminal">
+$ export CRYO_VERSION=v0.1.5
+$ git clone --depth 1 --branch "$CRYO_VERSION" https://github.com/tech-pw/cryo.git "cryo-$CRYO_VERSION"
+$ cd "cryo-$CRYO_VERSION"
+    </codeblock>
+  </step>
+  <step title="Look up the image digests">
+    <p>The release images are public on GHCR: <code>ghcr.io/tech-pw/cryo</code> runs the API, workers and migrations, and <code>ghcr.io/tech-pw/cryo-web</code> is the UI. With <code>CRYO_ENVIRONMENT=prod</code>, the chart won't render until every enabled image has a <code>sha256</code> digest, so a moved tag can't change what runs.</p>
+    <codeblock lang="bash" title="terminal">
+$ export CRYO_DIGEST=$(crane digest "ghcr.io/tech-pw/cryo:$CRYO_VERSION")
+$ export CRYO_WEB_DIGEST=$(crane digest "ghcr.io/tech-pw/cryo-web:$CRYO_VERSION")
+$ echo "$CRYO_DIGEST $CRYO_WEB_DIGEST"
+    </codeblock>
+    <p class="expect">Done when both values start with <code>sha256:</code>.</p>
+  </step>
+  <step title="Write the settings file">
+    <p>Every Cryo process reads its <code>CRYO_*</code> settings from the Secret named by <code>global.envFromSecret</code>, and that includes the migration Job. Save the settings below as <code>cryo.env</code> and replace every placeholder. Keeping them in a file keeps them out of your shell history.</p>
+    <codeblock lang="text" title="cryo.env">
+CRYO_DATABASE_URL=postgresql+psycopg://cryo:REPLACE_ME@postgres.example.internal:5432/cryo
+CRYO_REDIS_URL=redis://redis.example.internal:6379/0
+CRYO_OIDC_ISSUER_URL=https://idp.example.com/realms/data
+CRYO_OIDC_CLIENT_ID=cryo
+CRYO_OIDC_CLIENT_SECRET=REPLACE_ME
+CRYO_OIDC_REDIRECT_URI=https://cryo.example.com/login/callback
+    </codeblock>
+    <p><code>CRYO_OIDC_ISSUER_URL</code> must match the <code>iss</code> claim in your tokens. If your provider's access tokens use an audience other than the client ID, add <code>CRYO_OIDC_AUDIENCE</code> as well.</p>
+  </step>
+  <step title="Create the namespace and the Secret">
+    <p>Add two random keys to the file: one encrypts stored secrets, the other signs Cryo's own tokens. Then load the file into the Secret and delete it.</p>
+    <codeblock lang="bash" title="terminal">
+$ echo "CRYO_SECRET_KEY=$(openssl rand -hex 32)" >> cryo.env
+$ echo "CRYO_JWT_SECRET=$(openssl rand -hex 32)" >> cryo.env
+$ kubectl create namespace cryo
+$ kubectl -n cryo create secret generic cryo-secrets --from-env-file=cryo.env
+$ rm cryo.env
+    </codeblock>
+    <p><strong>Keep <code>CRYO_SECRET_KEY</code>.</strong> It also encrypts the connection secrets Cryo stores, so back it up alongside the database. If you lose it or change it, those stored secrets can't be read. See <a href="@/security/#secret-key">Security</a>.</p>
+  </step>
+  <step title="Write the values file">
+    <p>Save this as <code>cryo-values.yaml</code>. It sets <code>prod</code>, takes both images from the release, turns on the UI and points every process at the Secret. The bundled Redis is off because <code>CRYO_REDIS_URL</code> points at your own. The digests are passed on the command line in the next step.</p>
+    <codeblock lang="yaml" title="cryo-values.yaml">
+global:
+  envFromSecret: cryo-secrets
+  env:
+    CRYO_ENVIRONMENT: prod
+image:
+  repository: ghcr.io/tech-pw/cryo
+  tag: v0.1.5
+migration:
+  image:
+    repository: ghcr.io/tech-pw/cryo
+    tag: v0.1.5
+web:
+  enabled: true
+  image:
+    repository: ghcr.io/tech-pw/cryo-web
+    tag: v0.1.5
+redis:
+  enabled: false
+    </codeblock>
+    <p>The native and Spark-on-Kubernetes lanes are off by default. If you turn on <code>native.enabled</code> or <code>spark.k8s.enabled</code>, pin those images by digest too. <code>deploy/helm/cryo/values.yaml</code> documents every other setting and its default.</p>
+  </step>
+  <step title="Render, then install">
+    <p>Render first. A missing digest or a typo fails at this point, before anything touches the cluster.</p>
+    <codeblock lang="bash" title="terminal">
+$ helm template cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest="$CRYO_DIGEST" --set migration.image.digest="$CRYO_DIGEST" --set web.image.digest="$CRYO_WEB_DIGEST" > /dev/null
+$ helm upgrade --install cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest="$CRYO_DIGEST" --set migration.image.digest="$CRYO_DIGEST" --set web.image.digest="$CRYO_WEB_DIGEST" --wait --timeout 15m
+    </codeblock>
+    <p class="expect">Done when Helm prints <code>STATUS: deployed</code>. With the release name <code>cryo</code>, the Services are <code>cryo-api</code> on port 8000 and <code>cryo-web</code> on port 80.</p>
+  </step>
+</steps>
+
+<h2 id="migrations">How migrations run</h2>
+<p>Every <code>helm install</code> and <code>helm upgrade</code> starts with a hook Job called <code>cryo-migrate-&lt;revision&gt;</code>. It runs <code>alembic upgrade head</code> with the same image and Secret. The release waits for the Job, and no Deployment changes until it succeeds. Helm deletes the Job when it succeeds and keeps it when it fails, so after a failed install you can still read the log:</p>
+<codeblock lang="bash" title="terminal">
+$ kubectl -n cryo get jobs -l app.kubernetes.io/component=migration
+$ kubectl -n cryo logs job/cryo-migrate-1
+</codeblock>
+<p>After a successful install, check which revision the database is on:</p>
+<codeblock lang="bash" title="terminal">
+$ kubectl -n cryo exec deploy/cryo-api -- alembic current
+</codeblock>
+<p class="expect">Done when it prints one revision ending in <code>(head)</code>.</p>
+
+<h2 id="verify">Check the install</h2>
+<steps>
+  <step title="Pods are ready">
+    <codeblock lang="bash" title="terminal">
+$ kubectl -n cryo get pods
+    </codeblock>
+    <p class="expect">Done when the api, worker, governor, scheduler and web pods are all <code>Running</code> and ready. The scanner worker can stay at zero replicas until there's scan work.</p>
+  </step>
+  <step title="The API answers and the dev token is off">
+    <p>In a second terminal, run <code>kubectl -n cryo port-forward svc/cryo-api 8000:8000</code>. <code>/healthz</code> only shows that the process is up. <code>/healthz/deep</code> checks PostgreSQL and Redis as well.</p>
+    <codeblock lang="bash" title="terminal">
+$ curl -s localhost:8000/healthz
+$ curl -s localhost:8000/healthz/deep
+$ curl -s localhost:8000/api/v1/auth/config
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8000/api/v1/auth/token -H 'content-type: application/json' -d '{"role":"admin"}'
+    </codeblock>
+    <p class="expect">Done when <code>/healthz</code> reports <code>"environment":"prod"</code> and <code>/healthz/deep</code> returns <code>"status":"ok"</code>. The auth config should show <code>"mode":"oidc"</code> and <code>"dev_token_enabled":false</code>, and the token request should print <code>503</code>.</p>
+  </step>
+  <step title="Expose the UI">
+    <p>The chart has no Ingress. Point your own Ingress or load balancer at the <code>cryo-web</code> Service on port 80, using the host from <code>CRYO_OIDC_REDIRECT_URI</code>. The web pod serves the UI and forwards <code>/api/</code> to the API, so you only need one host. Ask Cryo streams server-sent events, so turn proxy buffering off and allow a read timeout of at least 60 seconds.</p>
+    <codeblock lang="yaml" title="cryo-ingress.yaml">
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cryo
+  namespace: cryo
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [cryo.example.com]
+      secretName: cryo-tls
+  rules:
+    - host: cryo.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cryo-web
+                port:
+                  number: 80
+    </codeblock>
+    <p>These annotations are for ingress-nginx, so use your controller's equivalents if you run a different one. The web pod does not forward <code>/metrics</code> or <code>/healthz/deep</code>: it answers both with 404, and admins read them in the UI through <code>/api/v1/ops/metrics</code> and <code>/api/v1/ops/healthz/deep</code>. Prometheus and probes reach the API Service directly. Set <code>CRYO_METRICS_BEARER_TOKEN</code> to require a token on the API's <code>/metrics</code>.</p>
+  </step>
+  <step title="Sign in">
+    <p>Open <code>https://cryo.example.com</code> and sign in through your identity provider. You need the <code>admin</code> role in your access token to add sources. If <code>/api/v1/auth/config</code> returns 503 with <code>OIDC issuer discovery failed</code>, the API can't reach <code>CRYO_OIDC_ISSUER_URL/.well-known/openid-configuration</code>.</p>
+    <p class="expect">Done when Home loads. It stays empty until the first scan.</p>
+  </step>
+  <step title="Add a source and run the first scan">
+    <p>Follow <a href="@/onboarding/">Connect a lakehouse</a> to add a catalog and start a scan. The scanner CronJob also scans every source every six hours, as set by <code>scanner.schedule</code>.</p>
+    <p class="expect">Done when Tables lists your tables with grades.</p>
+  </step>
+</steps>
+
+<h2 id="bundled-redis">Using the bundled Redis</h2>
+<p>When <code>redis.enabled</code> is <code>true</code>, which is the chart default, the chart runs one Redis pod with no volume behind a ClusterIP Service called <code>cryo-redis</code>. The chart doesn't set <code>CRYO_REDIS_URL</code> for you, so put <code>CRYO_REDIS_URL=redis://cryo-redis:6379/0</code> in the Secret. In <code>prod</code>, the Redis image needs a digest too:</p>
+<codeblock lang="bash" title="terminal">
+$ export REDIS_DIGEST=$(crane digest redis:7-alpine)
+$ helm upgrade --install cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest="$CRYO_DIGEST" --set migration.image.digest="$CRYO_DIGEST" --set web.image.digest="$CRYO_WEB_DIGEST" --set redis.enabled=true --set redis.image.digest="$REDIS_DIGEST" --wait --timeout 15m
+</codeblock>
+
+<h2 id="upgrade">Upgrade</h2>
+<p>Back up the database first. Then repeat the install with the new tag: check out its chart, look up its digests, change the three <code>tag</code> values in <code>cryo-values.yaml</code>, render, and run <code>helm upgrade --install</code>. The migration hook runs before any pod changes. <a href="@/upgrade/">Upgrade and rollback</a> has the details and the limits of a rollback.</p>
+
+<h2 id="uninstall">Uninstall</h2>
+<codeblock lang="bash" title="terminal">
+$ helm uninstall cryo --namespace cryo
+</codeblock>
+<p>This removes the Deployments, Services, CronJobs, ServiceAccount and RBAC that the release created. These are left behind:</p>
+<ul>
+  <li><strong>The database.</strong> The <code>cryo</code> schema stays in PostgreSQL, with its run history, audit rows and stored connections. Drop it yourself if you want them gone.</li>
+  <li><strong>Redis keys</strong> in your external Redis. The bundled Redis has no volume, so its data goes when its pod does.</li>
+  <li><strong>The Secret</strong> <code>cryo-secrets</code> and the namespace, because you created them outside the chart.</li>
+  <li><strong>Runtime Jobs</strong> started by the native or Spark lanes. They aren't part of the release and are removed through <code>ttlSecondsAfterFinished</code>. Check with <code>kubectl -n cryo get jobs,pods</code>.</li>
+  <li><strong>Changes to your tables.</strong> Maintenance that already ran is permanent. Compacted files and expired snapshots don't come back.</li>
+</ul>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/security/" title="Security">Roles, OIDC claims, the dev token and a hardening checklist.</linkcard>
+  <linkcard href="@/deployment/" title="Deployment">What the release runs and what it requests.</linkcard>
+  <linkcard href="@/onboarding/" title="Connect a lakehouse">Add the first source and run the first scan.</linkcard>
+  <linkcard href="@/configuration/" title="Configuration">Every environment variable and Helm value.</linkcard>
+</linkcards>

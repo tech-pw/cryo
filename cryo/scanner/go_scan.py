@@ -30,7 +30,7 @@ from cryo.scanner.cost import (
     build_table_cost_analysis,
     estimate_storage_cost,
 )
-from cryo.scanner.health import compute_health_score
+from cryo.scanner.health import compute_design_findings, compute_health_score
 from cryo.scanner.signals import enrich_stats_signals, manifest_stats
 
 logger = logging.getLogger(__name__)
@@ -284,6 +284,11 @@ def table_analysis_from_go_payload(
         "first_updated_at": last_snapshot_committed_at,
         "manifest_count": manifest_count,
         "avg_file_size_mb": avg_file_size_mb,
+        # The size scales the count-based health limits (file count, partition count,
+        # manifest count) so a large table is not permanently penalised for having the
+        # number of files its own layout requires. Without it the scale is always 1
+        # (issue #288).
+        "total_size_gb": round(total_size_bytes / GB, 6),
         "total_partitions": total_partitions,
         "partition_skew_ratio": skew,
         "avg_files_per_partition": avg_files_per_partition,
@@ -362,6 +367,7 @@ def table_analysis_from_go_payload(
         "file_formats": file_formats,
         "snapshot_overhead_gb": cost.snapshot_overhead_gb,
         "health_deductions": health_deductions,
+        "health_design_findings": compute_design_findings(stats_for_health),
         "column_quality": column_quality,
         "avg_null_rate": float(avg_null_rate),
         "max_null_rate": float(max_null_rate),

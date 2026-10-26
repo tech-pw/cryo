@@ -14,6 +14,12 @@ from prometheus_client import Counter, Gauge, Histogram, Summary
 
 # ==================== API SLO Metrics ====================
 
+auth_login_failures_total = Counter(
+    "cryo_auth_login_failures_total",
+    "Failed or throttled sign-ins by method (password, google) and bounded reason.",
+    ["method", "reason"],
+)
+
 api_requests_total = Counter(
     "cryo_api_requests_total",
     "API requests by bounded route template, method, and status class.",
@@ -125,6 +131,18 @@ scanner_tables_scanned_total = Counter(
     "cryo_scanner_tables_scanned_total",
     "Total tables scanned by source",
     ["source"],
+)
+
+tables_removed_from_catalog_total = Counter(
+    "cryo_tables_removed_from_catalog_total",
+    "Registry tables tombstoned because the catalog no longer lists them (#120)",
+    ["source"],
+)
+
+missing_table_reconcile_aborted_total = Counter(
+    "cryo_missing_table_reconcile_aborted_total",
+    "Missing-table reconciles that removed nothing because a safety guard tripped",
+    ["source", "reason"],
 )
 
 scanner_scan_duration_seconds = Histogram(

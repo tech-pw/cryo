@@ -287,6 +287,11 @@ class InMemoryJobStore:
             job.replica = replica
         job.error = error
 
+    def set_deferred_reason(self, job_id: str, reason: str) -> None:
+        job = self.jobs[job_id]
+        if job.status is JobStatus.DEFERRED:
+            job.error = reason
+
     def record_audit(self, record: AuditRecord) -> None:
         self.audit.append(record)
 
@@ -654,6 +659,14 @@ class Worker:
                 engine = engine.with_table_stats(table_data.stats)
 
             if engine.type is EngineType.SPARK_EMR:
+                # The planner already gates Spark destinations; this covers a native
+                # destination redirected to its Spark fallback just above (issue #169).
+                from cryo.planner.schema_gates import gate_spark_time_columns
+
+                gated = gate_spark_time_columns(plan, engine=engine.type, stats=table_data.stats)
+                if gated is not plan:
+                    plan = gated
+                    self._store.save_plan(job.id, plan_to_dict(plan))
                 _validate_spark_worker_plan(
                     plan,
                     table_data=table_data,

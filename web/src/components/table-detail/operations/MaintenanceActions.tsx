@@ -1,7 +1,7 @@
 import { Archive, Check, CheckCircle2, Clock3, FileStack, Layers, Plus, Trash2, XCircle, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import type { AuditEntry, TableStatsRead } from "../../../api/types";
-import { formatDuration } from "../../../lib/format";
+import { formatDateTime, formatDuration } from "../../../lib/format";
 import { Button } from "../../ui/button";
 import {
   OPERATION_CATALOG,
@@ -35,7 +35,7 @@ const LastRunLine = ({ run }: { run: LastRun | undefined }) => {
   }
   const failed = isFailureStatus(run.status);
   return (
-    <p className="td-op-last" data-state={failed ? "failed" : "ok"} title={new Date(run.at).toLocaleString()}>
+    <p className="td-op-last" data-state={failed ? "failed" : "ok"} title={formatDateTime(run.at)}>
       {failed ? <XCircle size={13} aria-hidden="true" /> : <CheckCircle2 size={13} aria-hidden="true" />}
       {failed ? "Failed" : "Ran"} {relativeTime(run.at)}
       {run.durationMs != null ? ` · ${formatDuration(run.durationMs)}` : ""}

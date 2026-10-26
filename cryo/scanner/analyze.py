@@ -13,6 +13,7 @@ from cryo.config import Settings, get_settings
 from cryo.cost.model import CostStatsInput
 from cryo.domain.enums import Priority
 from cryo.planner.partitions import normalize_transform
+from cryo.planner.schema_gates import schema_time_columns
 from cryo.scanner.commit_signals import commit_signals, commits_from_snapshots
 from cryo.scanner.cost import (
     GB,
@@ -24,7 +25,7 @@ from cryo.scanner.cost import (
     build_table_cost_analysis,
     estimate_storage_cost,
 )
-from cryo.scanner.health import compute_health_score
+from cryo.scanner.health import compute_design_findings, compute_health_score
 from cryo.scanner.orphans import table_location
 from cryo.scanner.quality import ColumnQualityAccumulator, summarize_column_quality
 from cryo.scanner.signals import detect_format_version, enrich_stats_signals, manifest_stats
@@ -374,6 +375,11 @@ def analyze_table(
         "first_updated_at": snapshot_info["last_snapshot_committed_at"],
         "manifest_count": len(manifests),
         "avg_file_size_mb": avg_file_size_mb,
+        # The size scales the count-based health limits (file count, partition count,
+        # manifest count) so a large table is not permanently penalised for having the
+        # number of files its own layout requires. Without it the scale is always 1
+        # (issue #288).
+        "total_size_gb": round(total_size_bytes / GB, 6),
         "total_partitions": total_partitions,
         "partition_skew_ratio": skew,
         "avg_files_per_partition": avg_files_per_partition,
@@ -481,6 +487,7 @@ def analyze_table(
         "file_formats": sorted(file_formats),
         "snapshot_overhead_gb": cost.snapshot_overhead_gb,
         "health_deductions": health_deductions,
+        "health_design_findings": compute_design_findings(stats_for_health),
         "column_quality": [
             {
                 "field_id": stat.field_id,
@@ -532,6 +539,9 @@ def analyze_table(
         "unknown": unknown_file_sizes,
     }
     raw["manifest_stats"] = manifest_stats(len(manifests), manifest_total_bytes, total_files)
+    time_columns = _schema_time_columns(table_obj)
+    if time_columns:
+        raw["time_columns"] = time_columns
     if cost_analysis is not None:
         raw["cost"] = cost_analysis.raw
     common = {
@@ -674,6 +684,17 @@ def _fetch_manifest_entries_safe(manifest: object, io: object) -> list[object]:
     """Backward-compatible wrapper used by tests."""
     entries, _ = _read_manifest_entries(manifest, io)
     return entries
+
+
+def _schema_time_columns(table_obj: object) -> list[str]:
+    """Iceberg ``time`` columns of the current schema; Spark cannot read them (issue #169)."""
+    schema_fn = getattr(table_obj, "schema", None)
+    if not callable(schema_fn):
+        return []
+    try:
+        return schema_time_columns(schema_fn())
+    except Exception:  # pragma: no cover - defensive: a schema walk must never break a scan.
+        return []
 
 
 def partition_fields(table_obj: object) -> list[dict[str, Any]]:

@@ -359,12 +359,36 @@ Run focused tests first while developing, then the full suite before handing off
 # API
 curl -sf http://<api-host>/healthz
 
-# Prometheus metrics
+# Prometheus metrics (add -H "Authorization: Bearer $CRYO_METRICS_BEARER_TOKEN" when it is set)
 curl -sf http://<api-host>/metrics | grep -E '^cryo_(governor|worker|scanner|queue)'
 
 # Grafana dashboard: Cryo Overview (uid: cryo-overview)
 # Panels: admission decisions, queue depth, worker duration, scanner throughput, cost estimates
 ```
+
+### Sign-in and endpoint exposure
+
+| Setting | Default | What it does |
+|---|---|---|
+| `CRYO_AUTH_LOGIN_THROTTLE_ENABLED` | `true` | Throttles failed password and Google sign-ins. Counts live in Redis, so the limit holds across API replicas. |
+| `CRYO_AUTH_LOGIN_MAX_FAILURES` | `5` | Failed sign-ins for one account within the window before it gets `429` with `Retry-After`. The right password is refused too until the window ends. A successful sign-in clears the count. |
+| `CRYO_AUTH_LOGIN_IP_MAX_FAILURES` | `20` | Failed sign-ins from one client IP, across all accounts, within the window. |
+| `CRYO_AUTH_LOGIN_WINDOW_SECONDS` | `900` | Window length, and the longest a lockout lasts. |
+| `CRYO_API_DOCS_ENABLED` | unset | `/docs`, `/redoc` and `/openapi.json`. Unset means served everywhere except `CRYO_ENVIRONMENT=prod`. |
+| `CRYO_METRICS_BEARER_TOKEN` | unset | When set, the API's root `/metrics` requires `Authorization: Bearer <token>`. Set the same token as `bearer_token` (or `authorization.credentials`) in the Prometheus scrape config. |
+
+Failed sign-ins are written to the audit log as `auth.login_failed`, with the username or
+email tried, the method, the reason and the client IP. The password and token are never stored.
+Admins read these rows from `GET /api/v1/auth/audit`. They are kept out of the
+viewer-readable `/api/v1/audit` feed. `cryo_auth_login_failures_total{method,reason}` counts
+the same failures, plus `reason="throttled"` for refused attempts. Alert on a sustained rate.
+
+`/metrics` lists source and destination names in its labels. The web UI's nginx never proxies
+it, and the UI reads the admin-only `/api/v1/ops/metrics` copy. If an Ingress exposes the API
+Service directly, set `CRYO_METRICS_BEARER_TOKEN` or keep `/metrics` off that Ingress.
+
+The per-IP count uses the first `X-Forwarded-For` hop, which a client can forge when it
+reaches the API directly. That is why the per-account limit matters more.
 
 Log exploration (Loki via Grafana Explore):
 
@@ -438,6 +462,31 @@ Log exploration (Loki via Grafana Explore):
 | Scheduler disabled | PATCH `/api/v1/scanner/config` → `enabled: true` |
 | Full cost scan overload | Disable `cost_full_scan` until off-peak |
 
+### Tables removed from the catalog
+
+A whole-source scan (chunk 0 only; a table-scoped scan never does this) compares the registry
+with what the catalog lists and **soft-deletes** registered tables it no longer finds. The row
+stays. It gets `removed_from_catalog_at` and `removed_reason`, is set `is_active=false`, and is
+hidden from `GET /tables` unless you pass `include_removed=true`. Its queued and deferred jobs
+are skipped, and running jobs finish. Each removal writes a `table_removed_from_catalog` audit
+row. If the table is listed again, the next scan restores it (`table_restored_to_catalog`).
+Nothing is ever hard-deleted.
+
+What keeps a bad listing from removing real tables:
+- Every suspect schema is listed again before anything is removed. A schema whose listing
+  fails is skipped.
+- A schema that lists empty is skipped unless its namespace is gone too.
+- Any discovery error in the scan skips the reconcile for that scan.
+- Out-of-allowlist schemas are never treated as dropped.
+- Mass guard: if more than `CRYO_SCAN_MISSING_TABLE_MAX_FRACTION` (default 0.2) of a source's
+  registered tables, or more than `CRYO_SCAN_MISSING_TABLE_MAX_COUNT` (default 500), would be
+  removed, nothing is removed. The scan writes a `missing_table_reconcile_aborted` audit row
+  and increments `cryo_missing_table_reconcile_aborted_total`. The fraction is ignored for
+  `CRYO_SCAN_MISSING_TABLE_GUARD_MIN_COUNT` (default 5) or fewer removals.
+
+Turn it off with `CRYO_SCAN_REMOVE_MISSING_TABLES_ENABLED=false`. After a guard abort, check
+the catalog. If the drop was real, raise the limits for one scan.
+
 ### Unmatched tables (no effective preset)
 
 **Symptoms:**
@@ -466,6 +515,24 @@ left a large table unmatched until someone looked by hand.
 | Fleet-wide catchall disabled | Re-enable it, or confirm the narrower preset set is the deliberate replacement |
 | Rule priority/predicate regression | Fix the rule via `POST /api/v1/presets/{id}/rules`; re-run simulate to confirm `matched_count` |
 | Genuinely out-of-scope tables (temp/scratch/test) | Confirm via `cryo.scheduler.rules.is_ephemeral_maintenance_table` — these should stay unmatched, not force-matched |
+
+### Default and paused presets
+
+- **Default preset.** Every table with no pin and no matching rule is maintained by the
+  tenant's default preset, including tables the scanner discovers for the first time (the scan
+  run summary shows `new_tables_on_default`). It needs a schedule; the API rejects a default
+  without `schedule_cron`. Switch the default with *Default preset* in the preset form or
+  `POST /api/v1/presets/{id}/set-default`; only one preset can be the default.
+- **Pause** (`paused`) holds a preset: its tables keep it as their effective preset and wait.
+  Nothing is scheduled and nothing is re-routed. Manual runs need `override_pause: true`.
+  Jobs already queued when you pause are left to drain.
+- **Disable** (`enabled: false`) retires a preset: tables pinned to it fall through to rules,
+  then the default.
+- **Unset default** with no replacement leaves unassigned tables unmaintained (provenance
+  `none`). The preset form shows how many tables are affected before saving.
+- Every pause, resume, default switch and enable/disable writes an `audit_log` row
+  (`preset_paused`, `preset_resumed`, `preset_default_set`, `preset_default_unset`,
+  `preset_enabled`, `preset_disabled`) with the actor and affected-table count.
 
 ### API memory / OOM (cryo-api)
 

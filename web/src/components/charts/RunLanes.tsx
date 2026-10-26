@@ -1,4 +1,5 @@
 import { ChartCard } from "./ChartCard";
+import { getDisplayTimeZone } from "../../lib/format";
 
 export interface RunLaneJob {
   id: string;
@@ -32,7 +33,7 @@ export const RunLanes = ({ jobs }: { jobs: RunLaneJob[] }) => {
   return (
     <ChartCard
       title="When did each table run?"
-      subtitle={{ unit: "time", timeZone: "Asia/Kolkata" }}
+      subtitle={{ unit: "time", timeZone: getDisplayTimeZone() }}
       table={rows}
       columns={[
         { key: "table", header: "Table" },

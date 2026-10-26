@@ -1,0 +1,70 @@
+---
+title: Configuration reference
+lede: Every environment variable Cryo reads and every top-level Helm value the chart accepts, with the default each one takes.
+description: The full configuration reference for Cryo -- CRYO_* environment variables and deploy/helm/cryo values.
+updated: 2026-10-26
+---
+<callout type="note" title="Generated, not hand-written">
+  <p>The tables below are generated from the settings class and the chart's own values, so they cannot drift from the code. CI fails when they do. Regenerate with <code>make config-reference</code>.</p>
+</callout>
+
+<h2 id="environment">Environment variables</h2>
+<p>Cryo reads these from the environment, with the <code>CRYO_</code> prefix. A default of <em>set from a secret</em>, <em>unset</em> or <em>computed</em> means there is no safe default to print.</p>
+<p>The full table, with every variable and its type, is in <a href="https://github.com/tech-pw/cryo/blob/main/docs/CONFIGURATION.md">docs/CONFIGURATION.md</a>.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_ENVIRONMENT</code></td><td><code>dev</code></td><td>One of <code>dev</code>, <code>test</code>, <code>staging</code>, <code>prod</code>. Decides whether the dev token is live and whether the default secret key is rejected.</td></tr>
+    <tr><td><code>CRYO_DATABASE_URL</code></td><td>secret</td><td>PostgreSQL connection string. Holds the password.</td></tr>
+    <tr><td><code>CRYO_REDIS_URL</code></td><td>secret</td><td>Redis connection string. Holds the password.</td></tr>
+    <tr><td><code>CRYO_SECRET_KEY</code></td><td>secret</td><td>Fernet key for stored connection secrets, and the default HS256 signing key. At least 32 characters; the published default is rejected in staging and prod.</td></tr>
+    <tr><td><code>CRYO_JWT_SECRET</code></td><td>secret</td><td>Overrides the signing key for API tokens alone, leaving the encryption key separate.</td></tr>
+    <tr><td><code>CRYO_OIDC_ISSUER_URL</code></td><td>unset</td><td>OIDC issuer. Setting it turns on RS256 token verification.</td></tr>
+    <tr><td><code>CRYO_OIDC_CLIENT_ID</code></td><td>unset</td><td>OIDC client id.</td></tr>
+    <tr><td><code>CRYO_OIDC_CLIENT_SECRET</code></td><td>secret</td><td>OIDC client secret, for the authorization-code exchange.</td></tr>
+    <tr><td><code>CRYO_OIDC_REDIRECT_URI</code></td><td>unset</td><td>The redirect URI registered with the provider. The UI callback.</td></tr>
+    <tr><td><code>CRYO_ALLOW_DEV_TOKEN_IN_PROD</code></td><td><code>false</code></td><td>Keeps the dev token live in prod. Anyone who can reach the API can self-grant any role while this is true.</td></tr>
+    <tr><td><code>CRYO_DISPLAY_TIMEZONE</code></td><td><code>UTC</code></td><td>IANA zone the install schedules and reports in. Also the zone the off-peak window is read in and the UI renders instants in.</td></tr>
+    <tr><td><code>CRYO_OFFPEAK_START_IST</code></td><td><code>0</code></td><td>Hour the off-peak window opens, in the display time zone. Equal bounds disable the gate.</td></tr>
+    <tr><td><code>CRYO_OFFPEAK_END_IST</code></td><td><code>0</code></td><td>Hour the off-peak window closes.</td></tr>
+    <tr><td><code>CRYO_SCAN_ENGINE</code></td><td><code>pyiceberg</code></td><td><code>go</code> or <code>pyiceberg</code>. The Go scanner is faster and is what a large fleet should use.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_WRITES_ENABLED</code></td><td><code>true</code></td><td>The master switch for anything that writes to your tables. Turning it off means Cryo plans and explains but does not execute.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_COOLDOWN_HOURS</code></td><td><code>20</code></td><td>How long a table is left alone after maintenance, so a nightly preset does not re-run the same table.</td></tr>
+    <tr><td><code>CRYO_DEFAULT_RETENTION_DAYS</code></td><td><code>7</code></td><td>Default snapshot retention window, tightened automatically for frequently-written tables.</td></tr>
+    <tr><td><code>CRYO_MAX_JOBS_PER_SCHEDULED_RUN</code></td><td><code>500</code></td><td>Caps how many tables one scheduled run may touch, so a large fleet cannot flood the queue in one tick.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="helm">Helm values</h2>
+<p>Top-level values in <code>deploy/helm/cryo/values.yaml</code>. The chart's schema, <code>deploy/helm/cryo/values.schema.json</code>, validates them at install time.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Value</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>image</code></td><td>object</td><td>Image repository, tag and digest for the backend. Pin the digest for a production install.</td></tr>
+    <tr><td><code>imagePullSecrets</code></td><td><code>[]</code></td><td>Pull secrets for the registry. Needed when the registry is private.</td></tr>
+    <tr><td><code>serviceAccount</code></td><td>object</td><td>The account Cryo pods run as. On EKS, put the IRSA role's annotation here.</td></tr>
+    <tr><td><code>podSecurityContext</code></td><td>object</td><td>Applied to every pod. Runs as the non-root <code>cryo</code> user by default.</td></tr>
+    <tr><td><code>global</code></td><td>object</td><td>Environment values applied to every service, including the environment flag and the secret reference.</td></tr>
+    <tr><td><code>migration</code></td><td>object</td><td>The Alembic migration job. Runs on install and upgrade.</td></tr>
+    <tr><td><code>api</code>, <code>worker</code>, <code>governor</code>, <code>scheduler</code>, <code>scannerWorker</code></td><td>objects</td><td>Replica counts, resource requests and limits for each service.</td></tr>
+    <tr><td><code>web</code></td><td>object</td><td>The UI. Its image is separate from the backend's.</td></tr>
+    <tr><td><code>native</code></td><td>object</td><td>The native Go compactor. It ships inside the main image and is dispatched as KEDA-scaled Jobs.</td></tr>
+    <tr><td><code>spark</code></td><td>object</td><td>The Spark-on-Kubernetes fallback engine.</td></tr>
+    <tr><td><code>scanner</code></td><td>object</td><td>The scanner CronJob and its job-dispatch settings.</td></tr>
+    <tr><td><code>redis</code></td><td>object</td><td>The Redis image and configuration. Redis itself is external; the chart ships a client.</td></tr>
+    <tr><td><code>ingress</code>, <code>networkPolicy</code>, <code>podDisruptionBudget</code></td><td>objects</td><td>Opt-in hardening. Ingress and TLS are off by default; the NetworkPolicy denies pod-to-pod traffic the chart does not need.</td></tr>
+    <tr><td><code>observability</code></td><td>object</td><td>Metrics and tracing settings.</td></tr>
+    <tr><td><code>backup</code></td><td>object</td><td>Backup-related settings for the release.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/security/" title="Security and authentication">Who can reach the API, and how to turn the dev token off.</linkcard>
+  <linkcard href="@/deployment/" title="Deployment">Install the chart and the resources it needs.</linkcard>
+  <linkcard href="@/troubleshooting/" title="Troubleshooting">Symptoms, causes and fixes.</linkcard>
+</linkcards>

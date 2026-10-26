@@ -99,6 +99,14 @@ def create_parser() -> argparse.ArgumentParser:
     # Analysis command (recovery plan §2/§3, 2026-09-20): bounded one-shot K8s Job entrypoint,
     # NOT a daemon -- claims one AnalysisTask batch and exits, unlike every other subcommand
     # above which runs an indefinite loop. See cryo/analysis/runner.py for the full rationale.
+    rotate_parser = subparsers.add_parser(
+        "rotate-secret-key",
+        help="Re-encrypt stored secrets with CRYO_SECRET_KEY (reads CRYO_SECRET_KEY_PREVIOUS)",
+    )
+    rotate_parser.add_argument(
+        "--apply", action="store_true", help="Write changes. Without it, only count them."
+    )
+
     analysis_parser = subparsers.add_parser(
         "analysis",
         help="Run one bounded batch of a durable analysis task, then exit (K8s Job entrypoint)",
@@ -134,6 +142,11 @@ class DaemonRunner:
         self._stop = Event()
         self._logger = logging.getLogger(f"cryo.{name}")
         self.consecutive_tick_failures = 0
+        # time.monotonic() when the tick now running began; None between ticks. Lets the
+        # health check tell a loop that is hung inside one tick (a socket read on a dead
+        # connection, a lock that never frees) from one that is merely idle between ticks --
+        # see tick_stalled() and _run_with_signal's readiness check.
+        self.tick_started_at: float | None = None
 
     def stop(self) -> None:
         self._stop.set()
@@ -141,6 +154,7 @@ class DaemonRunner:
     def run(self) -> None:
         self._logger.info("Starting %s (interval=%ds)", self.name, self.interval)
         while not self._stop.is_set():
+            self.tick_started_at = time.monotonic()
             try:
                 self._tick()
                 self.consecutive_tick_failures = 0
@@ -151,11 +165,20 @@ class DaemonRunner:
                     self.name,
                     self.consecutive_tick_failures,
                 )
+            finally:
+                self.tick_started_at = None
             self._stop.wait(self.interval)
         self._logger.info("Stopped %s", self.name)
 
     def _tick(self) -> None:
         raise NotImplementedError
+
+    def tick_stalled(self, stall_after_seconds: int, *, now: float | None = None) -> bool:
+        """True when one tick has been running longer than stall_after_seconds (0 = never)."""
+        started = self.tick_started_at
+        if stall_after_seconds <= 0 or started is None:
+            return False
+        return ((time.monotonic() if now is None else now) - started) > stall_after_seconds
 
 
 class BenefitScoreUpdaterRunner(DaemonRunner):
@@ -1176,6 +1199,8 @@ def _run_with_signal(runner: DaemonRunner, *, service_name: str | None = None) -
     if service_name and settings.health_port:
         from cryo.observability.health_server import start_health_server
 
+        stall_after = settings.daemon_tick_stall_seconds
+
         scale_metric_providers: dict[str, Callable[[], int]] = {
             "worker": _worker_scale_metric,
             "scanner": _scanner_scale_metric,
@@ -1188,7 +1213,14 @@ def _run_with_signal(runner: DaemonRunner, *, service_name: str | None = None) -
             # live incidents this is closing. No Deployment template wires a readinessProbe
             # at /healthz today (also see that same docstring) -- this is the code-side half;
             # the probe itself still needs wiring in deploy/helm/cryo and helm-repos/cryo.
-            return not r._stop.is_set() and r.consecutive_tick_failures < 5
+            # A tick that never returns (hung on a dead connection) never bumps
+            # consecutive_tick_failures either; CRYO_DAEMON_TICK_STALL_SECONDS (0 = off) turns
+            # that into an unhealthy /healthz so the chart's liveness probe restarts the pod.
+            return (
+                not r._stop.is_set()
+                and r.consecutive_tick_failures < 5
+                and not r.tick_stalled(stall_after)
+            )
 
         start_health_server(
             port=settings.health_port,
@@ -1219,6 +1251,26 @@ def run_analysis(args: argparse.Namespace) -> NoReturn:
     sys.exit(analysis_main([args.task_type]))
 
 
+def run_rotate_secret_key(args: argparse.Namespace) -> NoReturn:
+    from cryo.db import models  # noqa: F401 - registers every table on Base.metadata
+    from cryo.db.base import Base
+    from cryo.db.session import SessionLocal
+    from cryo.security.key_rotation import rotate_secrets
+
+    with SessionLocal() as session:
+        report = rotate_secrets(session, Base.metadata, apply=args.apply)
+    for name, count in sorted(report.rotated.items()):
+        print(f"{name}: {count} to re-encrypt")
+    for name, count in sorted(report.undecryptable.items()):
+        print(f"{name}: {count} unreadable with CRYO_SECRET_KEY or CRYO_SECRET_KEY_PREVIOUS")
+    if report.total_undecryptable:
+        print("Nothing written: set CRYO_SECRET_KEY_PREVIOUS to the key these were encrypted with.")
+        sys.exit(1)
+    verb = "Re-encrypted" if args.apply else "Would re-encrypt (dry run; pass --apply)"
+    print(f"{verb} {report.total_rotated} value(s).")
+    sys.exit(0)
+
+
 def main() -> NoReturn:
     parser = create_parser()
     args = parser.parse_args()
@@ -1231,6 +1283,7 @@ def main() -> NoReturn:
         "events": run_events,
         "serve": run_serve,
         "analysis": run_analysis,
+        "rotate-secret-key": run_rotate_secret_key,
     }
 
     handler = commands.get(args.command)

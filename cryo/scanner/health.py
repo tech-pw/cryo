@@ -57,6 +57,37 @@ class HealthDeduction(TypedDict):
     reason: str
 
 
+class DesignFinding(TypedDict):
+    """A structural table-design issue that maintenance cannot change (#264).
+
+    Partition count and partition skew follow from the partition spec and the data's value
+    distribution: no compaction, expiry or manifest rewrite moves them. Grading on them kept
+    tables at F forever after every operation succeeded, so they are reported separately
+    (persisted into ``TableStats.raw["health_design_findings"]``) and never lower the score.
+    """
+
+    label: str
+    severity: str
+    reason: str
+    recommendation: str
+
+
+# Default expire_snapshots window -- must match cryo/planner/planner.py::_expire_params'
+# ``params.get("retention_days", 7)`` default.
+DEFAULT_SNAPSHOT_RETENTION_DAYS = 7
+# Headroom over the snapshot count a table's own commit rate produces inside one retention
+# window: a table expired on schedule sits at ~1x, so only a backlog well past that is a
+# maintenance problem rather than the write pattern.
+SNAPSHOT_EXPECTED_WARN_SLACK = 1.5
+SNAPSHOT_EXPECTED_CRIT_SLACK = 3.0
+# Headroom over the file-count floor the layout implies (at least one file per partition and
+# one file per target-size chunk of data).
+FILE_FLOOR_WARN_SLACK = 1.5
+FILE_FLOOR_CRIT_SLACK = 3.0
+DEFAULT_TARGET_FILE_SIZE_BYTES = 268_435_456
+_MB = 1024 * 1024
+
+
 def _delete_reason(pct: float, count: int, limit_pct: float, limit_count: float) -> str:
     return (
         f"{pct:.1f}% deletes or {count} count "
@@ -94,13 +125,133 @@ def _scaled_thresholds(total_size_gb: float) -> dict[str, int | float]:
     return scaled
 
 
+def _effective_retention_days(stats: Mapping[str, Any]) -> float:
+    """The expire_snapshots window the planner would actually use for this table.
+
+    Mirrors the streaming-aware tightening in planner.py::_expire_params so the grade judges
+    snapshot buildup against the same window maintenance enforces.
+    """
+    configured = stats.get("snapshot_retention_days")
+    try:
+        retention = float(configured) if configured is not None else 0.0
+    except (TypeError, ValueError):
+        retention = 0.0
+    if retention <= 0:
+        retention = float(DEFAULT_SNAPSHOT_RETENTION_DAYS)
+    commits_per_day = float(stats.get("commits_per_day") or 0.0)
+    if stats.get("is_streaming") and commits_per_day >= 100:
+        return 1.0
+    if commits_per_day >= 20:
+        return max(1.0, min(retention, 3.0))
+    return retention
+
+
+def _snapshot_thresholds(
+    stats: Mapping[str, Any], thresholds: Mapping[str, int | float]
+) -> dict[str, int | float]:
+    """Snapshot-count limits relative to commit rate x retention window (#264).
+
+    A flat 200 made a frequently-written table swing F -> D -> F within a day depending on
+    when the scan ran relative to expire_snapshots. The fixed limits stay as the floor.
+    """
+    commits_per_day = float(stats.get("commits_per_day") or 0.0)
+    expected = commits_per_day * _effective_retention_days(stats)
+    return {
+        "snapshot_count_warn": max(
+            thresholds["snapshot_count_warn"], int(expected * SNAPSHOT_EXPECTED_WARN_SLACK)
+        ),
+        "snapshot_count_crit": max(
+            thresholds["snapshot_count_crit"], int(expected * SNAPSHOT_EXPECTED_CRIT_SLACK)
+        ),
+    }
+
+
+def file_count_floor(stats: Mapping[str, Any]) -> int:
+    """Fewest files the table's layout allows: max(partitions, data size / target size)."""
+    total_files = int(stats.get("total_files") or 0)
+    avg_mb = float(stats.get("avg_file_size_mb") or 0.0)
+    total_bytes = avg_mb * _MB * total_files
+    target = int(stats.get("target_file_size_bytes") or 0) or DEFAULT_TARGET_FILE_SIZE_BYTES
+    by_size = int(total_bytes // target) if total_bytes > 0 else 0
+    return max(int(stats.get("total_partitions") or 0), by_size)
+
+
+def _file_count_thresholds(
+    stats: Mapping[str, Any], thresholds: Mapping[str, int | float]
+) -> dict[str, int | float]:
+    """File-count limits relative to the layout's own floor (#264), never below the fixed ones."""
+    floor = file_count_floor(stats)
+    return {
+        "total_files_warn": max(thresholds["total_files_warn"], int(floor * FILE_FLOOR_WARN_SLACK)),
+        "total_files_crit": max(thresholds["total_files_crit"], int(floor * FILE_FLOOR_CRIT_SLACK)),
+    }
+
+
+def health_thresholds_for(stats: Mapping[str, Any]) -> dict[str, int | float]:
+    """The warn/crit limits compute_health_score grades this table against.
+
+    Public so projections (cryo.advisor.path_to_a) grade with the same per-table limits
+    rather than a copy of the flat HEALTH_THRESHOLDS.
+    """
+    thresholds = _scaled_thresholds(float(stats.get("total_size_gb") or 0))
+    thresholds.update(_file_count_thresholds(stats, thresholds))
+    thresholds.update(_snapshot_thresholds(stats, thresholds))
+    return thresholds
+
+
+def compute_design_findings(stats: Mapping[str, Any]) -> list[DesignFinding]:
+    """Structural findings (partition count, partition skew) reported beside the grade (#264)."""
+    thresholds = _scaled_thresholds(float(stats.get("total_size_gb") or 0))
+    findings: list[DesignFinding] = []
+    partitions = int(stats.get("total_partitions") or 0)
+    for severity in ("crit", "warn"):
+        limit = thresholds[f"partition_count_{severity}"]
+        if partitions >= limit:
+            findings.append(
+                {
+                    "label": "Partition count complexity",
+                    "severity": "critical" if severity == "crit" else "warning",
+                    "reason": f"{partitions:,} partitions (above {int(limit):,})",
+                    "recommendation": (
+                        "Coarsen the partition transform (for example day -> month, or "
+                        "bucket a high-cardinality identity column) through partition "
+                        "evolution. Maintenance can't reduce the partition count."
+                    ),
+                }
+            )
+            break
+    skew = float(stats.get("partition_skew_ratio") or 0)
+    for severity in ("crit", "warn"):
+        limit = thresholds[f"partition_skew_ratio_{severity}"]
+        if skew >= limit:
+            findings.append(
+                {
+                    "label": "Partition volume skew",
+                    "severity": "critical" if severity == "crit" else "warning",
+                    "reason": f"Skew ratio of {skew:.1f}x (above {limit:.0f}x)",
+                    "recommendation": (
+                        "Data is unevenly spread across partition values. Choose a partition "
+                        "column with a more even distribution, or add a bucket transform. "
+                        "Compaction can't rebalance partitions."
+                    ),
+                }
+            )
+            break
+    return findings
+
+
 def compute_health_score(
     stats: Mapping[str, Any],
     health_small_file_count: int,
     *,
     now: datetime | None = None,
 ) -> tuple[int, str, list[HealthDeduction]]:
-    thresholds = _scaled_thresholds(float(stats.get("total_size_gb") or 0))
+    """Grade a table on what maintenance can fix.
+
+    Structural findings (partition count, partition skew) are excluded from the score and
+    reported by :func:`compute_design_findings` instead (#264).
+    """
+    thresholds = health_thresholds_for(stats)
     deductions: list[HealthDeduction] = []
     score = 100
     total_files = int(stats.get("total_files") or 0)
@@ -208,24 +359,6 @@ def compute_health_score(
         "Manifest files bloat",
         thresholds,
         lambda value, limit: f"{int(value)} manifests (exceeds limit of {int(limit)})",
-    )
-    score = _deduct(
-        score,
-        deductions,
-        int(stats.get("total_partitions") or 0),
-        "partition_count",
-        "Partition count complexity",
-        thresholds,
-        lambda value, limit: f"{int(value)} partitions (exceeds limit of {int(limit)})",
-    )
-    score = _deduct(
-        score,
-        deductions,
-        float(stats.get("partition_skew_ratio") or 0),
-        "partition_skew_ratio",
-        "Partition volume skew",
-        thresholds,
-        lambda value, limit: f"Skew ratio of {value:.1f}x (exceeds limit of {limit:.0f}x)",
     )
     score = _deduct(
         score,
@@ -379,6 +512,10 @@ def _as_datetime(value: Any) -> datetime | None:
         except ValueError:
             return None
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def grade_for_score(score: int) -> str:
+    return _grade(score)
 
 
 def _grade(score: int) -> str:

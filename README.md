@@ -5,11 +5,29 @@
   <img src="docs/img/hero-light.png" alt="Cryo: self-hosted Apache Iceberg maintenance, with a receipt for every decision. Small ice cubes fuse into one solid cube, beside the steps scan, plan, admit, rewrite, receipt." width="100%">
 </picture>
 
-[![CI](https://github.com/tech-pw/cryo/actions/workflows/ci.yml/badge.svg)](https://github.com/tech-pw/cryo/actions/workflows/ci.yml) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-143E60)](./LICENSE) [![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-277ABE)](./docs/VERSIONING.md) ![Python 3.12](https://img.shields.io/badge/python-3.12-277ABE) ![React 19](https://img.shields.io/badge/web-React%2019%20%2B%20TypeScript-277ABE) [![Docs](https://img.shields.io/badge/docs-tech--pw.github.io%2Fcryo-68C1EA)](https://tech-pw.github.io/cryo/)
+### Self-hosted Apache Iceberg maintenance that grades every table, plans the work each one needs, runs it on the Trino or Spark you already have, and leaves a receipt for every decision.
+
+[![CI](https://github.com/tech-pw/cryo/actions/workflows/ci.yml/badge.svg)](https://github.com/tech-pw/cryo/actions/workflows/ci.yml) [![GitHub stars](https://img.shields.io/github/stars/tech-pw/cryo?style=flat&color=277ABE)](https://github.com/tech-pw/cryo/stargazers) [![Latest tag](https://img.shields.io/github/v/tag/tech-pw/cryo?sort=semver&label=version&color=277ABE)](https://github.com/tech-pw/cryo/tags) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-143E60)](./LICENSE) [![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-277ABE)](./docs/VERSIONING.md) [![Docs](https://img.shields.io/badge/docs-tech--pw.github.io%2Fcryo-68C1EA)](https://tech-pw.github.io/cryo/)
 
 **[Docs](https://tech-pw.github.io/cryo/)** · **[Quickstart](https://tech-pw.github.io/cryo/quickstart/)** · **[Architecture](./docs/design/hld.md)** · **[What ships today](./docs/CAPABILITIES.md)** · **[Contributing](./CONTRIBUTING.md)**
 
+Free and self-hosted. Runs on the Trino or Spark you already have. **[Try it locally in one command ↓](#quick-start)**
+
+⭐ If Cryo saves you from writing another maintenance DAG, a star helps other Iceberg teams find it.
+
 </div>
+
+> **Measured in [CryoBench V2](https://tech-pw.github.io/cryo/benchmark/)** (Spark 4.1 and Iceberg 1.11 on Kubernetes, three trials per test):
+>
+> - **1.76× faster queries** on a 100 GiB table after one Cryo run (geometric mean of the whole query mix).
+> - **22 / 22 Cryo jobs succeeded under live CDC** (a MERGE every 200 seconds for two hours), while **0 / 3** scheduled-DAG compactions committed.
+> - **10 vs 48 unnecessary rewrites** per trial against a scheduled Spark DAG.
+> - Live-query **p95 stayed within 0.88× to 1.04× of idle** during compaction, with zero query failures.
+> - The trade-off: Cryo used **about twice the Spark compute** of the scheduled DAG on small tables. It is not a compute saver.
+>
+> [Full results, method and trade-offs →](https://tech-pw.github.io/cryo/benchmark/)
+
+<p align="center">If Cryo looks useful, <a href="https://github.com/tech-pw/cryo/stargazers">star the repo</a> so others can find it, and <a href="https://github.com/tech-pw/cryo/issues/new/choose">tell us what broke or what is missing</a>. Feedback from real lakes shapes what ships next.</p>
 
 ---
 
@@ -41,6 +59,29 @@ down everything it did.
 <p align="center">
   <img src="docs/img/maintenance-flow.png" alt="One partition of analytics.events passes through Cryo in five steps: scan, plan, admit, rewrite, receipt. On the left, before: 2,140 files averaging 18 MB, all of them small. In the middle, the audit log entry: optimize succeeded on trino-b in 4 minutes 12 seconds, 2,140 files down to 152. On the right, after: 152 files averaging 256 MB, none small, stamped with a receipt." width="100%">
 </p>
+
+## Quick start
+
+You need Docker, Python 3.12+, Node 22+ and curl.
+
+```bash
+git clone https://github.com/tech-pw/cryo.git
+cd cryo
+./start-local.sh start
+```
+
+Open **http://localhost:5173** and sign in with a role (`viewer`, `operator` or `admin`).
+`./start-local.sh` runs the database migrations; `make up` on its own does not.
+
+```bash
+curl -s http://localhost:8000/healthz   # liveness only; does not touch Postgres
+```
+
+The UI starts empty. `make seed` writes five small Iceberg tables, but it doesn't register a
+source, scan or enqueue maintenance, and it needs host PySpark. The
+[illustrated quickstart](https://tech-pw.github.io/cryo/quickstart/) walks through the rest.
+
+Running it for real? Jump to [Install on Kubernetes](#install-on-kubernetes).
 
 ## Why Cryo
 
@@ -106,6 +147,101 @@ down everything it did.
 
 <sub>Screenshots are the real web UI on synthetic demo data, captured with
 <code>web/e2e/docs-capture</code>. No numbers in them come from a deployment.</sub>
+
+## Features
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/feature-map-dark.png">
+  <img src="docs/img/feature-map-light.png" alt="Cryo's features in five groups. Maintain: compaction with sort and Z-order, snapshot expiry, orphan file cleanup, manifest rewrites, column statistics, delete-file rewrites, and data expiry only after approval. Decide: an A to F grade for every table, AutoComp ranking weighted by query heat, partition-aware GB-budgeted plans, a load-aware self-tuning governor, presets and rule-based assignment, and maintenance batches that review one plan before applying it. Save: archive cold partitions in place and restore them, a duplicate-table finder, partition access from S3 logs, S3 cost and inventory, and a per-table settings advisor. Protect: a shared S3 path detector, per-table locks, an audit receipt for every action, owner alerts by email and Slack, OIDC and role-based access, and encrypted backups. Integrate: Ask Cryo in plain English, an MCP server for AI agents, maintenance as code with GitOps, a REST API and Python SDK, and a Helm chart with OpenTelemetry and Prometheus. Engines: Trino, Spark on EMR, native Go in beta. Catalogs: Iceberg REST, Polaris, Nessie, Hive and Glue." width="100%">
+</picture>
+
+Expand any group for the details.
+
+<details>
+<summary><b>Maintenance</b>: sources, engines, planner, governor, presets</summary>
+
+- **Sources (read)** connect Iceberg catalogs (REST, Hive Metastore, Glue, Apache Polaris and
+  Project Nessie) and discover tables through PyIceberg, configured separately from write engines.
+- **Destinations (write)** submit maintenance to **Trino**, **Spark on EMR**, or the **native Go**
+  compactor when it is enabled. Each SQL engine has its own renderer.
+- **Planner** walks pre-computed scan data, GB-budgets chunks, caps partitions per chunk to avoid
+  Trino `FilterNode` blowups, runs oversize partitions alone, bypasses chunking for small tables,
+  and applies cooldowns, off-peak windows, adaptive budgets and deadlines.
+- **Governor** is the global admission controller. It reads Trino `system.runtime.queries` to
+  bound real concurrency, applies per-replica caps with round-robin, and tunes thresholds per
+  destination with a contextual-bandit policy.
+- **Presets** bind *operations + params + target engine + schedule + selection rules* into a named
+  profile, such as `spark-large`: "tables over 100 GB → Spark/EMR, deep maintenance weekly".
+- **Assignment** filters the fleet by schema, size, small-file ratio, grade or drift, selects every
+  match across pages (as a filter, not a list of IDs), and assigns a preset in one action. Rule-based
+  auto-matching handles the rest, with manual override.
+
+</details>
+
+<details>
+<summary><b>Beyond compaction</b>: archive, duplicates, guardrails, AI</summary>
+
+- **Archive cold partitions, and restore them.** Move a partition's data files to S3
+  Intelligent-Tiering, Standard-IA or Glacier Instant Retrieval from the table page, and back to
+  Standard. Objects are re-classed in place, so paths and Iceberg metadata never change and every
+  engine keeps reading. Archive-tier classes that break Iceberg reads are refused. Preflight prints
+  the exact IAM policy if a permission is missing.
+- **Duplicate-table finder.** Fingerprints tables, scores similarity with MinHash and clusters the
+  forgotten `_backup`, `_v2` and `_tmp` copies into a graph under **Insights → Duplicates**. Exact
+  verification runs on demand, per pair, before anyone drops anything.
+- **Shared S3 path detector.** Flags catalog tables that share a warehouse path or nest inside
+  another table's path, across every enabled Hive, Glue and REST source, so expiry and orphan
+  cleanup never delete another table's live files.
+- **Partition access.** Per-partition request counts from S3 request logs, with days since last
+  access, on each table's Usage tab.
+- **Settings advisor.** Recommends Iceberg table properties from the table's own scan signals and
+  explains each one. Nothing is written until you stage and approve it.
+- **Maintenance batch.** Collect tables while you investigate, review one exact plan, then submit
+  it. What you reviewed is what runs, or the submit is refused.
+- **Ask Cryo and MCP.** A plain-English assistant over your scanned fleet, also exposed as an MCP
+  server for AI agents. It can only propose an action; a person with the right role approves it.
+- **Maintenance as code.** Define policies in YAML in Git, review them in pull requests, and sync
+  them to Cryo.
+- **Self-tuning governor.** A contextual-bandit policy learns admission thresholds per destination
+  from real outcomes, and falls back to static limits when confidence is low.
+- **Data expiry with approval.** Opt-in TTL deletes, partition by partition, that only run after an
+  approval.
+
+Some of these read query logs or S3 request logs; see [Status](#status) and
+[`docs/CAPABILITIES.md`](./docs/CAPABILITIES.md).
+
+</details>
+
+<details>
+<summary><b>Health and observability</b>: grades, dashboards, anomalies, cost</summary>
+
+- **Scanner** runs chunked, resumable scans and produces per-table and per-partition stats, an
+  A–F grade (WARN −8, CRIT −20), a `needs_compaction` priority and an S3 cost estimate.
+- **Dashboards** cover datalake and per-table health, audit timelines, drift and cost alerts,
+  scheduled email and Slack summaries, and a WebSocket live run console.
+- **Anomaly detection** watches null rate, size, file count and small-file ratio for drift, with
+  history for baselines.
+- **AWS cost and inventory** (opt-in) pulls S3 size and object counts from CloudWatch and CUR or
+  inventory feeds, so storage spend is quoted from real numbers.
+- **Owner and consumer alerts**: tables carry an owner and subscribers, and SLA or data-quality
+  breaches email (and optionally Slack) the people who would notice.
+
+</details>
+
+<details>
+<summary><b>Operations and security</b>: leader election, locks, audit, auth</summary>
+
+- **Scheduler, governor and workers** are separate, leader-elected Kubernetes deployments.
+  Scaling workers does not scale parallel `OPTIMIZE`s.
+- **Per-table locks** prevent double maintenance. **Failure isolation** keeps one bad table from
+  failing a run; it shows up in the audit log and the failed-tables panel, with its
+  `consecutive_scan_failures` streak and last error.
+- **Audit log** records table, action, status, detail, engine, duration, file counts and actor.
+- **Auth** is a signed JWT with the roles `evidence_collector`, `viewer`, `operator` and `admin`
+  (`editor` is an alias of `operator`). Production uses OIDC; see the warning under
+  [Install on Kubernetes](#install-on-kubernetes).
+
+</details>
 
 ## How it works
 
@@ -184,28 +320,7 @@ workers never adds parallel `OPTIMIZE`s.
 Full component map and data flow: [`docs/design/hld.md`](./docs/design/hld.md). Schemas, interfaces and the planner
 algorithm: [`docs/design/lld.md`](./docs/design/lld.md).
 
-## Quick start
-
-You need Docker, Python 3.12+, Node 22+ and curl.
-
-```bash
-git clone https://github.com/tech-pw/cryo.git
-cd cryo
-./start-local.sh start
-```
-
-Open **http://localhost:5173** and sign in with a role (`viewer`, `operator` or `admin`).
-`./start-local.sh` runs the database migrations; `make up` on its own does not.
-
-```bash
-curl -s http://localhost:8000/healthz   # liveness only; does not touch Postgres
-```
-
-The UI starts empty. `make seed` writes five small Iceberg tables, but it doesn't register a
-source, scan or enqueue maintenance, and it needs host PySpark. The
-[illustrated quickstart](https://tech-pw.github.io/cryo/quickstart/) walks through the rest.
-
-### Install on Kubernetes
+## Install on Kubernetes
 
 Each release tag publishes the Helm chart to GHCR as an OCI artifact, signed with cosign keyless.
 No clone needed. Chart versions equal the release tag without the `v` (tag `v0.1.6` is chart
@@ -264,60 +379,6 @@ Catalog and JDBC catalogs are rejected.
 
 </details>
 
-## Features
-
-<details>
-<summary><b>Maintenance</b>: sources, engines, planner, governor, presets</summary>
-
-- **Sources (read)** connect Iceberg catalogs (REST, Hive Metastore, Glue, Apache Polaris and
-  Project Nessie) and discover tables through PyIceberg, configured separately from write engines.
-- **Destinations (write)** submit maintenance to **Trino**, **Spark on EMR**, or the **native Go**
-  compactor when it is enabled. Each SQL engine has its own renderer.
-- **Planner** walks pre-computed scan data, GB-budgets chunks, caps partitions per chunk to avoid
-  Trino `FilterNode` blowups, runs oversize partitions alone, bypasses chunking for small tables,
-  and applies cooldowns, off-peak windows, adaptive budgets and deadlines.
-- **Governor** is the global admission controller. It reads Trino `system.runtime.queries` to
-  bound real concurrency, applies per-replica caps with round-robin, and tunes thresholds per
-  destination with a contextual-bandit policy.
-- **Presets** bind *operations + params + target engine + schedule + selection rules* into a named
-  profile, such as `spark-large`: "tables over 100 GB → Spark/EMR, deep maintenance weekly".
-- **Assignment** filters the fleet by schema, size, small-file ratio, grade or drift, selects every
-  match across pages (as a filter, not a list of IDs), and assigns a preset in one action. Rule-based
-  auto-matching handles the rest, with manual override.
-
-</details>
-
-<details>
-<summary><b>Health and observability</b>: grades, dashboards, anomalies, cost</summary>
-
-- **Scanner** runs chunked, resumable scans and produces per-table and per-partition stats, an
-  A–F grade (WARN −8, CRIT −20), a `needs_compaction` priority and an S3 cost estimate.
-- **Dashboards** cover datalake and per-table health, audit timelines, drift and cost alerts,
-  scheduled email and Slack summaries, and a WebSocket live run console.
-- **Anomaly detection** watches null rate, size, file count and small-file ratio for drift, with
-  history for baselines.
-- **AWS cost and inventory** (opt-in) pulls S3 size and object counts from CloudWatch and CUR or
-  inventory feeds, so storage spend is quoted from real numbers.
-- **Owner and consumer alerts**: tables carry an owner and subscribers, and SLA or data-quality
-  breaches email (and optionally Slack) the people who would notice.
-
-</details>
-
-<details>
-<summary><b>Operations and security</b>: leader election, locks, audit, auth</summary>
-
-- **Scheduler, governor and workers** are separate, leader-elected Kubernetes deployments.
-  Scaling workers does not scale parallel `OPTIMIZE`s.
-- **Per-table locks** prevent double maintenance. **Failure isolation** keeps one bad table from
-  failing a run; it shows up in the audit log and the failed-tables panel, with its
-  `consecutive_scan_failures` streak and last error.
-- **Audit log** records table, action, status, detail, engine, duration, file counts and actor.
-- **Auth** is a signed JWT with the roles `evidence_collector`, `viewer`, `operator` and `admin`
-  (`editor` is an alias of `operator`). Production uses OIDC; see the warning under
-  [Quick start](#quick-start).
-
-</details>
-
 ## How it compares
 
 Cryo is a self-hosted control plane over engines you already own. It is not a managed platform,
@@ -373,7 +434,8 @@ table: for a table already on ZSTD-3 with sensible row groups, the cheap residua
 3–12%. Granica's published 20–50% rests on one public datapoint (TPC-DS `store_sales`, 418 GiB
 across 301,949 files averaging ~1.45 MB) that changes file size, row-group size, sort order and
 encoding together, so it can't be credited to a codec alone. Neither vendor publishes a
-reproducible benchmark; Cryo's inputs are in [CryoBench](./docs/CRYOBENCH.md).
+reproducible benchmark. Cryo's measured results are on the [benchmark page](https://tech-pw.github.io/cryo/benchmark/); the
+[CryoBench fixture](./docs/CRYOBENCH.md) is a separate synthetic input generator, not that benchmark.
 
 Amoro cells were checked against `apache/amoro` commit `6d3cd42` (2026-10-17). The latest
 release then was v0.8.1-incubating (2025-09-11). `dynamic-allocation.*` is on `main` and the
@@ -433,6 +495,11 @@ contribution.
 
 Three trees: Python `cryo/`, Go `engine-go/` (the native compactor) and TypeScript `web/`.
 
+**Engines in this repo.** The Python control plane (`cryo/`) scans, grades, plans and admits all
+work, and runs it on the Trino or Spark you already have (both GA). The Go native compactor
+(`engine-go/`) is beta, opt-in per destination (`engine_impl=go`) and not the default. Flink is
+config generation only. There is no Rust engine: Cryo's native path is the Go binary.
+
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy 2.0 + Alembic (PostgreSQL + pgvector), PyIceberg,
   trino-python-client, boto3 (EMR Serverless), Redis, structlog.
 - **Frontend:** React 19 + TypeScript (Vite), Radix UI, Tailwind CSS, Recharts, TanStack Table and
@@ -484,6 +551,19 @@ cd web && npm run build && npm run test
 | Grafana | http://localhost:3000 (admin / admin) |
 
 </details>
+
+## Community
+
+**What grade does your worst table get?** Point Cryo at your catalog and tell us in
+[GitHub Discussions](https://github.com/tech-pw/cryo/discussions), where questions, ideas and
+show-and-tell live too. Real lakes shape the roadmap. If Cryo saves you a maintenance DAG, a ⭐ helps
+other Iceberg teams find it.
+
+Bugs go to [Issues](https://github.com/tech-pw/cryo/issues). See [`SUPPORT.md`](./SUPPORT.md).
+
+Cryo is led by **Aamir Siddiqui** ([@aamir306](https://github.com/aamir306),
+[LinkedIn](https://www.linkedin.com/in/aamir-siddiqui-396948100)). Reach out there to talk about
+Iceberg maintenance at scale. The full list of maintainers is in [`MAINTAINERS.md`](./MAINTAINERS.md).
 
 ## Contributing
 

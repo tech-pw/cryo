@@ -78,7 +78,14 @@ import { HealthGauge } from "./HealthGauge";
 import { buildDiagnosisVerdict, type DiagnosisVerdict } from "../TableDiagnosisPanel";
 import { chartTooltipProps } from "../../lib/theme";
 import type { PointDeduction } from "../HealthScoreBreakdown";
-import { formatBytesGb, formatDuration, formatNumber, formatTime } from "../../lib/format";
+import {
+  formatBytesGb,
+  formatDateTime,
+  formatDuration,
+  formatNumber,
+  formatShortDate,
+  formatTime
+} from "../../lib/format";
 import { formatPartitionColumnLabel } from "./helpers";
 
 export function measuredNumber(value: unknown): number | null {
@@ -126,7 +133,7 @@ export const HealthScoreTrend = ({ points }: { points: ScoreTrendPoint[] }) => {
             <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
             <XAxis
               dataKey="timestamp"
-              tickFormatter={(ts) => new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              tickFormatter={(ts) => formatShortDate(ts)}
               tick={{ fontSize: 11 }}
               interval="preserveStartEnd"
               stroke="var(--muted, #5c667a)"
@@ -134,7 +141,7 @@ export const HealthScoreTrend = ({ points }: { points: ScoreTrendPoint[] }) => {
             <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} stroke="var(--muted, #5c667a)" tickLine={false} />
             <RechartsTooltip
               {...chartTooltipProps}
-              labelFormatter={(ts) => new Date(Number(ts)).toLocaleString()}
+              labelFormatter={(ts) => formatDateTime(Number(ts))}
               formatter={(value) => {
                 const score = measuredNumber(value);
                 return [score == null ? "Not measured" : score.toFixed(1), "Health score"];
@@ -160,7 +167,7 @@ export const HealthScoreTrend = ({ points }: { points: ScoreTrendPoint[] }) => {
           {
             key: "time",
             header: "Time",
-            render: (row) => new Date(row.timestamp).toLocaleString()
+            render: (row) => formatDateTime(row.timestamp)
           },
           {
             key: "score",

@@ -9,6 +9,7 @@ const Skillsets = lazy(() => import("../Skillsets").then((m) => ({ default: m.Sk
 const PoliciesTab = lazy(() => import("../governance/PoliciesTab").then((m) => ({ default: m.PoliciesTab })));
 const AccessControl = lazy(() => import("./AccessControl").then((m) => ({ default: m.AccessControl })));
 const AiAccessTable = lazy(() => import("./AiAccessTable").then((m) => ({ default: m.AiAccessTable })));
+const About = lazy(() => import("./About").then((m) => ({ default: m.About })));
 
 const useSettingsTab = () => useSearchParams()[0].get("tab");
 
@@ -70,5 +71,11 @@ export const SettingsNotificationsHome = () => (
     subtitle="Configure Slack delivery and generate operational reports."
   >
     <Connections embedded forcedTab="slack" />
+  </SettingsLayout>
+);
+
+export const SettingsAboutHome = () => (
+  <SettingsLayout title="About" subtitle="Which Cryo build is running, for upgrades and bug reports.">
+    <About />
   </SettingsLayout>
 );

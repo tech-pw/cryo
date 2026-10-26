@@ -1,6 +1,7 @@
 import type { OffPeakWindowResponse } from "../../api/client";
 import type { FleetHealthTrendPoint, MaintenanceControlRead, RunRead } from "../../api/types";
 import { optionalNumber } from "../../lib/batchSummary";
+import { getDisplayTimeZone, zoneLabel } from "../../lib/format";
 
 export const STALE_SCAN_HOURS = 36;
 
@@ -63,8 +64,14 @@ export const dfSeries = (trend: readonly FleetHealthTrendPoint[] | null | undefi
   return values;
 };
 
-const istHour = (now: number): number =>
-  Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hourCycle: "h23", timeZone: "Asia/Kolkata" }).format(now));
+const displayHour = (now: number): number =>
+  Number(
+    new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      hourCycle: "h23",
+      timeZone: getDisplayTimeZone()
+    }).format(now)
+  );
 
 const hh = (hour: number) => `${String(hour).padStart(2, "0")}:00`;
 
@@ -73,12 +80,18 @@ export interface OffPeakState {
   open: boolean;
 }
 
-export const offPeakState = (window: OffPeakWindowResponse | null | undefined, now = Date.now()): OffPeakState | null => {
+export const offPeakState = (
+  window: OffPeakWindowResponse | null | undefined,
+  now = Date.now()
+): OffPeakState | null => {
   if (!window?.enabled) return null;
+  // The window's hours are read by the governor in the install's display zone
+  // (CRYO_DISPLAY_TIMEZONE, #183), so the UI has to compare them in that same zone --
+  // otherwise the "open now" badge disagrees with what the governor actually does.
   const { start_hour_ist: start, end_hour_ist: end } = window;
-  const hour = istHour(now);
+  const hour = displayHour(now);
   const open = start < end ? hour >= start && hour < end : hour >= start || hour < end;
-  return { label: `${hh(start)}–${hh(end)} IST`, open };
+  return { label: `${hh(start)}–${hh(end)} ${zoneLabel()}`, open };
 };
 
 export type NightOutcome = "succeeded" | "partial" | "failed" | "running" | "unknown";

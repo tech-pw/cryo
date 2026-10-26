@@ -5,7 +5,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { getTableAudit, getTableRuns, getTableSkipEvaluations } from "../../../api/client";
 import { useRunLiveEvents } from "../../../hooks/useRunLiveEvents";
 import { useAuth } from "../../../lib/auth";
-import { formatBytesGb, formatNumber, formatTime } from "../../../lib/format";
+import { formatBytesGb, formatClock, formatNumber, formatTime } from "../../../lib/format";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
 import { QueryErrorAlert } from "../../common";
 import { Button } from "../../ui/button";
@@ -669,7 +669,7 @@ const LiveLog = ({ runId, jobId }: { runId: string; jobId: string }) => {
         <ol>
           {lines.map((line, index) => (
             <li key={`${line.ts}-${index}`} data-level={(line.level ?? line.status ?? "").toLowerCase()}>
-              <time>{line.ts ? new Date(line.ts).toLocaleTimeString() : ""}</time>
+              <time>{line.ts ? formatClock(line.ts) : ""}</time>
               <span>{line.message ?? (line.status ? `status → ${line.status}` : line.type)}</span>
             </li>
           ))}

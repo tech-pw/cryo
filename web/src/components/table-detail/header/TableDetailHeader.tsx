@@ -12,7 +12,7 @@ import { Button } from "../../ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../../ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import { cn } from "../../../lib/cn";
-import { formatGb, formatNumber } from "../../../lib/format";
+import { formatGb, formatNumber, getDisplayTimeZone, zoneLabel } from "../../../lib/format";
 import { operationLabels } from "../../../lib/theme";
 import { formatPartitionColumnLabel } from "../helpers";
 import "./table-detail-header.css";
@@ -81,8 +81,9 @@ const formatIst = (value: string | null | undefined): string | null => {
   if (!value) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
+  const zone = getDisplayTimeZone();
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Kolkata",
+    timeZone: zone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -96,7 +97,7 @@ const formatIst = (value: string | null | undefined): string | null => {
   const hour = part("hour");
   const minute = part("minute");
   if (!month || !Number.isFinite(day) || !hour || !minute) return null;
-  return `${day} ${month} ${hour.padStart(2, "0")}:${minute.padStart(2, "0")} IST`;
+  return `${day} ${month} ${hour.padStart(2, "0")}:${minute.padStart(2, "0")} ${zoneLabel(zone)}`;
 };
 
 const countText = (value: number | null): string => (known(value) ? formatNumber(value) : UNKNOWN);
@@ -402,8 +403,8 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
               </Button>
             </ConfirmAction>
             {operations.length ? (
-              <div className="ctd-header__menu-group" role="group" aria-label="Add to run">
-                <p className="ctd-header__menu-label">Add to run</p>
+              <div className="ctd-header__menu-group" role="group" aria-label="Run one operation">
+                <p className="ctd-header__menu-label">Run one operation</p>
                 {operations.map((item) => (
                   <Button
                     key={item.op}

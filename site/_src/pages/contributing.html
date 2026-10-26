@@ -1,0 +1,69 @@
+---
+title: Contributing
+lede: Issues and pull requests live on GitHub. Set up a dev environment, run the checks that match what you touched, and open a focused pull request against main.
+description: How to set up a Cryo development environment, run the tests and the docs build, and get a pull request merged.
+updated: 2026-10-26
+---
+<p>This page is a summary. The full guide, with coding standards and the migration rules, is <a href="https://github.com/tech-pw/cryo/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>. Everyone taking part follows the <a href="https://github.com/tech-pw/cryo/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a>. Report security problems privately as described in <a href="https://github.com/tech-pw/cryo/blob/main/SECURITY.md">SECURITY.md</a>, never in a public issue.</p>
+
+<h2 id="path">How a pull request gets merged</h2>
+<p><a href="https://github.com/tech-pw/cryo">tech-pw/cryo</a> on GitHub is the source of truth. Pull requests are reviewed and merged there.</p>
+<steps>
+<step title="Open an issue or pick one">
+<p>For anything bigger than a small fix, open an issue first so the change can be discussed before you write it. Starter work is labelled <a href="https://github.com/tech-pw/cryo/labels/good%20first%20issue">good first issue</a>.</p>
+</step>
+<step title="Open a pull request">
+<p>Fork, branch from <code>main</code>, and open the pull request against <code>tech-pw/cryo</code>. GitHub Actions runs lint, type checks, tests and the docs check on it.</p>
+</step>
+<step title="Review and merge">
+<p>A maintainer reviews it. Keep the pull request focused on one change and link the issue it fixes with <code>Fixes #N</code>. Once checks are green and it's approved, a maintainer squash-merges it into <code>main</code>.</p>
+</step>
+</steps>
+<p>The "Edit this page" link at the bottom of every docs page opens GitHub's editor, and your edit becomes a pull request the same way.</p>
+
+<h2 id="setup">Development setup</h2>
+<p>You need Python 3.12+, Node 22 for the web UI and the docs site, Docker with Compose for the local stack, and Git. Go 1.25 is needed only for the native compactor in <code>engine-go/</code>, Rust only for <code>cryo-engine/</code>, and Java 17+ only to run PySpark.</p>
+<codeblock lang="bash">
+$ git clone https://github.com/YOUR_USERNAME/cryo.git && cd cryo
+$ python3.12 -m venv .venv && source .venv/bin/activate
+$ make install
+$ ./start-local.sh start
+</codeblock>
+<p><code>make install</code> installs the package with its dev extras. <code>./start-local.sh start</code> brings up the dev datalake (MinIO, Iceberg REST, Hive Metastore, Trino, Spark), Postgres and Redis, and the observability stack, then runs the Alembic migrations. <code>make up</code> starts the containers only, without migrating or seeding. For the UI and API without the datalake, run <code>make api</code> and <code>make web-dev</code> against a local Postgres and Redis.</p>
+
+<h2 id="tests">Tests and checks</h2>
+<table>
+  <thead><tr><th>Command</th><th>What it checks</th></tr></thead>
+  <tbody>
+    <tr><td><code>make test</code></td><td>Python unit tests (pytest, in-memory SQLite; no Docker stack needed)</td></tr>
+    <tr><td><code>make lint</code>, <code>make typecheck</code></td><td>ruff lint and format check, mypy. <code>make format</code> fixes what it can.</td></tr>
+    <tr><td><code>make web-quality</code></td><td>Web UI type check, CSS size budget and unit tests</td></tr>
+    <tr><td><code>make web-test</code></td><td>Web UI unit tests only (vitest)</td></tr>
+    <tr><td><code>make test-engine-go</code></td><td>Go native compactor tests</td></tr>
+    <tr><td><code>cargo test</code> in <code>cryo-engine/</code></td><td>Rust engine tests</td></tr>
+  </tbody>
+</table>
+<p><code>make test</code> isn't everything CI runs. Run the rows that match the parts you touched.</p>
+
+<h2 id="docs">Docs site</h2>
+<p>These pages are built from <code>site/_src/pages/*.html</code> with navigation in <code>site/_src/site.json</code>. The generator has no dependencies beyond Node 22. Commit the generated output along with your source edit; CI fails when they don't match.</p>
+<codeblock lang="bash">
+$ make docs-preview
+$ make docs
+$ node site/scripts/build.mjs --check
+</codeblock>
+<p><code>make docs-preview</code> serves the site on <code>http://localhost:4173</code> and rebuilds on save. <code>make docs</code> renders once. The changelog page comes from <code>CHANGELOG.md</code>, so rebuild the site when you add a changelog entry. More detail is in <a href="https://github.com/tech-pw/cryo/blob/main/site/README.md">site/README.md</a>.</p>
+
+<h2 id="commits">Commits and pull requests</h2>
+<ul>
+  <li>Use conventional commit messages: <code>feat(scanner): …</code>, <code>fix(planner): …</code>, <code>docs: …</code>, <code>test: …</code>, <code>refactor: …</code>, <code>chore: …</code>.</li>
+  <li>Add tests for new behaviour and update the docs in the same pull request.</li>
+  <li>Add a line under <code>[Unreleased]</code> in <code>CHANGELOG.md</code> for anything a user or operator would notice.</li>
+  <li>Alembic migrations are additive first, one concern per revision. Read the migration section of CONTRIBUTING.md before adding one.</li>
+  <li>Fill in the pull request template, and add screenshots for UI changes.</li>
+</ul>
+
+<linkcards>
+<linkcard href="@/changelog/" title="Changelog">What changed, release by release.</linkcard>
+<linkcard href="https://github.com/tech-pw/cryo/issues" title="Issues">Report a bug or propose a feature with the issue forms.</linkcard>
+</linkcards>

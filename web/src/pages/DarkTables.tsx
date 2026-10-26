@@ -13,7 +13,7 @@ import { Skeleton } from "../components/ui/skeleton";
 import { useAuth } from "../lib/auth";
 import { VIEWER_REASON } from "../lib/permissions";
 import { useWriteControl } from "../lib/useWriteControl";
-import { formatCurrency, formatGb, formatNumber } from "../lib/format";
+import { formatCurrency, formatGb, formatNumber, formatShortDate } from "../lib/format";
 
 const CandidateRow = ({ candidate }: { candidate: DarkTableCandidateRead }) => {
   const { api } = useAuth();
@@ -41,7 +41,7 @@ const CandidateRow = ({ candidate }: { candidate: DarkTableCandidateRead }) => {
           <p className="mt-0.5 text-xs text-muted-foreground">
             No queries for {candidate.consecutive_zero_query_windows} consecutive daily checks
             {candidate.first_zero_query_at
-              ? ` · silent since ${new Date(candidate.first_zero_query_at).toLocaleDateString()}`
+              ? ` · silent since ${formatShortDate(candidate.first_zero_query_at)}`
               : ""}
           </p>
         </div>

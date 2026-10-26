@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   diagnosticSignals,
+  gradeUnchangedAfterMaintenance,
+  readDesignFindings,
   formatDeductionLine,
   formatScoreSum,
   gradeLetter,
@@ -103,5 +105,45 @@ describe("gradeReasons", () => {
     expect(readDeductions({})).toBeNull();
     expect(readDeductions({ health_deductions: [] })).toEqual([]);
     expect(readDeductions({ health_deductions: [smallFiles, { label: "bad" }] })).toEqual([smallFiles]);
+  });
+});
+
+describe("#264 design findings and unchanged grade", () => {
+  it("reads structural findings and drops malformed rows", () => {
+    const raw = {
+      health_design_findings: [
+        { label: "Partition volume skew", severity: "critical", reason: "Skew ratio of 94.0x", recommendation: "Bucket it" },
+        { label: "" },
+        null,
+        { label: "Partition count complexity" }
+      ]
+    };
+    expect(readDesignFindings(raw)).toEqual([
+      { label: "Partition volume skew", severity: "critical", reason: "Skew ratio of 94.0x", recommendation: "Bucket it" },
+      { label: "Partition count complexity", severity: "warning", reason: "", recommendation: "" }
+    ]);
+    expect(readDesignFindings({})).toEqual([]);
+    expect(readDesignFindings(null)).toEqual([]);
+  });
+
+  const points = [
+    { at: "2026-10-20T00:00:00Z", grade: "F" },
+    { at: "2026-10-22T00:00:00Z", grade: "F" },
+    { at: "2026-10-24T00:00:00Z", grade: "F" }
+  ];
+
+  it("flags a grade that didn't move across the last successful run", () => {
+    expect(gradeUnchangedAfterMaintenance(points, [{ ts: "2026-10-23T00:00:00Z", status: "OK" }])).toBe(true);
+  });
+
+  it("ignores failed runs and runs with no scan after them", () => {
+    expect(gradeUnchangedAfterMaintenance(points, [{ ts: "2026-10-23T00:00:00Z", status: "FAILED" }])).toBe(false);
+    expect(gradeUnchangedAfterMaintenance(points, [{ ts: "2026-10-25T00:00:00Z", status: "OK" }])).toBe(false);
+    expect(gradeUnchangedAfterMaintenance(points, [])).toBe(false);
+  });
+
+  it("is false when the grade improved after the run", () => {
+    const improved = [...points.slice(0, 2), { at: "2026-10-24T00:00:00Z", grade: "C" }];
+    expect(gradeUnchangedAfterMaintenance(improved, [{ created_at: "2026-10-23T00:00:00Z", status: "succeeded" }])).toBe(false);
   });
 });

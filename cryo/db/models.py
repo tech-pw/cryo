@@ -211,6 +211,13 @@ class Table(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # #120: set when a complete catalog listing no longer contains the table. The row is a
+    # tombstone (inactive, hidden from /tables by default); a later listing that has the
+    # table again clears it. Nothing is hard-deleted.
+    removed_from_catalog_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), index=True
+    )
+    removed_reason: Mapped[str | None] = mapped_column(Text)
     # Tracks scans that fail to even read the table (e.g. a stale dbt __dbt_tmp pointer whose
     # metadata.json was deleted), as distinct from a table that scans fine but needs maintenance.
     # consecutive_scan_failures resets to 0 on any successful scan -- a single transient blip
@@ -806,6 +813,11 @@ class Preset(TimestampMixin, Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # #119: held (no scheduled runs, no fallthrough) while still configured; distinct from
+    # enabled=False, which retires the preset.
+    paused: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("cryo.tenants.id", ondelete="SET NULL"),
@@ -943,6 +955,11 @@ class MaintenanceJob(Base):
     admitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    # When the job first went DEFERRED in its current deferral episode. finished_at is
+    # restamped on every re-defer, so a job a gate keeps refusing would restart the run
+    # finalizer's grace window forever; this is kept across re-defers and the reconcile
+    # re-queue, and cleared once the job is admitted or reaches a real terminal state.
+    deferred_since: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
     # Plan Verifier (arXiv:2510.09567) -- persisted verdict so the worker + audit trail can see
     # whether the plan was proof-checked at enqueue time, and reproduce the verdict hash.
@@ -1626,11 +1643,15 @@ class QueryLog(Base):
     engine: Mapped[str] = mapped_column(Text, nullable=False)  # trino, spark, etc.
     query_text: Mapped[str | None] = mapped_column(Text)  # Full SQL (optional)
     query_type: Mapped[str | None] = mapped_column(Text)  # SELECT, INSERT, etc.
+    # none_as_null: Python None must be SQL NULL. Without it SQLAlchemy stored the JSON scalar
+    # null, and jsonb_array_length on it failed every layout-recommendation refresh (#255).
     filter_columns: Mapped[JsonList | None] = mapped_column(
-        JSONB
+        JSONB(none_as_null=True)
     )  # [{column, operator, cardinality}]
-    join_columns: Mapped[JsonList | None] = mapped_column(JSONB)  # [column, ...]
-    projection_columns: Mapped[JsonList | None] = mapped_column(JSONB)  # Selected columns
+    join_columns: Mapped[JsonList | None] = mapped_column(JSONB(none_as_null=True))  # [column, ...]
+    projection_columns: Mapped[JsonList | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )  # Selected columns
     executed_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     duration_ms: Mapped[int | None] = mapped_column(BigInteger)
     rows_read: Mapped[int | None] = mapped_column(BigInteger)
@@ -2985,6 +3006,11 @@ class LocalUser(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
+    # "admin" (added in Settings), "google" (first Google sign-in) or "bootstrap"
+    # (CRYO_GOOGLE_ADMIN_EMAILS). NULL for rows created before this was tracked.
+    created_via: Mapped[str | None] = mapped_column(Text)
+    last_login_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_login_method: Mapped[str | None] = mapped_column(Text)
 
 
 class AuthSettings(Base):

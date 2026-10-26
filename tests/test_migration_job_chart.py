@@ -18,7 +18,7 @@ def _helm(*args: str) -> subprocess.CompletedProcess[str]:
     if shutil.which("helm") is None:
         pytest.skip("helm is required for chart rendering")
     return subprocess.run(
-        ["helm", "template", "cryo", str(CHART), *args],
+        ["helm", "template", "cryo", str(CHART), "--set", "global.env.CRYO_ENVIRONMENT=dev", *args],
         capture_output=True,
         text=True,
     )

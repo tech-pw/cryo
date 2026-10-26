@@ -26,6 +26,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -187,6 +188,9 @@ class JobRunResult:
     state_details: str | None = None
     total_execution_duration_seconds: int | None = None
     bytes_removed: int | None = None
+    # When the driver pod started (RUNNING only). Orphan recovery measures the Job deadline
+    # from it, since a recovering worker has no wait_for_completion clock of its own (#258).
+    started_at: datetime | None = None
     # The procedure's own counters from the runner's last [cryo-result] line (issue #155).
     metrics: dict[str, Any] | None = None
 
@@ -610,7 +614,12 @@ class SparkK8sClient:
                 if lead:
                     detail = f"{lead}\n{detail}" if detail else lead
             return JobRunResult(job_run_id=job_id, state=JobRunState.FAILED, state_details=detail)
-        return JobRunResult(job_run_id=job_id, state=JobRunState.RUNNING)
+        start_time = getattr(pod.status, "start_time", None) if pod.status else None
+        return JobRunResult(
+            job_run_id=job_id,
+            state=JobRunState.RUNNING,
+            started_at=start_time if isinstance(start_time, datetime) else None,
+        )
 
     def _get_wrapper_job_run(self, job_id: str) -> JobRunResult:
         """Fallback for the window before the driver pod exists -- e.g. submission itself
