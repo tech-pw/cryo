@@ -60,6 +60,43 @@ export const formatDuration = (ms?: number | null): string => {
 
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/;
 
+/**
+ * The zone the install reports and schedules in (CRYO_DISPLAY_TIMEZONE, #183).
+ *
+ * The backend sends it on `/api/v1/runtime`. Until that arrives (and in tests), fall back
+ * to the browser's zone -- the old behaviour -- so the UI is never blank or wrong-shaped
+ * before the first runtime response.
+ */
+let displayTimeZone: string | undefined;
+
+export const setDisplayTimeZone = (zone: string | undefined | null): void => {
+  displayTimeZone = zone?.trim() || undefined;
+};
+
+export const getDisplayTimeZone = (): string | undefined => displayTimeZone;
+
+/**
+ * A short label for the display zone: "IST", "UTC", or the zone's own name.
+ *
+ * The UI shows the zone next to a clock so a reader can tell which one they are looking at.
+ */
+export const zoneLabel = (zone: string | undefined = displayTimeZone): string => {
+  if (!zone) return "local";
+  if (zone === "UTC") return "UTC";
+  const short = zone.split("/").pop() ?? zone;
+  return short.replace(/_/g, " ");
+};
+
+/** The zone to render an instant in: the install's zone, else the browser's. */
+const timeZone = (): string | undefined => {
+  if (displayTimeZone) return displayTimeZone;
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
+};
+
 export const formatTime = (value?: string | null): string => {
   if (!value) return "-";
   const date = new Date(value);
@@ -70,7 +107,60 @@ export const formatTime = (value?: string | null): string => {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-    year: includeYear ? "numeric" : undefined
+    year: includeYear ? "numeric" : undefined,
+    timeZone: timeZone()
+  }).format(date);
+};
+
+/** A date in the install's zone, with the year -- for "last seen" and similar. */
+export const formatDate = (value?: string | null): string => {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    timeZone: timeZone()
+  }).format(date);
+};
+
+/**
+ * A short date in the install's zone -- "12 Oct" -- for chart axes and dense tables.
+ *
+ * These read the browser's zone by default, which is what made the UI show two clocks on
+ * one page next to the off-peak window and the run timestamps (#183).
+ */
+export const formatShortDate = (value: string | number | Date): string => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: timeZone()
+  }).format(date);
+};
+
+/** A date and clock in the install's zone -- for tooltips and detail rows. */
+export const formatDateTime = (value: string | number | Date): string => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: timeZone()
+  }).format(date);
+};
+
+/** The clock only, in the install's zone. */
+export const formatClock = (value: string | number | Date): string => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: timeZone()
   }).format(date);
 };
 

@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getTableMaintenanceImpact } from "../../../api/client";
 import type { ImpactWindowRead } from "../../../api/types";
 import { useAuth } from "../../../lib/auth";
-import { formatBytesGb, formatNumber } from "../../../lib/format";
+import { formatBytesGb, formatDate, formatNumber } from "../../../lib/format";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
 import { QueryErrorAlert } from "../../common";
 import { Skeleton } from "../../ui/skeleton";
@@ -65,7 +65,7 @@ export const MaintenanceImpact = ({ tableId }: { tableId: string }) => {
       <div className="td-impact-grid">
         <WindowColumn label={`Last ${WINDOW_DAYS} days`} window={recent} />
         <WindowColumn
-          label={lifetime.since ? `Since ${new Date(lifetime.since).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}` : "All time"}
+          label={lifetime.since ? `Since ${formatDate(lifetime.since)}` : "All time"}
           window={lifetime}
         />
       </div>

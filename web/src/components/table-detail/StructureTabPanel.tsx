@@ -46,14 +46,14 @@ export const StructureStatsHistory = ({ points }: { points: StructureHistoryPoin
             <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
             <XAxis
               dataKey="timestamp"
-              tickFormatter={(ts) => new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              tickFormatter={(ts) => formatShortDate(ts)}
               tick={{ fontSize: 11 }}
               stroke="var(--muted, #5c667a)"
             />
             <YAxis tick={{ fontSize: 11 }} stroke="var(--muted, #5c667a)" />
             <RechartsTooltip
               {...chartTooltipProps}
-              labelFormatter={(ts) => new Date(Number(ts)).toLocaleString()}
+              labelFormatter={(ts) => formatDateTime(Number(ts))}
               formatter={(value) => [countText(measuredNumber(value)), "Small files"]}
             />
             <Line
@@ -81,14 +81,14 @@ export const StructureStatsHistory = ({ points }: { points: StructureHistoryPoin
             <CartesianGrid strokeDasharray="3 3" stroke="var(--line, #e1e6ed)" />
             <XAxis
               dataKey="timestamp"
-              tickFormatter={(ts) => new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              tickFormatter={(ts) => formatShortDate(ts)}
               tick={{ fontSize: 11 }}
               stroke="var(--muted, #5c667a)"
             />
             <YAxis tick={{ fontSize: 11 }} stroke="var(--muted, #5c667a)" />
             <RechartsTooltip
               {...chartTooltipProps}
-              labelFormatter={(ts) => new Date(Number(ts)).toLocaleString()}
+              labelFormatter={(ts) => formatDateTime(Number(ts))}
               formatter={(value) => [sizeText(measuredNumber(value)), "Size"]}
             />
             <Line
@@ -111,7 +111,7 @@ export const StructureStatsHistory = ({ points }: { points: StructureHistoryPoin
         {
           key: "time",
           header: "Scan time",
-          render: (row) => new Date(row.timestamp).toLocaleString()
+          render: (row) => formatDateTime(row.timestamp)
         },
         {
           key: "small-files",
@@ -130,6 +130,7 @@ export const StructureStatsHistory = ({ points }: { points: StructureHistoryPoin
   </div>
 );
 import { ChartDataTable } from "../ui/chart-data-table";
+import { formatDateTime, formatShortDate } from "../../lib/format";
 
 export const StructureTabPanel = () => {
   const {

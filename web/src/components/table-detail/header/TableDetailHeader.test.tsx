@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
-import { formatNumber } from "../../../lib/format";
+import { formatNumber, setDisplayTimeZone } from "../../../lib/format";
 import { CryoTooltipProvider } from "../../ui/tooltip";
 import { TableDetailHeader, type TableDetailHeaderProps } from "./TableDetailHeader";
 
@@ -64,6 +64,9 @@ const renderHeader = (overrides: Partial<TableDetailHeaderProps> = {}) => {
 };
 
 describe("TableDetailHeader", () => {
+  afterEach(() => {
+    setDisplayTimeZone(undefined);
+  });
   it("shows Not scanned and Scan now when the table has not been scanned", () => {
     const onScan = vi.fn();
     renderHeader({
@@ -172,15 +175,24 @@ describe("TableDetailHeader", () => {
     expect(screen.getByRole("button", { name: "Choose a workflow" })).toBeEnabled();
   });
 
-  it("labels scan and commit in IST and does not show the raw timestamp", () => {
+  it("labels scan and commit in the install's zone and does not show the raw timestamp", () => {
+    setDisplayTimeZone("Asia/Kolkata");
     renderHeader();
-    expect(screen.getByText("Scan 28 Sep 09:10 IST")).toBeInTheDocument();
-    expect(screen.getByText("Last commit 28 Sep 08:55 IST")).toBeInTheDocument();
+    expect(screen.getByText("Scan 28 Sep 09:10 Kolkata")).toBeInTheDocument();
+    expect(screen.getByText("Last commit 28 Sep 08:55 Kolkata")).toBeInTheDocument();
     expect(screen.queryByText(/2026-09-28T03:40/)).not.toBeInTheDocument();
-    expect(screen.getByText("Latest action: Compaction · 27 Sep 02:14 IST")).toBeInTheDocument();
+    expect(screen.getByText("Latest action: Compaction · 27 Sep 02:14 Kolkata")).toBeInTheDocument();
+  });
+
+  it("labels scan and commit in UTC when the install is on UTC (#183)", () => {
+    setDisplayTimeZone("UTC");
+    renderHeader();
+    // The same instant, in UTC: 03:40Z is 09:10 in Kolkata.
+    expect(screen.getByText("Scan 28 Sep 03:40 UTC")).toBeInTheDocument();
   });
 
   it("does not invent a scan backoff date", () => {
+    setDisplayTimeZone("Asia/Kolkata");
     const view = (backoff: TableDetailHeaderProps["scanBackoff"]) => (
       <CryoTooltipProvider>
         <MemoryRouter>
@@ -197,7 +209,7 @@ describe("TableDetailHeader", () => {
     expect(screen.queryByText("not-a-date")).not.toBeInTheDocument();
 
     rerender(view({ until: "2026-09-29T20:30:00.000Z", failures: 4 }));
-    expect(screen.getByText("Scans paused until 30 Sep 02:00 IST after 4 failures")).toBeInTheDocument();
+    expect(screen.getByText("Scans paused until 30 Sep 02:00 Kolkata after 4 failures")).toBeInTheDocument();
     expect(screen.queryByText(/2026-09-29T20:30/)).not.toBeInTheDocument();
   });
 
