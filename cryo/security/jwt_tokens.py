@@ -26,6 +26,7 @@ def issue_access_token(
     roles: list[str],
     tenant_id: uuid.UUID | None = None,
     ttl_hours: int = _DEFAULT_TTL_HOURS,
+    extra_claims: dict[str, Any] | None = None,
 ) -> str:
     now = datetime.now(UTC)
     payload: dict[str, Any] = {
@@ -36,6 +37,8 @@ def issue_access_token(
     }
     if tenant_id is not None:
         payload["tenant_id"] = str(tenant_id)
+    if extra_claims:
+        payload.update({k: v for k, v in extra_claims.items() if k not in payload})
     return jwt.encode(payload, jwt_secret(), algorithm=_ALGORITHM)
 
 

@@ -63,6 +63,15 @@ class Settings(BaseSettings):
             "while this is true. Turn off once oidc_issuer_url is set."
         ),
     )
+    google_admin_emails: str = Field(
+        default="",
+        description=(
+            "Comma-separated Google emails that become Cryo admins on their first Google "
+            "sign-in when no Cryo user exists for them. Bootstraps the first admin once "
+            "Google sign-in is enabled and dev tokens are turned off. Does not change the "
+            "role of an existing user."
+        ),
+    )
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
     scan_num_chunks: int = Field(default=4, gt=0)

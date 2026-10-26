@@ -12,6 +12,7 @@ from cryo.security.jwt_tokens import (
     tenant_id_from_claims,
     verify_access_token,
 )
+from cryo.security.local_users import LOCAL_AUTH, LocalUserState, lookup_local_user
 
 
 class Role(StrEnum):
@@ -77,12 +78,21 @@ def principal_from_token(token: str) -> Principal | None:
         return None
 
     role_names = roles_from_claims(claims)
+    subject_claim = claims.get("sub") or claims.get("preferred_username") or claims.get("email")
+    subject = subject_claim if isinstance(subject_claim, str) and subject_claim else "jwt"
+    if claims.get("auth") == LOCAL_AUTH and isinstance(claims.get("uid"), str):
+        state = lookup_local_user(claims["uid"])
+        if state is None:
+            return None
+        if isinstance(state, LocalUserState):
+            if state.disabled or parse_role(state.role) is None:
+                return None
+            role_names = frozenset({state.role})
+            subject = state.username
     if not role_names:
         return None
 
     roles = frozenset(Role(name) for name in role_names)
-    subject_claim = claims.get("sub") or claims.get("preferred_username") or claims.get("email")
-    subject = subject_claim if isinstance(subject_claim, str) and subject_claim else "jwt"
     tenant_id = tenant_id_from_claims(claims)
     if tenant_id is None:
         from cryo.security.oidc import tenant_id_from_oidc_claims

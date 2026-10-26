@@ -51,6 +51,7 @@ def fleet_audit_query(
     tenant_id = require_tenant(session)
     if tenant_id.int != 0:
         stmt = stmt.where(Table.tenant_id == tenant_id)
+    stmt = stmt.where(~AuditLog.action.like("auth.%"))
     if action:
         stmt = stmt.where(AuditLog.action == action)
     if status:
