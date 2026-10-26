@@ -559,8 +559,11 @@ cd web && npm run build && npm run test
 show-and-tell live too. Real lakes shape the roadmap. If Cryo saves you a maintenance DAG, a ⭐ helps
 other Iceberg teams find it.
 
-Bugs go to [Issues](https://github.com/tech-pw/cryo/issues). See [`SUPPORT.md`](./SUPPORT.md) and
-[`MAINTAINERS.md`](./MAINTAINERS.md).
+Bugs go to [Issues](https://github.com/tech-pw/cryo/issues). See [`SUPPORT.md`](./SUPPORT.md).
+
+Cryo is led by **Aamir Siddiqui** ([@aamir306](https://github.com/aamir306),
+[LinkedIn](https://www.linkedin.com/in/aamir-siddiqui-396948100)). Reach out there to talk about
+Iceberg maintenance at scale. The full list of maintainers is in [`MAINTAINERS.md`](./MAINTAINERS.md).
 
 ## Contributing
 
