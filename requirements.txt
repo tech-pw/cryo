@@ -7,5 +7,5 @@ pyarrow>=23.0.1
 boto3>=1.34.0
 # Transitive floors: the minimum versions without known advisories.
 nbconvert>=7.17.2
-anyio>=4.14.2
+anyio>=4.15.1
 idna>=3.20
