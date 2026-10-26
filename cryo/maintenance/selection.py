@@ -35,7 +35,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import ColumnElement, and_, or_, select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import MaintenanceJob, Source, Table, TableStats
@@ -145,6 +145,19 @@ COOLDOWN_JOB_STATUSES: tuple[str, ...] = (
     JobStatus.SUCCEEDED.value,
     JobStatus.PARTIAL.value,
 )
+
+
+def job_starts_cooldown() -> ColumnElement[bool]:
+    """SQL condition for a job that starts the nightly cooldown.
+
+    A job whose OPTIMIZE was cut short by max_chunks rewrote only some of the qualifying
+    partitions; treating it as a full pass parked the table for the whole cooldown and it got
+    another partial pass night after night (#199).
+    """
+    return and_(
+        MaintenanceJob.status.in_(COOLDOWN_JOB_STATUSES),
+        MaintenanceJob.plan["optimize_truncation"].as_string().is_(None),
+    )
 
 
 def has_compaction_or_delete_work(
@@ -327,7 +340,7 @@ def load_candidates(
     recently_maintained = (
         select(MaintenanceJob.table_id)
         .where(
-            MaintenanceJob.status.in_(COOLDOWN_JOB_STATUSES),
+            job_starts_cooldown(),
             MaintenanceJob.finished_at >= now - timedelta(hours=cooldown_hours),
         )
         .distinct()
@@ -518,7 +531,7 @@ def _exclusion_rows(
             session.scalars(
                 select(MaintenanceJob.table_id)
                 .where(
-                    MaintenanceJob.status.in_(COOLDOWN_JOB_STATUSES),
+                    job_starts_cooldown(),
                     MaintenanceJob.finished_at >= now - timedelta(hours=cooldown_hours),
                 )
                 .distinct()

@@ -22,6 +22,7 @@ from cryo.config import Settings
 from cryo.db.models import AuditLog, Destination, MaintenanceJob, MaintenanceRun, TableStats
 from cryo.db.repositories.operation_exclusions import excluded_operations_by_table
 from cryo.domain.enums import EngineType, JobStatus, OperationType
+from cryo.engines.base import is_metastore_unreachable_error
 from cryo.engines.spark.k8s import SparkK8sConfig
 from cryo.engines.spark.procedure_metrics import bytes_freed_from_procedure
 from cryo.maintenance.ernest import Calibration, DurationSample, calibrate
@@ -131,6 +132,9 @@ class RunReport:
     rescanned: int = 0
     rescan_error: str | None = None
     failures: list[dict[str, str]] = field(default_factory=list)
+    # Failed or partial tables whose error is the Hive Metastore being unreachable (#257):
+    # infrastructure, not the table. Counted inside `failed`/`partial` too.
+    metastore_unreachable: int = 0
     planned_statements: int = 0
     over_budget: int = 0
     rewrite_seconds: float = 0.0
@@ -396,6 +400,10 @@ class BatchMaintenance:
         # cryo/engines/spark/sql.py::_render_optimize); selection and planning use the same
         # threshold, so the work a table was chosen for is the work that runs.
         params.setdefault("min_file_size_mb", settings.scan_small_file_mb)
+        if table_ids:
+            # Explicit tables are an operator's ad-hoc request, which also skips the cooldown;
+            # the expiry minimum interval only guards scheduled repeats (#179).
+            params.setdefault("expire_snapshots_min_interval_hours", 0)
         shared_ids = self._shared_location_ids(dry_run=dry_run, now=started, report=report)
         if report.orphan_gate_closed:
             params["skip_operations"] = [OperationType.REMOVE_ORPHAN_FILES.value]
@@ -972,6 +980,8 @@ class BatchMaintenance:
                 report.skipped += 1
             if outcome.status in {JobStatus.FAILED, JobStatus.PARTIAL} and outcome.error:
                 report.failures.append({"table": outcome.name, "error": outcome.error[:300]})
+                if is_metastore_unreachable_error(outcome.error):
+                    report.metastore_unreachable += 1
             for result in outcome.results.values():
                 if not result.ok:
                     continue

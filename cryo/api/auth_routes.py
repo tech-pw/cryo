@@ -90,7 +90,9 @@ class OidcExchangeRequest(BaseModel):
 
 
 def _dev_token_enabled(settings: Settings) -> bool:
-    return settings.environment != "prod" or settings.allow_dev_token_in_prod
+    if settings.allow_dev_token_in_prod:
+        return True
+    return settings.environment in {"dev", "test"} and not settings.oidc_issuer_url
 
 
 def _dev_token_enabled_in_prod(settings: Settings) -> bool:
@@ -200,14 +202,14 @@ def refresh_oidc_access_token(payload: OidcRefreshRequest) -> TokenResponse:
 def issue_dev_token(payload: TokenRequest) -> TokenResponse:
     """Issue a signed JWT for dev/test UI and integration tests.
 
-    Disabled in production unless allow_dev_token_in_prod is explicitly set -- use your
-    identity provider instead.
+    Only on in dev/test with no OIDC issuer, unless allow_dev_token_in_prod is explicitly
+    set -- use your identity provider instead.
     """
     settings = get_settings()
     if not _dev_token_enabled(settings):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Token issuance is disabled in production",
+            detail="Token issuance is disabled; sign in through your identity provider",
         )
     role = payload.role.strip().lower()
     if role not in {"viewer", "operator", "admin"}:

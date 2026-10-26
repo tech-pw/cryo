@@ -6,6 +6,7 @@ import { useAuth } from "../../lib/auth";
 import { CryoMark } from "../brand/CryoMark";
 import { cn } from "../../lib/cn";
 import { NAV_GROUPS, resolveActiveNavHref } from "./nav-config";
+import { VersionFooter } from "./VersionFooter";
 
 export interface SidebarProps {
   pathname: string;
@@ -71,6 +72,7 @@ export const Sidebar = ({ pathname, mobileOpen, collapsed = false, onToggleColla
           );
         })}
       </nav>
+      <VersionFooter onNavigate={onNavigate} />
       {onToggleCollapsed ? (
         <button
           type="button"

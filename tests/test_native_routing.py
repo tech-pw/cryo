@@ -9,6 +9,7 @@ from cryo.domain.models import MaintenancePlan, Operation
 from cryo.engines.native.engine import NativeEngine, _supported_operations
 from cryo.engines.native.routing import (
     NATIVE_DELETE_FILES_DETAIL,
+    NATIVE_GO_IMPL_REQUIRED_DETAIL,
     NATIVE_MANIFESTS_DETAIL,
     NATIVE_V3_PARTITIONED_DV_DETAIL,
     fallback_is_spark,
@@ -122,6 +123,25 @@ def test_resolve_native_routing_cow_includes_optimize(monkeypatch: pytest.Monkey
     fallback_types = {op.type for op, _ in routing.fallback_operations}
     assert fallback_types == {OperationType.OPTIMIZE_MANIFESTS}
     assert not routing.skipped_operations
+
+
+def test_resolve_native_routing_without_go_impl_keeps_optimize_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Native optimize stays opt-in after the Rust engine was removed.
+
+    A destination with no engine_impl (including one whose 'rust' value was stripped)
+    still sends optimize to the fallback. Removing Rust must not switch native rewrites on.
+    """
+    monkeypatch.delenv("CRYO_ENGINE_IMPL", raising=False)
+    routing = resolve_native_routing(
+        _deep_plan(),
+        {"total_delete_files": 0},
+        {"sql_fallback_destination_id": "trino-1"},
+    )
+    assert OperationType.OPTIMIZE not in {op.type for op in routing.native_operations}
+    fallback = {op.type: detail for op, detail in routing.fallback_operations}
+    assert fallback[OperationType.OPTIMIZE] == NATIVE_GO_IMPL_REQUIRED_DETAIL
 
 
 def test_resolve_native_routing_delete_files_routes_optimize_to_fallback(

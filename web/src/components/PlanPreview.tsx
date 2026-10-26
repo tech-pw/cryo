@@ -91,6 +91,13 @@ export const PlanPreview = ({ open, tables, onClose, params = {}, onRunTable, ru
     [tables]
   );
 
+  // Refetch on table identity, not count: swapping one table for another of the
+  // same count must not keep showing the previous table's plan (#192).
+  const requestTablesKey = useMemo(
+    () => requestTables.map((table) => `${table.schema_name}.${table.table_name}`).join("|"),
+    [requestTables]
+  );
+
   const tableByRef = useMemo(
     () => new Map(tables.map((table) => [`${table.schema_name}.${table.table_name}`, table] as const)),
     [tables]
@@ -168,7 +175,7 @@ export const PlanPreview = ({ open, tables, onClose, params = {}, onRunTable, ru
 
   useEffect(() => {
     if (open && requestTables.length) preview.mutate();
-  }, [open, engineVirtual, mode, requestTables.length]);
+  }, [open, engineVirtual, mode, requestTablesKey]);
 
   useEffect(() => {
     if (!open || !preview.data?.items.length) return;

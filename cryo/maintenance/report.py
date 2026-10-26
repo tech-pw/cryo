@@ -144,6 +144,11 @@ def build_blocks(
             ":warning: Orphan-file removal was skipped for every table: the shared-S3-path "
             "snapshot could not be refreshed and the last one is stale."
         )
+    if report.metastore_unreachable:
+        notes.append(
+            f":electric_plug: {report.metastore_unreachable} table(s) failed because the Hive "
+            "Metastore was unreachable (connection timeouts, not table problems)."
+        )
     if report.rescan_error:
         notes.append(f":warning: Post-run rescan failed: {report.rescan_error[:200]}")
     if notes:

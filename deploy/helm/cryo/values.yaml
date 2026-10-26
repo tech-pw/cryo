@@ -50,9 +50,10 @@ containerSecurityContext:
 
 global:
   env:
-    # Public chart default. A production overlay must set this to prod and pin
-    # image.digest values; the chart refuses to render prod without them.
-    CRYO_ENVIRONMENT: dev
+    # Secure by default: prod turns off the self-issued dev token and refuses to start
+    # without a real CRYO_SECRET_KEY. The chart refuses to render prod without image
+    # digests. For a throwaway local install, set this to dev explicitly.
+    CRYO_ENVIRONMENT: prod
     CRYO_SCAN_TABLE_TIMEOUT_SECONDS: "600"
     # Go scan-stats (streaming manifests). Override to "pyiceberg" to fall back.
     CRYO_SCAN_ENGINE: go
@@ -474,6 +475,14 @@ web:
   # The web Deployment injects CRYO_API_UPSTREAM as the API Service FQDN and
   # NGINX_ENTRYPOINT_LOCAL_RESOLVERS so nginx uses the pod nameserver, not kube-dns.
   port: 8080
+  # Strict-Transport-Security from the web nginx. Off by default because an install without
+  # TLS must not send it. Turn it on only when the UI is served over HTTPS: browsers then
+  # refuse plain HTTP for this host for maxAgeSeconds.
+  hsts:
+    enabled: false
+    maxAgeSeconds: 31536000
+    includeSubDomains: false
+    preload: false
   probe:
     livenessInitialDelaySeconds: 5
     readinessInitialDelaySeconds: 3
