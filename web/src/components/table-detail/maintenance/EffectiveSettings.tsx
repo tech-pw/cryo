@@ -146,6 +146,7 @@ export const EffectiveSettings = ({ tableId }: { tableId: string }) => {
     });
   const overrideCount = entries.filter((entry) => entry.overridden).length;
   const currentId = preset.data?.preset_id ?? undefined;
+  const currentPaused = Boolean(currentId && presets.data?.find((item) => item.id === currentId)?.paused);
   const options = (compatible.data ?? []).map((item) => {
     const destination = destinations.data?.find((row) => row.id === item.destination_id);
     return {
@@ -183,6 +184,11 @@ export const EffectiveSettings = ({ tableId }: { tableId: string }) => {
           <p className="td-maintenance-kicker">Workflow</p>
           <p className="td-maintenance-workflow-name">{workflowName}</p>
           <p className="td-maintenance-workflow-why">{preset.data ? provenanceText(preset.data.provenance) : null}</p>
+          {currentPaused ? (
+            <p className="td-maintenance-workflow-why" role="status">
+              Paused, this table is waiting. Nothing runs until the preset is resumed.
+            </p>
+          ) : null}
         </div>
         <dl className="td-maintenance-workflow-stats">
           <div>

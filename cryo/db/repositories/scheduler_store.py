@@ -64,7 +64,9 @@ class SQLSchedulerStore:
         if IntentStore(self._session_factory).is_paused():
             return []
         with self._session_factory() as session:
-            presets = session.scalars(select(Preset).where(Preset.enabled.is_(True)))
+            presets = session.scalars(
+                select(Preset).where(Preset.enabled.is_(True), Preset.paused.is_(False))
+            )
             due: list[tuple[PresetConfig, datetime | None]] = []
             for preset in presets:
                 if not preset.schedule_cron:

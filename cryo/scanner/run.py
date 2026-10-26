@@ -31,6 +31,7 @@ from cryo.optimizer.wair.ranges import wair_sample_columns
 from cryo.scanner.analyze import TableAnalysis, analyze_catalog_table
 from cryo.scanner.cost import MetadataCostAccounting, build_table_cost_analysis
 from cryo.scanner.failure_classifier import scan_failure_is_permanent
+from cryo.scanner.new_tables import candidate_key, record_new_tables_on_default, unregistered_keys
 from cryo.scanner.orphans import carry_forward_orphans, scan_orphans, should_run_orphan_scan
 from cryo.scanner.persistence import (
     already_scanned_today,
@@ -73,6 +74,8 @@ class ScanSummary:
     # like a clean scan of an empty catalog (#162). main() exits non-zero when this is set.
     sources_failed: int = 0
     discovery_errors: tuple[str, ...] = ()
+    # Newly registered tables whose effective preset is the default (#119).
+    new_tables_on_default: int = 0
 
 
 class ScanProgressCallback(Protocol):
@@ -290,31 +293,23 @@ def run_scan(
         },
     )
 
-    if effective_parallel > 0 and len(assigned) > 1:
-        summary = _run_scan_parallel(
-            assigned,
-            settings=settings,
-            full_scan=full_scan,
-            honor_retry_backoff=honor_retry_backoff,
-            cost_full_scan=cost_full_scan,
-            scan_at=scan_at,
-            max_workers=effective_parallel,
-            total_discovered=len(candidates),
-            progress_callback=progress_callback,
-            cancel_checker=cancel_checker,
-        )
-    else:
-        summary = _run_scan_serial(
-            session,
-            assigned,
-            settings=settings,
-            full_scan=full_scan,
-            honor_retry_backoff=honor_retry_backoff,
-            cost_full_scan=cost_full_scan,
-            scan_at=scan_at,
-            total_discovered=len(candidates),
-            progress_callback=progress_callback,
-            cancel_checker=cancel_checker,
+    new_keys = _unregistered_candidates(session, assigned)
+    summary = _run_assigned(
+        session,
+        assigned,
+        settings=settings,
+        full_scan=full_scan,
+        honor_retry_backoff=honor_retry_backoff,
+        cost_full_scan=cost_full_scan,
+        scan_at=scan_at,
+        effective_parallel=effective_parallel,
+        total_discovered=len(candidates),
+        progress_callback=progress_callback,
+        cancel_checker=cancel_checker,
+    )
+    if new_keys:
+        summary = replace(
+            summary, new_tables_on_default=_record_new_tables_on_default(session, new_keys)
         )
     if discovery_errors:
         summary = replace(
@@ -323,6 +318,68 @@ def run_scan(
             discovery_errors=tuple(discovery_errors),
         )
     return summary
+
+
+def _unregistered_candidates(
+    session: Session, assigned: Sequence[ScanCandidate]
+) -> set[tuple[UUID, str, str]]:
+    try:
+        return unregistered_keys(session, (candidate_key(item) for item in assigned))
+    except Exception:
+        logger.warning("Could not snapshot unregistered tables for this scan", exc_info=True)
+        session.rollback()
+        return set()
+
+
+def _record_new_tables_on_default(session: Session, keys: set[tuple[UUID, str, str]]) -> int:
+    try:
+        return record_new_tables_on_default(session, keys)
+    except Exception:
+        logger.warning("Could not record new tables on the default preset", exc_info=True)
+        session.rollback()
+        return 0
+
+
+def _run_assigned(
+    session: Session,
+    assigned: list[ScanCandidate],
+    *,
+    settings: Settings,
+    full_scan: bool,
+    honor_retry_backoff: bool,
+    cost_full_scan: bool,
+    scan_at: datetime,
+    effective_parallel: int,
+    total_discovered: int,
+    progress_callback: ScanProgressCallback | None,
+    cancel_checker: Any | None,
+) -> ScanSummary:
+    if effective_parallel > 0 and len(assigned) > 1:
+        return _run_scan_parallel(
+            assigned,
+            settings=settings,
+            full_scan=full_scan,
+            honor_retry_backoff=honor_retry_backoff,
+            cost_full_scan=cost_full_scan,
+            scan_at=scan_at,
+            max_workers=effective_parallel,
+            total_discovered=total_discovered,
+            progress_callback=progress_callback,
+            cancel_checker=cancel_checker,
+        )
+
+    return _run_scan_serial(
+        session,
+        assigned,
+        settings=settings,
+        full_scan=full_scan,
+        honor_retry_backoff=honor_retry_backoff,
+        cost_full_scan=cost_full_scan,
+        scan_at=scan_at,
+        total_discovered=total_discovered,
+        progress_callback=progress_callback,
+        cancel_checker=cancel_checker,
+    )
 
 
 def _run_scan_serial(

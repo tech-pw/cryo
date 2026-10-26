@@ -1563,7 +1563,7 @@ class InMemorySchedulerStore:
         return [
             (preset, self.last_runs.get(preset.id))
             for preset in self.presets
-            if preset.enabled and preset.schedule_cron
+            if preset.enabled and not preset.paused and preset.schedule_cron
         ]
 
     def list_tables(self) -> list[TableCandidate]:

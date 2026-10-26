@@ -1075,6 +1075,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/presets/{preset_id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause Preset */
+        post: operations["pause_preset_api_v1_presets__preset_id__pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/presets/{preset_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume Preset */
+        post: operations["resume_preset_api_v1_presets__preset_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/presets/{preset_id}/set-default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Default Preset */
+        post: operations["set_default_preset_api_v1_presets__preset_id__set_default_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/presets/{preset_id}/unset-default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Unset Default Preset */
+        post: operations["unset_default_preset_api_v1_presets__preset_id__unset_default_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/assistant/capabilities": {
         parameters: {
             query?: never;
@@ -9345,6 +9413,11 @@ export interface components {
              * @default false
              */
             force: boolean;
+            /**
+             * Override Pause
+             * @default false
+             */
+            override_pause: boolean;
         };
         /** MaintenanceRunResponse */
         MaintenanceRunResponse: {
@@ -10016,6 +10089,11 @@ export interface components {
              * @default false
              */
             is_default: boolean;
+            /**
+             * Paused
+             * @default false
+             */
+            paused: boolean;
         };
         /** PresetPatch */
         PresetPatch: {
@@ -10044,6 +10122,8 @@ export interface components {
             } | null;
             /** Is Default */
             is_default?: boolean | null;
+            /** Paused */
+            paused?: boolean | null;
         };
         /** PresetRead */
         PresetRead: {
@@ -10085,6 +10165,11 @@ export interface components {
              * @default false
              */
             is_default: boolean;
+            /**
+             * Paused
+             * @default false
+             */
+            paused: boolean;
             /**
              * Id
              * Format: uuid
@@ -16200,6 +16285,130 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pause_preset_api_v1_presets__preset_id__pause_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                preset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresetRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_preset_api_v1_presets__preset_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                preset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresetRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_default_preset_api_v1_presets__preset_id__set_default_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                preset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresetRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unset_default_preset_api_v1_presets__preset_id__unset_default_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                preset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresetRead"];
                 };
             };
             /** @description Validation Error */

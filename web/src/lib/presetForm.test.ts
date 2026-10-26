@@ -17,6 +17,7 @@ const baseFormValues = (): PresetFormValues => ({
   priority: 100,
   enabled: true,
   is_default: false,
+  paused: false,
   min_small_files: 128,
   chunk_size_gb: 100,
   max_partitions_per_chunk: 100,

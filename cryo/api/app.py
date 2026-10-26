@@ -40,6 +40,7 @@ from cryo.api.routes_explorer_views import router as explorer_views_router
 from cryo.api.routes_funnel import router as funnel_router
 from cryo.api.routes_impact import router as impact_router
 from cryo.api.routes_partition_access import router as partition_access_router
+from cryo.api.routes_preset_lifecycle import router as preset_lifecycle_router
 from cryo.api.routes_property_recommendations import router as property_recommendations_router
 from cryo.api.routes_quality_constraints import router as quality_constraints_router
 from cryo.api.routes_skip_history import router as skip_history_router
@@ -176,6 +177,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {"value": pending_scan_chunk_count(session)}
 
     app.include_router(api_router)
+    app.include_router(preset_lifecycle_router)
     app.include_router(assistant_router)
     app.include_router(property_recommendations_router)
     app.include_router(table_config_router)
