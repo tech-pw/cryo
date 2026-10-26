@@ -2,6 +2,7 @@
   "name": "Cryo",
   "url": "https://tech-pw.github.io/cryo",
   "repo": "https://github.com/tech-pw/cryo",
+  "version": "v0.1.5",
   "editBase": "https://github.com/tech-pw/cryo/edit/main/site/_src/pages/",
   "tagline": "Keep every table healthy, without deciding when or how",
   "description": "Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Connect your lake and keep every table healthy without deciding when or how to optimize it \u2014 Cryo grades every table, runs the work on your Trino or Spark, and explains every decision.",
@@ -69,6 +70,26 @@
         {
           "slug": "deployment",
           "label": "Deployment"
+        },
+        {
+          "slug": "install",
+          "label": "Install on Kubernetes"
+        },
+        {
+          "slug": "security",
+          "label": "Security"
+        },
+        {
+          "slug": "upgrade",
+          "label": "Upgrade and rollback"
+        },
+        {
+          "slug": "backup",
+          "label": "Backup and restore"
+        },
+        {
+          "slug": "troubleshooting",
+          "label": "Troubleshooting"
         }
       ]
     },
@@ -79,6 +100,14 @@
         {
           "slug": "reference",
           "label": "Reference"
+        },
+        {
+          "slug": "changelog",
+          "label": "Changelog"
+        },
+        {
+          "slug": "contributing",
+          "label": "Contributing"
         }
       ]
     }

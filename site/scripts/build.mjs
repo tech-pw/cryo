@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { renderChangelog } from "./changelog.mjs";
 import { contributorItems, renderContributors } from "./contributors.mjs";
 import { renderDiagram } from "./diagrams.mjs";
 import { highlight } from "./highlight.mjs";
@@ -133,6 +134,11 @@ function expandComponents(body, ctx) {
   };
 
   body = body.replace(/<include\s+src="([^"]+)"\s*\/>/g, (_, rel) => readFileSync(join(SRC, rel), "utf8"));
+
+  body = body.replaceAll("%%VERSION%%", esc(cfg.version)).replaceAll("%%RELEASE_URL%%", esc(releaseUrl()));
+
+  // Not held: the TOC and heading anchors must see the changelog headings.
+  body = body.replace(/<changelog\s*\/>/g, () => renderChangelog(readFileSync(join(SITE, "..", "CHANGELOG.md"), "utf8"), cfg.repo));
 
   body = body.replace(/<contributors\s*\/>/g, () => {
     const snap = JSON.parse(readFileSync(join(SRC, "contributors.json"), "utf8"));
@@ -255,7 +261,15 @@ const PAGE_SUMMARIES = {
   reference: "What is in the box, what is not, and how Cryo compares with adjacent tools.",
 };
 
-function htmlToMarkdown(html) {
+// Code is held out as placeholders until the outermost call returns. Otherwise the tag and
+// indent stripping below eats YAML indentation and anything in code that looks like a tag.
+function htmlToMarkdown(html, holds = null) {
+  const top = holds === null;
+  if (top) holds = [];
+  const keep = (text) => {
+    holds.push(text);
+    return `\u0001${holds.length - 1}\u0001`;
+  };
   let s = dropNamedElement(dropNamedElement(dropNamedElement(html, "script"), "style"), "svg")
     .replace(/<button(?![^>]*data-go)[\s\S]*?<\/button>/gi, "")
     .replace(/<aside class="tj-[a-z]+"[\s\S]*?<\/aside>/gi, "")
@@ -265,23 +279,26 @@ function htmlToMarkdown(html) {
       const title = /<span class="code-title[^"]*">([\s\S]*?)<\/span>/i.exec(fig);
       const code = /<code>([\s\S]*?)<\/code>/i.exec(fig);
       const label = title ? inlineText(title[1]) : "";
-      const body = code ? decodeEntities(code[1]).replace(/\n$/, "") : "";
-      return `\n\n${label ? `**${label}**\n\n` : ""}\`\`\`\n${body}\n\`\`\`\n\n`;
+      const body = code ? decodeEntities(dropHtmlTags(code[1])).replace(/\n$/, "") : "";
+      return `\n\n${label ? `**${label}**\n\n` : ""}${keep(`\`\`\`\n${body}\n\`\`\``)}\n\n`;
     })
     .replace(/<a class="anchor"[^>]*>[\s\S]*?<\/a>/gi, "");
-  s = s.replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_, code) => `\n\n\`\`\`\n${decodeEntities(code).replace(/\n$/, "")}\n\`\`\`\n\n`);
+  s = s.replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_, code) => `\n\n${keep(`\`\`\`\n${decodeEntities(dropHtmlTags(code)).replace(/\n$/, "")}\n\`\`\``)}\n\n`);
+  s = s.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_, c) => keep(`\`${decodeEntities(dropHtmlTags(c))}\``));
   s = s.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, lvl, inner) => `\n\n${"#".repeat(Number(lvl))} ${inlineText(inner)}\n\n`);
   s = s.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, inner) => {
-    const link = /<a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(inner);
-    const note = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(inner);
-    if (link && note) return `\n- [${inlineText(link[2])}](${link[1]}): ${inlineText(note[1])}\n`;
     const step = /<p class="step-title"[^>]*>([\s\S]*?)<\/p>/i.exec(inner);
     if (step) {
       const rest = inner.replace(/<p class="step-title"[\s\S]*?<\/p>/i, "");
-      return `\n\n### ${inlineText(step[1])}\n\n${htmlToMarkdown(rest)}\n`;
+      return `\n\n### ${inlineText(step[1])}\n\n${htmlToMarkdown(rest, holds)}\n`;
     }
+    const link = /<a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(inner);
+    const note = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(inner);
+    if (link && note) return `\n- [${inlineText(link[2])}](${link[1]}): ${inlineText(note[1])}\n`;
     return `\n- ${inlineText(inner)}\n`;
   });
+  s = s.replace(/<dt[^>]*>([\s\S]*?)<\/dt>/gi, (_, inner) => `\n\n**${inlineText(inner)}**\n`);
+  s = s.replace(/<dd[^>]*>([\s\S]*?)<\/dd>/gi, (_, inner) => `\n${inlineText(inner)}\n`);
   s = s.replace(/<p class="ops-phase"[^>]*>([\s\S]*?)<\/p>/gi, (_, inner) => `\n\n**${inlineText(inner)}**\n\n`);
   s = s.replace(/<thead>[\s\S]*?<\/thead>/gi, (head) => {
     const cells = [...head.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)].map((m) => escapePipes(inlineText(m[1])));
@@ -296,7 +313,15 @@ function htmlToMarkdown(html) {
   s = s.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, (_, inner) => `\n\n${inlineText(inner)}\n\n`);
   s = s.replace(/<br\s*\/?>/gi, "\n");
   s = dropHtmlTags(s).replace(/ +/g, " ");
-  return decodeEntities(s).replace(/[ \t]+\n/g, "\n").replace(/^[ \t]+/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+  const md = decodeEntities(s)
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/^[ \t]+/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    // Table rows and list items come out one block each; join them so markdown reads one table or list.
+    .replace(/^(\|.*\|)\n\n(?=\|)/gm, "$1\n")
+    .replace(/^(- .*)\n\n(?=- )/gm, "$1\n")
+    .trim();
+  return top ? md.replace(/\u0001(\d+)\u0001/g, (_, i) => holds[Number(i)]) : md;
 }
 
 function escapePipes(value) {
@@ -387,6 +412,11 @@ function logoMark() {
   return `<svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true">${LOGO_MARK_INNER}</svg>`;
 }
 
+// The released version shown in the header. Bump `version` in site.json when a tag is cut.
+function releaseUrl() {
+  return `${cfg.repo}/releases/tag/${cfg.version}`;
+}
+
 function header(root, activeGroup) {
   const tabs = cfg.groups
     .map((g) => {
@@ -395,7 +425,7 @@ function header(root, activeGroup) {
       return `<a class="hdr-tab" href="${root}${urlOf(first.slug)}"${cur}>${esc(g.label)}</a>`;
     })
     .join("");
-  return `<header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side">${MENU}</button><a class="logo" href="${root}" aria-label="Cryo home">${logoMark(root)}${LOGO_WORD}</a><nav class="hdr-tabs" aria-label="Sections">${tabs}</nav><div class="hdr-end"><button class="search-open" type="button" aria-label="Search the docs" aria-haspopup="dialog">${SEARCH_ICON}<span class="so-text">Search</span><kbd class="so-kbd">⌘K</kbd></button><a class="icon-btn" href="${cfg.repo}" aria-label="Cryo on GitHub">${GH_ICON}</a><button class="icon-btn theme-toggle" type="button" aria-label="Toggle colour theme">${SUN}${MOON}</button></div></div></header>`;
+  return `<header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side">${MENU}</button><a class="logo" href="${root}" aria-label="Cryo home">${logoMark(root)}${LOGO_WORD}</a><nav class="hdr-tabs" aria-label="Sections">${tabs}</nav><div class="hdr-end"><a class="hdr-ver" href="${esc(releaseUrl())}" title="Latest release on GitHub">${esc(cfg.version)}</a><button class="search-open" type="button" aria-label="Search the docs" aria-haspopup="dialog">${SEARCH_ICON}<span class="so-text">Search</span><kbd class="so-kbd">⌘K</kbd></button><a class="icon-btn" href="${cfg.repo}" aria-label="Cryo on GitHub">${GH_ICON}</a><button class="icon-btn theme-toggle" type="button" aria-label="Toggle colour theme">${SUN}${MOON}</button></div></div></header>`;
 }
 
 function searchKeys(url, headingId, group, title) {
@@ -477,7 +507,7 @@ function renderDoc(entry) {
   const issue = `${cfg.repo}/issues/new?title=${encodeURIComponent(`docs: ${title}`)}&body=${encodeURIComponent(`Page: ${cfg.url}/${urlOf(slug)}\n\nWhat is wrong or missing?\n`)}&labels=documentation`;
   const mdHref = `${root}${urlOf(slug)}index.md`;
   const metaRow = `<div class="doc-meta"><span>Updated <time datetime="${updated}">${updated}</time></span><span class="dot" aria-hidden="true"></span><span>${mins} min read</span><span class="meta-links"><a href="${edit}">${PEN_ICON}Edit this page</a><button class="share-page" type="button">${SHARE_ICON}<span>Share</span></button><a href="${issue}">${BUG_ICON}Report an issue</a><a class="md-page" href="${mdHref}">View as Markdown</a></span><button class="copy-page" type="button" data-md="${mdHref}">Copy page</button></div>`;
-  const community = `<aside class="community"><div><p class="cm-h">Stuck, or have an idea?</p><p>Cryo is built in the open. Ask in GitHub Discussions, open an issue, or send a pull request.</p></div><div class="cm-actions"><a class="btn btn-sm" href="${cfg.repo}/discussions">Discussions</a><a class="btn btn-sm" href="${cfg.repo}/issues">Issues</a><a class="btn btn-sm btn-primary" href="${cfg.repo}">${GH_ICON}Star on GitHub</a></div></aside>`;
+  const community = `<aside class="community"><div><p class="cm-h">Stuck, or have an idea?</p><p>Cryo is built in the open. Check Troubleshooting, open an issue, or send a pull request.</p></div><div class="cm-actions"><a class="btn btn-sm" href="${root}${urlOf("troubleshooting")}">Troubleshooting</a><a class="btn btn-sm" href="${cfg.repo}/issues">Issues</a><a class="btn btn-sm btn-primary" href="${cfg.repo}">${GH_ICON}Star on GitHub</a></div></aside>`;
   const canonical = `${cfg.url}/${urlOf(slug)}`;
   const mdUrl = `${canonical}index.md`;
   const html = `<!doctype html><html lang="en">${head({ root, title, desc: meta.description || meta.lede, canonical, slug, markdown: mdHref })}<body class="docs" data-page="${slug || "home"}" data-root="${root}"><a class="skip" href="#main">Skip to content</a>${header(root, entry.group.id)}<div class="shell">${sidebar(root, slug)}<main class="main" id="main"><article class="doc"><header class="doc-head">${crumbs}<h1>${esc(title)}</h1><p class="lede">${meta.lede}</p>${metaRow}</header>${t.mobile}<div class="prose">${content}</div>${community}${pager}</article></main>${t.rail}</div>${footer(root)}${SEARCH_DIALOG}<script src="${root}assets/js/site.js?v=${JS_REV}" defer></script></body></html>`;

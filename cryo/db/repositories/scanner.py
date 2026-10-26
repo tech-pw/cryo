@@ -493,6 +493,7 @@ def record_scan_chunk_finished(
                 "skipped": skipped,
                 "failed": failed,
                 "unreadable": unreadable,
+                "new_tables_on_default": int(summary_update.get("new_tables_on_default") or 0),
             }
         )
         chunk.pop("current_table", None)
@@ -642,6 +643,9 @@ def _recompute_chunk_totals(summary: dict[str, Any]) -> None:
     )
     for key in ("assigned", "scanned", "skipped", "failed", "unreadable"):
         summary[key] = sum(int(chunk.get(key) or 0) for chunk in chunk_values)
+    new_on_default = sum(int(chunk.get("new_tables_on_default") or 0) for chunk in chunk_values)
+    if new_on_default:
+        summary["new_tables_on_default"] = new_on_default
     # Surface remaining work for the UI (pending + still running).
     summary["chunks_remaining"] = int(summary["chunks_pending"]) + int(summary["chunks_running"])
 

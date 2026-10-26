@@ -566,6 +566,7 @@ class PresetCreate(BaseModel):
     enabled: bool = True
     guardrails: JsonDict = Field(default_factory=dict)
     is_default: bool = False
+    paused: bool = False
 
 
 class PresetRead(PresetCreate, OrmModel):
@@ -586,6 +587,7 @@ class PresetPatch(BaseModel):
     enabled: bool | None = None
     guardrails: JsonDict | None = None
     is_default: bool | None = None
+    paused: bool | None = None
 
 
 class PresetRuleCreate(BaseModel):
@@ -1311,6 +1313,9 @@ class MaintenanceRunRequest(BaseModel):
     # Create the jobs even when a queued/running job already covers the same operations on the
     # table. Without it those steps are skipped and reported in the response and run summary.
     force: bool = False
+    # Run even though the preset is paused (#119). Separate from `force`, which only overrides
+    # active-job dedupe. The override is audited.
+    override_pause: bool = False
 
 
 class SkippedTableOps(BaseModel):

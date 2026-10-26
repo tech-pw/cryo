@@ -29,6 +29,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
+from cryo.api import routes_preset_lifecycle as preset_lifecycle
 from cryo.api.deps import (
     CurrentPrincipal,
     SessionDep,
@@ -917,7 +918,9 @@ def get_preset(preset_id: uuid.UUID, session: SessionDep) -> Preset:
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
 )
-def create_preset(payload: PresetCreate, session: SessionDep) -> Preset:
+def create_preset(
+    payload: PresetCreate, session: SessionDep, principal: CurrentPrincipal
+) -> Preset:
     get_scoped_resource(session, Destination, payload.destination_id, resource_type="Destination")
     values = payload.model_dump()
     values["mode"] = payload.mode.value
@@ -928,6 +931,9 @@ def create_preset(payload: PresetCreate, session: SessionDep) -> Preset:
         values["schedule_cron"] = validate_cron_field(values.get("schedule_cron"), required=False)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    preset_lifecycle.ensure_default_has_schedule(
+        is_default=bool(values.get("is_default")), schedule_cron=values.get("schedule_cron")
+    )
     guardrail_errors = validate_guardrails(values.get("guardrails") or {})
     if guardrail_errors:
         raise HTTPException(status_code=400, detail={"guardrails": guardrail_errors})
@@ -936,13 +942,30 @@ def create_preset(payload: PresetCreate, session: SessionDep) -> Preset:
         raise HTTPException(status_code=400, detail={"params": param_errors})
     if values.get("operations"):
         values["operations"] = sort_operations_canonically(values["operations"])
+    previous_default: uuid.UUID | None = None
     if values.get("is_default"):
+        previous_default = session.scalar(
+            select(Preset.id).where(Preset.is_default.is_(True)).limit(1)
+            if tenant_id is None
+            else select(Preset.id)
+            .where(Preset.is_default.is_(True), Preset.tenant_id == tenant_id)
+            .limit(1)
+        )
         presets.clear_other_default_presets(
             session,
             tenant_id=tenant_id,
         )
     preset = Preset(**values)
     session.add(preset)
+    if preset.is_default or preset.paused:
+        preset_lifecycle.audit_lifecycle_change(
+            session,
+            preset,
+            {"enabled": bool(preset.enabled), "paused": False, "is_default": False},
+            covered_before=0,
+            actor=principal.subject,
+            previous_default=previous_default,
+        )
     session.commit()
     session.refresh(preset)
     return preset
@@ -953,9 +976,14 @@ def create_preset(payload: PresetCreate, session: SessionDep) -> Preset:
     response_model=PresetRead,
     dependencies=[Depends(require_admin)],
 )
-def patch_preset(preset_id: uuid.UUID, payload: PresetPatch, session: SessionDep) -> Preset:
+def patch_preset(
+    preset_id: uuid.UUID, payload: PresetPatch, session: SessionDep, principal: CurrentPrincipal
+) -> Preset:
     preset = get_scoped_resource(session, Preset, preset_id, resource_type="Preset")
     values = payload.model_dump(exclude_unset=True)
+    for switch in ("enabled", "paused", "is_default"):
+        if switch in values and values[switch] is None:
+            raise HTTPException(status_code=400, detail=f"{switch} cannot be null")
     if payload.mode is not None:
         values["mode"] = payload.mode.value
     if "schedule_cron" in values:
@@ -979,13 +1007,35 @@ def patch_preset(preset_id: uuid.UUID, payload: PresetPatch, session: SessionDep
             raise HTTPException(status_code=400, detail={"params": param_errors})
     if values.get("operations"):
         values["operations"] = sort_operations_canonically(values["operations"])
+    if "is_default" in values or "schedule_cron" in values:
+        preset_lifecycle.ensure_default_has_schedule(
+            is_default=bool(values.get("is_default", preset.is_default)),
+            schedule_cron=values.get("schedule_cron", preset.schedule_cron),
+        )
+    before = preset_lifecycle.lifecycle_state(preset)
+    switches_change = any(
+        key in values and bool(values[key]) != before[key]
+        for key in ("enabled", "paused", "is_default")
+    )
+    covered_before = preset_lifecycle.covered_table_count(session, preset) if switches_change else 0
+    previous_default: uuid.UUID | None = None
     if values.get("is_default"):
+        previous_default = preset_lifecycle.current_default_id(session, preset)
         presets.clear_other_default_presets(
             session,
             tenant_id=getattr(preset, "tenant_id", None),
             keep_preset_id=preset.id,
         )
     _apply_patch(preset, values)
+    if switches_change:
+        preset_lifecycle.audit_lifecycle_change(
+            session,
+            preset,
+            before,
+            covered_before=covered_before,
+            actor=principal.subject,
+            previous_default=previous_default,
+        )
     session.commit()
     session.refresh(preset)
     return preset
