@@ -22,7 +22,6 @@ def test_healthz() -> None:
     body = response.json()
     assert body["status"] == "ok"
     assert body["environment"] == "test"
-    assert body["version"]
 
 
 def test_preview_renders_trino_partition_filtered_sql() -> None:

@@ -38,8 +38,10 @@ export const versionsDiffer = (web: WebBuild, api: ApiVersion | undefined): bool
   return web.version !== api.version;
 };
 
-export const getApiVersion = async (): Promise<ApiVersion> => {
-  const response = await fetch(`${API_PREFIX}/version`);
+export const getApiVersion = async (token: string): Promise<ApiVersion> => {
+  const response = await fetch(`${API_PREFIX}/version`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
   if (!response.ok) throw new Error(`GET ${API_PREFIX}/version failed: ${response.status}`);
   return (await response.json()) as ApiVersion;
 };
@@ -52,15 +54,17 @@ export const resetApiVersionCache = () => {
   cached = null;
 };
 
-export const useApiVersion = (): { data: ApiVersion | undefined; error: unknown } => {
+export const useApiVersion = (
+  token: string | null | undefined
+): { data: ApiVersion | undefined; error: unknown } => {
   const [state, setState] = useState<{ data: ApiVersion | undefined; error: unknown }>({
     data: undefined,
     error: null
   });
   useEffect(() => {
     let active = true;
-    if (typeof fetch !== "function") return;
-    cached ??= getApiVersion().catch((error: unknown) => {
+    if (typeof fetch !== "function" || !token) return;
+    cached ??= getApiVersion(token).catch((error: unknown) => {
       cached = null;
       throw error;
     });
@@ -71,7 +75,7 @@ export const useApiVersion = (): { data: ApiVersion | undefined; error: unknown 
     return () => {
       active = false;
     };
-  }, []);
+  }, [token]);
   return state;
 };
 

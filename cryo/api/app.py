@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
@@ -16,6 +16,7 @@ from cryo.api.capabilities import router as capabilities_router
 from cryo.api.correlation_middleware import CorrelationMiddleware
 from cryo.api.cost_insights_routes import router as cost_insights_router
 from cryo.api.dashboard_routes import router as dashboard_router
+from cryo.api.deps import require_viewer
 from cryo.api.evidence_routes import router as evidence_router
 from cryo.api.extensions import router as extensions_router
 from cryo.api.maintenance_control import router as maintenance_control_router
@@ -51,7 +52,7 @@ from cryo.api.routes_table_maintenance import router as table_maintenance_router
 from cryo.api.s3_log_config_routes import router as s3_log_config_router
 from cryo.api.search_routes import router as search_router
 from cryo.api.slack_routes import router as slack_interactions_router
-from cryo.build_info import build_info, current_schema_revision
+from cryo.build_info import build_info, cached_schema_revision
 from cryo.config import Settings, get_settings
 from cryo.mcp.http import mount_mcp
 from cryo.observability.logging import configure_logging
@@ -156,19 +157,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/healthz", tags=["health"])
     def healthz() -> dict[str, str]:
-        # Liveness only: no database call. /api/v1/version adds the schema revision.
-        return {
-            "status": "ok",
-            "environment": settings.environment,
-            "version": build_info().version,
-        }
+        # Liveness only: no database call, and no build identity for unauthenticated callers.
+        return {"status": "ok", "environment": settings.environment}
 
-    @app.get("/api/v1/version", tags=["health"])
+    @app.get("/api/v1/version", tags=["health"], dependencies=[Depends(require_viewer)])
     def version() -> dict[str, str | None]:
-        """Which build is running (#263). Unauthenticated like /healthz, so bug reports and
-        incident checks can read it without a token. schema_revision is the Alembic
+        """Which build is running (#263). Needs a viewer token: the exact build and schema
+        revision tell an attacker which advisories apply. schema_revision is the Alembic
         revision in the database, null when the database can't be reached."""
-        return {**build_info().as_dict(), "schema_revision": current_schema_revision()}
+        return {**build_info().as_dict(), "schema_revision": cached_schema_revision()}
 
     @app.get("/readyz", tags=["health"])
     def readyz() -> dict[str, str]:
