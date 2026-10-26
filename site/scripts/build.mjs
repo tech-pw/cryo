@@ -560,6 +560,7 @@ for (const o of outputs) {
 }
 // Size budget for what the Pages deploy publishes (it leaves out _src, scripts and the PNG screenshots).
 const MAX_ASSET = 2 * 1024 * 1024;
+const MAX_TOTAL = 15 * 1024 * 1024;
 const unpublished = (rel) => /^(_src|scripts)\//.test(rel) || rel === "README.md" || /^assets\/img\/screens\/.*\.png$/.test(rel);
 let published = 0;
 let oversized = 0;
@@ -581,6 +582,10 @@ const walk = (dir) => {
 walk(SITE);
 if (oversized && CHECK) {
   console.error(`${oversized} asset(s) over the 2 MB budget. Compress them before committing.`);
+  process.exit(1);
+}
+if (published > MAX_TOTAL && CHECK) {
+  console.error(`published site is ${(published / 1048576).toFixed(1)} MB, over the 15 MB budget. Compress assets before committing.`);
   process.exit(1);
 }
 
