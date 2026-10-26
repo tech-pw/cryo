@@ -117,7 +117,8 @@ make format
 We welcome many types of contributions:
 
 - **Bug reports** — Found a bug? Open an issue with details
-- **Feature requests** — Have an idea? Open an issue for discussion
+- **Questions** — Ask in [GitHub Discussions](https://github.com/tech-pw/cryo/discussions) (Q&A)
+- **Feature requests** — Have an idea? Start a thread in [Discussions → Ideas](https://github.com/tech-pw/cryo/discussions/categories/ideas), or open a feature issue once it's concrete
 - **Documentation** — Improve docs, fix typos, add examples
 - **Code** — Fix bugs, implement features, improve performance
 - **Tests** — Add test coverage, improve test quality

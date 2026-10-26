@@ -4,4 +4,4 @@ Support policy, channels, severity, and the diagnostic bundle are in [docs/SUPPO
 
 Vulnerability reports follow [SECURITY.md](SECURITY.md). Do not open a public issue for those. No mailbox is published.
 
-Usage and design questions belong in GitHub Discussions. Until Discussions is enabled for this repository, open an issue instead.
+Ask usage and design questions in [GitHub Discussions](https://github.com/tech-pw/cryo/discussions) (Q&A), and propose features under Ideas. Report bugs in [GitHub Issues](https://github.com/tech-pw/cryo/issues).
