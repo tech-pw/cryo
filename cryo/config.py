@@ -393,8 +393,32 @@ class Settings(BaseSettings):
             "runs of 3,478-6,117 jobs against a worker fleet whose real ceiling is ~3,000 "
             "jobs/day, so 5,952 of 6,117 jobs in one run aged out of ADMITTED and were recorded "
             "as failures without an engine ever touching the table. Candidates are ranked by "
-            "apply_priority_order before this slice, so the cap keeps the highest-value tables."
+            "apply_priority_order before this slice, so the cap keeps the highest-value tables. "
+            "With scheduler_backlog_drain_enabled this caps each batch, not the night."
         ),
+    )
+    scheduler_backlog_drain_enabled: bool = Field(
+        default=True,
+        description=(
+            "After a capped cron run, keep scheduling further batches of the preset's remaining "
+            "candidates whenever the previous batch has drained, until the next cron fire. Each "
+            "table is attempted at most once per cron period. A preset opts out with "
+            "guardrails.backlog_drain=false."
+        ),
+    )
+    scheduler_backlog_drain_low_water: int = Field(
+        default=50,
+        ge=0,
+        description=(
+            "Next backlog batch is scheduled once the preset has at most this many queued, "
+            "admitted or running jobs. Deferred jobs are not counted: they hold no engine "
+            "capacity and a few routinely stay deferred for hours."
+        ),
+    )
+    scheduler_backlog_drain_interval_seconds: int = Field(
+        default=900,
+        ge=60,
+        description="Minimum time between backlog batches of one preset.",
     )
     stuck_admitted_after_seconds: int = Field(
         default=900,
@@ -1226,6 +1250,14 @@ class Settings(BaseSettings):
         description=(
             "When true, the Governor calls QPPModel.predict() before admitting a maintenance "
             "job and refuses jobs whose predicted p95 exceeds the per-destination target."
+        ),
+    )
+    qpp_fail_open: bool = Field(
+        default=False,
+        description=(
+            "When true, a QPP prediction error admits the job (advisory-only deployments). "
+            "By default an error defers the job with reason qpp_gate_check_failed, the same "
+            "fail-closed behaviour as the PII gate."
         ),
     )
     qpp_target_p95_ms: int = Field(

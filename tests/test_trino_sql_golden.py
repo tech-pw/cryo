@@ -213,3 +213,43 @@ def test_trino_rewrite_position_deletes_raises_unsupported() -> None:
     )
     with pytest.raises(UnsupportedPredicateError, match="not supported on Trino"):
         render(plan)
+
+
+def _manifests_plan(table_ref: str) -> MaintenancePlan:
+    return MaintenancePlan(
+        table_ref=table_ref,
+        mode=Mode.STANDARD,
+        operations=(Operation(OperationType.OPTIMIZE_MANIFESTS, {}),),
+    )
+
+
+def test_trino_quotes_table_names_that_are_not_plain_identifiers() -> None:
+    rendered = render(_manifests_plan("iceberg.demo.bad name; DROP TABLE x --"))
+
+    assert rendered[0].sql == (
+        'ALTER TABLE iceberg.demo."bad name; DROP TABLE x --" EXECUTE optimize_manifests'
+    )
+    assert rendered[0].metadata["table_ref"] == 'iceberg.demo."bad name; DROP TABLE x --"'
+
+
+def test_trino_keeps_an_already_quoted_table_ref_and_escapes_embedded_quotes() -> None:
+    rendered = render(_manifests_plan('iceberg."my-schema"."a""b"'))
+
+    assert rendered[0].sql == 'ALTER TABLE iceberg."my-schema"."a""b" EXECUTE optimize_manifests'
+
+
+@pytest.mark.parametrize(
+    "table_ref",
+    ['iceberg.demo.x" FROM y --', "events", "iceberg..events", "a.b.c.d", 'iceberg.demo.""'],
+)
+def test_trino_rejects_malformed_table_refs(table_ref: str) -> None:
+    with pytest.raises(ValueError):
+        render(_manifests_plan(table_ref))
+
+
+def test_trino_renders_the_files_metadata_table_inside_the_table_schema() -> None:
+    plain = render(_manifests_plan("iceberg.demo.events"))[0]
+    odd = render(_manifests_plan('iceberg.demo."a""b c"'))[0]
+
+    assert plain.metadata["files_ref"] == 'iceberg.demo."events$files"'
+    assert odd.metadata["files_ref"] == 'iceberg.demo."a""b c$files"'

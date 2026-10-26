@@ -5,7 +5,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from cryo.domain.enums import EngineType, Mode, OperationType
-from cryo.domain.models import MaintenancePlan
+from cryo.domain.models import MaintenancePlan, Operation
 from cryo.planner.planner import build_plan
 
 
@@ -45,6 +45,7 @@ def build_execution_plan(
     operations: tuple[OperationType, ...] | None,
     protected_snapshot_ids: Sequence[int] = (),
     has_shared_location: bool = False,
+    shared_location_unverified: bool = False,
     excluded_operations: Collection[str] = (),
 ) -> MaintenancePlan:
     plan_params = execution_plan_params(params, destination, stats)
@@ -74,9 +75,11 @@ def build_execution_plan(
     plan = gate_orphan_removal_on_shared_location(
         plan,
         has_shared_location=has_shared_location,
+        unverified=shared_location_unverified,
     )
     plan = gate_gc_disabled(plan, gc_disabled=gc_disabled_in_stats(stats))
     plan = gate_engine_unsupported(plan, destination=destination)
+    plan = gate_trino_semantics(plan, destination=destination)
     return gate_native_optimize_manifests(
         plan,
         operations=operations,
@@ -192,12 +195,29 @@ def skip_operations_from_preset(
     return []
 
 
+_SHARED_LOCATION_NOTE = (
+    "Skipped remove_orphan_files: this table's S3 location overlaps another table's, "
+    "so unreferenced-file deletion could remove the other table's live data. Give the "
+    "table a unique location, then re-enable."
+)
+SHARED_LOCATION_UNVERIFIED_NOTE = (
+    "Skipped remove_orphan_files: the shared-location check failed, so Cryo could not confirm "
+    "this table's S3 location does not overlap another table's. Orphan removal runs again "
+    "once the check succeeds."
+)
+
+
 def gate_orphan_removal_on_shared_location(
     plan: MaintenancePlan,
     *,
     has_shared_location: bool,
+    unverified: bool = False,
 ) -> MaintenancePlan:
     """Drop remove_orphan_files when this table's S3 location overlaps another table's.
+
+    ``unverified`` means the overlap lookup itself failed. That is treated as shared (fail
+    closed, like the batch coordinator skipping orphan removal on a stale overlap snapshot)
+    with its own plan note, so the run says why orphan removal was skipped.
 
     remove_orphan_files lists everything under the table root and deletes whatever is not
     referenced by *this* table's metadata. When two catalog entries share a warehouse path --
@@ -215,7 +235,7 @@ def gate_orphan_removal_on_shared_location(
     The rest of the plan still runs: optimize, expire_snapshots, and optimize_manifests all
     operate through table metadata and never delete another table's files.
     """
-    if not has_shared_location:
+    if not has_shared_location and not unverified:
         return plan
     if all(
         operation.type is not OperationType.REMOVE_ORPHAN_FILES for operation in plan.operations
@@ -231,9 +251,7 @@ def gate_orphan_removal_on_shared_location(
         ),
         notes=(
             *plan.notes,
-            "Skipped remove_orphan_files: this table's S3 location overlaps another table's, "
-            "so unreferenced-file deletion could remove the other table's live data. Give the "
-            "table a unique location, then re-enable.",
+            _SHARED_LOCATION_NOTE if has_shared_location else SHARED_LOCATION_UNVERIFIED_NOTE,
         ),
     )
 
@@ -315,6 +333,83 @@ def gate_engine_unsupported(
         mode=plan.mode,
         operations=tuple(op for op in plan.operations if op.type not in unsupported),
         notes=(*plan.notes, *dict.fromkeys(unsupported[op.type] for op in dropped)),
+    )
+
+
+TRINO_PROTECTED_EXPIRE_NOTE = (
+    "Skipped expire_snapshots: {count} snapshot(s) on this table are excluded from Cryo expiry, "
+    "and Trino's expire_snapshots cannot keep a specific snapshot, so running it could delete "
+    "them. Route the table to a Spark destination, which tags them first, or remove the "
+    "exclusions."
+)
+TRINO_CONVERT_DELETES_NOTE = (
+    "convert_deletes runs as OPTIMIZE on Trino: Trino has no delete-file-threshold rewrite, so "
+    "this rewrites small data files and files with deletes across {scope}. It is planned and "
+    "recorded as optimize."
+)
+TRINO_CONVERT_DELETES_REDUNDANT_NOTE = (
+    "Dropped convert_deletes: on Trino it is the same table-wide OPTIMIZE this plan already runs."
+)
+
+
+def _engine_value(destination: ExecutionDestination) -> str:
+    engine = destination.engine
+    return engine.value if isinstance(engine, EngineType) else str(engine).lower()
+
+
+def gate_trino_semantics(
+    plan: MaintenancePlan,
+    *,
+    destination: ExecutionDestination,
+) -> MaintenancePlan:
+    """Make a Trino plan say what Trino will actually do (issue #198).
+
+    - Trino's expire_snapshots has no way to keep a given snapshot id, so a table with
+      protected snapshots skips expire on Trino, with a plan note, instead of silently
+      expiring the snapshot the operator protected.
+    - Trino has no convert-deletes procedure. The renderer runs it as OPTIMIZE, a data
+      rewrite, so the plan, the cost estimate and the run record call it optimize. When the
+      plan already has a table-wide optimize, the duplicate is dropped.
+    """
+    if _engine_value(destination) != EngineType.TRINO.value:
+        return plan
+    operations: list[Operation] = []
+    notes: list[str] = []
+    has_table_wide_optimize = any(
+        op.type is OperationType.OPTIMIZE and not op.predicates for op in plan.operations
+    )
+    changed = False
+    for op in plan.operations:
+        if op.type is OperationType.EXPIRE_SNAPSHOTS and op.params.get("protected_snapshot_ids"):
+            notes.append(
+                TRINO_PROTECTED_EXPIRE_NOTE.format(count=len(op.params["protected_snapshot_ids"]))
+            )
+            changed = True
+            continue
+        if op.type is OperationType.CONVERT_DELETES:
+            changed = True
+            if has_table_wide_optimize and not op.predicates:
+                notes.append(TRINO_CONVERT_DELETES_REDUNDANT_NOTE)
+                continue
+            scope = "the selected partitions" if op.predicates else "the whole table"
+            notes.append(TRINO_CONVERT_DELETES_NOTE.format(scope=scope))
+            operations.append(
+                Operation(
+                    OperationType.OPTIMIZE,
+                    {**op.params, "planned_as": OperationType.CONVERT_DELETES.value},
+                    op.predicates,
+                )
+            )
+            has_table_wide_optimize = has_table_wide_optimize or not op.predicates
+            continue
+        operations.append(op)
+    if not changed:
+        return plan
+    return MaintenancePlan(
+        table_ref=plan.table_ref,
+        mode=plan.mode,
+        operations=tuple(operations),
+        notes=(*plan.notes, *dict.fromkeys(notes)),
     )
 
 

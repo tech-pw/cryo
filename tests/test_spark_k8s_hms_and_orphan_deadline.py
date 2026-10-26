@@ -64,7 +64,11 @@ def _plan() -> MaintenancePlan:
 def test_metastore_timeouts_are_transient_and_retryable(message: str) -> None:
     assert is_spark_transient_metastore_error(message)
     assert is_spark_retryable_catalog_error(message)
-    assert is_metastore_unreachable_error(message)
+
+
+def test_report_classifies_metastore_specific_text_without_the_marker() -> None:
+    assert is_metastore_unreachable_error(HMS_TIMEOUT)
+    assert not is_metastore_unreachable_error("java.net.SocketTimeoutException: Read timed out")
 
 
 def test_a_dropped_table_is_not_a_metastore_outage() -> None:
@@ -319,3 +323,13 @@ def test_adoption_is_logged_once_per_job(monkeypatch, frozen_now, caplog) -> Non
         r for r in caplog.records if "waiting" in r.getMessage() and r.levelno == logging.INFO
     ]
     assert len(waiting) == 1
+
+
+def test_an_oom_with_peer_connection_errors_is_not_a_metastore_outage() -> None:
+    from cryo.engines.spark.k8s_engine import EXECUTOR_OOM_PREFIX
+
+    driver = "OOMKilled exit 137\njava.net.ConnectException: Connection refused"
+    executor = f"{EXECUTOR_OOM_PREFIX} exec-1\njava.net.ConnectException: Connection refused"
+    for message in (driver, executor):
+        assert not is_spark_transient_metastore_error(message)
+    assert not is_metastore_unreachable_error("S3 java.net.SocketTimeoutException: Read timed out")

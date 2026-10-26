@@ -14,7 +14,7 @@
 // the build itself does not call GitHub. Bots and AI-agent logins are dropped when the snapshot is written.
 
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contributorItems, renderContributors } from "./contributors.mjs";
@@ -173,7 +173,11 @@ function expandComponents(body, ctx) {
   body = body.replace(/<screenshot\s+([^>]*?)\/>/g, (_, a) => {
     const at = parseAttrs(a);
     const { w, h } = pngSize(`assets/img/screens/${at.name}-light.png`);
-    const src = (theme) => `@/assets/img/screens/${at.name}-${theme}.png`;
+    // The PNG is the source (README embeds it); the site serves the WebP copy from screens_webp.py.
+    if (!existsSync(join(SITE, `assets/img/screens/${at.name}-light.webp`))) {
+      throw new Error(`screenshot ${at.name}: no WebP copy. Run: python3 site/scripts/screens_webp.py`);
+    }
+    const src = (theme) => `@/assets/img/screens/${at.name}-${theme}.webp`;
     const img = (theme) => `<img class="shot-${theme}" src="${src(theme)}" width="${w / 2}" height="${h / 2}" alt="${esc(at.alt || "")}" loading="lazy" decoding="async">`;
     const caption = at.caption ? `<figcaption>${at.caption}</figcaption>` : "";
     return hold(
@@ -554,12 +558,38 @@ for (const o of outputs) {
     writeFileSync(o.path, o.html);
   }
 }
+// Size budget for what the Pages deploy publishes (it leaves out _src, scripts and the PNG screenshots).
+const MAX_ASSET = 2 * 1024 * 1024;
+const unpublished = (rel) => /^(_src|scripts)\//.test(rel) || rel === "README.md" || /^assets\/img\/screens\/.*\.png$/.test(rel);
+let published = 0;
+let oversized = 0;
+const walk = (dir) => {
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    const rel = full.slice(SITE.length + 1);
+    if (statSync(full).isDirectory()) walk(full);
+    else if (!unpublished(rel)) {
+      const size = statSync(full).size;
+      published += size;
+      if (size > MAX_ASSET) {
+        oversized += 1;
+        console.error(`over budget: site/${rel} is ${(size / 1048576).toFixed(1)} MB (limit 2 MB per asset)`);
+      }
+    }
+  }
+};
+walk(SITE);
+if (oversized && CHECK) {
+  console.error(`${oversized} asset(s) over the 2 MB budget. Compress them before committing.`);
+  process.exit(1);
+}
+
 if (CHECK) {
   if (stale) {
     console.error(`${stale} file(s) out of date. Run: node site/scripts/build.mjs`);
     process.exit(1);
   }
-  console.log("site output is up to date");
+  console.log(`site output is up to date (${(published / 1048576).toFixed(1)} MB published)`);
 } else {
   console.log(`built ${outputs.length} files (${searchDocs.length} search entries)`);
 }

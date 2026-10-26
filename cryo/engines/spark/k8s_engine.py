@@ -12,18 +12,23 @@ from cryo.domain.models import CapacitySnapshot, MaintenancePlan
 from cryo.engines.base import (
     METASTORE_UNREACHABLE_MARKER,
     METASTORE_UNREACHABLE_SIGNATURES,
+    ROOT_CAUSE_PREFIX,
     TABLE_NOT_FOUND_MARKER,
     ExecCtx,
     ExecResult,
     RenderedStatement,
+    capacity_refusal_error,
+    is_capacity_refusal,
     is_table_not_found_error,
     truncate_error_message,
 )
 from cryo.engines.spark.k8s import (
+    EXECUTOR_OOM_PREFIX,
     SUCCESS_STATES,
     SparkK8sClient,
     SparkK8sConfig,
 )
+from cryo.engines.spark.procedure_metrics import rewrite_file_counts
 from cryo.engines.spark.sizing import (
     cap_deadline_seconds_for_table,
     scale_executor_profile,
@@ -52,6 +57,8 @@ _SPARK_CATALOG_RETRY_BACKOFF_SECONDS = 10
 # One larger driver after a real OOMKilled. A second kill stops. Exit 137 is not a
 # heap sample, and a third pod would just burn another slot on the same anti-join.
 _SPARK_OOM_RETRY_ATTEMPTS = 1
+# One retry on a doubled executor heap after a kubelet-recorded executor OOMKilled.
+_SPARK_EXECUTOR_OOM_RETRY_ATTEMPTS = 1
 _SPARK_RETRYABLE_SIGNATURES = (
     "BaseMetastoreTableOperations",
     "CommitFailedException",
@@ -91,7 +98,18 @@ def is_spark_transient_metastore_error(message: str | None) -> bool:
         return False
     if any(sig in message for sig in _SPARK_NON_RETRYABLE_SIGNATURES):
         return False
+    # A killed driver or executor leaves connection errors from its peers in the log; the
+    # kill is the cause, and the OOM retries own it.
+    if is_spark_driver_oom(message) or is_spark_executor_oom(message):
+        return False
     return any(sig in message for sig in _SPARK_TRANSIENT_METASTORE_SIGNATURES)
+
+
+def is_spark_executor_oom(message: str | None) -> bool:
+    """True when get_job_run front-loaded a kubelet-recorded executor OOMKilled (issue #166)."""
+    if not message:
+        return False
+    return message.split("\n", 1)[0].startswith(EXECUTOR_OOM_PREFIX)
 
 
 def is_spark_retryable_catalog_error(message: str | None) -> bool:
@@ -327,6 +345,14 @@ class SparkK8sEngine:
                 duration_ms=_elapsed_ms(start),
             )
         except Exception as exc:
+            if is_capacity_refusal(str(exc)):
+                # Kubernetes refused the Job itself, so nothing ran.
+                return ExecResult(
+                    ok=False,
+                    detail=stmt.sql,
+                    error=truncate_error_message(capacity_refusal_error(str(exc))),
+                    duration_ms=_elapsed_ms(start),
+                )
             return ExecResult(
                 ok=False,
                 outcome_known=False,
@@ -364,18 +390,24 @@ class SparkK8sEngine:
             )
         try:
             oom_steps = 0
+            executor_oom_steps = 0
             catalog_attempts = 0
-            max_attempts = _SPARK_CATALOG_RETRY_ATTEMPTS + _SPARK_OOM_RETRY_ATTEMPTS
+            max_attempts = (
+                _SPARK_CATALOG_RETRY_ATTEMPTS
+                + _SPARK_OOM_RETRY_ATTEMPTS
+                + _SPARK_EXECUTOR_OOM_RETRY_ATTEMPTS
+            )
             for attempt in range(max_attempts):
                 attempt_name = job_name if attempt == 0 else f"{job_name}-r{attempt}"
                 logger.info(
                     "spark-k8s execute submit action=%s sql_bytes=%d rss=%s MiB "
-                    "attempt=%d oom_steps=%d",
+                    "attempt=%d oom_steps=%d executor_oom_steps=%d",
                     stmt.action.value,
                     len(stmt.sql),
                     process_rss_mib(),
                     attempt + 1,
                     oom_steps,
+                    executor_oom_steps,
                 )
                 table_size_gb, total_files = _table_size_and_files(self._table_stats)
                 job_id = self.k8s_client.submit_spark_sql(
@@ -387,6 +419,7 @@ class SparkK8sEngine:
                     total_size_gb=table_size_gb,
                     total_files=total_files,
                     oom_steps=oom_steps,
+                    executor_oom_steps=executor_oom_steps,
                 )
                 if ctx is not None and ctx.on_engine_ref is not None:
                     ctx.on_engine_ref(job_id)
@@ -402,14 +435,29 @@ class SparkK8sEngine:
 
                 duration_ms = _elapsed_ms(start)
                 if result.state in SUCCESS_STATES:
+                    input_files, output_files = rewrite_file_counts(
+                        stmt.action.value, result.metrics
+                    )
                     return ExecResult(
                         ok=True,
                         engine_ref=job_id,
                         detail=stmt.sql,
                         duration_ms=duration_ms,
+                        input_files_count=input_files,
+                        output_files_count=output_files,
                         actual_bytes_freed=result.bytes_removed,
                     )
                 state_details = result.state_details or "no details"
+                if is_capacity_refusal(state_details):
+                    # The quota refused the driver pod or its Service: no SQL ran. Not a
+                    # table failure and not worth a same-slot retry; the worker defers it.
+                    return ExecResult(
+                        ok=False,
+                        engine_ref=job_id,
+                        detail=stmt.sql,
+                        error=truncate_error_message(capacity_refusal_error(state_details)),
+                        duration_ms=duration_ms,
+                    )
                 # A driver's raw log tail is a full Java/Scala stack trace easily over 4000 chars,
                 # with "Caused by: NoSuchTableException" typically buried well past the head+tail
                 # window truncate_error_message keeps -- confirmed live, 2026-07-31: the signature
@@ -435,9 +483,21 @@ class SparkK8sEngine:
                     and is_spark_driver_oom(state_details)
                     and _oom_step_would_grow(stmt.action.value, total_files, oom_steps)
                 )
-                if catalog_retry or oom_retry:
+                # An OOM-killed executor is the same kernel kill on the other pod. One retry
+                # on a larger executor heap for the rewrite operations that size executors.
+                executor_oom = is_spark_executor_oom(state_details)
+                executor_oom_retry = (
+                    executor_oom
+                    and executor_oom_steps < _SPARK_EXECUTOR_OOM_RETRY_ATTEMPTS
+                    and _executor_step_would_grow(
+                        self._k8s_config, stmt.action.value, table_size_gb, executor_oom_steps
+                    )
+                )
+                if catalog_retry or oom_retry or executor_oom_retry:
                     if oom_retry:
                         oom_steps += 1
+                    if executor_oom_retry:
+                        executor_oom_steps += 1
                     self.k8s_client.cleanup_after_run(job_id)
                     job_id = None
                     if catalog_retry:
@@ -461,13 +521,18 @@ class SparkK8sEngine:
                         f"{METASTORE_UNREACHABLE_MARKER} Hive Metastore unreachable after "
                         f"{catalog_attempts} attempt(s)\n{state_details}"
                     )
+                error = f"Spark-on-K8s Job {result.state.value}: {state_details}"
+                if executor_oom:
+                    # Name the kill as the root cause, or truncation front-loads Spark's
+                    # follow-on NullPointerException from the lost executor instead.
+                    lead = state_details.split("\n", 1)[0]
+                    retried = " after one retry on a larger executor heap" * executor_oom_steps
+                    error = f"{ROOT_CAUSE_PREFIX}{lead}{retried}\n{error}"
                 return ExecResult(
                     ok=False,
                     engine_ref=job_id,
                     detail=stmt.sql,
-                    error=truncate_error_message(
-                        f"Spark-on-K8s Job {result.state.value}: {state_details}"
-                    ),
+                    error=truncate_error_message(error),
                     duration_ms=duration_ms,
                 )
             raise RuntimeError("spark-k8s execute retry loop exited without a result")
@@ -481,6 +546,14 @@ class SparkK8sEngine:
                 duration_ms=_elapsed_ms(start),
             )
         except Exception as exc:
+            if job_id is None and is_capacity_refusal(str(exc)):
+                # Kubernetes refused the dispatch Job itself, so nothing ran.
+                return ExecResult(
+                    ok=False,
+                    detail=stmt.sql,
+                    error=truncate_error_message(capacity_refusal_error(str(exc))),
+                    duration_ms=_elapsed_ms(start),
+                )
             return ExecResult(
                 ok=False,
                 outcome_known=False,
@@ -530,6 +603,34 @@ def _oom_step_would_grow(operation: str, total_files: int | None, oom_steps: int
     current = lightweight_driver_heap_mib(total_files=total_files, oom_steps=oom_steps)
     nxt = lightweight_driver_heap_mib(total_files=total_files, oom_steps=oom_steps + 1)
     return nxt > current
+
+
+def _executor_step_would_grow(
+    config: SparkK8sConfig,
+    operation: str,
+    total_size_gb: float | None,
+    executor_oom_steps: int,
+) -> bool:
+    """True when one more executor OOM step yields a bigger executor than the pod that died."""
+    from cryo.engines.spark.sizing import ExecutorProfile, cap_dispatch_profile
+
+    base = ExecutorProfile(
+        executor_instances=config.executor_instances,
+        executor_cpu_milli=config.executor_cpu_milli,
+        executor_mem_mib=config.executor_mem_mib,
+        driver_cpu_milli=config.driver_cpu_milli,
+        driver_mem_mib=config.driver_mem_mib,
+    )
+
+    def _mem(steps: int) -> int:
+        return cap_dispatch_profile(
+            base,
+            operation=operation,
+            total_size_gb=total_size_gb,
+            executor_oom_steps=steps,
+        ).executor_mem_mib
+
+    return _mem(executor_oom_steps + 1) > _mem(executor_oom_steps)
 
 
 def _driver_heap_at_ceiling(operation: str, total_files: int | None, oom_steps: int) -> bool:

@@ -361,7 +361,7 @@ def _dispatch(
     if action == "save_view":
         return _dispatch_save_view(session, principal, args)
     if action == "subscribe_alerts":
-        return _dispatch_subscribe(session, args)
+        return _dispatch_subscribe(session, principal, args)
     if action == "protect_snapshot":
         return _dispatch_protect(session, args, protect=True)
     if action == "unprotect_snapshot":
@@ -458,7 +458,9 @@ def _dispatch_save_view(
     return _DispatchResult()
 
 
-def _dispatch_subscribe(session: Session, args: dict[str, Any]) -> _DispatchResult:
+def _dispatch_subscribe(
+    session: Session, principal: Principal, args: dict[str, Any]
+) -> _DispatchResult:
     from cryo.api.routes import create_table_alert_subscription
     from cryo.api.schemas import TableAlertSubscriptionCreate
 
@@ -466,6 +468,7 @@ def _dispatch_subscribe(session: Session, args: dict[str, Any]) -> _DispatchResu
         uuid.UUID(str(args["table_id"])),
         TableAlertSubscriptionCreate(email=str(args["email"])),
         session,
+        principal,
     )
     return _DispatchResult()
 

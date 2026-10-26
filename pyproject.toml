@@ -80,6 +80,13 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.bandit]
+exclude_dirs = ["engine-go/third_party", "web", "site", ".venv"]
+
+# pytest asserts are the test framework, not a security control. cryo/ is still checked.
+[tool.bandit.assert_used]
+skips = ["tests/*", "*/tests/*", "*/test_*.py", "*_test.py"]
+
 [tool.mypy]
 python_version = "3.12"
 warn_unused_configs = true

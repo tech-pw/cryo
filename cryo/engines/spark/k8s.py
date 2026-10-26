@@ -20,6 +20,7 @@ per-job AWS credentials Secret.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 import uuid
@@ -32,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from kubernetes import client
 
+from cryo.engines.base import deepest_caused_by
 from cryo.engines.k8s_cost_labels import cost_attribution_labels
 from cryo.engines.k8s_security import container_security_context, pod_security_context
 from cryo.engines.native.job_state import current_k8s_namespace
@@ -189,6 +191,8 @@ class JobRunResult:
     # When the driver pod started (RUNNING only). Orphan recovery measures the Job deadline
     # from it, since a recovering worker has no wait_for_completion clock of its own (#258).
     started_at: datetime | None = None
+    # The procedure's own counters from the runner's last [cryo-result] line (issue #155).
+    metrics: dict[str, Any] | None = None
 
 
 class SparkK8sClient:
@@ -235,6 +239,7 @@ class SparkK8sClient:
         total_size_gb: float | None = None,
         total_files: int | None = None,
         oom_steps: int = 0,
+        executor_oom_steps: int = 0,
     ) -> str:
         cfg = self._config
         runner_args = [
@@ -263,6 +268,7 @@ class SparkK8sClient:
             total_size_gb=total_size_gb,
             total_files=total_files,
             oom_steps=oom_steps,
+            executor_oom_steps=executor_oom_steps,
         )
 
     def submit_repair_missing_files(
@@ -317,6 +323,7 @@ class SparkK8sClient:
         total_size_gb: float | None = None,
         total_files: int | None = None,
         oom_steps: int = 0,
+        executor_oom_steps: int = 0,
     ) -> str:
         cfg = _capped_submit_config(
             self._config,
@@ -324,6 +331,7 @@ class SparkK8sClient:
             total_size_gb=total_size_gb,
             total_files=total_files,
             oom_steps=oom_steps,
+            executor_oom_steps=executor_oom_steps,
         )
         k8s_job_name = f"cryo-spark-{uuid.uuid4().hex[:10]}"
         driver_pod_name = f"{k8s_job_name}-driver"
@@ -576,12 +584,16 @@ class SparkK8sClient:
         phase = pod.status.phase if pod.status else None
         if phase == "Succeeded":
             detail = _read_pod_log_tail(driver_pod_name, self._config.namespace)
-            from cryo.engines.spark.procedure_metrics import bytes_removed_from_log
+            from cryo.engines.spark.procedure_metrics import (
+                bytes_removed_from_log,
+                result_metrics_from_log,
+            )
 
             return JobRunResult(
                 job_run_id=job_id,
                 state=JobRunState.SUCCESS,
                 bytes_removed=bytes_removed_from_log(detail),
+                metrics=result_metrics_from_log(detail),
             )
         if phase == "Failed":
             detail = _read_pod_log_tail(driver_pod_name, self._config.namespace)
@@ -592,6 +604,15 @@ class SparkK8sClient:
             reason = _container_termination_reason(pod)
             if reason:
                 detail = f"{reason}\n{detail}" if detail else reason
+            else:
+                # The driver survived, so look for what killed the job: an OOM-killed
+                # executor (Spark's follow-on NPE is not the cause, issue #166), else the
+                # driver container's own exit when the log tail holds no exception at all.
+                lead = executor_oom_summary(detail)
+                if lead is None and deepest_caused_by(detail) is None:
+                    lead = _container_exit_summary(pod)
+                if lead:
+                    detail = f"{lead}\n{detail}" if detail else lead
             return JobRunResult(job_run_id=job_id, state=JobRunState.FAILED, state_details=detail)
         start_time = getattr(pod.status, "start_time", None) if pod.status else None
         return JobRunResult(
@@ -806,6 +827,7 @@ def _capped_submit_config(
     total_size_gb: float | None = None,
     total_files: int | None = None,
     oom_steps: int = 0,
+    executor_oom_steps: int = 0,
 ) -> SparkK8sConfig:
     profile = cap_dispatch_profile(
         ExecutorProfile(
@@ -819,6 +841,7 @@ def _capped_submit_config(
         total_size_gb=total_size_gb,
         total_files=total_files,
         oom_steps=oom_steps,
+        executor_oom_steps=executor_oom_steps,
     )
     return replace(
         cfg,
@@ -1097,6 +1120,55 @@ def _container_termination_reason(pod: Any) -> str | None:
         exit_code = getattr(terminated, "exit_code", None)
         code = exit_code if exit_code is not None else 137
         return f"OOMKilled exit {code}"
+    return None
+
+
+EXECUTOR_OOM_PREFIX = "Executor OOMKilled"
+# Spark's ExecutorPodsLifecycleManager, in the driver log, for a cgroup-killed executor:
+#   The executor with id 2 exited with exit code 137(SIGKILL, possible container OOM).
+#   ... container name: spark-kubernetes-executor ... termination reason: OOMKilled
+_EXECUTOR_EXIT_RE = re.compile(r"executor with id (\S+) exited with exit code (\d+)")
+_LOST_EXECUTOR_RE = re.compile(r"Lost executor (\S+) on ")
+_EXECUTOR_CONTAINER = "spark-kubernetes-executor"
+_OOMKILLED_REASON = "termination reason: OOMKilled"
+
+
+def executor_oom_summary(detail: str | None) -> str | None:
+    """``Executor OOMKilled exit 137 (executor 2)`` when the driver log shows a killed executor.
+
+    Requires the kubelet's recorded ``OOMKilled`` reason next to an executor container, the
+    same evidence rule as the driver: exit 137 alone is also eviction or preemption.
+    """
+    if not detail or _OOMKILLED_REASON not in detail:
+        return None
+    lines = detail.splitlines()
+    oom_lines = [i for i, line in enumerate(lines) if _OOMKILLED_REASON in line]
+    executor_oom = any(
+        any(_EXECUTOR_CONTAINER in line for line in lines[max(0, i - 40) : i + 1])
+        for i in oom_lines
+    )
+    if not executor_oom:
+        return None
+    exit_match = _EXECUTOR_EXIT_RE.search(detail)
+    if exit_match:
+        return f"{EXECUTOR_OOM_PREFIX} exit {exit_match.group(2)} (executor {exit_match.group(1)})"
+    lost = _LOST_EXECUTOR_RE.search(detail)
+    if lost:
+        return f"{EXECUTOR_OOM_PREFIX} exit 137 (executor {lost.group(1)})"
+    return f"{EXECUTOR_OOM_PREFIX} exit 137"
+
+
+def _container_exit_summary(pod: Any) -> str | None:
+    """``driver container terminated: Error exit 1`` from the recorded container status."""
+    statuses = getattr(getattr(pod, "status", None), "container_statuses", None) or []
+    for status in statuses:
+        terminated = getattr(getattr(status, "state", None), "terminated", None)
+        if terminated is None:
+            continue
+        reason = getattr(terminated, "reason", None) or "terminated"
+        exit_code = getattr(terminated, "exit_code", None)
+        suffix = f" exit {exit_code}" if exit_code is not None else ""
+        return f"driver container terminated: {reason}{suffix}"
     return None
 
 
