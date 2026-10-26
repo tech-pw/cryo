@@ -71,19 +71,14 @@ Figure 1make up runs the whole stack against a demo lake
 - **Read path
 Text description
 - You to Web UI (open)
-
 - Web UI to API (REST)
-
 - Scanner to Demo catalog
 
 ## What to try first
 
 - **Home** is empty until a scan has stored grades. The screenshots below are synthetic demo data, not this quickstart.
-
 - Open **Tables** after you add a source and run a scan. `make seed` alone does not put rows here.
-
 - Open **Runs** after a preset is assigned. Nothing in this quickstart enqueues maintenance.
-
 - Open any run to see its jobs and receipts: operation, engine, status and duration.
 
 localhost:5173/

@@ -19,13 +19,9 @@ Figure 1Cryo in the lakehouse
 
 Text description
 - Operators use the Web UI. Catalogs, destinations and monitors sit beside them and point into the stack Cryo talks to.
-
 - The stack you already run is Iceberg REST, Apache Hive, AWS Glue, Trino and Spark on EMR.
-
 - Cryo’s control plane is the HTTP API, Scanner, Planner, Governor, Scheduler and Workers. The planner emits no SQL.
-
 - PostgreSQL, Redis, Kubernetes and Helm sit under Cryo as stores and deploy.
-
 - The data lake is Amazon S3 holding Iceberg data files. Engines write there. The scanner does not read those files.
 
 ## System context
@@ -37,35 +33,21 @@ Figure 2Cryo reads your catalogs, then maintains tables through your engines
 *Select a node to open the page that explains it. Hover a node to follow its connections.*
 
 - **Read path
-
 - **Write or execute
-
 - **Control or probe
 Text description
 - Step 1: Iceberg REST to Scanner (metadata)
-
 - Step 2: Scanner to PostgreSQL (stats)
-
 - Step 3: Scheduler to Redis (queue)
-
 - Step 4: Governor to Workers (admit)
-
 - Step 5: Workers to Planner (plan)
-
 - Step 6: Workers to Destinations (execute)
-
 - Step 7: Trino to Object storage (write files)
-
 - Hive or Glue to Scanner
-
 - Spark on EMR to Object storage
-
 - Web UI to API (REST)
-
 - API to PostgreSQL (reads)
-
 - Governor to Redis (slots)
-
 - Governor to Destinations (probe live load)
 
 ## Scheduled maintenance
@@ -77,33 +59,20 @@ Figure 3Follow one scheduled job: enqueue, admit, execute
 *One scheduled job, from enqueue to audit.*
 
 - **Write or execute
-
 - **Read path
-
 - **Control or probe
 Text description
 - Scheduler to PostgreSQL: find due presets and resolve tables from rules and assignments
-
 - Scheduler to PostgreSQL: create the run and its jobs as queued
-
 - Scheduler to Redis: enqueue jobs
-
 - Governor to Destination: probe live load: runtime.queries for Trino, job slots for EMR
-
 - Governor to Redis: compute free slots from caps, off-peak window, budget and cooldown
-
 - Governor to Worker: admit and dispatch the job
-
 - Worker to PostgreSQL: read the latest scan and partitions
-
 - Worker to Planner: build the MaintenancePlan from mode and thresholds
-
 - Worker to Destination: render dialect SQL and execute it, partition-filtered
-
 - Worker to PostgreSQL: write audit and result
-
 - Worker to Redis: update live counters and state
-
 - Governor to PostgreSQL: finalize the run summary as ok, failed or deferred
 
 ## Job lifecycle
@@ -115,21 +84,14 @@ Figure 4Every job ends recorded, even when it fails or waits
 *A job ends as recorded, whether it succeeded, failed or was skipped.*
 
 - **Read path
-
 - **Write or execute
-
 - **Control or probe
 Text description
 - Queued to Admitted
-
 - Admitted to Running
-
 - Running to Succeeded
-
 - Queued to Deferred (deadline)
-
 - Deferred to Queued (re-queue)
-
 - Running to Failed (recorded)
 
 The run view groups jobs by how they ended. The [seeded demo run](https://tech-pw.github.io/cryo/maintenance/#canonical-order) shows 9 jobs: 8 completed, 1 failed and 1 skipped, and the failed job stays on its table.
@@ -143,38 +105,25 @@ Figure 5Filter, assign, preview: nothing runs until you confirm
 *An assignment carries a filter, so selecting 'all matching tables' works across pages.*
 
 - **Write or execute
-
 - **Read path
-
 - **Control or probe
 Text description
 - Filter tables to Select all matching
-
 - Select all matching to Assign preset
-
 - Assign preset to Preview plan
-
 - Preview plan to Run
-
 - Assign preset to Resolve filter (preset)
-
 - Preview plan to Build plan (dry run)
 
 ## Component jobs
 
 | Component | Job | Boundary |
 | --- | --- | --- |
-
 | **Scanner** | Reads sources and stores the shape of every table. Runs from a CronJob and from an ad-hoc scan queue. | Never reads data files. Never starts a rewrite. |
-
 | **Planner** | Turns stored table shape into ordered operations with partition predicates. | Engine-agnostic. Emits no SQL strings. Operation order is fixed in `cryo/planner/guardrails.py`. |
-
 | **Scheduler** | Finds due presets and enqueues jobs. | Leader-elected. Several replicas may start, one is active. |
-
 | **Governor** | Decides whether and when a job may run. Probes live load (`system.runtime.queries` for Trino, slots for Spark on EMR), applies per-replica caps and round-robins across replicas. | Leader-elected. Honors cooldowns and off-peak windows. Bounds real concurrency, so more workers do not mean more parallel rewrites. |
-
 | **Worker** | Executes one table's maintenance on one destination engine. | Holds a per-table Redis lock for the job's lifetime. A failure is recorded and the run continues. |
-
 | **API and web UI** | The API serves tables, runs, presets, assignments and audit. The UI is a client of the API. | The UI talks only to the API. |
 
 Interactive deep dives

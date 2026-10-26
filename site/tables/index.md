@@ -31,15 +31,10 @@ Each card counts tables in one state that usually needs a person. Click a card t
 
 | Card | Counts tables where |
 | --- | --- |
-
 | Failed last run | The latest maintenance job failed or partly failed. |
-
 | Queued or running | A job is waiting for engine capacity or running now. |
-
 | Skipped with work | The table needed maintenance, but the nightly run held it back (cooldown, budget, eligibility). |
-
 | Health dropped | The health score fell 10 or more points in 7 days. |
-
 | Scan issues | The scanner is failing on the table, has never scanned it, or last scanned it more than 48 hours ago. |
 
 ### Last nightly run
@@ -78,17 +73,11 @@ cryo.local/tables
 
 | Column | What it shows |
 | --- | --- |
-
 | Health | Grade, score, and the change over 7 days (▼ red for a drop, ▲ green for a gain). |
-
 | Maintenance | What Cryo is doing about the table now: Running, Queued, Failed, Skipped, Needs work, Up to date, Held, Excluded, Scan failing or Not scanned, with the reason underneath. |
-
 | Last run | When the last job finished, how it ended, and whether it was nightly or manual. |
-
 | Small files | Small files as a share of all files, with both counts and a bar. |
-
 | Size, Reads 30d | Table size and the number of queries that read it in 30 days. |
-
 | Savings/mo | Modelled monthly saving from maintenance. `-` means none, `<$1` means under a dollar. |
 
 Hover a row for **Scan now** and a shortcut to the table's Maintenance tab.
@@ -119,15 +108,10 @@ cryo.local/tables
 
 | Action | What it does |
 | --- | --- |
-
 | Assign workflow | Pins the chosen workflow (preset) to the selected tables. Only workflows whose engine can reach those tables' catalog are offered. |
-
 | Preview plan | Shows the plan Cryo would build, without running anything. |
-
 | Scan | Queues a fresh scan of the selected tables. |
-
 | Run maintenance… | Opens the run dialog below. |
-
 | ⋯ → Remove workflow pins | Returns the tables to rule-based assignment, after a confirmation. |
 
 cryo.local/tables

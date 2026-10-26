@@ -263,13 +263,9 @@ $ helm uninstall cryo --namespace cryo
 This removes the Deployments, Services, CronJobs, ServiceAccount and RBAC that the release created. These are left behind:
 
 - **The database.** The `cryo` schema stays in PostgreSQL, with its run history, audit rows and stored connections. Drop it yourself if you want them gone.
-
 - **Redis keys** in your external Redis. The bundled Redis has no volume, so its data goes when its pod does.
-
 - **The Secret** `cryo-secrets` and the namespace, because you created them outside the chart.
-
 - **Runtime Jobs** started by the native or Spark lanes. They aren't part of the release and are removed through `ttlSecondsAfterFinished`. Check with `kubectl -n cryo get jobs,pods`.
-
 - **Changes to your tables.** Maintenance that already ran is permanent. Compacted files and expired snapshots don't come back.
 
 ## Where to go next

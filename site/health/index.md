@@ -15,15 +15,10 @@ Every table starts at 100 points and loses points for each problem the scan find
 
 | Grade | Score |
 | --- | --- |
-
 | **A** | 90 or more |
-
 | **B** | 75 to 89 |
-
 | **C** | 60 to 74 |
-
 | **D** | 40 to 59 |
-
 | **F** | Below 40 |
 
 The home screen rolls those grades up across the lake, so you can see at a glance how many tables need work and how much storage maintenance could give back. It shows whether the count of D and F tables moved since yesterday, which D and F tables people query most, and which tables Cryo moved up a grade in the last 24 hours. A table only counts as fixed once a scan after its maintenance job shows the better grade. The [quickstart](https://tech-pw.github.io/cryo/quickstart/#next) shows that screen after the first scan of the seeded lake.
@@ -36,15 +31,10 @@ Worked example: how a table reaches 64.
 
 | Step | Points | Running score |
 | --- | --- | --- |
-
 | Start | | 100 |
-
 | Small-file fragmentation (warning) | −8 | 92 |
-
 | Manifest files bloat (warning) | −8 | 84 |
-
 | Position delete file buildup (critical) | −20 | 64 |
-
 | Final score and grade | | **C** 64 |
 
 On the [Tables page](https://tech-pw.github.io/cryo/tables/), every row carries its grade, its score change over 7 days and the evidence behind it: small files out of total files, size and reads. The **Health triage** view lists grade D and F tables first.
@@ -70,9 +60,7 @@ Figure 1Cost is estimated from scan stats, without reading object storage
 - **Write or execute
 Text description
 - Step 1: Scanner to Cost estimator (stats)
-
 - Step 2: Cost estimator to Stored projection (store)
-
 - Object storage is not read by Cost estimator
 
 Bytes first, then a rate
@@ -83,13 +71,9 @@ Projections are byte classes: live data, expirable, manifests and metadata, and 
 
 | Operation | Projected effect |
 | --- | --- |
-
 | `expire_snapshots` | Bytes referenced only by snapshots the retention policy would drop, and only when no surviving snapshot still references the file. |
-
 | `remove_orphan_files` | Bytes present in storage but referenced by no snapshot. Precise only on the scanner's opt-in listing tier. |
-
 | `optimize` | Delete-file bytes merged away. Data bytes are rewritten, so the storage change shows up in the later expiry projection. |
-
 | `optimize_manifests` | Manifest and metadata bytes reclaimed by consolidation. Small in volume, large in plan-time latency. |
 
 ## Where to go next

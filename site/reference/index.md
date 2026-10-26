@@ -17,19 +17,12 @@ Source: README comparison table, Amoro cells checked against apache/amoro 6d3cd4
 
 | Capability | Cryo | DIY | Amoro | LakeOps | Crunch | Databricks | Managed cloud |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-
 | Maintenance operations | Yes | Partial | Yes | Yes | Yes | Yes | Yes |
-
 | Sorting or clustering | Partial | No | Partial | Yes | Yes | Yes | No |
-
 | Compression below ZSTD | No | No | No | No | Yes | No | No |
-
 | Load-aware admission | Yes | No | No | Yes | No | No | No |
-
 | Health grade and cost | Yes | No | Partial | Partial | No | Partial | No |
-
 | Data leaves your infrastructure | No | No | No | Yes | No | Yes | Yes |
-
 | Fleet assignment UI | Yes | No | Limited | Yes | Yes | Yes | Yes |
 
 ## Public surfaces
@@ -43,7 +36,6 @@ Figure 1Everything goes through the API
 - **Read path
 Text description
 - Web UI to API (REST)
-
 - API to Platform services
 
 The API groups its resources as `tables`, `runs`, `presets`, `assignments`, `audit`, `sources` and `destinations`. The OpenAPI document is served at `/openapi.json`, and the web client's types are generated from it.

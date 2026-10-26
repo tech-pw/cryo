@@ -18,7 +18,6 @@ Figure 1Helm installs Cryo; PostgreSQL, Redis and the engines stay yours
 - **Write or execute
 Text description
 - Cryo Helm release to Required stores (state)
-
 - Cryo Helm release to Engines you already run (execute)
 
 The scheduler and the governor are leader-elected, so several replicas may start but only one is active. Scaling workers does not by itself raise `OPTIMIZE` concurrency, because the governor bounds real concurrency against engine load.
@@ -43,17 +42,11 @@ These are the resources the committed Helm defaults request when Cryo is idle, s
 
 | Service | CPU (cores) | Memory (GiB) |
 | --- | --- | --- |
-
 | `api` | 0.50 | 1.50 |
-
 | `worker` | 1.00 | 2.00 |
-
 | `governor` | 0.25 | 0.50 |
-
 | `scheduler` | 0.10 | 0.50 |
-
 | `scannerWorker` | 1.50 | 1.50 |
-
 | Total | 3.35 | 6.00 |
 
 Reproduce the table from the chart defaults:

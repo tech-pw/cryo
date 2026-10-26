@@ -12,9 +12,7 @@ Upgrade one released version at a time, with a database backup taken first. Migr
 ## Before you upgrade
 
 - **Pick a released tag.** Upgrade to a `v*` tag, never to `main` or `latest`. The chart and both images come from that same tag. See [tags](https://github.com/tech-pw/cryo/tags) and [CHANGELOG.md](https://github.com/tech-pw/cryo/blob/main/CHANGELOG.md).
-
 - **Back up the database.** This is the only complete way back. See [Backup and restore](https://tech-pw.github.io/cryo/backup/).
-
 - **Record the schema revision** you're on now, so you know where a schema downgrade would have to go:
 
 **terminal**
@@ -81,9 +79,7 @@ A log that prints `Running upgrade …` and exits 0 doesn't prove the schema cha
 In order of preference:
 
 - **Roll forward.** Fix the problem with a newer release or a values change, and leave the schema alone.
-
 - **Restore the backup** you took before the upgrade, then `helm rollback`. This is the only path that brings back data exactly as it was. Anything Cryo recorded after the backup is lost, including runs and audit rows. See [Restore](https://tech-pw.github.io/cryo/backup/#restore).
-
 - **Downgrade the schema, then roll back the chart.** Every migration has a downgrade path, but a downgrade that drops a column or a table drops its data too. Scale down the writers first (see [Restore](https://tech-pw.github.io/cryo/backup/#restore)), run the downgrade with the *new* image, which has the migration files, and then roll back:
 
 **terminal**

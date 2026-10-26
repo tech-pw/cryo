@@ -26,5 +26,7 @@ Read this file, then answer only from the pages below. If a fact is not on one o
 - [Backup and restore](https://tech-pw.github.io/cryo/backup/index.md): What Cryo stores where, encrypted PostgreSQL backups with the built-in tool or the backup CronJob, a restore procedure, and what losing Redis costs.
 - [Troubleshooting](https://tech-pw.github.io/cryo/troubleshooting/index.md): Symptom-first troubleshooting for Cryo installs, sign-in, scans, runs, deferred jobs and Spark lanes, plus an FAQ.
 - [Reference](https://tech-pw.github.io/cryo/reference/index.md): What is in the box, what is not, and how Cryo compares with adjacent tools.
+- [Changelog](https://tech-pw.github.io/cryo/changelog/index.md): Cryo's changelog, rendered from CHANGELOG.md, with links to the versioning and support policies.
+- [Contributing](https://tech-pw.github.io/cryo/contributing/index.md): How to set up a Cryo development environment, run the tests and the docs build, and get a pull request merged.
 
 Full index: https://tech-pw.github.io/cryo/llms.txt
