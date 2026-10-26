@@ -17,7 +17,12 @@ from cryo.domain.intents import (
     MaintenanceIntentRecord,
 )
 from cryo.domain.models import MaintenancePlan, Operation
-from cryo.engines.base import ExecCtx, RenderedStatement, is_table_not_found_error
+from cryo.engines.base import (
+    ExecCtx,
+    RenderedStatement,
+    is_capacity_refusal,
+    is_table_not_found_error,
+)
 from cryo.engines.base import ExecResult as BaseExecResult
 from cryo.engines.native.routing import (
     native_fallback_mismatch_detail,
@@ -589,6 +594,7 @@ class Worker:
                     snapshot_id=active_intent.observed_snapshot_id,
                 )
             else:
+                shared_location = self._has_shared_location(job.table_id)
                 plan = build_execution_plan(
                     stats=table_data.stats,
                     partitions=table_data.partitions,
@@ -597,7 +603,8 @@ class Worker:
                     destination=destination,
                     operations=job.operations,
                     protected_snapshot_ids=_protected_snapshot_ids(job.table_id),
-                    has_shared_location=self._has_shared_location(job.table_id),
+                    has_shared_location=shared_location is True,
+                    shared_location_unverified=shared_location is None,
                     excluded_operations=job.excluded_operations,
                 )
                 self._store.save_plan(job.id, plan_to_dict(plan))
@@ -1038,12 +1045,19 @@ class Worker:
                             )
                         if outcome_unknown:
                             reconciliation_required = True
+                        capacity_refused = not outcome_unknown and is_capacity_refusal(detail)
                         self._store.record_audit(
                             AuditRecord(
                                 job_id=job.id,
                                 table_id=job.table_id,
                                 action=statement.action,
-                                status="UNKNOWN" if outcome_unknown else "FAILED",
+                                status=(
+                                    "UNKNOWN"
+                                    if outcome_unknown
+                                    else "DEFERRED"
+                                    if capacity_refused
+                                    else "FAILED"
+                                ),
                                 engine=engine.type,
                                 detail=detail,
                                 duration_ms=result_duration_ms,
@@ -1150,6 +1164,18 @@ class Worker:
                         final_status = JobStatus.PARTIAL
                         error = budget_error
                         break
+                if (
+                    failed_actions
+                    and not had_success
+                    and final_status is JobStatus.SUCCEEDED
+                    and all(is_capacity_refusal(detail) for detail in failed_actions.values())
+                ):
+                    # Every failure was a namespace ResourceQuota refusing the Spark pods: a
+                    # capacity condition, not a table failure (issue #159). Defer; the
+                    # deferred-job reconciler requeues it when admission allows.
+                    final_status = JobStatus.DEFERRED
+                    error = "capacity_deferred: " + next(iter(failed_actions.values()))
+                    failed_actions = {}
                 if failed_actions and final_status is JobStatus.SUCCEEDED:
                     # Some operations landed and some didn't: PARTIAL is the honest answer.
                     # Calling the whole job FAILED would hide real reclaimed space from the
@@ -1212,6 +1238,7 @@ class Worker:
         self._store.mark_status(job.id, final_status, engine_ref=engine_ref, error=error)
         if final_status is JobStatus.FAILED and is_table_not_found_error(error):
             self._deactivate_dropped_table(job.table_id, error)
+        self._update_failure_backoff(job.table_id, final_status, error)
         safe_publish(
             self._run_events,
             job.run_id,
@@ -1255,6 +1282,19 @@ class Worker:
         if self._on_job_finished is not None:
             self._on_job_finished()
         return self._store.get_job(job.id)
+
+    def _update_failure_backoff(self, table_id: str, status: JobStatus, error: str | None) -> None:
+        """Per-table backoff after consecutive deadline/OOM failures (#180), regardless of
+        the preset's adaptive_routing. Best-effort: bookkeeping never fails the job."""
+        if status not in {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.PARTIAL}:
+            return
+        update_backoff = getattr(self._store, "update_resource_failure_backoff", None)
+        if not callable(update_backoff):
+            return
+        try:
+            update_backoff(table_id, status, error)
+        except Exception:
+            logger.exception("Failed to update the failure backoff for table %s", table_id)
 
     def _deactivate_dropped_table(self, table_id: str, error: str | None) -> None:
         """Best-effort: never let reconciliation bookkeeping fail the job it's reacting to.
@@ -1386,11 +1426,14 @@ class Worker:
             job.table_id, job.id, self._lock_ttl_seconds
         ) or self._lock_store.acquire_table_lock(job.table_id, job.id, self._lock_ttl_seconds)
 
-    def _has_shared_location(self, table_id: str) -> bool:
+    def _has_shared_location(self, table_id: str) -> bool | None:
         """Whether this table's warehouse path overlaps another catalog entry's.
 
-        Optional on the store protocol so in-memory/test stores and older wiring keep
-        working -- see _shared_location_unknown for why the absent answer is "no overlap".
+        ``None`` means the lookup failed: the caller must treat the location as shared and
+        drop remove_orphan_files (fail closed, as the batch coordinator does with a stale
+        overlap snapshot). That is distinct from a store with no lookup method at all
+        (in-memory/test stores and older wiring), which keeps the "no overlap" default --
+        see _shared_location_unknown.
         """
         lookup = getattr(self._store, "has_shared_s3_location", None)
         if not callable(lookup):
@@ -1399,11 +1442,11 @@ class Worker:
             return bool(lookup(table_id))
         except Exception:
             logger.warning(
-                "Shared-location lookup failed for table %s; proceeding without the gate",
+                "Shared-location lookup failed for table %s; skipping remove_orphan_files",
                 table_id,
                 exc_info=True,
             )
-            return _shared_location_unknown()
+            return None
 
     def _renew_table_lock(self, job: MaintenanceJobRecord) -> bool:
         """Return whether this worker still holds the table lock -- CR-02: every call site
@@ -2687,11 +2730,12 @@ def _table_ref_from_stats(stats: Mapping[str, Any]) -> str | None:
 
 
 def _shared_location_unknown() -> bool:
-    """Default when the store can't answer whether a table's location overlaps another's.
+    """Default when the store has no shared-location lookup at all (in-memory/test stores,
+    older wiring).
 
-    False, i.e. "no known overlap", which preserves the pre-existing behavior. The gate is a
-    safety net over the procedure's own retention window; failing every orphan cleanup fleet
-    -wide because a reporting table is unavailable would trade a narrow risk for a broad one.
+    False, i.e. "no known overlap", which preserves the pre-existing behavior for wiring that
+    never had the check. A lookup that exists but *fails* is different: _has_shared_location
+    returns None and the plan drops remove_orphan_files (#197).
     """
     return False
 

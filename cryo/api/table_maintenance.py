@@ -50,6 +50,7 @@ from cryo.maintenance.skip_history import (
     STAGE_SELECTED,
     SkipEvaluation,
 )
+from cryo.scheduler.scheduler import BACKLOG_TRIGGER
 
 SCORE_DELTA_DAYS = 7
 
@@ -473,8 +474,25 @@ def latest_batch_run(session: Session) -> MaintenanceRun | None:
     ).first()
 
 
+def nightly_run_ids(session: Session, run: MaintenanceRun | None) -> list[uuid.UUID]:
+    """The nightly run plus the backlog batches its preset scheduled after it."""
+    if run is None:
+        return []
+    if run.preset_id is None or run.trigger != "cron":
+        return [run.id]
+    backlog = session.scalars(
+        select(MaintenanceRun.id).where(
+            MaintenanceRun.preset_id == run.preset_id,
+            MaintenanceRun.trigger == BACKLOG_TRIGGER,
+            MaintenanceRun.created_at >= run.created_at,
+        )
+    ).all()
+    return [run.id, *backlog]
+
+
 def tables_funnel(session: Session, *, tenant_id: uuid.UUID) -> TablesFunnelResponse:
     run = latest_batch_run(session)
+    run_ids = nightly_run_ids(session, run)
     scan_bucket = case(
         (
             or_(Table.last_scan_error_kind.is_not(None), Table.consecutive_scan_failures > 0),
@@ -490,13 +508,13 @@ def tables_funnel(session: Session, *, tenant_id: uuid.UUID) -> TablesFunnelResp
             MaintenanceJob.table_id.label("table_id"),
             func.max(case(*job_rank_whens, else_=0)).label("job_rank"),
         )
-        .where(MaintenanceJob.run_id == run_id)
+        .where(MaintenanceJob.run_id.in_(run_ids))
         .group_by(MaintenanceJob.table_id)
         .subquery()
     )
     evaluations = (
         select(SkipEvaluation.table_id, SkipEvaluation.stage, SkipEvaluation.reason)
-        .where(SkipEvaluation.run_id == run_id)
+        .where(SkipEvaluation.run_id.in_(run_ids))
         .subquery()
     )
     stmt = (

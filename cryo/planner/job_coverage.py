@@ -20,6 +20,8 @@ from cryo.planner.guardrails import MODE_OPERATIONS, sort_operations_canonically
 
 # Statuses in which a job still owns work for its table. A terminal job covers nothing.
 ACTIVE_JOB_STATUSES: tuple[str, ...] = ("queued", "admitted", "running", "deferred")
+# Active statuses that hold, or are about to take, engine capacity.
+IN_FLIGHT_JOB_STATUSES: tuple[str, ...] = ("queued", "admitted", "running")
 
 
 @dataclass(frozen=True)

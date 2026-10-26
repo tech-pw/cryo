@@ -9,14 +9,17 @@ consulted it before deleting. See a shared-location incident.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 from cryo.domain.enums import EngineType, Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
 from cryo.planner.execution import (
+    SHARED_LOCATION_UNVERIFIED_NOTE,
     build_execution_plan,
     gate_orphan_removal_on_shared_location,
 )
+from cryo.worker.worker import Worker
 
 _STATS = {
     "schema_name": "demo",
@@ -109,3 +112,63 @@ def test_build_execution_plan_plans_orphan_removal_without_an_overlap() -> None:
     )
 
     assert any(operation.type is OperationType.REMOVE_ORPHAN_FILES for operation in plan.operations)
+
+
+def test_gate_drops_orphan_removal_when_the_overlap_check_failed() -> None:
+    """#197: an overlap lookup that failed is treated as shared, with its own note."""
+    gated = gate_orphan_removal_on_shared_location(
+        _plan_with(*_ALL_FOUR),
+        has_shared_location=False,
+        unverified=True,
+    )
+
+    assert OperationType.REMOVE_ORPHAN_FILES not in [op.type for op in gated.operations]
+    assert [op.type for op in gated.operations] == list(_ALL_FOUR[:3])
+    assert SHARED_LOCATION_UNVERIFIED_NOTE in gated.notes
+
+
+def test_build_execution_plan_skips_orphan_removal_when_unverified() -> None:
+    plan = build_execution_plan(
+        stats=_STATS,
+        partitions=[],
+        mode=Mode.DEEP,
+        params={"min_small_files": 10},
+        destination=_DESTINATION,
+        operations=_ALL_FOUR,
+        shared_location_unverified=True,
+    )
+
+    assert all(op.type is not OperationType.REMOVE_ORPHAN_FILES for op in plan.operations)
+    assert SHARED_LOCATION_UNVERIFIED_NOTE in plan.notes
+
+
+class _RaisingStore:
+    def has_shared_s3_location(self, table_id: str) -> bool:
+        raise RuntimeError("database unavailable")
+
+
+class _AnsweringStore:
+    def __init__(self, answer: bool) -> None:
+        self.answer = answer
+
+    def has_shared_s3_location(self, table_id: str) -> bool:
+        return self.answer
+
+
+def _lookup(store: object) -> bool | None:
+    return Worker._has_shared_location(SimpleNamespace(_store=store), "table-1")  # type: ignore[arg-type]
+
+
+def test_worker_reports_a_failed_overlap_lookup_as_unknown_not_as_no_overlap() -> None:
+    """A DB error used to come back as "no overlap", so the plan kept remove_orphan_files."""
+    assert _lookup(_RaisingStore()) is None
+
+
+def test_worker_keeps_no_overlap_default_for_stores_without_the_lookup() -> None:
+    """In-memory/test wiring has no lookup at all -- distinct from a lookup that failed."""
+    assert _lookup(object()) is False
+
+
+def test_worker_passes_through_a_successful_lookup() -> None:
+    assert _lookup(_AnsweringStore(True)) is True
+    assert _lookup(_AnsweringStore(False)) is False

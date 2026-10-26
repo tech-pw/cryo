@@ -944,11 +944,16 @@ export interface CostDashboard {
     projected_monthly_cost_usd: number;
     projected_savings_usd_month: number;
     current_storage_bytes: number;
-    reclaimable_bytes: number;
+    // null when no table has a measured reclaimable figure; the count says how many do.
+    reclaimable_bytes: number | null;
+    reclaimable_tables_measured?: number;
     precision_coverage?: Partial<Record<CostPrecision, number>>;
     orphan_scan_stale?: boolean;
     last_full_cost_scan_at?: string | null;
-    total_realized_savings_usd?: number;
+    // Monthly storage value ($/month) of bytes successful reclaim actions freed, not
+    // lifetime dollars. null when nothing was measured.
+    total_realized_savings_usd?: number | null;
+    total_realized_bytes_freed?: number | null;
     // GET-cost reduction from compaction. null means no table has a TableCost row,
     // so the UI must not render $0. The table count says how much of the fleet the sum covers.
     query_request_savings_usd_month?: number | null;
