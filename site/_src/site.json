@@ -79,6 +79,10 @@
         {
           "slug": "reference",
           "label": "Reference"
+        },
+        {
+          "slug": "configuration",
+          "label": "Configuration"
         }
       ]
     }

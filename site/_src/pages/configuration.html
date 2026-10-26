@@ -1,0 +1,32 @@
+---
+title: Configuration
+lede: Every CRYO_* environment variable the code reads, with its default, and every top-level Helm value. Both tables are generated from the code, so they match the release you build from.
+description: Configuration reference for Cryo. All CRYO_* environment variables from the Settings class and the code that reads os.environ, and the top-level Helm chart values.
+updated: 2026-10-26
+---
+<p>Cryo reads its settings from environment variables with the prefix <code>CRYO_</code>. A field <code>secret_key</code> is the variable <code>CRYO_SECRET_KEY</code>. Lists and maps are JSON, for example <code>CRYO_CORS_ALLOW_ORIGINS='["https://cryo.example.com"]'</code>. Locally, <code>.env</code> in the working directory is read too.</p>
+<p>On Kubernetes, put plain values in <code>global.env</code> and secrets in the Secret that <code>global.envFromSecret</code> names. Every Cryo process, and the migration Job, gets both. See <a href="@/install/">Install on Kubernetes</a>.</p>
+
+<callout type="important" title="Settings that matter for security">
+  <p><code>CRYO_ENVIRONMENT</code>, <code>CRYO_SECRET_KEY</code>, <code>CRYO_JWT_SECRET</code>, <code>CRYO_ALLOW_DEV_TOKEN_IN_PROD</code> and the <code>CRYO_OIDC_*</code> settings decide who can sign in and what an attacker can forge. They're marked below. <a href="@/security/">Security</a> explains each one.</p>
+</callout>
+
+<h2 id="environment">Environment variables</h2>
+<p>Defaults are the code defaults. The chart sets a few of its own in <code>global.env</code>, such as <code>CRYO_SCAN_ENGINE=go</code> and <code>CRYO_SCAN_TABLE_TIMEOUT_SECONDS=600</code>.</p>
+<include src="includes/configuration-env.html"/>
+
+<h2 id="helm">Helm values</h2>
+<p>The top-level values in <code>deploy/helm/cryo/values.yaml</code>, and the keys under each one. The comments in <code>values.yaml</code> explain every key and why its default is what it is. <code>values.schema.json</code> validates the types of some of them.</p>
+<include src="includes/configuration-helm.html"/>
+
+<h2 id="regenerate">Keeping this page current</h2>
+<p>Both tables come from <code>python -m cryo.config_reference</code>, which reads <code>cryo.config.Settings</code>, scans the package for other <code>CRYO_*</code> reads, and parses <code>values.yaml</code>. CI runs it with <code>--check</code>. It fails when the committed tables are stale, when code reads a new variable outside <code>Settings</code> without a description, when a new <code>Settings</code> field has no description, or when a new top-level Helm value has none. After changing configuration, run:</p>
+<codeblock lang="bash" title="terminal">
+$ make config-docs
+</codeblock>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/security/" title="Security">What the security-relevant settings protect.</linkcard>
+  <linkcard href="@/install/" title="Install on Kubernetes">Where each kind of setting goes in a Helm install.</linkcard>
+</linkcards>

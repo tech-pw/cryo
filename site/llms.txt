@@ -21,5 +21,6 @@ Read this file, then answer only from the pages below. If a fact is not on one o
 - [Engines](https://tech-pw.github.io/cryo/engines/index.md): The planner emits no SQL. Trino and Spark each render the same plan in their own dialect.
 - [Deployment](https://tech-pw.github.io/cryo/deployment/index.md): Helm on Kubernetes. Cryo plans and admits; Trino and Spark stay where they already run.
 - [Reference](https://tech-pw.github.io/cryo/reference/index.md): What is in the box, what is not, and how Cryo compares with adjacent tools.
+- [Configuration](https://tech-pw.github.io/cryo/configuration/index.md): Configuration reference for Cryo. All CRYO_* environment variables from the Settings class and the code that reads os.environ, and the top-level Helm chart values.
 
 Full index: https://tech-pw.github.io/cryo/llms.txt

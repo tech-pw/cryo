@@ -1,0 +1,579 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Configuration · Cryo</title><meta name="description" content="Configuration reference for Cryo. All CRYO_* environment variables from the Settings class and the code that reads os.environ, and the top-level Helm chart values."><link rel="canonical" href="https://tech-pw.github.io/cryo/configuration/"><link rel="alternate" type="text/markdown" href="../configuration/index.md" title="Markdown version"><meta name="theme-color" content="#F5FAFD" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0F16" media="(prefers-color-scheme: dark)"><meta property="og:type" content="website"><meta property="og:site_name" content="Cryo"><meta property="og:title" content="Configuration · Cryo"><meta property="og:description" content="Configuration reference for Cryo. All CRYO_* environment variables from the Settings class and the code that reads os.environ, and the top-level Helm chart values."><meta property="og:url" content="https://tech-pw.github.io/cryo/configuration/"><meta property="og:image" content="https://tech-pw.github.io/cryo/assets/img/og.png"><meta name="twitter:card" content="summary_large_image"><link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="../assets/fonts/ibm-plex-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin><script>(function(){try{var t=localStorage.getItem("cryo-site-theme");if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}})()</script><link rel="stylesheet" href="../assets/css/site.css?v=f1b6aaac6a"></head><body class="docs" data-page="configuration" data-root="../"><a class="skip" href="#main">Skip to content</a><header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><a class="logo" href="../" aria-label="Cryo home"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true"><g stroke-width="1.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
+    <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
+    <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
+    <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
+    <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
+    <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
+    <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
+    <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
+    <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="2" stroke-linecap="round" style="stroke:var(--cryo-mark-dash,#5C667A)">
+    <path d="M17 19.5L20 22.3"/>
+    <path d="M27.6 14.5L29 18"/>
+    <path d="M13.9 34.1L17.2 34.7"/>
+  </g>
+  <g stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
+    <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
+    <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="1.1">
+    <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
+    <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
+    <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
+  </g>
+  <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)"/>
+  <g stroke="#FFFFFF" stroke-linecap="round">
+    <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
+    <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><nav class="hdr-tabs" aria-label="Sections"><a class="hdr-tab" href="../quickstart/">Get started</a><a class="hdr-tab" href="../concepts/">Concepts</a><a class="hdr-tab" href="../health/">Operate</a><a class="hdr-tab" href="../reference/" aria-current="true">Reference</a></nav><div class="hdr-end"><button class="search-open" type="button" aria-label="Search the docs" aria-haspopup="dialog"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="so-text">Search</span><kbd class="so-kbd">⌘K</kbd></button><a class="icon-btn" href="https://github.com/tech-pw/cryo" aria-label="Cryo on GitHub"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><button class="icon-btn theme-toggle" type="button" aria-label="Toggle colour theme"><svg class="i-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="i-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></button></div></div></header><div class="shell"><nav class="side" id="side" aria-label="Documentation"><div class="side-in"><div class="nav-group"><p class="nav-label">Get started</p><ul><li><a class="nav-link" href="../">Overview</a></li><li><a class="nav-link" href="../quickstart/">Quickstart</a></li><li><a class="nav-link" href="../benchmark/">Benchmark</a></li><li><a class="nav-link" href="../onboarding/">Connect a lakehouse</a></li></ul></div><div class="nav-group"><p class="nav-label">Concepts</p><ul><li><a class="nav-link" href="../concepts/">How Cryo fits</a></li><li><a class="nav-link" href="../architecture/">Architecture</a></li><li><a class="nav-link" href="../maintenance/">Maintenance</a></li></ul></div><div class="nav-group"><p class="nav-label">Operate</p><ul><li><a class="nav-link" href="../health/">Health and cost</a></li><li><a class="nav-link" href="../tables/">Tables</a></li><li><a class="nav-link" href="../table-detail/">Table detail</a></li><li><a class="nav-link" href="../engines/">Engines</a></li><li><a class="nav-link" href="../deployment/">Deployment</a></li></ul></div><div class="nav-group"><p class="nav-label">Reference</p><ul><li><a class="nav-link" href="../reference/">Reference</a></li><li><a class="nav-link" href="../configuration/" aria-current="page">Configuration</a></li></ul></div></div><button class="side-collapse" type="button" aria-label="Collapse sidebar" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg></button></nav><div class="scrim" hidden></div><main class="main" id="main"><article class="doc"><header class="doc-head"><nav class="crumbs" aria-label="Breadcrumb"><a href="../" aria-label="Cryo home"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></a><span class="crumb-sep" aria-hidden="true">›</span><span>Reference</span><span class="crumb-sep" aria-hidden="true">›</span><span class="crumb-here" aria-current="page">Configuration</span></nav><h1>Configuration</h1><p class="lede">Every CRYO_* environment variable the code reads, with its default, and every top-level Helm value. Both tables are generated from the code, so they match the release you build from.</p><div class="doc-meta"><span>Updated <time datetime="2026-10-26">2026-10-26</time></span><span class="dot" aria-hidden="true"></span><span>22 min read</span><span class="meta-links"><a href="https://github.com/tech-pw/cryo/edit/main/site/_src/pages/configuration.html"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>Edit this page</a><button class="share-page" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"/></svg><span>Share</span></button><a href="https://github.com/tech-pw/cryo/issues/new?title=docs%3A%20Configuration&body=Page%3A%20https%3A%2F%2Ftech-pw.github.io%2Fcryo%2Fconfiguration%2F%0A%0AWhat%20is%20wrong%20or%20missing%3F%0A&labels=documentation"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="13" rx="5"/><path d="M9 7a3 3 0 0 1 6 0M3 13h4M17 13h4M4 7l3 2M20 7l-3 2M4 19l3-2M20 19l-3-2"/></svg>Report an issue</a><a class="md-page" href="../configuration/index.md">View as Markdown</a></span><button class="copy-page" type="button" data-md="../configuration/index.md">Copy page</button></div></header><details class="toc-m"><summary>On this page</summary><ul><li class="toc-l2"><a href="#environment">Environment variables</a></li><li class="toc-l3"><a href="#env-ai">CRYO_AI_*</a></li><li class="toc-l3"><a href="#env-anomaly">CRYO_ANOMALY_*</a></li><li class="toc-l3"><a href="#env-assistant">CRYO_ASSISTANT_*</a></li><li class="toc-l3"><a href="#env-audit">CRYO_AUDIT_*</a></li><li class="toc-l3"><a href="#env-cost">CRYO_COST_*</a></li><li class="toc-l3"><a href="#env-default">CRYO_DEFAULT_*</a></li><li class="toc-l3"><a href="#env-gitops">CRYO_GITOPS_*</a></li><li class="toc-l3"><a href="#env-job">CRYO_JOB_*</a></li><li class="toc-l3"><a href="#env-layout">CRYO_LAYOUT_*</a></li><li class="toc-l3"><a href="#env-llm">CRYO_LLM_*</a></li><li class="toc-l3"><a href="#env-maintenance">CRYO_MAINTENANCE_*</a></li><li class="toc-l3"><a href="#env-oidc">CRYO_OIDC_*</a></li><li class="toc-l3"><a href="#env-otel">CRYO_OTEL_*</a></li><li class="toc-l3"><a href="#env-qpp">CRYO_QPP_*</a></li><li class="toc-l3"><a href="#env-query">CRYO_QUERY_*</a></li><li class="toc-l3"><a href="#env-report">CRYO_REPORT_*</a></li><li class="toc-l3"><a href="#env-roi">CRYO_ROI_*</a></li><li class="toc-l3"><a href="#env-s3">CRYO_S3_*</a></li><li class="toc-l3"><a href="#env-scan">CRYO_SCAN_*</a></li><li class="toc-l3"><a href="#env-silent">CRYO_SILENT_*</a></li><li class="toc-l3"><a href="#env-slack">CRYO_SLACK_*</a></li><li class="toc-l3"><a href="#env-smtp">CRYO_SMTP_*</a></li><li class="toc-l3"><a href="#env-table">CRYO_TABLE_*</a></li><li class="toc-l3"><a href="#env-telemetry">CRYO_TELEMETRY_*</a></li><li class="toc-l3"><a href="#env-trino">CRYO_TRINO_*</a></li><li class="toc-l3"><a href="#env-other">Other</a></li><li class="toc-l3"><a href="#env-outside-settings">Read outside Settings</a></li><li class="toc-l2"><a href="#helm">Helm values</a></li><li class="toc-l2"><a href="#regenerate">Keeping this page current</a></li><li class="toc-l2"><a href="#read-next">Where to go next</a></li></ul></details><div class="prose"><p>Cryo reads its settings from environment variables with the prefix <code>CRYO_</code>. A field <code>secret_key</code> is the variable <code>CRYO_SECRET_KEY</code>. Lists and maps are JSON, for example <code>CRYO_CORS_ALLOW_ORIGINS='["https://cryo.example.com"]'</code>. Locally, <code>.env</code> in the working directory is read too.</p>
+<p>On Kubernetes, put plain values in <code>global.env</code> and secrets in the Secret that <code>global.envFromSecret</code> names. Every Cryo process, and the migration Job, gets both. See <a href="../install/">Install on Kubernetes</a>.</p>
+
+<aside class="callout callout-important" role="note"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 3h7L21 8.5v7L15.5 21h-7L3 15.5v-7L8.5 3zM12 8v5M12 16h.01"/></svg><div class="callout-body"><p class="callout-title">Settings that matter for security</p><p><code>CRYO_ENVIRONMENT</code>, <code>CRYO_SECRET_KEY</code>, <code>CRYO_JWT_SECRET</code>, <code>CRYO_ALLOW_DEV_TOKEN_IN_PROD</code> and the <code>CRYO_OIDC_*</code> settings decide who can sign in and what an attacker can forge. They're marked below. <a href="../security/">Security</a> explains each one.</p></div></aside>
+
+<h2 id="environment">Environment variables<a class="anchor" href="#environment" aria-label="Link to Environment variables">#</a></h2>
+<p>Defaults are the code defaults. The chart sets a few of its own in <code>global.env</code>, such as <code>CRYO_SCAN_ENGINE=go</code> and <code>CRYO_SCAN_TABLE_TIMEOUT_SECONDS=600</code>.</p>
+<!-- Generated by `python -m cryo.config_reference`. Do not edit. -->
+<p>232 settings, grouped by the first word of their name.</p>
+<h3 id="env-ai">CRYO_AI_*<a class="anchor" href="#env-ai" aria-label="Link to CRYO_AI_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_AI_FEATURE_ANOMALY_BRIEF_ENABLED</code></td><td><code>true</code></td><td>Enable anomaly root-cause brief surfaces.</td></tr>
+    <tr><td><code>CRYO_AI_FEATURE_DIAGNOSIS_ENABLED</code></td><td><code>true</code></td><td>Enable run-failure diagnosis API/UI surfaces.</td></tr>
+    <tr><td><code>CRYO_AI_FEATURE_FILTER_TRANSLATION_ENABLED</code></td><td><code>true</code></td><td>Enable natural-language table-filter translation.</td></tr>
+    <tr><td><code>CRYO_AI_FEATURE_PLAN_NARRATION_ENABLED</code></td><td><code>true</code></td><td>Enable optional plan narration for SQL intent in PlanPreview.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-anomaly">CRYO_ANOMALY_*<a class="anchor" href="#env-anomaly" aria-label="Link to CRYO_ANOMALY_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_ANOMALY_DETECTION_BATCH_SIZE</code></td><td><code>100</code></td><td>Tables processed per batch in fleet-wide anomaly detection.</td></tr>
+    <tr><td><code>CRYO_ANOMALY_HISTORY_ROWS_PER_TABLE</code></td><td><code>60</code></td><td>Max history rows loaded per table during anomaly detection.</td></tr>
+    <tr><td><code>CRYO_ANOMALY_MAX_RESULTS</code></td><td><code>500</code></td><td>Maximum anomaly alerts retained from a fleet-wide scan.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-assistant">CRYO_ASSISTANT_*<a class="anchor" href="#env-assistant" aria-label="Link to CRYO_ASSISTANT_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_ASSISTANT_ENABLED</code></td><td><code>false</code></td><td>Master switch for Ask Cryo. Stays off until an operator enables it.</td></tr>
+    <tr><td><code>CRYO_ASSISTANT_MAX_ACTIVE_TURNS_PER_USER</code></td><td><code>2</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_ASSISTANT_MAX_PARALLEL_READS</code></td><td><code>4</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_ASSISTANT_MAX_TOOL_CALLS</code></td><td><code>8</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_ASSISTANT_MCP_ENABLED</code></td><td><code>false</code></td><td>Expose the streamable HTTP MCP adapter. Off until BOT-09 is qualified.</td></tr>
+    <tr><td><code>CRYO_ASSISTANT_PROPOSAL_TTL_S</code></td><td><code>600</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_ASSISTANT_RETENTION_DAYS</code></td><td><code>90</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_ASSISTANT_TURN_TIMEOUT_S</code></td><td><code>45</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_ASSISTANT_WRITES_ENABLED</code></td><td><code>false</code></td><td>Assistant-only kill switch, separate from maintenance_writes_enabled.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-audit">CRYO_AUDIT_*<a class="anchor" href="#env-audit" aria-label="Link to CRYO_AUDIT_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_AUDIT_LOG_PRUNE_BATCH_SIZE</code></td><td><code>10000</code></td><td>Maximum audit rows deleted in one transaction.</td></tr>
+    <tr><td><code>CRYO_AUDIT_LOG_PRUNE_MAX_ROWS_PER_TICK</code></td><td><code>100000</code></td><td>Maximum audit rows deleted by one daily leader-scheduler retention tick.</td></tr>
+    <tr><td><code>CRYO_AUDIT_LOG_RETENTION_DAYS</code></td><td><code>365</code></td><td>Days to retain immutable maintenance audit entries in the operational database. The leader scheduler prunes older rows in bounded batches. Set a longer value when regulatory or incident-response policy requires it; 365 days is the safe default.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-cost">CRYO_COST_*<a class="anchor" href="#env-cost" aria-label="Link to CRYO_COST_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_COST_CEILING_CHECK_INTERVAL_MINUTES</code></td><td><code>30</code></td><td>How often the scheduler re-checks real spend. CUR data lags 24-48h, so checking much more often than this doesn&#x27;t reveal new information -- this mainly controls how quickly a pause gets lifted once yesterday&#x27;s lagged data catches up to show spend back under the ceiling.</td></tr>
+    <tr><td><code>CRYO_COST_CEILING_CLUSTER_NAME</code></td><td><code>&quot;&quot;</code></td><td>EKS cluster name as tagged in AWS CUR (resource_tags_aws_eks_cluster_name). Required when cost_ceiling_enabled is true.</td></tr>
+    <tr><td><code>CRYO_COST_CEILING_DAILY_USD</code></td><td><code>250.0</code></td><td>Daily used+unused USD ceiling for cost_ceiling_enabled&#x27;s circuit breaker.</td></tr>
+    <tr><td><code>CRYO_COST_CEILING_ENABLED</code></td><td><code>false</code></td><td>Enables cryo.reporting.cost_ceiling&#x27;s real-dollar circuit breaker -- checks the cryo namespace&#x27;s actual daily spend (used+unused, via Grafana&#x27;s Athena CUR datasource) and pauses fleet-wide admission (the same MaintenanceControlState global pause an operator&#x27;s manual pause button writes to) if it exceeds…</td></tr>
+    <tr><td><code>CRYO_COST_CEILING_NAMESPACE</code></td><td><code>&quot;cryo&quot;</code></td><td>Kubernetes namespace to check against cost_ceiling_daily_usd.</td></tr>
+    <tr><td><code>CRYO_COST_CEILING_TOLERANCE_PCT</code></td><td><code>0.15</code></td><td>Fraction above cost_ceiling_daily_usd that&#x27;s treated as normal variance, not a breach worth halting the fleet for -- e.g. 0.15 means spend up to 15% over the ceiling only logs a warning; only spend beyond that pauses admission.</td></tr>
+    <tr><td><code>CRYO_COST_FULL_SCAN_EVERY_HOURS</code></td><td><code>168</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_COST_METADATA_MAX_FILES_ESTIMATE</code></td><td><code>2000000</code></td><td>Cheap pre-filter before even attempting Tier-1 metadata cost accounting: skip it when the current-snapshot file count meets or exceeds this threshold.</td></tr>
+    <tr><td><code>CRYO_COST_METADATA_MAX_MANIFESTS_CURRENT</code></td><td><code>500</code></td><td>Skip Tier-1 metadata cost when current-snapshot manifest count meets or exceeds this threshold.</td></tr>
+    <tr><td><code>CRYO_COST_MODEL_REFRESH_INTERVAL_HOURS</code></td><td><code>6</code></td><td>Hours between cost-model retrains (cryo.ml.cost_integration.refresh_cost_model_cache).</td></tr>
+    <tr><td><code>CRYO_COST_ORPHAN_MIN_AGE_HOURS</code></td><td><code>72</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_COST_PRICE_PER_GB_MONTH</code></td><td><code>0.023</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_COST_SCAN_MAX_LIST_KEYS</code></td><td><code>1000000</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_COST_SCAN_MAX_MANIFESTS</code></td><td><code>5000</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_COST_SCAN_MAX_SNAPSHOTS</code></td><td><code>200</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_COST_SCAN_TIER</code></td><td><code>&quot;metadata&quot;</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_COST_USE_GIB</code></td><td><code>true</code></td><td><em>Not described yet.</em></td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-default">CRYO_DEFAULT_*<a class="anchor" href="#env-default" aria-label="Link to CRYO_DEFAULT_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_DEFAULT_EMR_SLOT_CAP</code></td><td><code>10</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_DEFAULT_NATIVE_SLOT_CAP</code></td><td><code>5</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_DEFAULT_PER_REPLICA_OPTIMIZE_CAP</code></td><td><code>5</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_DEFAULT_RETAIN_LAST</code></td><td><code>1</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_DEFAULT_RETENTION_DAYS</code></td><td><code>7</code></td><td><em>Not described yet.</em></td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-gitops">CRYO_GITOPS_*<a class="anchor" href="#env-gitops" aria-label="Link to CRYO_GITOPS_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_GITOPS_POLICY_DIR</code></td><td><code>&quot;policies&quot;</code></td><td>Relative directory within gitops_repo_path containing YAML policies.</td></tr>
+    <tr><td><code>CRYO_GITOPS_REPO_PATH</code></td><td><code>unset</code></td><td>Local path to GitOps policy repository for webhook/poll sync.</td></tr>
+    <tr><td><code>CRYO_GITOPS_WEBHOOK_SECRET</code></td><td><code>unset</code></td><td>HMAC secret for GitOps webhook signature verification.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-job">CRYO_JOB_*<a class="anchor" href="#env-job" aria-label="Link to CRYO_JOB_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_JOB_PRUNE_BATCH_SIZE</code></td><td><code>10000</code></td><td>Maximum job rows deleted in one transaction.</td></tr>
+    <tr><td><code>CRYO_JOB_PRUNE_MAX_ROWS_PER_TICK</code></td><td><code>100000</code></td><td>Maximum job rows deleted by one daily retention tick.</td></tr>
+    <tr><td><code>CRYO_JOB_RETENTION_DAYS</code></td><td><code>180</code></td><td>Days to retain finished MaintenanceJob rows (status terminal, finished_at set). Had no retention at all until 2026-10-05. Only ever deletes rows with a non-null finished_at, so queued/admitted/running jobs are never eligible.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-layout">CRYO_LAYOUT_*<a class="anchor" href="#env-layout" aria-label="Link to CRYO_LAYOUT_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_LAYOUT_AUTOPILOT_ENABLED</code></td><td><code>false</code></td><td>Off by default -- opt-in, and a second gate on top of the per-preset opt-in below.</td></tr>
+    <tr><td><code>CRYO_LAYOUT_AUTOPILOT_MAX_TABLES_PER_TICK</code></td><td><code>20</code></td><td>Cap on how many tables get their pending layout recommendation auto-executed per telemetry tick when layout_autopilot_enabled is true. Kept far lower than property_autopilot_max_tables_per_tick since each one is a real Spark rewrite job, not a metadata-only property flip.</td></tr>
+    <tr><td><code>CRYO_LAYOUT_EFFECTIVENESS_MAX_TABLES_PER_TICK</code></td><td><code>20</code></td><td>Cap on how many applied-but-unmeasured LayoutRecommendation rows get a fresh observed_prune_improvement reading per telemetry tick.</td></tr>
+    <tr><td><code>CRYO_LAYOUT_RECOMMENDATION_MAX_TABLES_PER_TICK</code></td><td><code>20</code></td><td>Cap on how many tables get a layout-recommendation (re)generated per telemetry tick. generate_layout_recommendation() skips tables refreshed within the last 24h on its own, so this only bounds the cost of the *first* pass over a large backlog -- keeps a single tick from doing thousands of analyses (each with its own…</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-llm">CRYO_LLM_*<a class="anchor" href="#env-llm" aria-label="Link to CRYO_LLM_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_LLM_ALLOWED_ORIGINS</code></td><td><code>&quot;&quot;</code></td><td>Comma-separated exact origins that a saved OpenAI-compatible base URL may select, such as http://localhost:11434. The request URL is rebuilt from the matching origin. api.openai.com and *.openai.azure.com stay allowed without an entry here. Set CRYO_LLM_ALLOWED_ORIGINS. <strong>Security:</strong> Each listed origin can receive AI provider requests. Keep it short.</td></tr>
+    <tr><td><code>CRYO_LLM_DAILY_COST_CAP_USD_DEFAULT</code></td><td><code>15.0</code></td><td>Default per-provider daily spend cap in USD (best-effort; derived from provider config pricing).</td></tr>
+    <tr><td><code>CRYO_LLM_DAILY_TOKEN_CAP_DEFAULT</code></td><td><code>300000</code></td><td>Default per-provider daily token cap when provider budget omits it.</td></tr>
+    <tr><td><code>CRYO_LLM_DEFAULT_MODEL_ANTHROPIC</code></td><td><code>&quot;claude-sonnet-4-20250514&quot;</code></td><td>Default Anthropic model when provider row omits model.</td></tr>
+    <tr><td><code>CRYO_LLM_DEFAULT_MODEL_AZURE_OPENAI</code></td><td><code>&quot;gpt4o&quot;</code></td><td>Default Azure OpenAI deployment when provider row omits model.</td></tr>
+    <tr><td><code>CRYO_LLM_DEFAULT_MODEL_OPENAI</code></td><td><code>&quot;gpt-4o&quot;</code></td><td>Default OpenAI model when provider row omits model.</td></tr>
+    <tr><td><code>CRYO_LLM_OPENAI_BASE_URL</code></td><td><code>unset</code></td><td>Optional OpenAI-compatible API base override (vLLM/Ollama/local gateways). When set, OpenAI provider calls are routed through this endpoint. A non-OpenAI/Azure origin is used only if it is listed in CRYO_LLM_ALLOWED_ORIGINS.</td></tr>
+    <tr><td><code>CRYO_LLM_OVER_BUDGET_MODE</code></td><td><code>&quot;abstain&quot;</code></td><td>Behavior when an LLM provider exceeds budget: hard reject or abstain-with-fallback.</td></tr>
+    <tr><td><code>CRYO_LLM_PER_CALL_MAX_TOKENS_DEFAULT</code></td><td><code>1200</code></td><td>Default max completion tokens allowed per LLM call when provider budget omits it.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-maintenance">CRYO_MAINTENANCE_*<a class="anchor" href="#env-maintenance" aria-label="Link to CRYO_MAINTENANCE_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_MAINTENANCE_AUTOCOMP_BUDGET_GBHR</code></td><td><code>unset</code></td><td>Compute budget per scheduled run. Unset: max_lanes x lane memory x the hours lanes may start tables.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_AUTOCOMP_HEAT_WEIGHT</code></td><td><code>0.3</code></td><td>Cryo extension: share of the score from Trino query heat; 0 = paper-only.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_AUTOCOMP_REWRITE_GB_PER_HOUR</code></td><td><code>25.0</code></td><td>RewriteBytesPerHour until a run has measured it; afterwards the median of recent runs&#x27; observed rewrite throughput is used.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_AUTOCOMP_W_FILE_REDUCTION</code></td><td><code>0.7</code></td><td>Weight of file-count reduction in the AutoComp table ranking. The compute-cost weight is one minus this value.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_COOLDOWN_HOURS</code></td><td><code>20</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_DESTINATION_ID</code></td><td><code>unset</code></td><td>Spark destination to run on; defaults to the only enabled Spark one.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_DURATION_MODEL</code></td><td><code>&quot;rate&quot;</code></td><td>How AutoComp estimates a table&#x27;s rewrite hours. &#x27;rate&#x27;: GiB / RewriteBytesPerHour. &#x27;ernest&#x27;: the Ernest model fitted on completed rewrite statements (cryo/maintenance/ernest.py), used only while it beats &#x27;rate&#x27; on held-out runs; the comparison is recorded in every run&#x27;s autocomp trace either way.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_LANE_CAPACITY_TYPES</code></td><td><code>&quot;spot,on-demand&quot;</code></td><td>Karpenter capacity types lane pods may run on, most preferred first.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_LANE_MAX_CPU_MILLI</code></td><td><code>4000</code></td><td>Upper bound on one batch-maintenance lane pod&#x27;s CPU, in millicores.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_LANE_MAX_MEM_MIB</code></td><td><code>16384</code></td><td>Upper bound on one batch-maintenance lane pod&#x27;s memory, in MiB.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_LANE_MAX_NODE_CPU</code></td><td><code>0</code></td><td>Optional inclusive Karpenter node vCPU ceiling for maintenance lanes. Zero disables it; enabling requires karpenter.k8s.aws/instance-cpu node labels. Prevents small protected lanes from pinning very large shared nodes.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_LANE_TARGET_GB</code></td><td><code>200.0</code></td><td>Rewrite GB one lane should carry before another pod is worth starting.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_MAX_LANES</code></td><td><code>4</code></td><td>Max Spark pods.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_MAX_LANE_RESPAWNS</code></td><td><code>8</code></td><td>Replacement pods one run may start for lanes that died mid-run (OOM, node loss). The table a lane died on is recorded as failed; the replacement takes the rest.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_MAX_RUNTIME_MINUTES</code></td><td><code>360</code></td><td>Hard stop for the whole run; lanes stop starting tables 20 min earlier.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_MAX_STATS_AGE_DAYS</code></td><td><code>3</code></td><td>Skip tables whose last successful scan is older than this.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_MEASURE_ORPHAN_BYTES</code></td><td><code>false</code></td><td>Before each remove_orphan_files, run the same call as a dry run and sum the sizes of the files it lists, so orphan removal&#x27;s audit rows carry actual_bytes_freed. Off by default: the dry run doubles the orphan LIST, which has OOM&#x27;d Spark before.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_POLL_SECONDS</code></td><td><code>30</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_RESCAN_ENABLED</code></td><td><code>true</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_SHARED_SNAPSHOT_MAX_AGE_HOURS</code></td><td><code>72</code></td><td>If the shared-S3-path snapshot cannot be refreshed and the last one is older than this, the run skips remove_orphan_files on every table.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_SLACK_ENABLED</code></td><td><code>true</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_TOP_N</code></td><td><code>500</code></td><td>Tables per batch run.</td></tr>
+    <tr><td><code>CRYO_MAINTENANCE_WRITES_ENABLED</code></td><td><code>true</code></td><td>When false, maintenance cannot enqueue or execute Iceberg writes.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-oidc">CRYO_OIDC_*<a class="anchor" href="#env-oidc" aria-label="Link to CRYO_OIDC_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_OIDC_AUDIENCE</code></td><td><code>unset</code></td><td>Expected access-token audience; defaults to oidc_client_id.</td></tr>
+    <tr><td><code>CRYO_OIDC_CLIENT_ID</code></td><td><code>unset</code></td><td><strong>Set in production.</strong> OIDC OAuth client id.</td></tr>
+    <tr><td><code>CRYO_OIDC_CLIENT_SECRET</code></td><td><code>unset</code></td><td><strong>Set in production.</strong> OIDC client secret for authorization-code exchange. <strong>Security:</strong> Keep in the Kubernetes Secret.</td></tr>
+    <tr><td><code>CRYO_OIDC_ISSUER_URL</code></td><td><code>unset</code></td><td><strong>Set in production.</strong> OIDC issuer URL (production SSO). Enables RS256 IdP token verification.</td></tr>
+    <tr><td><code>CRYO_OIDC_JWKS_URI</code></td><td><code>unset</code></td><td>Optional JWKS URI override (defaults to issuer/.well-known/jwks.json).</td></tr>
+    <tr><td><code>CRYO_OIDC_REDIRECT_URI</code></td><td><code>unset</code></td><td><strong>Set in production.</strong> OAuth redirect URI registered with the IdP (UI callback).</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-otel">CRYO_OTEL_*<a class="anchor" href="#env-otel" aria-label="Link to CRYO_OTEL_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_OTEL_ENABLED</code></td><td><code>false</code></td><td>Enable OpenTelemetry tracing and OTLP export.</td></tr>
+    <tr><td><code>CRYO_OTEL_ENDPOINT</code></td><td><code>&quot;http://localhost:4318/v1/traces&quot;</code></td><td>OTLP HTTP endpoint for trace export.</td></tr>
+    <tr><td><code>CRYO_OTEL_SAMPLE_RATE</code></td><td><code>1.0</code></td><td>Trace sampling rate (0.0-1.0).</td></tr>
+    <tr><td><code>CRYO_OTEL_SERVICE_NAME</code></td><td><code>&quot;cryo&quot;</code></td><td>Service name attached to exported spans.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-qpp">CRYO_QPP_*<a class="anchor" href="#env-qpp" aria-label="Link to CRYO_QPP_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_QPP_ENABLED</code></td><td><code>false</code></td><td>When true, the Governor calls QPPModel.predict() before admitting a maintenance job and refuses jobs whose predicted p95 exceeds the per-destination target.</td></tr>
+    <tr><td><code>CRYO_QPP_MIN_OBSERVATIONS</code></td><td><code>20</code></td><td>Minimum observations before QPPModel trusts the learned regression.</td></tr>
+    <tr><td><code>CRYO_QPP_TARGET_P95_MS</code></td><td><code>600000</code></td><td>Default per-destination QPP p95 target in milliseconds.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-query">CRYO_QUERY_*<a class="anchor" href="#env-query" aria-label="Link to CRYO_QUERY_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_QUERY_COST_REPORT_ENABLED</code></td><td><code>false</code></td><td>Post the Trino query-cost report to Slack.</td></tr>
+    <tr><td><code>CRYO_QUERY_GETS_PER_FILE</code></td><td><code>1.0</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_QUERY_LOG_ICEBERG_MAX_ROWS_PER_WINDOW</code></td><td><code>25000</code></td><td>Last-resort per-window row cap for the iceberg_table read-through query-log path. Only triggers if a single window still has an extreme row count; excess rows in that window are dropped (logged as a warning) rather than blocking the watermark from advancing past that window.</td></tr>
+    <tr><td><code>CRYO_QUERY_LOG_ICEBERG_MAX_WINDOWS_PER_TICK</code></td><td><code>4</code></td><td>Max number of query_log_iceberg_window_hours windows processed per aggregation call. Bounds how much a large backlog (first-ever run, or catch-up after an outage) can do in one tick; the rest is picked up on the next scheduled tick.</td></tr>
+    <tr><td><code>CRYO_QUERY_LOG_ICEBERG_WINDOW_HOURS</code></td><td><code>1</code></td><td>Time-window size for the iceberg_table read-through query-log path (cryo/telemetry/iceberg_source.py).</td></tr>
+    <tr><td><code>CRYO_QUERY_LOG_RETENTION_DAYS</code></td><td><code>90</code></td><td>Days of raw query_logs rows to keep before the scheduler purges them. query_patterns (the aggregated signal partition/layout recommendations actually consume) is unaffected by purging, since it&#x27;s aggregated before rows age out.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-report">CRYO_REPORT_*<a class="anchor" href="#env-report" aria-label="Link to CRYO_REPORT_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_REPORT_COST_DOD_DECLINE_PCT</code></td><td><code>30.0</code></td><td>Day-over-day fleet cost decrease (%) that flags a decline worth noting.</td></tr>
+    <tr><td><code>CRYO_REPORT_COST_DOD_SPIKE_PCT</code></td><td><code>10.0</code></td><td>Day-over-day fleet cost increase (%) that flags a spike.</td></tr>
+    <tr><td><code>CRYO_REPORT_COST_WOW_DECLINE_PCT</code></td><td><code>35.0</code></td><td>Week-over-week fleet cost decrease (%) that flags a decline worth noting.</td></tr>
+    <tr><td><code>CRYO_REPORT_COST_WOW_SPIKE_PCT</code></td><td><code>15.0</code></td><td>Week-over-week fleet cost increase (%) that flags a spike.</td></tr>
+    <tr><td><code>CRYO_REPORT_EMAIL_RECIPIENTS</code></td><td><code>[]</code></td><td>Email recipients for daily anomaly reports.</td></tr>
+    <tr><td><code>CRYO_REPORT_IMPACT_DOD_MOVE_PCT</code></td><td><code>25.0</code></td><td>Day-over-day change (%) in GB reclaimed that&#x27;s worth flagging either way.</td></tr>
+    <tr><td><code>CRYO_REPORT_IMPACT_WOW_MOVE_PCT</code></td><td><code>20.0</code></td><td>Week-over-week change (%) in GB reclaimed that&#x27;s worth flagging either way.</td></tr>
+    <tr><td><code>CRYO_REPORT_QUERY_COST_DOD_DECLINE_PCT</code></td><td><code>30.0</code></td><td>Day-over-day Trino query cost decrease (%) that flags a decline worth noting.</td></tr>
+    <tr><td><code>CRYO_REPORT_QUERY_COST_DOD_SPIKE_PCT</code></td><td><code>15.0</code></td><td>Day-over-day Trino query cost increase (%) that flags a spike.</td></tr>
+    <tr><td><code>CRYO_REPORT_QUERY_COST_WOW_DECLINE_PCT</code></td><td><code>35.0</code></td><td>Week-over-week Trino query cost decrease (%) that flags a decline.</td></tr>
+    <tr><td><code>CRYO_REPORT_QUERY_COST_WOW_SPIKE_PCT</code></td><td><code>20.0</code></td><td>Week-over-week Trino query cost increase (%) that flags a spike.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-roi">CRYO_ROI_*<a class="anchor" href="#env-roi" aria-label="Link to CRYO_ROI_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_ROI_GATE_ENABLED</code></td><td><code>false</code></td><td>Enable ROI-based governor gate for maintenance admission decisions.</td></tr>
+    <tr><td><code>CRYO_ROI_GATE_SHADOW_MODE</code></td><td><code>true</code></td><td>Log ROI decisions without enforcing skip/defer while tuning thresholds.</td></tr>
+    <tr><td><code>CRYO_ROI_MIN_BCR</code></td><td><code>1.0</code></td><td>Minimum benefit-cost ratio required for non-streaming tables.</td></tr>
+    <tr><td><code>CRYO_ROI_MIN_BCR_STREAMING</code></td><td><code>0.5</code></td><td>Minimum benefit-cost ratio required for streaming/hot tables.</td></tr>
+    <tr><td><code>CRYO_ROI_SHADOW_MIN_SAMPLES</code></td><td><code>200</code></td><td>Minimum shadow decisions before suggesting ROI enforcement.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-s3">CRYO_S3_*<a class="anchor" href="#env-s3" aria-label="Link to CRYO_S3_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_S3_GET_USD_PER_1K</code></td><td><code>0.0004</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_S3_LIST_USD_PER_1K</code></td><td><code>0.005</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_S3_LOG_INGEST_CONCURRENCY</code></td><td><code>16</code></td><td>Max concurrent S3 GetObject calls when reading log objects for a single bucket&#x27;s ingestion run -- I/O-bound work, so higher than a typical CPU-bound worker pool.</td></tr>
+    <tr><td><code>CRYO_S3_LOG_INGEST_INTERVAL_HOURS</code></td><td><code>24</code></td><td>Hours between S3 request-cost ingestion runs (docs/s3-request-cost-tracking.md §10) -- reads and aggregates every enabled bucket&#x27;s log objects natively (no Trino/Hive-connector dependency).</td></tr>
+    <tr><td><code>CRYO_S3_LOG_INGEST_MAX_OBJECTS_PER_DAY</code></td><td><code>20000</code></td><td>Safety cap on how many S3 access-log objects are read per date-partition per ingestion run. A busy bucket can deliver many small per-flush log files; this bounds S3 API call volume per run rather than unbounded object-count growth. Days that hit the cap are logged as a lower-bound (not exact) count, not an error.</td></tr>
+    <tr><td><code>CRYO_S3_LOG_TRINO_CATALOG</code></td><td><code>&quot;hive&quot;</code></td><td>Trino Hive-connector catalog/schema used only to clean up an external log table from an older Trino-based ingestion run when tearing down S3 request-cost tracking for a bucket (cryo/integrations/s3_bucket_provisioning.py). Ingestion itself reads and aggregates S3 access logs natively -- no Trino dependency.</td></tr>
+    <tr><td><code>CRYO_S3_LOG_TRINO_SCHEMA</code></td><td><code>&quot;cryo_s3_logs&quot;</code></td><td>Schema within s3_log_trino_catalog for the legacy teardown path above.</td></tr>
+    <tr><td><code>CRYO_S3_PUT_USD_PER_1K</code></td><td><code>0.005</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_S3_REQUEST_COST_RETENTION_DAYS</code></td><td><code>35</code></td><td>Days of S3RequestCostDaily rows kept before the retention job prunes them -- a few days past the 30-day TableCost rollup window.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-scan">CRYO_SCAN_*<a class="anchor" href="#env-scan" aria-label="Link to CRYO_SCAN_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_SCAN_DEAD_TABLE_FAILURE_THRESHOLD</code></td><td><code>10</code></td><td>consecutive_scan_failures at or above this AND zero query_logs rows in scan_dead_table_lookback_days -&gt; auto-deactivate the table.</td></tr>
+    <tr><td><code>CRYO_SCAN_DEAD_TABLE_LOOKBACK_DAYS</code></td><td><code>30</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_SCAN_ENGINE</code></td><td><code>&quot;pyiceberg&quot;</code></td><td>Metadata walk implementation for current-snapshot stats. &#x27;go&#x27; shells out to cryo-engine-go scan-stats (streaming manifests); &#x27;pyiceberg&#x27; uses the in-process path.</td></tr>
+    <tr><td><code>CRYO_SCAN_FRESHNESS_EXCLUDED_SCHEMAS</code></td><td><code>&quot;temp&quot;</code></td><td>Comma-separated schema names excluded from scan_freshness/scan_failures (health checks) -- for scratch/staging schemas whose tables are never queried, so a slow scan cadence against them isn&#x27;t a real signal.</td></tr>
+    <tr><td><code>CRYO_SCAN_GO_BINARY</code></td><td><code>unset</code></td><td>Optional path to cryo-engine-go; otherwise resolve like native runner.</td></tr>
+    <tr><td><code>CRYO_SCAN_NEEDS_COMPACTION_THRESHOLD</code></td><td><code>128</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_SCAN_NUM_CHUNKS</code></td><td><code>4</code></td><td>Number of chunks a fleet scan is split into.</td></tr>
+    <tr><td><code>CRYO_SCAN_PARALLEL_MANIFESTS</code></td><td><code>4</code></td><td>Max threads for parallel manifest fetching within a table. Kept modest under typical 2Gi scanner-worker limits: each in-flight manifest still materializes its entry list.</td></tr>
+    <tr><td><code>CRYO_SCAN_PARALLEL_TABLES</code></td><td><code>0</code></td><td>Tables to scan in parallel per chunk (0=serial).</td></tr>
+    <tr><td><code>CRYO_SCAN_SMALL_FILE_MB</code></td><td><code>89.6</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_SCAN_TABLE_TIMEOUT_SECONDS</code></td><td><code>180.0</code></td><td>Hard wall-clock bound for scanning a single table (catalog load, stats analysis, and orphan-file listing).</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-silent">CRYO_SILENT_*<a class="anchor" href="#env-silent" aria-label="Link to CRYO_SILENT_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_SILENT_LOSS_BATCH_SIZE</code></td><td><code>500</code></td><td>Tables swept per scheduler tick by the silent-data-loss sweep, not the whole fleet at once -- sweeping ~13k tables unbounded in one session accumulated every Table/TableStats ORM object simultaneously and OOMKilled cryo-scheduler every ~5min in production.</td></tr>
+    <tr><td><code>CRYO_SILENT_LOSS_CHECK_INTERVAL_MIN</code></td><td><code>5</code></td><td>Minutes between silent-data-loss scans per table (CRYO_SILENT_LOSS_CHECK_INTERVAL_MIN).</td></tr>
+    <tr><td><code>CRYO_SILENT_LOSS_LOCAL_ROOT</code></td><td><code>&quot;.local/tables&quot;</code></td><td>Local filesystem root for table data in dev (CRYO_SILENT_LOSS_LOCAL_ROOT).</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-slack">CRYO_SLACK_*<a class="anchor" href="#env-slack" aria-label="Link to CRYO_SLACK_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_SLACK_CHANNEL</code></td><td><code>unset</code></td><td>Override channel for Slack notifications (optional).</td></tr>
+    <tr><td><code>CRYO_SLACK_DAILY_REPORT_CRON</code></td><td><code>&quot;0 9 * * *&quot;</code></td><td>Cron expression for daily anomaly report (default: 9 AM daily).</td></tr>
+    <tr><td><code>CRYO_SLACK_DAILY_REPORT_ENABLED</code></td><td><code>false</code></td><td>Enable daily anomaly report to Slack.</td></tr>
+    <tr><td><code>CRYO_SLACK_SIGNING_SECRET</code></td><td><code>unset</code></td><td>Signing secret for Slack interactive requests. Unset rejects those requests.</td></tr>
+    <tr><td><code>CRYO_SLACK_WEBHOOK_URL</code></td><td><code>unset</code></td><td>Slack incoming webhook URL for daily reports.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-smtp">CRYO_SMTP_*<a class="anchor" href="#env-smtp" aria-label="Link to CRYO_SMTP_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_SMTP_FROM</code></td><td><code>unset</code></td><td>From address for report emails.</td></tr>
+    <tr><td><code>CRYO_SMTP_HOST</code></td><td><code>unset</code></td><td>SMTP host for email notifications.</td></tr>
+    <tr><td><code>CRYO_SMTP_PASSWORD</code></td><td><code>unset</code></td><td>SMTP password. <strong>Security:</strong> Keep in the Kubernetes Secret.</td></tr>
+    <tr><td><code>CRYO_SMTP_PORT</code></td><td><code>587</code></td><td>SMTP server port for email notifications.</td></tr>
+    <tr><td><code>CRYO_SMTP_USER</code></td><td><code>unset</code></td><td>SMTP user name.</td></tr>
+    <tr><td><code>CRYO_SMTP_USE_TLS</code></td><td><code>true</code></td><td>Use STARTTLS for SMTP.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-table">CRYO_TABLE_*<a class="anchor" href="#env-table" aria-label="Link to CRYO_TABLE_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_TABLE_ALERT_COOLDOWN_HOURS</code></td><td><code>24</code></td><td>Minimum hours between repeat breach alerts for the same table.</td></tr>
+    <tr><td><code>CRYO_TABLE_ALERT_DISPATCH_INTERVAL_HOURS</code></td><td><code>1</code></td><td>Hours between SLA/data-quality breach checks for owned/subscribed tables.</td></tr>
+    <tr><td><code>CRYO_TABLE_STATS_HISTORY_PRUNE_BATCH_SIZE</code></td><td><code>10000</code></td><td>Maximum table_stats_history rows deleted in one transaction.</td></tr>
+    <tr><td><code>CRYO_TABLE_STATS_HISTORY_PRUNE_MAX_ROWS_PER_TICK</code></td><td><code>100000</code></td><td>Maximum table_stats_history rows deleted by one daily retention tick.</td></tr>
+    <tr><td><code>CRYO_TABLE_STATS_HISTORY_RETENTION_DAYS</code></td><td><code>180</code></td><td>Days to retain per-scan TableStatsHistory snapshots.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-telemetry">CRYO_TELEMETRY_*<a class="anchor" href="#env-telemetry" aria-label="Link to CRYO_TELEMETRY_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_TELEMETRY_ATHENA_WORKGROUP</code></td><td><code>unset</code></td><td>Optional Athena workgroup filter for query-log ingestion.</td></tr>
+    <tr><td><code>CRYO_TELEMETRY_DUCKDB_DATABASE</code></td><td><code>unset</code></td><td>DuckDB database path for query_history / duckdb_logs ingestion.</td></tr>
+    <tr><td><code>CRYO_TELEMETRY_DUCKDB_ENABLED</code></td><td><code>false</code></td><td>Enable DuckDB query-log ingestion (dev-only).</td></tr>
+    <tr><td><code>CRYO_TELEMETRY_INGEST_ON_STARTUP</code></td><td><code>true</code></td><td>When true, scheduler attempts query-log ingest ticks if configured.</td></tr>
+    <tr><td><code>CRYO_TELEMETRY_TRINO_PASSWORD</code></td><td><code>unset</code></td><td>Password for telemetry_trino_url, if the coordinator requires auth (CRYO_TELEMETRY_TRINO_PASSWORD). Unset means no BasicAuthentication is attempted.</td></tr>
+    <tr><td><code>CRYO_TELEMETRY_TRINO_SSL_VERIFY</code></td><td><code>true</code></td><td>Verify TLS certificates when connecting to telemetry_trino_url (CRYO_TELEMETRY_TRINO_SSL_VERIFY). Only disable for coordinators with self-signed/internal-CA certs you&#x27;ve already verified out of band.</td></tr>
+    <tr><td><code>CRYO_TELEMETRY_TRINO_URL</code></td><td><code>unset</code></td><td>Trino coordinator URL for scheduled query-log ingestion (CRYO_TELEMETRY_TRINO_URL).</td></tr>
+    <tr><td><code>CRYO_TELEMETRY_TRINO_USER</code></td><td><code>unset</code></td><td>Username for telemetry_trino_url, if the coordinator requires auth (CRYO_TELEMETRY_TRINO_USER). Defaults to &#x27;cryo&#x27; if a password is set but no username is given.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-trino">CRYO_TRINO_*<a class="anchor" href="#env-trino" aria-label="Link to CRYO_TRINO_*">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_TRINO_COST_PRICING_ENABLED</code></td><td><code>false</code></td><td>Enables deriving a real $/GiB Trino compute price from the trino-db namespace&#x27;s actual Grafana Athena CUR cost (cryo.reporting.cost_ceiling.fetch_namespace_cost_range) divided by real bytes scanned that day (QueryCostAttributionDaily&#x27;s rollup), and writing it onto QueryCostAttributionDaily.estimated_scan_cost_usd --…</td></tr>
+    <tr><td><code>CRYO_TRINO_COST_PRICING_LOOKBACK_DAYS</code></td><td><code>10</code></td><td>How many trailing days to (re-)price on each tick. Wider than CUR&#x27;s 24-48h lag on purpose, so a day whose cost data was still incomplete on a prior tick gets priced once it catches up, not stuck NULL forever.</td></tr>
+    <tr><td><code>CRYO_TRINO_COST_PRICING_NAMESPACE</code></td><td><code>&quot;trino-db&quot;</code></td><td>Kubernetes namespace to price against (see trino_cost_pricing_enabled).</td></tr>
+    <tr><td><code>CRYO_TRINO_HOT_PRESET_NAME</code></td><td><code>&quot;daily-trino-hot-tables&quot;</code></td><td>Name of the Preset (see scripts/seed_trino_hot_preset.py) that TrinoHotPresetRunner repins daily -- must match an existing, seeded Preset.name.</td></tr>
+    <tr><td><code>CRYO_TRINO_HOT_PRESET_REPIN_INTERVAL_HOURS</code></td><td><code>24</code></td><td>Hours between repins of the daily top-N-by-Trino-query-frequency maintenance preset (cryo.scheduler.trino_hot_preset.repin_trino_hot_tables) -- daily by default, matching its purpose: concentrate maintenance effort on whichever tables are actually driving Trino scan cost right now, re-evaluated once a day.</td></tr>
+    <tr><td><code>CRYO_TRINO_HOT_PRESET_TABLE_LIMIT</code></td><td><code>500</code></td><td>How many top-Trino-query-frequency tables to pin to the preset each repin.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-other">Other<a class="anchor" href="#env-other" aria-label="Link to Other">#</a></h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_ALLOW_DEV_TOKEN_IN_PROD</code></td><td><code>false</code></td><td>Explicit opt-in to keep POST /api/v1/auth/token (self-declared role, no real identity check) enabled even when environment==&#x27;prod&#x27;. Only for bridging the gap before OIDC is configured -- anyone who can reach the API can self-grant any role while this is true. Turn off once oidc_issuer_url is set. <strong>Security:</strong> Re-opens the unauthenticated dev token route. Leave unset.</td></tr>
+    <tr><td><code>CRYO_API_RATE_LIMIT_BURST</code></td><td><code>10</code></td><td>Burst capacity for expensive API endpoint rate limiting.</td></tr>
+    <tr><td><code>CRYO_API_RATE_LIMIT_RPS</code></td><td><code>0.5</code></td><td>Token refill rate for expensive API endpoints (requests/sec).</td></tr>
+    <tr><td><code>CRYO_APP_NAME</code></td><td><code>&quot;Cryo&quot;</code></td><td>Display name used in API metadata.</td></tr>
+    <tr><td><code>CRYO_BENEFIT_SCORE_SWEEP_VIA_K8S_JOBS</code></td><td><code>false</code></td><td>Recovery plan §2/§8, 2026-09-20: when true, BenefitScoreUpdaterRunner&#x27;s tick ensures a durable analysis_tasks row is due and dispatches a bounded K8s Job (cryo.analysis.dispatch) to process it, instead of running the multi-hour sweep in-process (the scheduler-OOM root cause this whole mechanism replaces).</td></tr>
+    <tr><td><code>CRYO_BENEFIT_SCORE_UPDATE_INTERVAL_HOURS</code></td><td><code>6</code></td><td>Hours between AutoComp benefit score recalculations.</td></tr>
+    <tr><td><code>CRYO_COMMIT_RACE_ALERT_LOOKBACK_HOURS</code></td><td><code>24</code></td><td>Window scanned for native compaction runs that lost the optimistic-concurrency commit race (audit detail tagged &#x27;commit_race_lost&#x27;); see docs/native-engine-scoping-research.md §3.2.</td></tr>
+    <tr><td><code>CRYO_COMMIT_RACE_ALERT_MIN_OCCURRENCES</code></td><td><code>2</code></td><td>Number of commit-race losses within the lookback window before a table is flagged as &#x27;compaction losing the commit race&#x27;. 1 = alert on the first loss.</td></tr>
+    <tr><td><code>CRYO_COMPUTE_STATISTICS_ENABLED</code></td><td><code>true</code></td><td>Enable Puffin statistics computation after compaction by default.</td></tr>
+    <tr><td><code>CRYO_CORS_ALLOW_ORIGINS</code></td><td><code>[&quot;http://localhost:5173&quot;]</code></td><td>Origins allowed to call the API from a browser, as a JSON list. Not needed when the UI is served through the web pod&#x27;s /api proxy. <strong>Security:</strong> Never list *.</td></tr>
+    <tr><td><code>CRYO_CREDENTIAL_VENDING_ENABLED</code></td><td><code>false</code></td><td>Enable REST catalog STS credential vending in worker.</td></tr>
+    <tr><td><code>CRYO_DATABASE_URL</code></td><td><code>&quot;postgresql+psycopg://cryo:cryo@localhost:5432/cryo&quot;</code></td><td><strong>Set in production.</strong> SQLAlchemy URL of the PostgreSQL database that holds the cryo schema. <strong>Security:</strong> Contains the database password. Keep in the Kubernetes Secret.</td></tr>
+    <tr><td><code>CRYO_DISPATCH_HEARTBEAT_STALL_MINUTES</code></td><td><code>1560</code></td><td>Minutes since the last MaintenanceJob admitted/started/finished before vitals.dispatch_heartbeat calls dispatch stalled.</td></tr>
+    <tr><td><code>CRYO_DURABLE_INTENTS_ENABLED</code></td><td><code>false</code></td><td>Bind new maintenance jobs to immutable plans, monotonic table fences, attempts, and effect receipts. Safety-alpha migration flag; legacy jobs remain executable.</td></tr>
+    <tr><td><code>CRYO_DURABLE_INTENT_TTL_HOURS</code></td><td><code>24</code></td><td>Maximum time a bound maintenance intent remains executable. Scheduled intents start their TTL at scheduled dispatch time and are also capped by the run deadline.</td></tr>
+    <tr><td><code>CRYO_ENFORCE_TENANT_ISOLATION</code></td><td><code>false</code></td><td>When true, every JWT must carry tenant_id and queries are scoped.</td></tr>
+    <tr><td><code>CRYO_ENGINE_CONNECT_TIMEOUT_SEC</code></td><td><code>5.0</code></td><td>Per-request connect timeout (seconds) for Trino coordinator probes and statement execution. The trino client doesn&#x27;t expose a connect timeout directly, so we patch the requests Session it uses.</td></tr>
+    <tr><td><code>CRYO_ENVIRONMENT</code></td><td><code>&quot;dev&quot;</code></td><td><strong>Set in production.</strong> Deployment environment: dev, test, staging or prod. prod turns off the dev token route, and the Helm chart requires every enabled image to be pinned by digest. <strong>Security:</strong> Set prod for any install other people can reach.</td></tr>
+    <tr><td><code>CRYO_EVOLVING_CATALOG_CLEANUP_INTERVAL_HOURS</code></td><td><code>6</code></td><td>Hours between sweeps deactivating orphaned &#x27;*_evolving&#x27; catalog entries (cryo.db.repositories.sources.deactivate_orphaned_evolving_catalog_entries) -- the fix existed since 2026-08-26 (ace7f4b) but was never wired to a scheduled runner, so the same historical rename artifact (1,200+ tables, location IS NULL, a…</td></tr>
+    <tr><td><code>CRYO_FAST_PATH_CHECK_ENABLED</code></td><td><code>true</code></td><td>Cheap new-table health sweep on the telemetry tick (RFC Features 2+3).</td></tr>
+    <tr><td><code>CRYO_FAST_PATH_CHECK_MAX_TABLES_PER_TICK</code></td><td><code>50</code></td><td>Cap on how many newly discovered tables the fast-path sweep inspects per telemetry tick when fast_path_check_enabled is true.</td></tr>
+    <tr><td><code>CRYO_FLEET_ADMISSION_RATE_CAP</code></td><td><code>500</code></td><td>Blunt, mechanism-agnostic ceiling on total jobs (any status, any destination, fleet-wide) admitted within fleet_admission_rate_window_minutes.</td></tr>
+    <tr><td><code>CRYO_FLEET_ADMISSION_RATE_WINDOW_MINUTES</code></td><td><code>15</code></td><td>Rolling window used by fleet_admission_rate_cap -- see that field&#x27;s docstring for the incident this pair guards against.</td></tr>
+    <tr><td><code>CRYO_FLINK_ENGINE_ENABLED</code></td><td><code>false</code></td><td>Enable Flink config-generation engine (does not submit jobs).</td></tr>
+    <tr><td><code>CRYO_FORECAST_DEFAULT_HORIZON_HOURS</code></td><td><code>24</code></td><td>Default workload forecast horizon for smart-maintenance API endpoints.</td></tr>
+    <tr><td><code>CRYO_FORECAST_WINDOW_DAYS</code></td><td><code>14</code></td><td>Historical window used by EWMA workload forecaster.</td></tr>
+    <tr><td><code>CRYO_GOVERNOR_BANDIT_TUNING_ENABLED</code></td><td><code>false</code></td><td>When true, a Thompson-sampling bandit may override the admission config an operator set on a destination (per_replica_cap, high_load_ratio/fraction, default_cooldown_hours, min_benefit_score) and learning signals are recorded on every admission and deferral.</td></tr>
+    <tr><td><code>CRYO_GOVERNOR_SHADOW_SAMPLE_RATE</code></td><td><code>20</code></td><td>Evaluate the ROI-gate and resource-predictor shadow paths for 1 in N candidates per wave, not every one.</td></tr>
+    <tr><td><code>CRYO_GRAFANA_ATHENA_DATASOURCE_UID</code></td><td><code>&quot;&quot;</code></td><td>Grafana datasource uid for the Athena CUR connection used by the cost ceiling. Required when cost_ceiling_enabled or Trino scan-cost pricing is on.</td></tr>
+    <tr><td><code>CRYO_GRAFANA_BASE_URL</code></td><td><code>&quot;&quot;</code></td><td>Base URL for cost_ceiling&#x27;s Grafana API calls, no trailing slash. Required when cost_ceiling_enabled is true.</td></tr>
+    <tr><td><code>CRYO_HEALTH_PORT</code></td><td><code>8081</code></td><td>HTTP port for /healthz and /metrics on background services.</td></tr>
+    <tr><td><code>CRYO_HILBERT_CLUSTERING_ENABLED</code></td><td><code>false</code></td><td>Allow Hilbert-curve clustering. Off by default: Iceberg only gained hilbert() in 1.12.0 on the Spark 4.1 path (PR #16827, merged 2026-08-25), and an unsupported runtime fails at procedure-parse time after the job is submitted. Requests downgrade to Z-order unless the versions below confirm support.</td></tr>
+    <tr><td><code>CRYO_JWT_SECRET</code></td><td><code>unset</code></td><td><strong>Set in production.</strong> HS256 secret for API JWTs. Defaults to secret_key when unset. <strong>Security:</strong> Set a separate random value so token signing can be rotated on its own.</td></tr>
+    <tr><td><code>CRYO_MAX_CONCURRENT_JOBS_PER_METASTORE</code></td><td><code>150</code></td><td>Cross-destination cap on RUNNING jobs whose table&#x27;s source shares the same Hive metastore URI, checked at native-engine admission time.</td></tr>
+    <tr><td><code>CRYO_MAX_JOBS_PER_SCHEDULED_RUN</code></td><td><code>500</code></td><td>Hard cap on how many tables one cron-triggered run may target. build_scheduled_run has always accepted a budget_hint, but the cron path never passed one, so a single preset fired against every matching table in the fleet.</td></tr>
+    <tr><td><code>CRYO_MCP_RUN_PRESET_ENABLED</code></td><td><code>false</code></td><td>Allow write-capable MCP run_preset tool. Disabled by default for safety.</td></tr>
+    <tr><td><code>CRYO_ML_DRIFT_CHECK_INTERVAL_HOURS</code></td><td><code>24</code></td><td>Hours between scheduled health-classifier drift evaluations.</td></tr>
+    <tr><td><code>CRYO_NATIVE_ENGINE_ENABLED</code></td><td><code>true</code></td><td>Enable native cryo-engine maintenance (default workflow).</td></tr>
+    <tr><td><code>CRYO_OBSERVATION_LAKEHOUSE_PATH</code></td><td><code>&quot;.local/observations&quot;</code></td><td>On-disk path where the observation lakehouse stores long-term actuations.</td></tr>
+    <tr><td><code>CRYO_OFFPEAK_END_IST</code></td><td><code>0</code></td><td>End hour (IST) of the off-peak window. Equal start and end disables the gate.</td></tr>
+    <tr><td><code>CRYO_OFFPEAK_START_IST</code></td><td><code>0</code></td><td>Start hour (IST) of the off-peak window. Equal start and end disables the gate.</td></tr>
+    <tr><td><code>CRYO_PAGERDUTY_ROUTING_KEY</code></td><td><code>unset</code></td><td>PagerDuty Events API v2 routing key for high-severity anomalies.</td></tr>
+    <tr><td><code>CRYO_PLAN_VERIFIER_ENABLED</code></td><td><code>true</code></td><td>When false, /plans/verify and the enqueue-time verifier pass-through return 503. Lets ops kill the feature without redeploying.</td></tr>
+    <tr><td><code>CRYO_PRODUCTION_HEALTH_CHECK_ENABLED</code></td><td><code>false</code></td><td>Post the production health check to Slack.</td></tr>
+    <tr><td><code>CRYO_PROPERTY_AUTOPILOT_ENABLED</code></td><td><code>false</code></td><td>Off by default -- opt-in.</td></tr>
+    <tr><td><code>CRYO_PROPERTY_AUTOPILOT_MAX_TABLES_PER_TICK</code></td><td><code>100</code></td><td>Cap on how many tables get their safe property recommendations applied per telemetry tick when property_autopilot_enabled is true -- same rationale as layout_recommendation_max_tables_per_tick above: bounds the cost of a single tick rather than trying to sweep the whole fleet in one pass.</td></tr>
+    <tr><td><code>CRYO_PUFFIN_LOCAL_DIR</code></td><td><code>&quot;.local/puffin&quot;</code></td><td>On-disk directory for Puffin blobs in local dev (CRYO_PUFFIN_LOCAL_DIR).</td></tr>
+    <tr><td><code>CRYO_REDIS_URL</code></td><td><code>&quot;redis://localhost:6379/0&quot;</code></td><td><strong>Set in production.</strong> URL of the Redis used for the job queue, leases and short-lived markers. <strong>Security:</strong> Keep in the Kubernetes Secret if it carries a password.</td></tr>
+    <tr><td><code>CRYO_SCANNER_MAX_PARTITIONS_PER_TABLE</code></td><td><code>5000</code></td><td>Cap on how many partition rows a single scan persists to table_partitions per table, keeping the ones with the most small files (the actual compaction signal).</td></tr>
+    <tr><td><code>CRYO_SCANNER_WAIR_FILE_SAMPLE_SIZE</code></td><td><code>1000</code></td><td>Maximum deterministic current-snapshot data-file bound samples retained per table for WAIR analysis, restricted to range-queried numeric/temporal columns. Zero disables collection.</td></tr>
+    <tr><td><code>CRYO_SCRIPT_RUNTIME</code></td><td><code>&quot;docker&quot;</code></td><td>Container runtime for custom maintenance scripts (runsc=gVisor).</td></tr>
+    <tr><td><code>CRYO_SECRET_KEY</code></td><td><code>&quot;dev-only-change-me&quot;</code></td><td><strong>Set in production.</strong> Signs Cryo&#x27;s HS256 tokens when CRYO_JWT_SECRET is unset, and derives the key that encrypts stored connection secrets. <strong>Security:</strong> The default is published. Set a random value of at least 32 characters, and back it up: changing it makes stored secrets unreadable.</td></tr>
+    <tr><td><code>CRYO_SHARED_S3_REPORT_ENABLED</code></td><td><code>false</code></td><td>Post the shared-S3-path anomaly report to Slack.</td></tr>
+    <tr><td><code>CRYO_SPARK_ICEBERG_VERSION</code></td><td><code>unset</code></td><td>Iceberg runtime version on the Spark destination, e.g. &#x27;1.12.0&#x27;. Used to gate Hilbert clustering; unknown is treated as unsupported, never as new enough.</td></tr>
+    <tr><td><code>CRYO_SPARK_RUNTIME_VERSION</code></td><td><code>unset</code></td><td>Spark version on the destination, e.g. &#x27;4.1.0&#x27;. Used to gate Hilbert clustering; unknown is treated as unsupported.</td></tr>
+    <tr><td><code>CRYO_STATS_COLUMNS_LIMIT</code></td><td><code>50</code></td><td>Max columns to compute stats for (high-cardinality priority).</td></tr>
+    <tr><td><code>CRYO_STUCK_ADMITTED_AFTER_SECONDS</code></td><td><code>900</code></td><td>Grace period before reconcile_stuck_admitted_jobs treats an ADMITTED job with no engine_ref as undispatched. Only applies to jobs that are genuinely absent from the claim queue; a job still waiting its turn is left alone however long the queue is.</td></tr>
+    <tr><td><code>CRYO_UNMATCHED_TABLES_CHECK_INTERVAL_HOURS</code></td><td><code>6</code></td><td>Hours between fleet-wide sweeps for active tables that resolve to no effective preset (cryo.scheduler.rules.effective_preset returns None) -- these are never scheduled for maintenance by any cron and previously went undetected.</td></tr>
+    <tr><td><code>CRYO_WAVE_WAIT_SEC</code></td><td><code>300</code></td><td><em>Not described yet.</em></td></tr>
+    <tr><td><code>CRYO_WEB_APP_BASE_URL</code></td><td><code>unset</code></td><td>Base URL of the Cryo web app, used to build deep links in breach alerts.</td></tr>
+    <tr><td><code>CRYO_WORKER_DISPATCH_BACKLOG_PER_REPLICA</code></td><td><code>3</code></td><td>Admission backpressure: the governor will not grow the undispatched ADMITTED backlog beyond this many jobs per live worker replica.</td></tr>
+  </tbody>
+</table>
+</div>
+<h3 id="env-outside-settings">Read outside Settings<a class="anchor" href="#env-outside-settings" aria-label="Link to Read outside Settings">#</a></h3>
+<p>These are read with <code>os.environ</code> by one module rather than through <code>Settings</code>. Most are set by Cryo itself on the Jobs it creates.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Variable</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_ANALYSIS_IMAGE</code></td><td>Image for analysis Jobs, when the caller passes none.</td></tr>
+    <tr><td><code>CRYO_ANALYSIS_IMAGE_PULL_POLICY</code></td><td>Pull policy for analysis Jobs. Default IfNotPresent.</td></tr>
+    <tr><td><code>CRYO_ANALYSIS_SERVICE_ACCOUNT</code></td><td>ServiceAccount for analysis Jobs. Defaults to default.</td></tr>
+    <tr><td><code>CRYO_BACKUP_KEY</code></td><td>Required by python -m cryo.operations.backup: 32 random bytes, URL-safe base64. Encrypts and decrypts backups. Store it apart from the backups.</td></tr>
+    <tr><td><code>CRYO_ENGINE_BINARY</code></td><td>Path to the native engine binary, overriding the one on PATH.</td></tr>
+    <tr><td><code>CRYO_GRAFANA_TOKEN</code></td><td>Grafana API token for the daily and health-check reports.</td></tr>
+    <tr><td><code>CRYO_K8S_NAMESPACE</code></td><td>Namespace for native Jobs when POD_NAMESPACE is unset.</td></tr>
+    <tr><td><code>CRYO_NATIVE_IMAGE</code></td><td>Image for native and analysis Jobs, when the destination sets none.</td></tr>
+    <tr><td><code>CRYO_NATIVE_IMAGE_PULL_POLICY</code></td><td>Pull policy for native Jobs, when the destination sets none.</td></tr>
+    <tr><td><code>CRYO_NATIVE_IMAGE_PULL_SECRETS</code></td><td>Pull secrets for native Jobs, when the destination sets none.</td></tr>
+    <tr><td><code>CRYO_NATIVE_SERVICE_ACCOUNT</code></td><td>ServiceAccount for native Jobs, when the destination sets none.</td></tr>
+    <tr><td><code>CRYO_NATIVE_TTL_SECONDS</code></td><td>ttlSecondsAfterFinished for native Jobs, when the destination sets none.</td></tr>
+    <tr><td><code>CRYO_PAYLOAD_B64</code></td><td>Internal. Job payload passed by Cryo to its own Job pods.</td></tr>
+    <tr><td><code>CRYO_PAYLOAD_FILE</code></td><td>Internal. Path of the Job payload Cryo mounts into its own Job pods.</td></tr>
+    <tr><td><code>CRYO_SCANNER_JOB_DISPATCH_BATCH_SIZE</code></td><td>Tables per scanner Job when scans dispatch as Jobs. Default 1.</td></tr>
+    <tr><td><code>CRYO_SPARK_DRIVER_POD_CLEANUP_TTL_SECONDS</code></td><td>Age after which finished Spark driver pods are deleted. Default 3600.</td></tr>
+    <tr><td><code>CRYO_SPARK_K8S_SLOT_CAP</code></td><td>Override for the Spark-on-Kubernetes slot cap.</td></tr>
+    <tr><td><code>CRYO_STATE_DIR</code></td><td>Directory for node-local state files. Default /tmp/cryo.</td></tr>
+  </tbody>
+</table>
+</div>
+
+
+<h2 id="helm">Helm values<a class="anchor" href="#helm" aria-label="Link to Helm values">#</a></h2>
+<p>The top-level values in <code>deploy/helm/cryo/values.yaml</code>, and the keys under each one. The comments in <code>values.yaml</code> explain every key and why its default is what it is. <code>values.schema.json</code> validates the types of some of them.</p>
+<!-- Generated by `python -m cryo.config_reference`. Do not edit. -->
+<div class="tbl">
+<table>
+  <thead><tr><th>Value</th><th>What it configures</th><th>Keys</th></tr></thead>
+  <tbody>
+    <tr><td><code>image</code></td><td>The Cryo image for the API, workers, governor, scheduler, scanner and CronJobs.</td><td><code>repository</code>, <code>tag</code>, <code>digest</code>, <code>pullPolicy</code></td></tr>
+    <tr><td><code>imagePullSecrets</code></td><td>Pull secrets added to every pod.</td><td>—</td></tr>
+    <tr><td><code>serviceAccount</code></td><td>The ServiceAccount Cryo&#x27;s pods run as. Annotate it for IRSA.</td><td><code>create</code>, <code>name</code>, <code>annotations</code></td></tr>
+    <tr><td><code>podSecurityContext</code></td><td>Pod security context applied to every Cryo pod.</td><td><code>runAsNonRoot</code>, <code>runAsUser</code>, <code>runAsGroup</code>, <code>fsGroup</code>, <code>seccompProfile</code></td></tr>
+    <tr><td><code>containerSecurityContext</code></td><td>Container security context applied to every Cryo container.</td><td><code>allowPrivilegeEscalation</code>, <code>privileged</code>, <code>capabilities</code></td></tr>
+    <tr><td><code>global</code></td><td>Environment for every process: env (plain values), envFromSecret and envFromConfigMap.</td><td><code>env</code>, <code>envFromSecret</code>, <code>envFromConfigMap</code></td></tr>
+    <tr><td><code>observability</code></td><td>Prometheus scrape annotations and the metrics port.</td><td><code>prometheusScrape</code>, <code>metricsPort</code></td></tr>
+    <tr><td><code>api</code></td><td>The API Deployment: replicas, Uvicorn workers, probes, resources and Ingress annotations.</td><td><code>replicas</code>, <code>port</code>, <code>workers</code>, <code>probe</code>, <code>ingressAnnotations</code>, <code>resources</code></td></tr>
+    <tr><td><code>worker</code></td><td>The maintenance worker Deployment.</td><td><code>replicas</code>, <code>resources</code></td></tr>
+    <tr><td><code>governor</code></td><td>The admission governor Deployment (leader-elected).</td><td><code>replicas</code>, <code>probe</code>, <code>resources</code></td></tr>
+    <tr><td><code>scheduler</code></td><td>The cron scheduler Deployment (leader-elected).</td><td><code>replicas</code>, <code>resources</code></td></tr>
+    <tr><td><code>scannerWorker</code></td><td>The ad-hoc scan consumer Deployment and its HPA or KEDA autoscaling.</td><td><code>replicas</code>, <code>resources</code>, <code>autoscaling</code></td></tr>
+    <tr><td><code>scanner</code></td><td>The fleet-scan CronJob: schedule, chunks, and Job dispatch.</td><td><code>schedule</code>, <code>suspend</code>, <code>chunks</code>, <code>resources</code>, <code>jobDispatch</code></td></tr>
+    <tr><td><code>maintenance</code></td><td>The nightly batch-maintenance CronJob and its Spark lanes. Off by default.</td><td><code>enabled</code>, <code>schedule</code>, <code>suspend</code>, <code>topN</code>, <code>maxLanes</code>, <code>laneMaxCpuMilli</code>, <code>laneMaxMemMib</code>, <code>laneMaxNodeCpu</code>, <code>laneCapacityTypes</code>, <code>maxRuntimeMinutes</code>, <code>cooldownHours</code>, <code>resources</code></td></tr>
+    <tr><td><code>backup</code></td><td>The encrypted offsite backup CronJob. Off by default.</td><td><code>enabled</code>, <code>schedule</code>, <code>s3Uri</code>, <code>retentionDays</code>, <code>backoffLimit</code>, <code>serviceAccount</code>, <code>resources</code></td></tr>
+    <tr><td><code>native</code></td><td>Native engine Jobs, their RBAC, KEDA and Karpenter settings. Off by default.</td><td><code>enabled</code>, <code>image</code>, <code>serviceAccount</code>, <code>ttlSecondsAfterFinished</code>, <code>maxCpu</code>, <code>maxMemory</code>, <code>spot</code>, <code>keda</code>, <code>karpenter</code></td></tr>
+    <tr><td><code>analysis</code></td><td>Analysis-runner RBAC for scheduler-dispatched analysis Jobs. Off by default.</td><td><code>enabled</code></td></tr>
+    <tr><td><code>spark</code></td><td>Cryo-managed Spark on Kubernetes (spark.k8s). Off by default.</td><td><code>k8s</code></td></tr>
+    <tr><td><code>redis</code></td><td>A single in-namespace Redis with no volume. Set CRYO_REDIS_URL yourself.</td><td><code>enabled</code>, <code>image</code>, <code>port</code>, <code>probe</code>, <code>resources</code>, <code>maxmemory</code>, <code>maxmemoryPolicy</code>, <code>save</code>, <code>podSecurityContext</code></td></tr>
+    <tr><td><code>migration</code></td><td>The pre-install/pre-upgrade migration Job image and retries.</td><td><code>image</code>, <code>backoffLimit</code></td></tr>
+    <tr><td><code>web</code></td><td>The UI Deployment and Service. Off by default.</td><td><code>enabled</code>, <code>replicas</code>, <code>image</code>, <code>port</code>, <code>probe</code>, <code>service</code>, <code>podSecurityContext</code>, <code>resources</code></td></tr>
+    <tr><td><code>service</code></td><td>The API Service type and port.</td><td><code>type</code>, <code>port</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+
+<h2 id="regenerate">Keeping this page current<a class="anchor" href="#regenerate" aria-label="Link to Keeping this page current">#</a></h2>
+<p>Both tables come from <code>python -m cryo.config_reference</code>, which reads <code>cryo.config.Settings</code>, scans the package for other <code>CRYO_*</code> reads, and parses <code>values.yaml</code>. CI runs it with <code>--check</code>. It fails when the committed tables are stale, when code reads a new variable outside <code>Settings</code> without a description, when a new <code>Settings</code> field has no description, or when a new top-level Helm value has none. After changing configuration, run:</p>
+<figure class="code" data-lang="bash"><figcaption class="code-bar"><span class="code-title">terminal</span><button class="copy" type="button" data-copy="make config-docs" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">make</span> config<span class="tk-o">-docs</span></span></code></pre></figure>
+
+<h2 id="read-next">Where to go next<a class="anchor" href="#read-next" aria-label="Link to Where to go next">#</a></h2>
+<div class="linkcards"><a class="linkcard" href="../security/"><span class="lc-title">Security</span><span class="lc-desc">What the security-relevant settings protect.</span></a><a class="linkcard" href="../install/"><span class="lc-title">Install on Kubernetes</span><span class="lc-desc">Where each kind of setting goes in a Helm install.</span></a></div>
+</div><aside class="community"><div><p class="cm-h">Stuck, or have an idea?</p><p>Cryo is built in the open. Ask in GitHub Discussions, open an issue, or send a pull request.</p></div><div class="cm-actions"><a class="btn btn-sm" href="https://github.com/tech-pw/cryo/discussions">Discussions</a><a class="btn btn-sm" href="https://github.com/tech-pw/cryo/issues">Issues</a><a class="btn btn-sm btn-primary" href="https://github.com/tech-pw/cryo"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>Star on GitHub</a></div></aside><nav class="pager" aria-label="Previous and next pages"><a class="pg pg-prev" href="../reference/"><span class="pg-k">Previous</span><span class="pg-t">Reference</span></a><span></span></nav></article></main><aside class="toc" aria-label="On this page"><p class="toc-h">On this page</p><ul><li class="toc-l2"><a href="#environment">Environment variables</a></li><li class="toc-l3"><a href="#env-ai">CRYO_AI_*</a></li><li class="toc-l3"><a href="#env-anomaly">CRYO_ANOMALY_*</a></li><li class="toc-l3"><a href="#env-assistant">CRYO_ASSISTANT_*</a></li><li class="toc-l3"><a href="#env-audit">CRYO_AUDIT_*</a></li><li class="toc-l3"><a href="#env-cost">CRYO_COST_*</a></li><li class="toc-l3"><a href="#env-default">CRYO_DEFAULT_*</a></li><li class="toc-l3"><a href="#env-gitops">CRYO_GITOPS_*</a></li><li class="toc-l3"><a href="#env-job">CRYO_JOB_*</a></li><li class="toc-l3"><a href="#env-layout">CRYO_LAYOUT_*</a></li><li class="toc-l3"><a href="#env-llm">CRYO_LLM_*</a></li><li class="toc-l3"><a href="#env-maintenance">CRYO_MAINTENANCE_*</a></li><li class="toc-l3"><a href="#env-oidc">CRYO_OIDC_*</a></li><li class="toc-l3"><a href="#env-otel">CRYO_OTEL_*</a></li><li class="toc-l3"><a href="#env-qpp">CRYO_QPP_*</a></li><li class="toc-l3"><a href="#env-query">CRYO_QUERY_*</a></li><li class="toc-l3"><a href="#env-report">CRYO_REPORT_*</a></li><li class="toc-l3"><a href="#env-roi">CRYO_ROI_*</a></li><li class="toc-l3"><a href="#env-s3">CRYO_S3_*</a></li><li class="toc-l3"><a href="#env-scan">CRYO_SCAN_*</a></li><li class="toc-l3"><a href="#env-silent">CRYO_SILENT_*</a></li><li class="toc-l3"><a href="#env-slack">CRYO_SLACK_*</a></li><li class="toc-l3"><a href="#env-smtp">CRYO_SMTP_*</a></li><li class="toc-l3"><a href="#env-table">CRYO_TABLE_*</a></li><li class="toc-l3"><a href="#env-telemetry">CRYO_TELEMETRY_*</a></li><li class="toc-l3"><a href="#env-trino">CRYO_TRINO_*</a></li><li class="toc-l3"><a href="#env-other">Other</a></li><li class="toc-l3"><a href="#env-outside-settings">Read outside Settings</a></li><li class="toc-l2"><a href="#helm">Helm values</a></li><li class="toc-l2"><a href="#regenerate">Keeping this page current</a></li><li class="toc-l2"><a href="#read-next">Where to go next</a></li></ul><a class="toc-top" href="#main">Back to top ↑</a></aside></div><footer class="foot"><div class="foot-in"><div class="foot-brand"><a class="logo" href="../"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true"><g stroke-width="1.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
+    <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
+    <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
+    <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
+    <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
+    <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
+    <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
+    <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
+    <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="2" stroke-linecap="round" style="stroke:var(--cryo-mark-dash,#5C667A)">
+    <path d="M17 19.5L20 22.3"/>
+    <path d="M27.6 14.5L29 18"/>
+    <path d="M13.9 34.1L17.2 34.7"/>
+  </g>
+  <g stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
+    <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
+    <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="1.1">
+    <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
+    <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
+    <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
+  </g>
+  <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)"/>
+  <g stroke="#FFFFFF" stroke-linecap="round">
+    <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
+    <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><p>Apache-2.0, self-hosted Iceberg maintenance. Every decision explained.</p></div><div><p class="foot-h">Docs</p><ul><li><a href="../quickstart/">Quickstart</a></li><li><a href="../benchmark/">Benchmark</a></li><li><a href="../concepts/">Concepts</a></li><li><a href="../architecture/">Architecture</a></li><li><a href="../reference/">Reference</a></li></ul></div><div><p class="foot-h">Operate</p><ul><li><a href="../maintenance/">Maintenance</a></li><li><a href="../health/">Health and cost</a></li><li><a href="../engines/">Engines</a></li><li><a href="../deployment/">Deployment</a></li></ul></div><div><p class="foot-h">Project</p><ul><li><a href="https://github.com/tech-pw/cryo">GitHub</a></li><li><a href="https://github.com/tech-pw/cryo/issues">Issues</a></li><li><a href="../llms.txt">llms.txt</a></li><li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 licence</a></li></ul></div></div><p class="foot-fine">Apache, Apache Iceberg, Iceberg and Apache Spark are trademarks of The Apache Software Foundation. Other names may be trademarks of their respective owners.</p></footer><dialog class="search" id="search" aria-label="Search the docs"><form method="dialog" class="search-box"><div class="search-field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="search-input" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="search-list"><kbd>Esc</kbd></div><ul class="search-list" id="search-list" role="listbox"></ul><p class="search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to open</span></p></form></dialog><script src="../assets/js/site.js?v=af4e3140cc" defer></script></body></html>
