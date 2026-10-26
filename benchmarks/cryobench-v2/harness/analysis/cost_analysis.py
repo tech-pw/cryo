@@ -6,7 +6,7 @@ import json, statistics
 from collections import defaultdict
 from common import load, pods, write_json, write_csv, OUT, ROOT
 
-# Rate assumptions (USD, <region>). Frozen in the protocol budget section before the runs.
+# Rate assumptions (USD, ap-south-1). Frozen in the protocol budget section before the runs.
 RATE_VCPU_H = 0.057          # r6a on-demand per vCPU-hour (r6a nodes observed; 8 GiB per vCPU covers memory)
 RATE_S3_GB_MONTH = 0.025     # S3 Standard storage
 RATE_S3_PUT_1K = 0.005       # PUT/COPY/POST/LIST per 1,000

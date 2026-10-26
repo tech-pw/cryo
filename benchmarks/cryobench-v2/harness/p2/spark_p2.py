@@ -39,7 +39,7 @@ spark = (
     .config("spark.sql.catalog.bench.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
     .config("spark.sql.catalog.bench.s3.access-key-id", os.environ["AWS_ACCESS_KEY_ID"])
     .config("spark.sql.catalog.bench.s3.secret-access-key", os.environ["AWS_SECRET_ACCESS_KEY"])
-    .config("spark.sql.catalog.bench.client.region", "<region>")
+    .config("spark.sql.catalog.bench.client.region", "ap-south-1")
     .config("spark.sql.catalog.bench.s3.retry.num-retries", "32")
     .config("spark.sql.adaptive.enabled", "false")
     .getOrCreate()

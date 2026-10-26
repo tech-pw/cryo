@@ -119,10 +119,13 @@ provenance against the internal repository matches the first.
 | `<benchmark-bucket>` | the object-store bucket the benchmark wrote to |
 | `<benchmark-cluster>` | the EKS cluster the benchmark ran on |
 | `cryo-bench` | the Kubernetes namespace the benchmark ran in |
-| `<region>` | the AWS region |
-| `<node-N>` | the EKS node hostnames, which carried private IPs. Each node keeps its own number, so pods that shared a node still read as shared |
+| `<node>` | the EKS node hostnames, which carried the nodes' private IPs |
 | `<home>` | the local home directory, in recorded paths |
 | `<internal-host>`, `<internal-domain>` | internal infrastructure hostnames |
+
+The AWS region (`ap-south-1`) is **not** replaced. It is public — the benchmark
+page states it, it appears in the Kubernetes topology labels in the data, and it
+is where S3 prices are published. Only the private IPs were sensitive.
 
 The measured numbers were not changed. The analysis outputs regenerate
 byte-identically from the scrubbed data, which is what proves it: a replacement

@@ -263,7 +263,7 @@ The costs are separated as follows:
 6. snapshot-retained bytes (measured, under the normal 7-day retention, never shortened);
 7. net total.
 
-Everything is modeled from published <region> prices and measured usage, and labeled modeled. Break-even and ROI are computed per query frequency.
+Everything is modeled from published ap-south-1 prices and measured usage, and labeled modeled. Break-even and ROI are computed per query frequency.
 
 ## Phase 6 (P1): production workload protection
 

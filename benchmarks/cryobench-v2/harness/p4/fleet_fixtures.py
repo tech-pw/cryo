@@ -29,7 +29,7 @@ cat = RestCatalog("bench", **{
     "warehouse": WAREHOUSE,
     "s3.access-key-id": os.environ["AWS_ACCESS_KEY_ID"],
     "s3.secret-access-key": os.environ["AWS_SECRET_ACCESS_KEY"],
-    "s3.region": "<region>",
+    "s3.region": "ap-south-1",
 })
 schema = Schema(NestedField(1, "id", LongType(), required=False),
                 NestedField(2, "name", StringType(), required=False),
