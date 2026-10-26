@@ -569,3 +569,53 @@ class TestJobRowFinalization:
         assert result.resolved_ok == 1
         session.refresh(row)
         assert row.status == "OK"
+
+
+def test_sweep_defers_a_job_whose_driver_pod_the_quota_refused(session, monkeypatch) -> None:
+    """Issue #159: a ResourceQuota refusal is a capacity condition, not a table failure."""
+    destination = _seed_spark_destination(session)
+    job = _seed_running_job(session, destination_id=destination.id)
+    row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-quota", job_id=job.id)
+    session.add(row)
+    session.commit()
+
+    mock_client = MagicMock()
+    mock_client.get_job_run.return_value = JobRunResult(
+        job_run_id="cryo-spark-quota",
+        state=JobRunState.FAILED,
+        state_details=(
+            'pods "cryo-spark-quota-driver" is forbidden: exceeded quota: compute, requested: '
+            "limits.cpu=1, used: limits.cpu=47800m, limited: limits.cpu=48"
+        ),
+    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
+
+    sweep_pending_fallback_dispatches(session)
+
+    session.refresh(row)
+    session.refresh(job)
+    assert row.status == "DEFERRED"
+    assert (row.detail or "").startswith("[capacity_refused]")
+    assert job.status == "deferred"
+
+
+def test_sweep_records_rewrite_file_counts_on_success(session, monkeypatch) -> None:
+    """Issue #155: the optimize counters from [cryo-result] reach the audit row."""
+    _seed_spark_destination(session)
+    row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-opt")
+    row.action = "optimize"
+    session.add(row)
+    session.commit()
+
+    mock_client = MagicMock()
+    mock_client.get_job_run.return_value = JobRunResult(
+        job_run_id="cryo-spark-opt",
+        state=JobRunState.SUCCESS,
+        metrics={"rewritten_data_files_count": 1024, "added_data_files_count": 17},
+    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
+
+    sweep_pending_fallback_dispatches(session)
+
+    session.refresh(row)
+    assert (row.input_files_count, row.output_files_count) == (1024, 17)
