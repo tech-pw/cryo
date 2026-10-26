@@ -38,7 +38,7 @@ def s3_env():
     return [
         {"name": "AWS_ACCESS_KEY_ID", "valueFrom": {"secretKeyRef": {"name": "cryo-bench-s3", "key": "access_key_id"}}},
         {"name": "AWS_SECRET_ACCESS_KEY", "valueFrom": {"secretKeyRef": {"name": "cryo-bench-s3", "key": "secret_access_key"}}},
-        {"name": "AWS_REGION", "value": "<region>"},
+        {"name": "AWS_REGION", "value": "ap-south-1"},
     ]
 
 
@@ -369,7 +369,7 @@ def recover():
     src = find_by_name("/sources", "bench-rest")
     if src is None:
         src = call("POST", "/sources", {"name": "bench-rest", "type": "rest", "config": {
-            "uri": uri, "warehouse": wh, "s3.region": "<region>",
+            "uri": uri, "warehouse": wh, "s3.region": "ap-south-1",
             "s3.access-key-id": os.environ["AWS_ACCESS_KEY_ID"],
             "s3.secret-access-key": os.environ["AWS_SECRET_ACCESS_KEY"]}})
     emit(event="recover_source", id=src["id"])
