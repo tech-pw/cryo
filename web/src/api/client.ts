@@ -2377,8 +2377,10 @@ export const getShallowHealth = async (): Promise<{ status: string }> => {
   return payload as { status: string };
 };
 
-export const getDeepHealth = async (): Promise<DeepHealthResponse> => {
-  const response = await fetch("/healthz/deep");
+export const getDeepHealth = async ({ token }: ApiOptions): Promise<DeepHealthResponse> => {
+  const response = await fetch(`${API_PREFIX}/ops/healthz/deep`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
   const payload = await response.json();
   if (
     payload &&
@@ -2394,8 +2396,10 @@ export const getDeepHealth = async (): Promise<DeepHealthResponse> => {
   return payload as DeepHealthResponse;
 };
 
-export const getMetricsText = async (maxLines = 60): Promise<string> => {
-  const response = await fetch("/metrics");
+export const getMetricsText = async ({ token }: ApiOptions, maxLines = 60): Promise<string> => {
+  const response = await fetch(`${API_PREFIX}/ops/metrics`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
   const text = await response.text();
   if (!response.ok) {
     throw responseError(response, "Failed to fetch metrics", text);
