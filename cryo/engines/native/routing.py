@@ -1,4 +1,4 @@
-"""Native engine operation routing — COW vs MOR and Go vs Rust."""
+"""Native engine operation routing — COW vs MOR, native vs SQL fallback."""
 
 from __future__ import annotations
 
@@ -63,8 +63,10 @@ NATIVE_DELETE_FILES_DETAIL = (
     "expire_snapshots and remove_orphan_files still run"
 )
 
-NATIVE_RUST_OPTIMIZE_DETAIL = (
-    "native compaction blocked upstream on iceberg-rust (EPIC #2269); "
+# Native OPTIMIZE stays opt-in: a destination runs it only with engine_impl=go set,
+# the same gate the Rust era had. Dropping the Rust engine does not flip it on.
+NATIVE_GO_IMPL_REQUIRED_DETAIL = (
+    "native optimize runs only when engine_impl=go; "
     "set CRYO_ENGINE_IMPL=go or destination.config.engine_impl=go"
 )
 
@@ -348,7 +350,7 @@ def resolve_native_routing(
             if has_v3_partitioned_deletion_vectors(stats):
                 detail = NATIVE_V3_PARTITIONED_DV_DETAIL
             elif not is_go_engine_impl(cfg):
-                detail = NATIVE_RUST_OPTIMIZE_DETAIL
+                detail = NATIVE_GO_IMPL_REQUIRED_DETAIL
             else:
                 detail = NATIVE_LEGACY_DISCONNECTED_DETAIL
             if has_sql_fallback:

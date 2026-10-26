@@ -30,7 +30,6 @@ import { useAuth } from "../../lib/auth";
 import {
   formatDestinationLabel,
   isNativeDestination,
-  nativeRustOptimizeTooltip,
   nativeSupportsOperation,
   nativeUnsupportedOpTooltip,
   resolveNativeEngineImpl
@@ -101,12 +100,7 @@ export const PresetConfigForm = ({
 
   const operationOptions = operations.map((operation) => {
     const supported = !isNative || nativeSupportsOperation(operation, nativeImpl ?? "go");
-    const tooltip =
-      operation === "optimize_manifests"
-        ? nativeUnsupportedOpTooltip
-        : operation === "optimize"
-          ? nativeRustOptimizeTooltip
-          : undefined;
+    const tooltip = operation === "optimize_manifests" ? nativeUnsupportedOpTooltip : undefined;
     return { operation, supported, tooltip };
   });
 

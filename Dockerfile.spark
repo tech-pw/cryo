@@ -99,4 +99,20 @@ RUN mkdir -p /opt/cryo-site/cryo/engines/spark \
 COPY cryo/engines/spark/procedure_metrics.py /opt/cryo-site/cryo/engines/spark/procedure_metrics.py
 ENV PYTHONPATH="/opt/cryo-site:${PYTHONPATH}"
 
+# Build identity (#263). release-supply-chain.yml passes the tag, commit and build time;
+# a plain `docker build` leaves them empty and the app reports the package version only.
+# Kept last so changing them never invalidates the dependency layers above.
+ARG CRYO_VERSION=""
+ARG CRYO_GIT_SHA=""
+ARG CRYO_BUILD_DATE=""
+ENV CRYO_VERSION=${CRYO_VERSION} \
+    CRYO_GIT_SHA=${CRYO_GIT_SHA} \
+    CRYO_BUILD_DATE=${CRYO_BUILD_DATE}
+LABEL org.opencontainers.image.title="cryo-spark" \
+      org.opencontainers.image.source="https://github.com/tech-pw/cryo" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${CRYO_VERSION}" \
+      org.opencontainers.image.revision="${CRYO_GIT_SHA}" \
+      org.opencontainers.image.created="${CRYO_BUILD_DATE}"
+
 USER 185
