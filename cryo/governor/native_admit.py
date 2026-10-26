@@ -958,6 +958,7 @@ def admit_native_k8s_jobs(
                                     for key in (
                                         "total_size_gb",
                                         "total_files",
+                                        "total_delete_files",
                                         "manifest_count",
                                         "total_snapshots",
                                     )

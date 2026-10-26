@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from cryo.domain.enums import JobStatus, Mode
+from cryo.planner.job_coverage import (
+    ActiveJob,
+    canonical_operations,
+    mode_operations,
+    uncovered,
+)
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.scheduler.rules import (
     PresetConfig,
@@ -25,6 +31,9 @@ class ScheduledJobDraft:
     destination_id: str
     mode: Mode
     status: JobStatus = JobStatus.QUEUED
+    # Set only when dedupe trimmed the job to the operations no active job already covers;
+    # None means "everything the mode plans".
+    operations: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +43,8 @@ class ScheduledRunDraft:
     trigger: str
     deadline_at: datetime | None
     jobs: tuple[ScheduledJobDraft, ...] = field(default_factory=tuple)
+    dedupe_tables_skipped: int = 0
+    dedupe_steps_skipped: int = 0
 
 
 def build_scheduled_run(
@@ -46,10 +57,31 @@ def build_scheduled_run(
     trigger: str = "cron",
     budget_hint: int | None = None,
     now: datetime | None = None,
+    active_coverage: Mapping[str, Sequence[ActiveJob]] | None = None,
 ) -> ScheduledRunDraft:
     current = now or datetime.now(UTC)
+    mode = Mode(preset.mode)
     candidates = tables_for_preset(preset, tables, presets, rules, assignments, now=current)
     candidates = drop_recently_maintained(candidates, preset)
+    # Before the budget cut, so a table another job already covers does not spend one of the
+    # run's slots.
+    trimmed: dict[str, tuple[str, ...]] = {}
+    tables_skipped = 0
+    steps_skipped = 0
+    wanted = canonical_operations(mode_operations(mode))
+    if active_coverage is not None and wanted:
+        uncovered_candidates: list[TableCandidate] = []
+        for table in candidates:
+            coverage = uncovered(wanted, active_coverage.get(table.id, ()))
+            if coverage.fully_covered:
+                tables_skipped += 1
+                steps_skipped += len(coverage.skipped)
+                continue
+            if coverage.skipped:
+                trimmed[table.id] = coverage.remaining
+                steps_skipped += len(coverage.skipped)
+            uncovered_candidates.append(table)
+        candidates = uncovered_candidates
     candidates = apply_priority_order(candidates)
     if budget_hint is not None:
         candidates = candidates[:budget_hint]
@@ -62,7 +94,8 @@ def build_scheduled_run(
             run_id=run_id,
             table_id=table.id,
             destination_id=preset.destination_id,
-            mode=Mode(preset.mode),
+            mode=mode,
+            operations=trimmed.get(table.id),
         )
         for table in candidates
     )
@@ -72,6 +105,8 @@ def build_scheduled_run(
         trigger=trigger,
         deadline_at=deadline,
         jobs=jobs,
+        dedupe_tables_skipped=tables_skipped,
+        dedupe_steps_skipped=steps_skipped,
     )
 
 
