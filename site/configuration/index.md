@@ -21,7 +21,7 @@ Settings that matter for security
 
 Defaults are the code defaults. The chart sets a few of its own in `global.env`, such as `CRYO_SCAN_ENGINE=go` and `CRYO_SCAN_TABLE_TIMEOUT_SECONDS=600`.
 
-235 settings, grouped by the first word of their name.
+236 settings, grouped by the first word of their name.
 
 ### CRYO_AI_*
 
@@ -280,6 +280,8 @@ Defaults are the code defaults. The chart sets a few of its own in `global.env`,
 | --- | --- | --- |
 
 | `CRYO_QPP_ENABLED` | `false` | When true, the Governor calls QPPModel.predict() before admitting a maintenance job and refuses jobs whose predicted p95 exceeds the per-destination target. |
+
+| `CRYO_QPP_FAIL_OPEN` | `false` | When true, a QPP prediction error admits the job (advisory-only deployments). By default an error defers the job with reason qpp_gate_check_failed, the same fail-closed behaviour as the PII gate. |
 
 | `CRYO_QPP_MIN_OBSERVATIONS` | `20` | Minimum observations before QPPModel trusts the learned regression. |
 
@@ -702,7 +704,7 @@ The top-level values in `deploy/helm/cryo/values.yaml`, and the keys under each 
 
 | `scannerWorker` | The ad-hoc scan consumer Deployment and its HPA or KEDA autoscaling. | `replicas`, `resources`, `autoscaling` |
 
-| `scanner` | The fleet-scan CronJob: schedule, chunks, and Job dispatch. | `schedule`, `suspend`, `chunks`, `resources`, `jobDispatch` |
+| `scanner` | The fleet-scan CronJob: schedule, chunks, and Job dispatch. | `schedule`, `suspend`, `chunks`, `concurrencyPolicy`, `activeDeadlineSeconds`, `resources`, `jobDispatch` |
 
 | `maintenance` | The nightly batch-maintenance CronJob and its Spark lanes. Off by default. | `enabled`, `schedule`, `suspend`, `topN`, `maxLanes`, `laneMaxCpuMilli`, `laneMaxMemMib`, `laneMaxNodeCpu`, `laneCapacityTypes`, `maxRuntimeMinutes`, `cooldownHours`, `resources` |
 
