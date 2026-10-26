@@ -1,0 +1,82 @@
+---
+title: Upgrade and rollback
+lede: How to move a Cryo release forward, what a downgrade can and cannot undo, and how to check the migration path before you upgrade.
+description: Upgrading Cryo on Kubernetes -- the migration hook, checking the migration path, and the limits of a rollback.
+updated: 2026-10-26
+---
+<h2 id="upgrade">Upgrade</h2>
+<p><code>helm upgrade</code> runs <code>alembic upgrade head</code> as a <code>pre-install,pre-upgrade</code> hook and blocks the release until that Job finishes. It does not delete the external database or the warehouse.</p>
+<codeblock lang="bash" title="terminal">
+$ helm upgrade --install cryo oci://ghcr.io/tech-pw/charts/cryo --version 0.1.6 \
+    --namespace cryo \
+    --set global.envFromSecret=cryo-secrets
+$ kubectl -n cryo rollout status deployment/cryo-api --timeout=180s
+</codeblock>
+<p>Pin the digests. The image tag is static, so a rollout without a digest change can leave pods running the old image while the chart reports success.</p>
+
+<h2 id="migration-path">Check the migration path first</h2>
+<p>Cryo renders the complete Alembic graph in both directions for every signed release. Run it before you upgrade, not after something fails:</p>
+<codeblock lang="bash" title="terminal">
+$ python scripts/build_upgrade_rollback_evidence.py \
+    --revision "$(git rev-parse HEAD)" \
+    --output build/upgrade-rollback-evidence.json
+</codeblock>
+<p>The record fingerprints transaction-wrapped PostgreSQL SQL for <code>base → head</code> and <code>head → base</code>. It catches disconnected revisions, missing downgrade paths, and migrations that cannot render before an image is released.</p>
+<callout type="note" title="What offline rendering proves, and what it does not">
+  <p>It is repository evidence, not a deployed rollback claim. It does not prove data preservation, application compatibility, availability, or duration. A production drill is still required: upgrade a restored database, verify representative Cryo records and API health, roll back, verify them again, and record the service impact.</p>
+</callout>
+
+<h2 id="before">Before you upgrade</h2>
+<steps>
+  <step title="Take a backup">
+    <p>See <a href="@/backup/">Backup and restore</a>. A downgrade can be blocked by a migration that drops a column; a backup is what makes that recoverable.</p>
+  </step>
+  <step title="Check the changelog">
+    <p>Cryo is pre-1.0. A minor release may change the HTTP API, the Helm values, the database schema or the engine SQL, and there is no still-working deprecation window. The changelog says so — read it.</p>
+  </step>
+  <step title="Check the off-peak window">
+    <p>A migration that rewrites a large table runs on your database, not on your engine. The governor's off-peak window does not apply to it.</p>
+  </step>
+  <step title="Verify the chart renders">
+    <p><code>helm template</code> needs no cluster and catches a broken template before the hook runs.</p>
+  </step>
+</steps>
+
+<h2 id="rollback">Rollback</h2>
+<p>Roll back the release:</p>
+<codeblock lang="bash" title="terminal">
+$ helm rollback cryo <revision> --namespace cryo
+</codeblock>
+<p>The pre-upgrade hook runs again on the way down, so the database is migrated back with the previous release's Alembic graph.</p>
+
+<h3 id="rollback-limits">What a rollback cannot undo</h3>
+<p>Three things survive a rollback, and two of them are not reversible:</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Survives the rollback</th><th>Why, and what to do</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Data written by the new release</strong></td>
+      <td>Maintenance that ran under the new version has already rewritten data files, expired snapshots and removed orphans. The old release does not undo it. If the new version did something you did not want, restore from a backup.</td>
+    </tr>
+    <tr>
+      <td><strong>Irreversible migrations</strong></td>
+      <td>A migration that drops or renames a column cannot be reversed by Alembic's <code>downgrade()</code>. Cryo's policy is additive-first precisely so this stays rare, and every revision documents when it is not. Check the evidence file above before you rely on a downgrade.</td>
+    </tr>
+    <tr>
+      <td><strong>Queue and lease state</strong></td>
+      <td>Redis is reconstructable. The scheduler and governor re-elect and the next scheduled run rebuilds the queue.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+<callout type="warn" title="A rollback is not a restore">
+  <p>Rolling back moves the application and the schema back. It does not bring back expired snapshots or rewritten data files. If the rollback is because the new version wrote something wrong, restore the database from a backup and assess the warehouse separately.</p>
+</callout>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/backup/" title="Backup and restore">Taking a backup, and what to do with one.</linkcard>
+  <linkcard href="@/install/" title="Install on Kubernetes">A first install, or a fresh environment.</linkcard>
+  <linkcard href="@/changelog/">Changelog">What changed in each release.</linkcard>
+</linkcards>

@@ -1,0 +1,93 @@
+---
+title: Contributing
+lede: How to propose a change to Cryo, and what happens after you open the pull request.
+description: Contributing to Cryo -- setup, the test suite, the conventions the codebase follows, and the review process.
+updated: 2026-10-26
+---
+<p>The full guide is <a href="https://github.com/tech-pw/cryo/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> in the repository. This page is the short version.</p>
+
+<h2 id="setup">Set up</h2>
+<p>You need Python 3.12+, Node 22+ (for the UI), Docker and Docker Compose. Go 1.25.5 only if you touch the native compactor. Java 17+ only if you run PySpark — the test suite does not need it.</p>
+<codeblock lang="bash" title="terminal">
+$ git clone https://github.com/tech-pw/cryo.git
+$ cd cryo
+$ make install
+$ make test
+</codeblock>
+<p>For the full local stack — a datalake with a catalog, Trino and Spark, plus Cryo's own dependencies and observability — use <code>./start-local.sh start</code>. That runs the migrations too. <code>make up</code> starts the containers only.</p>
+
+<h2 id="tests">Run the tests</h2>
+<div class="tbl">
+<table>
+  <thead><tr><th>Command</th><th>Runs</th></tr></thead>
+  <tbody>
+    <tr><td><code>make test</code></td><td>The Python suite. In-memory SQLite; it does not need the local stack.</td></tr>
+    <tr><td><code>make lint</code></td><td>Ruff check and format check.</td></tr>
+    <tr><td><code>make typecheck</code></td><td>mypy.</td></tr>
+    <tr><td><code>make web-test</code></td><td>The frontend suite.</td></tr>
+    <tr><td><code>make test-engine-go</code></td><td>The Go engine's tests.</td></tr>
+  </tbody>
+</table>
+</div>
+<callout type="note" title="make test is not all the tests">
+  <p>CI also runs the Go engine tests — including with <code>-race</code> — and the frontend tests. A green <code>make test</code> is not a green build.</p>
+</callout>
+
+<h2 id="conventions">Conventions</h2>
+<ul>
+  <li>Python: PEP 8, enforced by Ruff, with type hints checked by mypy. Google-style docstrings on public APIs.</li>
+  <li>TypeScript: strict, functional components with hooks. The package has no ESLint or Prettier script — <code>npm run typecheck</code> is the check.</li>
+  <li>SQL: keywords uppercase, identifiers lowercase with underscores.</li>
+  <li>Commits are conventional: <code>feat</code>, <code>fix</code>, <code>docs</code>, <code>test</code>, <code>refactor</code>, <code>chore</code>, <code>perf</code>.</li>
+</ul>
+
+<h3 id="migrations">Migrations</h3>
+<p>Cryo's schema policy is <strong>additive-first</strong>. Prefer adding a column over altering a type, renaming or dropping. If a destructive change is unavoidable, write it in two revisions — add, backfill, switch, cleanup — so it can be paused between each.</p>
+<ul>
+  <li>One concern per revision. A column add, an index and a constraint do not belong in one revision.</li>
+  <li>Every <code>downgrade()</code> must restore the previous schema. If a revision is genuinely irreversible, leave the downgrade empty and say so in the docstring.</li>
+  <li>UUID primary keys, server-side <code>gen_random_uuid()</code>.</li>
+  <li>Everything in the <code>cryo</code> schema, and every migration operation passes <code>schema="cryo"</code>.</li>
+  <li>No backfill data in a migration. Backfill in a separate one-off script, or in a follow-up revision gated on a column's presence.</li>
+</ul>
+<p>Test the migration: upgrade head against an empty database, downgrade base, upgrade head again, and check the schema matches.</p>
+
+<h2 id="pull-request">Open the pull request</h2>
+<steps>
+  <step title="Branch">
+    <p>One focused change per branch, named for the change: <code>feat/…</code>, <code>fix/…</code>, <code>docs/…</code>, <code>ci/…</code>.</p>
+  </step>
+  <step title="Test">
+    <p>Add tests for the new behaviour. A renderer change needs a golden test — an input plan and the expected SQL. Partition-predicate maths needs parity tests.</p>
+  </step>
+  <step title="Document">
+    <p>Update the docs the change makes wrong. The project brain is in <code>docs/</code>, and <code>todo.md</code> tracks what is still open.</p>
+  </step>
+  <step title="Open it">
+    <p>Describe what changed and why, and how you tested it. Link the issue it closes.</p>
+  </step>
+</steps>
+<callout type="note" title="GitHub is the source of truth">
+  <p>Pull requests merged here are the change. There is no separate mirror to port them to.</p>
+</callout>
+
+<h2 id="review">Review</h2>
+<p>A maintainer reviews every pull request. Address the feedback, and once it is approved it is merged. CI must be green — every check reports on every pull request, including the docs ones.</p>
+<p>If you are unsure whether something is wanted, open an issue first. Discussion is cheaper than a pull request that gets rewritten.</p>
+
+<h2 id="security">Security</h2>
+<p>Do not open a public issue for a security-sensitive finding. Use <a href="https://github.com/tech-pw/cryo/security/advisories/new">GitHub Security Advisory</a>, which stays private until a fix is published.</p>
+
+<h2 id="community">Community</h2>
+<ul>
+  <li><a href="https://github.com/tech-pw/cryo/issues">GitHub Issues</a> — bugs and feature requests.</li>
+  <li><a href="https://github.com/tech-pw/cryo/discussions">GitHub Discussions</a> — questions, design discussion and show-and-tell.</li>
+  <li><a href="https://github.com/tech-pw/cryo/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a> — the Contributor Covenant 2.1.</li>
+</ul>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/architecture/">Architecture">The system the change lands in.</linkcard>
+  <linkcard href="@/maintenance/">Maintenance">The operations the planner emits.</linkcard>
+  <linkcard href="@/changelog/">Changelog">What changed in each release.</linkcard>
+</linkcards>

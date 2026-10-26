@@ -71,6 +71,18 @@
           "label": "Deployment"
         },
         {
+          "slug": "install",
+          "label": "Install"
+        },
+        {
+          "slug": "upgrade",
+          "label": "Upgrade"
+        },
+        {
+          "slug": "backup",
+          "label": "Backup"
+        },
+        {
           "slug": "configuration",
           "label": "Configuration"
         },
@@ -91,6 +103,14 @@
         {
           "slug": "troubleshooting",
           "label": "Troubleshooting"
+        },
+        {
+          "slug": "contributing",
+          "label": "Contributing"
+        },
+        {
+          "slug": "changelog",
+          "label": "Changelog"
         }
       ]
     }
