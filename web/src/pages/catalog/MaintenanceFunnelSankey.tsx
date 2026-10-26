@@ -12,6 +12,7 @@ const NODE_TONE: Record<string, string> = {
   succeeded: "var(--color-status-success)",
   not_scanned: "var(--color-text-tertiary)",
   not_evaluated: "var(--color-text-tertiary)",
+  not_in_run: "var(--color-text-tertiary)",
   not_run: "var(--color-text-tertiary)",
   in_progress: "var(--color-primary)"
 };
@@ -63,7 +64,8 @@ export const FunnelCaption = ({ funnel }: { funnel: TablesFunnel }) =>
       <Link className="underline underline-offset-2 hover:text-foreground" to={`/runs/${funnel.run_id}`}>
         latest nightly run
       </Link>{" "}
-      ({formatRelative(funnel.run_started_at)}). Counted per table, not per operation. Click a stage to list
-      those tables as they are now.
+      ({formatRelative(funnel.run_started_at)}). A job is that table's outcome. A table with no job and no
+      recorded decision was not in the run. Counted per table, not per operation. Click a stage to list those
+      tables as they are now.
     </p>
   ) : null;

@@ -23,6 +23,7 @@ from cryo.engines.trino.query_status import (
 )
 from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
+from cryo.scheduler.scheduler import fifo_priority
 from cryo.worker.safety_gates import DANGEROUS_OPS, TableActivity
 from cryo.worker.worker import DestinationConfig, JobStore, MaintenanceJobRecord
 
@@ -240,7 +241,7 @@ def recover_orphaned_jobs(
 
         if job.status is JobStatus.ADMITTED:
             if queue.status(job.id) is None:
-                queue.enqueue(job.id, job.destination_id)
+                queue.enqueue(job.id, job.destination_id, fifo_priority(job.run_created_at))
                 admit = getattr(queue, "requeue_admitted", None)
                 if callable(admit):
                     admit(job.id, job.destination_id, job.replica)
