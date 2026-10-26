@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -353,6 +353,7 @@ def persist_table_analysis(
         table_name=analysis.table_name,
     )
     table_id = table_row.id
+    _lock_table_for_persist(session, table_id)
 
     location = (analysis.raw or {}).get("location")
     if location:
@@ -485,14 +486,23 @@ def persist_table_analysis(
 
     evaluate_after_scan(session, table_id)
 
-    # Update AutoComp benefit scores after scan (if enabled)
+    # Flush the scan's own writes first, outside the try below: an error there (for example
+    # an IntegrityError) is a real persist failure and must reach the caller. It used to
+    # surface from an autoflush inside the benefit-score try, got logged as a benefit-score
+    # warning, and the caller's commit then failed with a misleading PendingRollbackError
+    # that became the table's last_scan_error (#256).
+    session.flush()
+
+    # Update AutoComp benefit scores after scan (if enabled). A SAVEPOINT, so a failure here
+    # rolls back only the score update, never the scan it follows.
     try:
         from cryo.config import get_settings
         from cryo.planner.benefit_score import update_partition_benefit_scores
 
         settings = get_settings()
         if hasattr(settings, "compute_statistics_enabled") and settings.compute_statistics_enabled:
-            updated = update_partition_benefit_scores(session, table_id)
+            with session.begin_nested():
+                updated = update_partition_benefit_scores(session, table_id)
             if updated > 0:
                 import logging
 
@@ -505,6 +515,25 @@ def persist_table_analysis(
         logger.warning(f"Failed to update benefit scores for table {table_id}: {e}")
 
     return table_id
+
+
+def _lock_table_for_persist(session: Session, table_id: uuid.UUID) -> None:
+    """Serialize concurrent persists of one table for the rest of this transaction.
+
+    persist_table_analysis deletes the table's partition and column rows and inserts the new
+    ones. Under READ COMMITTED two overlapping scans of the same table both delete, and the
+    second insert hits pk_table_columns with the rows the first one committed: 868
+    violations across 217 tables on one scanner pod (#256). A transaction-scoped advisory
+    lock makes the second persist wait for the first, then replace its rows cleanly.
+    PostgreSQL only; other dialects (SQLite in tests) have no concurrent writers to guard.
+    """
+    get_bind = getattr(session, "get_bind", None)
+    if not callable(get_bind) or get_bind().dialect.name != "postgresql":
+        return
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"cryo.scan.persist:{table_id}"},
+    )
 
 
 def persist_table_cost(

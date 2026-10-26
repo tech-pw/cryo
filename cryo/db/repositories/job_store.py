@@ -126,11 +126,21 @@ class SQLJobStore:
                 JobStatus.PARTIAL,
             }:
                 job.finished_at = now
+            _track_deferral(job, JobStatus(status), now)
             if engine_ref is not None:
                 job.engine_ref = engine_ref
             if replica is not None:
                 job.replica = replica
             job.error = error
+            session.commit()
+
+    def set_deferred_reason(self, job_id: str, reason: str) -> None:
+        """Replace a still-deferred job's error without restarting its deferral clock."""
+        with self._session_factory() as session:
+            job = _load_job(session, uuid.UUID(job_id))
+            if job.status != JobStatus.DEFERRED.value or job.error == reason:
+                return
+            job.error = reason
             session.commit()
 
     def deactivate_table(self, table_id: str, reason: str) -> None:
@@ -158,6 +168,37 @@ class SQLJobStore:
 
         with self._session_factory() as session:
             record_missing_metadata(session, uuid.UUID(table_id), reason=reason)
+            session.commit()
+
+    def update_resource_failure_backoff(
+        self, table_id: str, status: JobStatus, error: str | None
+    ) -> None:
+        """Arm or end the per-table deadline/OOM backoff after a job finishes (#180).
+
+        See cryo.maintenance.failure_backoff for the schedule and why it lives on the
+        table's maintenance_retry_after."""
+        from cryo.maintenance.failure_backoff import (
+            clear_resource_failure_backoff,
+            is_resource_exhaustion_error,
+            record_resource_failure_backoff,
+        )
+
+        with self._session_factory() as session:
+            if status is JobStatus.SUCCEEDED:
+                clear_resource_failure_backoff(session, uuid.UUID(table_id))
+            elif status in (JobStatus.FAILED, JobStatus.PARTIAL) and (
+                is_resource_exhaustion_error(error)
+            ):
+                until = record_resource_failure_backoff(session, uuid.UUID(table_id))
+                if until is not None:
+                    logger.warning(
+                        "Table %s hit its deadline or OOM on consecutive runs; maintenance "
+                        "backed off until %s",
+                        table_id,
+                        until.isoformat(),
+                    )
+            else:
+                return
             session.commit()
 
     def set_force_admit(self, job_id: str, value: bool) -> None:
@@ -478,6 +519,31 @@ def _destination_config(destination: Destination) -> DestinationConfig:
     )
 
 
+_DEFERRAL_ENDING_STATUSES = frozenset(
+    {
+        JobStatus.ADMITTED,
+        JobStatus.RUNNING,
+        JobStatus.SUCCEEDED,
+        JobStatus.FAILED,
+        JobStatus.SKIPPED,
+        JobStatus.PARTIAL,
+    }
+)
+
+
+def _track_deferral(job: MaintenanceJob, status: JobStatus, now: datetime) -> None:
+    """Keep deferred_since across re-defers and the reconcile re-queue (QUEUED).
+
+    The re-queue is part of the same episode: the job goes back to the gate chain and is
+    usually refused again. Only admission or a real outcome ends the episode.
+    """
+    if status is JobStatus.DEFERRED:
+        if job.deferred_since is None:
+            job.deferred_since = now
+    elif status in _DEFERRAL_ENDING_STATUSES:
+        job.deferred_since = None
+
+
 def _load_job(session: Session, job_id: uuid.UUID) -> MaintenanceJob:
     job = session.scalar(
         select(MaintenanceJob)
@@ -687,6 +753,8 @@ def _stats_dict(table: Table) -> dict[str, Any]:
         "query_count_30d": stats.query_count_30d,
         "partition_col": stats.partition_col,
         "partition_col_type": stats.partition_col_type,
+        # The optimize target follows it (#265); the scanner judges small files against it.
+        "target_file_size_bytes": stats.target_file_size_bytes,
         "projected_savings_usd_month": stats.projected_savings_usd_month,
         "format_version": (stats.raw or {}).get("format_version"),
         "raw": dict(stats.raw or {}),

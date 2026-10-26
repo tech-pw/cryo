@@ -11,10 +11,11 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, selectinload
 
 from cryo.config import get_settings
 from cryo.db.model_utils import qualified_table_name
@@ -219,7 +220,17 @@ def detect_table_anomalies(
         .limit(max_history_rows)
     )
     history = list(reversed(session.execute(stmt).all()))
+    return _anomalies_from_history(table_uuid, table_name, history, threshold_sigma)
 
+
+def _anomalies_from_history(
+    table_uuid: UUID,
+    table_name: str,
+    history: Sequence[Any],
+    threshold_sigma: float,
+) -> list[AnomalyAlert]:
+    """Anomalies for one table from its history rows, oldest first (scan_at, small_files_count,
+    total_size_gb, overall_score, p95_query_latency_ms)."""
     if len(history) < 5:
         return []  # Not enough history for anomaly detection
 
@@ -376,6 +387,52 @@ def _number(value: object) -> float | None:
         return None
 
 
+def _history_for_tables(
+    session: Session, table_ids: Sequence[UUID], lookback_days: int
+) -> dict[UUID, list[Any]]:
+    """The newest ``anomaly_history_rows_per_table`` history rows of each table, oldest first,
+    in one query (same columns and cap as :func:`detect_table_anomalies`)."""
+    if not table_ids:
+        return {}
+    since = datetime.now(UTC) - timedelta(days=lookback_days)
+    max_history_rows = get_settings().anomaly_history_rows_per_table
+    ranked = (
+        select(
+            TableStatsHistory.table_id,
+            TableStatsHistory.scan_at,
+            TableStatsHistory.small_files_count,
+            TableStatsHistory.total_size_gb,
+            TableStatsHistory.overall_score,
+            TableStatsHistory.raw["p95_query_latency_ms"].label("p95_query_latency_ms"),
+            func.row_number()
+            .over(
+                partition_by=TableStatsHistory.table_id,
+                order_by=TableStatsHistory.scan_at.desc(),
+            )
+            .label("rn"),
+        )
+        .where(TableStatsHistory.table_id.in_(list(table_ids)))
+        .where(TableStatsHistory.scan_at >= since)
+        .subquery()
+    )
+    rows = session.execute(
+        select(
+            ranked.c.table_id,
+            ranked.c.scan_at,
+            ranked.c.small_files_count,
+            ranked.c.total_size_gb,
+            ranked.c.overall_score,
+            ranked.c.p95_query_latency_ms,
+        )
+        .where(ranked.c.rn <= max_history_rows)
+        .order_by(ranked.c.table_id, ranked.c.scan_at)
+    ).all()
+    out: dict[UUID, list[Any]] = {}
+    for row in rows:
+        out.setdefault(row.table_id, []).append(row)
+    return out
+
+
 def detect_all_anomalies(
     session: Session,
     min_severity: str = "medium",
@@ -413,17 +470,33 @@ def detect_all_anomalies(
     max_results = get_settings().anomaly_max_results
     for batch_start in range(0, len(table_ids), batch_size):
         batch = table_ids[batch_start : batch_start + batch_size]
-        for table_id in batch:
+        try:
+            # Two queries per batch instead of two per table: at ~12k tables the per-table loop
+            # took over 60 s and timed out the Governance page (#259).
+            histories = _history_for_tables(session, batch, lookback_days)
+            by_id = {
+                table.id: table
+                for table in session.scalars(
+                    select(Table).where(Table.id.in_(batch)).options(selectinload(Table.source))
+                )
+            }
+        except Exception:
+            logger.exception("Anomaly history query failed for a batch of %d tables", len(batch))
+            continue
+        # Keep the caller's table order so the max_results cut-off is unchanged.
+        tables = [by_id[table_id] for table_id in batch if table_id in by_id]
+        for table in tables:
             if len(all_anomalies) >= max_results:
                 break
             try:
-                anomalies = detect_table_anomalies(
-                    session,
-                    table_id,
-                    lookback_days,
-                    threshold_sigma,
+                all_anomalies.extend(
+                    _anomalies_from_history(
+                        table.id,
+                        qualified_table_name(table),
+                        histories.get(table.id, []),
+                        threshold_sigma,
+                    )
                 )
-                all_anomalies.extend(anomalies)
             except Exception:
                 continue
         if len(all_anomalies) >= max_results:

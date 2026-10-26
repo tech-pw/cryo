@@ -1073,3 +1073,56 @@
 .td-check-text p { margin: 2px 0 0; font-size: 12px; color: var(--color-muted); overflow-wrap: anywhere; }
 .td-check .td-overview-link { white-space: nowrap; font-size: 12px; }
 .td-ov-checks .cryo-collapsible, .td-ov-checks details { margin-top: 10px; }
+
+/* #264: grade unchanged after maintenance, and unscored structural findings. */
+.td-grade-stuck {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md, 10px);
+  background: color-mix(in srgb, var(--color-status-warning) 8%, transparent);
+  color: var(--color-ink);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.td-design-findings {
+  margin-top: 16px;
+}
+
+.td-design-findings h3 {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.td-design-findings ul {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.td-design-findings li {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-status-warning) 35%, transparent);
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--color-ink) 3%, transparent);
+  font-size: 13px;
+}
+
+.td-design-findings li[data-severity="critical"] {
+  border-color: color-mix(in srgb, var(--color-status-danger) 35%, transparent);
+}
+
+.td-finding-reason,
+.td-finding-rec {
+  color: var(--color-muted);
+}
+
+.td-finding-rec {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 17px;
+}

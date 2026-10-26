@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, tzinfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import SlackConfig
+from cryo.display_time import display_zone, display_zone_name
 from cryo.maintenance.coordinator import CRON_TRIGGER, RunReport
 from cryo.reporting.slack import (
     SlackBlock,
@@ -23,16 +24,15 @@ from cryo.security.crypto import decrypt_secret
 
 logger = logging.getLogger(__name__)
 
-_IST = timezone(timedelta(hours=5, minutes=30))
 
-
-def _clock(value: datetime, zone: timezone) -> str:
+def _clock(value: datetime, zone: tzinfo) -> str:
     aware = value if value.tzinfo else value.replace(tzinfo=UTC)
     return aware.astimezone(zone).strftime("%H:%M")
 
 
-def _ist(value: datetime) -> str:
-    return _clock(value, _IST)
+def _local(value: datetime) -> str:
+    """Clock time in the install's zone (CRYO_DISPLAY_TIMEZONE); was hard-coded IST (#183)."""
+    return _clock(value, display_zone())
 
 
 def _duration(start: datetime, end: datetime) -> str:
@@ -65,7 +65,7 @@ def build_blocks(
     finished = report.finished_at or report.started_at
     window = (
         f"{_clock(report.started_at, UTC)}–{_clock(finished, UTC)} UTC "
-        f"({_ist(report.started_at)}–{_ist(finished)} Asia/Kolkata), "
+        f"({_local(report.started_at)}–{_local(finished)} {display_zone_name()}), "
         f"{_duration(report.started_at, finished)}"
     )
     attempted = report.succeeded + report.partial + report.failed
@@ -143,6 +143,11 @@ def build_blocks(
         notes.append(
             ":warning: Orphan-file removal was skipped for every table: the shared-S3-path "
             "snapshot could not be refreshed and the last one is stale."
+        )
+    if report.metastore_unreachable:
+        notes.append(
+            f":electric_plug: {report.metastore_unreachable} table(s) failed because the Hive "
+            "Metastore was unreachable (connection timeouts, not table problems)."
         )
     if report.rescan_error:
         notes.append(f":warning: Post-run rescan failed: {report.rescan_error[:200]}")

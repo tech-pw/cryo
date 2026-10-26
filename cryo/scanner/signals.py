@@ -6,8 +6,14 @@ from typing import Any
 
 
 def metadata_to_data_ratio(metadata_bytes: int, data_bytes: int) -> float:
+    """Metadata bytes per live data byte.
+
+    No live data with metadata present is all overhead, the worst case, not 0.0: an empty
+    or fully-deleted table still carrying manifests and snapshots used to look perfect and
+    took no metadata-overhead deduction (issue #191). The result is capped at 1.0 there.
+    """
     if data_bytes <= 0:
-        return 0.0
+        return 1.0 if metadata_bytes > 0 else 0.0
     return round(metadata_bytes / data_bytes, 4)
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cmp_to_key
-from typing import Any
+from typing import Any, cast
 
 from cryo.domain.enums import Mode, OperationType, PartitionTransform, PredicateCapability
 from cryo.domain.models import MaintenancePlan, Operation, PartitionPredicate
@@ -272,6 +272,7 @@ def _optimize_operations(
     total_size_gb = _total_size_gb(stats)
     configured_chunk_size_gb = float(params.get("chunk_size_gb", 100))
     fields = partition_fields_from_stats(stats, params)
+    params = resolve_optimize_params(stats, params, fields, notes)
 
     # Streaming-aware compaction cadence: high-velocity tables fragment faster, so we
     # tighten the chunk size + min_small_files threshold to keep compaction windows small
@@ -473,6 +474,84 @@ def _candidate_partitions(
             )
         )
     return candidates
+
+
+_DEFAULT_OPTIMIZE_FILE_SIZE_MB = 256
+# Default write-idle gate for time-partitioned tables (#265): the newest day partition is
+# still taking appends, a rewrite of it races the writer (commit conflicts, executor OOM on
+# the largest partition) and the next append fragments it again anyway.
+DEFAULT_TIME_PARTITION_IDLE_HOURS = 12
+_TIME_COLUMN_TYPES = ("date", "timestamp")
+
+
+def table_target_file_size_mb(stats: Mapping[str, Any]) -> int | None:
+    """The table's own write.target-file-size-bytes in MB, as the scanner recorded it."""
+    raw = stats.get("target_file_size_bytes")
+    if raw is None:
+        raw = (stats.get("raw") or {}).get("target_file_size_bytes")
+    try:
+        target_bytes = int(raw) if raw is not None else 0
+    except (TypeError, ValueError):
+        return None
+    if target_bytes <= 0:
+        return None
+    return max(1, round(target_bytes / (1024 * 1024)))
+
+
+def _is_time_partitioned(fields: Sequence[PartitionFieldSpec]) -> bool:
+    for field in fields:
+        if field.transform is PartitionTransform.DAY:
+            return True
+        if field.transform is PartitionTransform.IDENTITY and field.col_type.lower().startswith(
+            _TIME_COLUMN_TYPES
+        ):
+            return True
+    return False
+
+
+def resolve_optimize_params(
+    stats: Mapping[str, Any],
+    params: Mapping[str, Any],
+    fields: Sequence[PartitionFieldSpec],
+    notes: list[str],
+) -> dict[str, Any]:
+    """Fill the two optimize defaults that must follow the table, not a fixed preset value.
+
+    #265: the scanner counts files below the table's write.target-file-size-bytes, so a
+    rewrite to the preset's 256 MB on a 512 MB table left every output file "below target"
+    and the planner found the same work forever (and the Spark renderer then persisted
+    256 MB over the table's own property). With no explicit file_size_mb /
+    target_file_size_bytes, rewrite to the table's target; an explicit preset value still
+    wins, with a note naming the mismatch.
+
+    partition_write_idle_hours unset means 0 (no gate) except on day/date-partitioned
+    tables, which get DEFAULT_TIME_PARTITION_IDLE_HOURS so the partition still taking
+    appends is not the one rewritten. An explicit value (including 0) wins.
+    """
+    resolved = dict(params)
+    table_mb = table_target_file_size_mb(stats)
+    explicit_bytes = params.get("target_file_size_bytes")
+    explicit_mb = params.get("file_size_mb")
+    if explicit_bytes is None and explicit_mb is None:
+        resolved["file_size_mb"] = table_mb or _DEFAULT_OPTIMIZE_FILE_SIZE_MB
+    elif table_mb is not None:
+        chosen_mb: int | None
+        try:
+            if explicit_bytes is not None:
+                chosen_mb = round(int(explicit_bytes) / (1024 * 1024))
+            else:
+                chosen_mb = int(cast(Any, explicit_mb))
+        except (TypeError, ValueError):
+            chosen_mb = None
+        if chosen_mb is not None and chosen_mb != table_mb:
+            notes.append(
+                f"Optimize target {chosen_mb} MB (preset) differs from the table's "
+                f"write.target-file-size-bytes ({table_mb} MB); the scanner counts files "
+                f"below {table_mb} MB as small, so compaction cannot clear them."
+            )
+    if resolved.get("partition_write_idle_hours") is None and _is_time_partitioned(fields):
+        resolved["partition_write_idle_hours"] = DEFAULT_TIME_PARTITION_IDLE_HOURS
+    return resolved
 
 
 def _optimize_operation(
@@ -972,7 +1051,9 @@ def _compare_candidates(left: OptimizeCandidate, right: OptimizeCandidate) -> in
         return -1 if left.size_gb < right.size_gb else 1
     if left.value == right.value:
         return 0
-    return -1 if left.value > right.value else 1
+    # Older partition first (#265): a cold partition stays compacted, the newest is the one
+    # most likely to be written again.
+    return -1 if left.value < right.value else 1
 
 
 def _optional_int(value: Any) -> int | None:

@@ -121,6 +121,7 @@ def reconcile_deferred_jobs(
     *,
     now: datetime | None = None,
     still_blocked: Callable[[MaintenanceJobRecord], bool] | None = None,
+    blocked_reason: Callable[[MaintenanceJobRecord], str | None] | None = None,
 ) -> int:
     """Return deferred jobs to the queue when admission would admit them now.
 
@@ -147,6 +148,11 @@ def reconcile_deferred_jobs(
     and an approved job would never run. The caller instead supplies the missing question --
     "is the thing that actually deferred this still true?" -- and the job is left alone while
     the answer is yes. Optional so the in-memory/test paths keep the old behaviour.
+
+    `blocked_reason` is the same question answered with the reason, and wins over
+    `still_blocked` when both are given. A job left deferred for a reason other than the one it
+    was deferred with gets its `error` updated: operators otherwise saw a days-old
+    `table_locked` on jobs actually held by cooldown or an approval (#167).
     """
     from cryo.governor.admission import (
         AdmissionConfig,
@@ -162,6 +168,16 @@ def reconcile_deferred_jobs(
     current = now or datetime.now(UTC)
     requeued = 0
     failed_orphaned = 0
+    set_reason = getattr(store, "set_deferred_reason", None)
+
+    def note_reason(job: MaintenanceJobRecord, reason: str | None) -> None:
+        if not reason or reason == job.error or not callable(set_reason):
+            return
+        try:
+            set_reason(job.id, reason)
+        except Exception:
+            logger.debug("Could not update deferred reason for job %s", job.id, exc_info=True)
+
     for job in list_deferred(limit=_MAX_DEFERRED_RECONCILE_PER_WAVE):
         if job.run_status in _TERMINAL_RUN_STATUSES:
             store.mark_status(
@@ -177,6 +193,7 @@ def reconcile_deferred_jobs(
         admission_job = admission_job_from_record(job)
         decision = decide_job_admission(admission_job, config, now=current)
         if not decision.admissible and decision.defer:
+            note_reason(job, decision.reason)
             continue
         # pack_fleet_budget defers a job whose cost is unknown on every wave, and nothing
         # waiting can supply a size, so re-queueing it only produces the same refusal.
@@ -185,11 +202,17 @@ def reconcile_deferred_jobs(
             and config.fleet_budget_gb is not None
             and admission_job.size_gb is None
         ):
+            note_reason(job, "unknown_cost")
             continue
         # Admission would take it, but admission is not why it was deferred. Checked after
         # the admission decision so the cheap arithmetic still filters first and this only
         # runs for the jobs actually about to be re-queued.
-        if still_blocked is not None and still_blocked(job):
+        if blocked_reason is not None:
+            reason = blocked_reason(job)
+            if reason is not None:
+                note_reason(job, reason)
+                continue
+        elif still_blocked is not None and still_blocked(job):
             continue
         if queue.status(job.id) in _ACTIVE_QUEUE_STATUSES:
             store.mark_status(job.id, JobStatus.QUEUED)

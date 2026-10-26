@@ -7,18 +7,11 @@ on:
       - "docs/**"
       - "**.md"
       - "site/**"
+  # No paths-ignore on pull requests: these jobs are required status checks on main, and a
+  # skipped workflow never reports them, which would leave docs-only PRs unmergeable.
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**.md"
-      - "site/**"
-  # GitHub Actions does not reliably fire push events for force-pushes (confirmed live,
-  # 2026-10-12: a force-push to main from the OSS sync job produced no CI run at all,
-  # and this workflow has no other way to re-run against current main since dispatch
-  # didn't exist). The OSS mirror is force-pushed on every sync by design (see
-  # scripts/sync_oss_mirror.sh) -- this restores a manual way to get a CI result on
-  # current main without needing an unrelated push to trigger one.
+  # Manual trigger: re-run CI against current main without needing an unrelated push.
   workflow_dispatch:
 
 concurrency:
@@ -55,10 +48,25 @@ jobs:
           gitleaks version
 
       - name: Scan git history for secrets
+        # fetch-depth: 0 fetches every branch, and gitleaks with no --log-opts runs
+        # `git log --all`, so one unrelated branch's finding used to fail every PR.
+        # A PR scans only its own commits (base..merge ref). Pushes to main and manual
+        # runs scan the full history of the checked-out ref.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            log_opts="--full-history origin/${BASE_REF}..HEAD"
+          else
+            log_opts="--full-history HEAD"
+          fi
+          echo "gitleaks log range: ${log_opts}"
           gitleaks detect \
             --source . \
             --config .gitleaks.toml \
+            --log-opts="${log_opts}" \
             --redact \
             --verbose \
             --exit-code 1
@@ -613,7 +621,7 @@ jobs:
 
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-report
           path: web/playwright-report/
@@ -700,7 +708,7 @@ jobs:
 
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-visual-report
           path: |

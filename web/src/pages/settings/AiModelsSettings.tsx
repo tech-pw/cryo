@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   assistantErrorMessage,
@@ -16,6 +17,7 @@ import {
   type AssistantSettings,
   type AssistantUsageRow
 } from "../../api/assistant";
+import { ConfirmAction } from "../../components/confirm";
 import { useAuth } from "../../lib/auth";
 import { formatTime } from "../../lib/format";
 import { Alert } from "../../components/ui/alert";
@@ -258,16 +260,30 @@ export const AiModelsSettings = () => {
                   {item.revoked_at ? `Revoked ${formatTime(item.revoked_at)}` : formatTime(item.created_at)}
                 </span>
               </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
+              <ConfirmAction
+                title={`Revoke the key "${item.name}"?`}
+                description="Anything using this key stops working right away. A revoked key can't be restored; create a new key instead."
+                okText="Revoke key"
+                okButtonProps={{ danger: true }}
                 disabled={Boolean(item.revoked_at)}
-                loading={revoke.isPending && revoke.variables === item.id}
-                onClick={() => revoke.mutate(item.id)}
+                onConfirm={async () => {
+                  try {
+                    await revoke.mutateAsync(item.id);
+                  } catch {
+                    toast.error("Couldn't revoke the key");
+                  }
+                }}
               >
-                Revoke
-              </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={Boolean(item.revoked_at) || (revoke.isPending && revoke.variables === item.id)}
+                  loading={revoke.isPending && revoke.variables === item.id}
+                >
+                  Revoke
+                </Button>
+              </ConfirmAction>
             </li>
           ))}
         </ul>

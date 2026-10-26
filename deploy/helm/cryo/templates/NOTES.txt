@@ -1,12 +1,13 @@
 Cryo is installed in {{ .Release.Namespace }}.
 
-The API is not a production install until you set:
-  image.repository (and a tag or digest you published)
-  global.envFromSecret to a Secret with CRYO_DATABASE_URL and CRYO_SECRET_KEY
-  global.env.CRYO_ENVIRONMENT to prod
-
-The chart default CRYO_ENVIRONMENT is dev. That leaves POST /api/v1/auth/token open.
-OIDC does not close that route.
+{{- if eq (index .Values.global.env "CRYO_ENVIRONMENT") "prod" }}
+CRYO_ENVIRONMENT is prod. The API refuses to start unless global.envFromSecret points at a
+Secret with CRYO_DATABASE_URL and a CRYO_SECRET_KEY of 32+ characters. Sign-in is through OIDC.
+{{- else }}
+WARNING: CRYO_ENVIRONMENT is {{ index .Values.global.env "CRYO_ENVIRONMENT" }}. With no OIDC issuer set,
+POST /api/v1/auth/token is open: anyone who reaches the API can mint an admin token.
+Use this only for a throwaway local install.
+{{- end }}
 
 Web UI: {{ if .Values.web.enabled }}enabled{{ else }}off (web.enabled is false){{ end }}.
 

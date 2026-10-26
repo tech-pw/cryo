@@ -1,4 +1,4 @@
-import { MoreHorizontal, Play, X } from "lucide-react";
+import { AlertTriangle, MoreHorizontal, Play, X } from "lucide-react";
 import { useState } from "react";
 import type { DestinationRead, Mode, PresetRead, UUID } from "../api/types";
 import type { Predicate } from "../lib/predicate";
@@ -9,6 +9,7 @@ import {
   nativeUnsupportedOpTooltip
 } from "../lib/engines";
 import { ConfirmAction } from "./confirm";
+import { OPERATION_CATALOG, RUNNABLE_OPERATIONS, type RunnableOperation } from "./table-detail/operations/operationCatalog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,14 +32,12 @@ import {
 } from "./ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Label } from "./ui/label";
-import { Segmented } from "./ui/segmented";
 import { Select } from "./ui/select";
 
 export type BulkSelection =
   | { mode: "ids"; ids: UUID[]; totalSelected: number }
   | { mode: "filter"; filter: Predicate | null; totalSelected: number };
 
-type RunScope = "workflow" | "manifests";
 
 interface Props {
   selection: BulkSelection | null;
@@ -50,7 +49,8 @@ interface Props {
   onClear: () => void;
   onAssign: (presetId: UUID) => void;
   onPreview: () => void;
-  onRun: (args: { destinationId: UUID; presetId: UUID; mode: Mode }) => void;
+  /** `operations` is set only when the operator picked a subset of the workflow's operations. */
+  onRun: (args: { destinationId: UUID; presetId: UUID; mode: Mode; operations?: RunnableOperation[] }) => void;
   onManifestRewrite?: (args: { destinationId: UUID; presetId: UUID }) => void;
   onUnassign?: () => void;
   onScan?: () => void;
@@ -63,14 +63,29 @@ interface Props {
 
 const formatMode = (mode: Mode): string => mode.replace(/_/g, " ");
 
+/** Operations the workflow runs, in execution order, limited to the ones an operator can launch. */
+export const presetOperations = (preset: PresetRead | undefined): RunnableOperation[] => {
+  const ops = new Set((preset?.operations ?? []).map((op) => String(op)));
+  return RUNNABLE_OPERATIONS.filter((op) => ops.has(op));
+};
+
 const runDisabledReason = (
   preset: PresetRead | undefined,
   destination: DestinationRead | undefined,
-  scope: RunScope
+  ops: RunnableOperation[],
+  fullWorkflow: boolean,
+  manifestOnlyOutsidePreset: boolean,
+  needsAck: boolean,
+  acknowledged: boolean
 ): string | null => {
   if (!preset) return "Choose the workflow to run.";
   if (!destination) return "Choose the engine that runs it.";
-  if (scope === "manifests" && isNativeDestination(destination)) return nativeUnsupportedOpTooltip;
+  if (ops.length === 0 && !fullWorkflow) return "Choose at least one operation.";
+  if (ops.includes("optimize_manifests") && isNativeDestination(destination)) return nativeUnsupportedOpTooltip;
+  if (manifestOnlyOutsidePreset && ops.length > 1) {
+    return "This workflow doesn't include Rewrite manifests, so it can only run on its own.";
+  }
+  if (needsAck && !acknowledged) return "Confirm that files are deleted permanently.";
   return null;
 };
 
@@ -96,7 +111,9 @@ export const BulkAssignBar = ({
   const [unassignOpen, setUnassignOpen] = useState(false);
   const [runPresetId, setRunPresetId] = useState<UUID | undefined>();
   const [destinationId, setDestinationId] = useState<UUID | undefined>();
-  const [scope, setScope] = useState<RunScope>("workflow");
+  // null means every operation the workflow (plus manifest rewrite, when offered) enables.
+  const [pickedOps, setPickedOps] = useState<RunnableOperation[] | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
   if (!selection || selection.totalSelected === 0) return null;
 
   const total = selection.totalSelected;
@@ -107,7 +124,28 @@ export const BulkAssignBar = ({
   const runPreset = presets.find((preset) => preset.id === runPresetId);
   const activeDestinationId = destinationId ?? runPreset?.destination_id;
   const activeDestination = destinations.find((destination) => destination.id === activeDestinationId);
-  const disabledReason = runDisabledReason(runPreset, activeDestination, scope);
+  const workflowOps = presetOperations(runPreset);
+  const manifestOutsidePreset = Boolean(onManifestRewrite) && runPreset != null && !workflowOps.includes("optimize_manifests");
+  const offeredOps = RUNNABLE_OPERATIONS.filter(
+    (op) => workflowOps.includes(op) || (op === "optimize_manifests" && manifestOutsidePreset)
+  );
+  const selectedOps = pickedOps ?? workflowOps;
+  const deletesFiles = selectedOps.some((op) => OPERATION_CATALOG[op].destructive);
+  const manifestOnlyOutsidePreset = manifestOutsidePreset && selectedOps.includes("optimize_manifests");
+  const disabledReason = runDisabledReason(
+    runPreset,
+    activeDestination,
+    selectedOps,
+    pickedOps === null,
+    manifestOnlyOutsidePreset,
+    deletesFiles,
+    acknowledged
+  );
+  const toggleOp = (op: RunnableOperation) => {
+    const next = selectedOps.includes(op) ? selectedOps.filter((item) => item !== op) : [...selectedOps, op];
+    setPickedOps(RUNNABLE_OPERATIONS.filter((item) => next.includes(item)));
+    setAcknowledged(false);
+  };
   const canSelectAll =
     !isFilterSelection && onSelectAllMatching && matchingTotal != null && matchingTotal > total;
   const presetOptions = presets.map((preset) => ({
@@ -123,10 +161,18 @@ export const BulkAssignBar = ({
 
   const queueRun = () => {
     if (!runPreset || !activeDestinationId || disabledReason) return;
-    if (scope === "manifests" && onManifestRewrite) {
+    if (manifestOnlyOutsidePreset && onManifestRewrite) {
       onManifestRewrite({ destinationId: activeDestinationId, presetId: runPreset.id });
     } else {
-      onRun({ destinationId: activeDestinationId, presetId: runPreset.id, mode: runPreset.mode ?? "standard" });
+      const allPresetOps = new Set((runPreset.operations ?? []).map((op) => String(op)));
+      const isFull = pickedOps === null || (selectedOps.length === allPresetOps.size && selectedOps.every((op) => allPresetOps.has(op)));
+      const subset = isFull ? undefined : selectedOps;
+      onRun({
+        destinationId: activeDestinationId,
+        presetId: runPreset.id,
+        mode: runPreset.mode ?? "standard",
+        ...(subset ? { operations: subset } : {})
+      });
     }
     setRunOpen(false);
   };
@@ -232,27 +278,56 @@ export const BulkAssignBar = ({
                 placeholder="Choose a workflow"
                 value={runPresetId}
                 options={presetOptions}
-                onChange={(next) => setRunPresetId(next || undefined)}
+                onChange={(next) => {
+                  setRunPresetId(next || undefined);
+                  setPickedOps(null);
+                  setAcknowledged(false);
+                }}
               />
             </div>
-            {onManifestRewrite ? (
-              <div className="flex flex-col gap-1">
-                <span className="text-sm font-medium">Operations</span>
-                <Segmented
-                  aria-label="Operations to run"
-                  value={scope}
-                  onChange={setScope}
-                  options={[
-                    { label: "Full workflow", value: "workflow" },
-                    { label: "Manifests only", value: "manifests" }
-                  ]}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {scope === "workflow"
-                    ? "Every operation the workflow enables, in the standard order."
-                    : "Rewrites manifests only. No data files are compacted."}
-                </p>
-              </div>
+            {runPreset ? (
+              <fieldset className="flex flex-col gap-1.5">
+                <legend className="mb-1 text-sm font-medium">Operations</legend>
+                {offeredOps.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">This workflow has no operations to run.</p>
+                ) : (
+                  offeredOps.map((op) => {
+                    const info = OPERATION_CATALOG[op];
+                    return (
+                      <label key={op} className="flex items-start gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={selectedOps.includes(op)}
+                          onChange={() => toggleOp(op)}
+                        />
+                        <span className="flex flex-col">
+                          <span>
+                            {info.title}
+                            {info.destructive ? (
+                              <span className="ml-2 text-xs text-[var(--color-status-warning)]">deletes files</span>
+                            ) : null}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{info.summary}</span>
+                        </span>
+                      </label>
+                    );
+                  })
+                )}
+                {deletesFiles ? (
+                  <label className="mt-1 flex items-start gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={acknowledged}
+                      onChange={(event) => setAcknowledged(event.target.checked)}
+                    />
+                    <span className="flex items-center gap-1">
+                      <AlertTriangle size={14} aria-hidden="true" /> I understand files are deleted permanently.
+                    </span>
+                  </label>
+                ) : null}
+              </fieldset>
             ) : null}
             <div className="flex flex-col gap-1">
               <Label htmlFor="bulk-run-engine">Engine</Label>
