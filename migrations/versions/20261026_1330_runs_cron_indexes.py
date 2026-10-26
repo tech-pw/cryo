@@ -1,7 +1,7 @@
 """Partial indexes for the scheduler's last-cron-run lookups on cryo.runs
 
 Revision ID: 20261026_1330
-Revises: 20261026_1300
+Revises: 20261026_1720
 
 #245 made the scheduler read the newest cron run per preset, and the newest cron scan, from
 Postgres on every tick, so a Redis restart can't re-fire the day's crons. cryo.runs had no
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20261026_1330"
-down_revision = "20261026_1300"
+down_revision = "20261026_1720"
 branch_labels = None
 depends_on = None
 
