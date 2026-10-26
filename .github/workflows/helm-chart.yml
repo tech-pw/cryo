@@ -1,0 +1,75 @@
+name: Helm chart
+
+# PR-time check for the chart release-supply-chain.yml publishes: lint the source chart,
+# then run the same stamp + lint + render + package steps the release job runs, with a
+# fake tag and fake digests and no push.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/**"
+      - "scripts/stamp_helm_chart_release.sh"
+      - ".github/workflows/helm-chart.yml"
+      - ".github/workflows/release-supply-chain.yml"
+  pull_request:
+    paths:
+      - "deploy/helm/**"
+      - "scripts/stamp_helm_chart_release.sh"
+      - ".github/workflows/helm-chart.yml"
+      - ".github/workflows/release-supply-chain.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  chart:
+    name: Lint, stamp, and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      CHART_DIR: deploy/helm/cryo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.22.1
+
+      - name: Lint and render the source chart
+        run: |
+          helm lint --strict "${CHART_DIR}"
+          helm template cryo "${CHART_DIR}" > /dev/null
+
+      - name: Artifact Hub metadata is valid YAML with a repositoryID
+        run: yq -e '.repositoryID | test("^[0-9a-f-]{36}$")' deploy/helm/artifacthub-repo.yml
+
+      - name: Stamp, lint, render, and package as a release would
+        env:
+          CRYO_IMAGE_DIGEST: "sha256:0000000000000000000000000000000000000000000000000000000000000001"
+          CRYO_WEB_IMAGE_DIGEST: "sha256:0000000000000000000000000000000000000000000000000000000000000002"
+          CRYO_SPARK_IMAGE_DIGEST: "sha256:0000000000000000000000000000000000000000000000000000000000000003"
+        run: |
+          scratch=$(mktemp -d)
+          cp -R "${CHART_DIR}" "${scratch}/cryo"
+          scripts/stamp_helm_chart_release.sh "${scratch}/cryo" v9.9.9-ci.1
+          test "$(yq '.version' "${scratch}/cryo/Chart.yaml")" = "9.9.9-ci.1"
+          test "$(yq '.annotations["artifacthub.io/prerelease"]' "${scratch}/cryo/Chart.yaml")" = "true"
+          test "$(yq '.image.digest' "${scratch}/cryo/values.yaml")" = "${CRYO_IMAGE_DIGEST}"
+          helm lint --strict "${scratch}/cryo"
+          helm template cryo "${scratch}/cryo" --set global.env.CRYO_ENVIRONMENT=prod --set redis.enabled=false \
+            | grep -F "ghcr.io/tech-pw/cryo@${CRYO_IMAGE_DIGEST}"
+          helm package "${scratch}/cryo" --destination "${scratch}/dist"
+          tar -tzf "${scratch}/dist/cryo-9.9.9-ci.1.tgz" | grep -Fx 'cryo/README.md'
+          if scripts/stamp_helm_chart_release.sh "${scratch}/cryo" 1.2.3; then
+            echo "stamp accepted a tag without a leading v" >&2
+            exit 1
+          fi

@@ -149,11 +149,17 @@ from cryo.db.repositories.sources import (
 )
 from cryo.db.session import SessionLocal
 from cryo.db.tenant_scope import (
+    assert_resource_tenant,
     bind_tenant,
+    get_scoped_job,
     get_scoped_resource,
+    get_scoped_run,
     require_tenant,
+    run_visible,
     scope_by_tenant,
+    scope_runs,
     scoped_select,
+    tenant_filter_id,
     tenant_id_for_create,
 )
 from cryo.domain.enums import EngineType, JobStatus, Mode, OperationType
@@ -991,9 +997,7 @@ def patch_preset(preset_id: uuid.UUID, payload: PresetPatch, session: SessionDep
     dependencies=[Depends(require_admin)],
 )
 def delete_preset(preset_id: uuid.UUID, session: SessionDep) -> None:
-    preset = session.get(Preset, preset_id)
-    if preset is None:
-        raise HTTPException(status_code=404, detail="Preset not found")
+    preset = get_scoped_resource(session, Preset, preset_id, resource_type="Preset")
     preset.enabled = False
     session.commit()
 
@@ -1004,8 +1008,7 @@ def delete_preset(preset_id: uuid.UUID, session: SessionDep) -> None:
     dependencies=[Depends(require_viewer)],
 )
 def list_preset_rules(preset_id: uuid.UUID, session: SessionDep) -> list[PresetRule]:
-    if session.get(Preset, preset_id) is None:
-        raise HTTPException(status_code=404, detail="Preset not found")
+    get_scoped_resource(session, Preset, preset_id, resource_type="Preset")
     return list(session.scalars(select(PresetRule).where(PresetRule.preset_id == preset_id)))
 
 
@@ -1018,8 +1021,7 @@ def list_preset_rules(preset_id: uuid.UUID, session: SessionDep) -> list[PresetR
 def create_preset_rule(
     preset_id: uuid.UUID, payload: PresetRuleCreate, session: SessionDep
 ) -> PresetRule:
-    if session.get(Preset, preset_id) is None:
-        raise HTTPException(status_code=404, detail="Preset not found")
+    get_scoped_resource(session, Preset, preset_id, resource_type="Preset")
     _validate_filter(payload.predicate)
     rule = PresetRule(
         preset_id=preset_id,
@@ -1038,6 +1040,7 @@ def create_preset_rule(
     dependencies=[Depends(require_admin)],
 )
 def delete_preset_rule(preset_id: uuid.UUID, rule_id: uuid.UUID, session: SessionDep) -> None:
+    get_scoped_resource(session, Preset, preset_id, resource_type="Preset")
     rule = session.get(PresetRule, rule_id)
     if rule is None or rule.preset_id != preset_id:
         raise HTTPException(status_code=404, detail="Preset rule not found")
@@ -1051,10 +1054,8 @@ def delete_preset_rule(preset_id: uuid.UUID, rule_id: uuid.UUID, session: Sessio
     dependencies=[Depends(require_operator)],
 )
 def simulate_preset(preset_id: uuid.UUID, session: SessionDep) -> PresetSimulationResponse:
-    preset = session.get(Preset, preset_id)
-    if preset is None:
-        raise HTTPException(status_code=404, detail="Preset not found")
-    sample, estimate = presets.simulate_preset(session, preset)
+    preset = get_scoped_resource(session, Preset, preset_id, resource_type="Preset")
+    sample, estimate = presets.simulate_preset(session, preset, tenant_id=tenant_filter_id(session))
     return PresetSimulationResponse(
         preset_id=preset.id,
         matched_count=int(estimate["matched_count"]),
@@ -1497,6 +1498,7 @@ def create_table_alert_subscription(
     table_id: uuid.UUID,
     payload: TableAlertSubscriptionCreate,
     session: SessionDep,
+    principal: Annotated[Principal, Depends(require_viewer)],
 ) -> TableAlertSubscription:
     """Subscribe an email to SLA/data-quality breach alerts for this table.
 
@@ -1513,7 +1515,9 @@ def create_table_alert_subscription(
     )
     if existing is not None:
         return existing
-    subscription = TableAlertSubscription(table_id=table_id, email=payload.email)
+    subscription = TableAlertSubscription(
+        table_id=table_id, email=payload.email, created_by=principal.subject
+    )
     session.add(subscription)
     session.commit()
     session.refresh(subscription)
@@ -1527,12 +1531,22 @@ def create_table_alert_subscription(
     tags=["tables"],
 )
 def delete_table_alert_subscription(
-    table_id: uuid.UUID, subscription_id: uuid.UUID, session: SessionDep
+    table_id: uuid.UUID,
+    subscription_id: uuid.UUID,
+    session: SessionDep,
+    principal: Annotated[Principal, Depends(require_viewer)],
 ) -> None:
+    """Unsubscribe. Only the subscriber (whoever created it, or the subscribed address
+    itself) or an admin may remove a subscription; other viewers get 403."""
     get_scoped_resource(session, Table, table_id, resource_type="Table")
     subscription = session.get(TableAlertSubscription, subscription_id)
     if subscription is None or subscription.table_id != table_id:
         raise HTTPException(status_code=404, detail="Alert subscription not found")
+    if not _may_delete_subscription(principal, subscription):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the subscriber or an admin can remove this subscription",
+        )
     session.delete(subscription)
     session.commit()
 
@@ -1716,7 +1730,7 @@ def list_compatible_presets(table_id: uuid.UUID, session: SessionDep) -> list[Pr
     destination's ``catalog_bindings``. Non-Trino presets are always included.
     """
     table = get_scoped_resource(session, Table, table_id, resource_type="Table")
-    return presets.list_compatible_presets(session, table)
+    return presets.list_compatible_presets(session, table, tenant_id=tenant_filter_id(session))
 
 
 @router.post(
@@ -1725,7 +1739,8 @@ def list_compatible_presets(table_id: uuid.UUID, session: SessionDep) -> list[Pr
     dependencies=[Depends(require_operator)],
 )
 def assign_tables(payload: AssignmentRequest, session: SessionDep) -> AssignmentResponse:
-    if session.get(Preset, payload.preset_id) is None:
+    preset = session.get(Preset, payload.preset_id)
+    if preset is None or not _preset_visible(session, preset):
         raise HTTPException(status_code=400, detail="Preset does not exist")
 
     selection = _resolve_selection(session, payload.selection)
@@ -2175,6 +2190,7 @@ def list_runs(
         # Only scan runs record source_id in their summary (source/schemas/tables scope) --
         # fleet-wide "all" scans aren't tied to one lakehouse, so they're excluded here by design.
         stmt = stmt.where(MaintenanceRun.summary["source_id"].astext == str(source_id))
+    stmt = scope_runs(session, stmt)
     runs = list(session.scalars(stmt))
     targets = presets.run_target_summaries(session, runs)
     return [
@@ -2189,9 +2205,7 @@ def list_runs(
     tags=["runs"],
 )
 def get_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
-    run = session.scalar(select(MaintenanceRun).where(MaintenanceRun.id == run_id))
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+    run = get_scoped_run(session, run_id)
     targets = presets.run_target_summaries(session, [run])
     payload = presets.run_summary(run, target=targets[run.id], detail=True)
     payload.update(datalake.realized_savings_for_run(session, run.id))
@@ -2205,6 +2219,7 @@ def get_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
     tags=["runs"],
 )
 def get_run_jobs(run_id: uuid.UUID, session: SessionDep) -> dict[str, object]:
+    get_scoped_run(session, run_id)
     snapshot = datalake.run_jobs_snapshot(session, run_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -2273,6 +2288,8 @@ async def _send_run_snapshot(
     # cycle, tracing back to a long-lived watch_run websocket connection.
     if hasattr(session, "expunge_all"):
         session.expunge_all()
+    if not run_visible(session, run_id):
+        return None
     snapshot = datalake.run_jobs_snapshot(session, run_id)
     if snapshot is None:
         return None
@@ -2406,9 +2423,7 @@ async def _watch_run_with_session(
     tags=["runs"],
 )
 def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
-    run = session.get(MaintenanceRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+    run = get_scoped_run(session, run_id)
     # A finished run's recorded outcome is immutable; only its leftover jobs can still be stopped.
     run_finished = run.status in _TERMINAL_RUN_STATUSES
     if run.kind == "scan":
@@ -2513,9 +2528,7 @@ def cancel_run(run_id: uuid.UUID, session: SessionDep) -> RunRead:
     tags=["runs"],
 )
 def get_job(job_id: uuid.UUID, session: SessionDep) -> JobRead:
-    job = session.get(MaintenanceJob, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = get_scoped_job(session, job_id)
     return JobRead.model_validate(presets.job_summary(job))
 
 
@@ -2537,9 +2550,7 @@ def force_admit_job(
     stuck on "table_locked" needs the lock to actually clear (or a lock-bug fix), not
     this endpoint.
     """
-    job = session.get(MaintenanceJob, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = get_scoped_job(session, job_id)
     if job.status not in {JobStatus.QUEUED.value, JobStatus.DEFERRED.value}:
         raise HTTPException(
             status_code=409,
@@ -2615,6 +2626,24 @@ def _validate_filter(payload: dict[str, object]) -> None:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _may_delete_subscription(principal: Principal, subscription: TableAlertSubscription) -> bool:
+    if principal.can(Role.ADMIN):
+        return True
+    subject = principal.subject.strip().casefold()
+    created_by = subscription.created_by
+    if created_by is not None and created_by.strip().casefold() == subject:
+        return True
+    return subscription.email.strip().casefold() == subject
+
+
+def _preset_visible(session: Session, preset: Preset) -> bool:
+    try:
+        assert_resource_tenant(session, preset.tenant_id, resource_type="Preset")
+    except HTTPException:
+        return False
+    return True
+
+
 def _resolve_selection(session: Session, selection: AssignmentSelection) -> presets.SelectionResult:
     try:
         return presets.resolve_selection(
@@ -2622,6 +2651,7 @@ def _resolve_selection(session: Session, selection: AssignmentSelection) -> pres
             mode=selection.mode,
             ids=selection.ids,
             filter_payload=selection.filter,
+            tenant_id=tenant_filter_id(session),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

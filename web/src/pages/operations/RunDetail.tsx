@@ -74,6 +74,7 @@ import {
   targetTableId
 } from "../../lib/operations";
 import "./runDetail.css";
+import { useRunWorkflow } from "./useRunWorkflow";
 
 const STUCK_STATUSES = new Set(["queued", "deferred"]);
 const STALL_THRESHOLD_MS = 3 * 60 * 1000;
@@ -553,8 +554,7 @@ export const RunDetail = () => {
     return () => window.clearInterval(timer);
   }, [runFinished]);
   const duration = formatDuration(runDurationMs(runData));
-  const workflowName = scan ? "Scanner" : targetLabel(runData ?? { id: "", kind: "", status: "", created_at: "" });
-  const workflowLink = scan ? "/runs/scanner" : runData?.preset_id ? `/runs/workflows/${runData.preset_id}` : "/runs";
+  const { name: workflowName, link: workflowLink } = useRunWorkflow(runData ?? undefined);
 
   const pipelineSteps = useMemo(() => {
     if (scan) return scanPipelineSteps(runData?.status);

@@ -13,6 +13,9 @@ Endpoints for:
 
 from __future__ import annotations
 
+import threading
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
@@ -21,7 +24,7 @@ from uuid import UUID
 if TYPE_CHECKING:
     from cryo.engines.spark.k8s import SparkK8sClient
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 from sqlalchemy.orm import selectinload
@@ -55,6 +58,35 @@ from cryo.config import get_settings
 from cryo.observability.observation_lakehouse import ObservationLakehouse
 
 router = APIRouter(prefix="/api/v1/advanced", tags=["advanced"])
+
+# Fleet-wide anomalies and signals are recomputed at most this often per API process. The
+# Governance page asks for them from several tabs at once; without the cache each view
+# started the whole computation again (#259).
+FLEET_INSIGHTS_TTL_SECONDS = 300.0
+_fleet_cache: dict[tuple[object, ...], tuple[float, datetime, list[Any]]] = {}
+_fleet_locks: dict[tuple[object, ...], threading.Lock] = {}
+_fleet_locks_guard = threading.Lock()
+
+
+def _cached_fleet_result(
+    key: tuple[object, ...], compute: Callable[[], list[Any]]
+) -> tuple[list[Any], datetime]:
+    """Return a fresh-enough cached result for ``key``, computing it once when it is missing or
+    stale. Concurrent requests for the same key wait for that one computation."""
+    with _fleet_locks_guard:
+        lock = _fleet_locks.setdefault(key, threading.Lock())
+    with lock:
+        cached = _fleet_cache.get(key)
+        if cached is not None and time.monotonic() - cached[0] < FLEET_INSIGHTS_TTL_SECONDS:
+            return cached[2], cached[1]
+        result = compute()
+        computed_at = datetime.now(UTC)
+        _fleet_cache[key] = (time.monotonic(), computed_at, result)
+        return result, computed_at
+
+
+def clear_fleet_insights_cache() -> None:
+    _fleet_cache.clear()
 
 
 # ==================== Fast-path new-table findings (RFC Features 2+3) ====================
@@ -410,6 +442,7 @@ class AnomalyAlertRead(BaseModel):
 @router.get("/anomalies", response_model=list[AnomalyAlertRead])
 def detect_anomalies(
     session: SessionDep,
+    response: Response,
     _principal: Annotated[Principal, Depends(require_viewer)],
     lookback_days: int = Query(30, ge=7, le=90),
     threshold_sigma: float = Query(3.0, ge=2.0, le=5.0),
@@ -418,12 +451,22 @@ def detect_anomalies(
     """Detect anomalies across all tables."""
     from cryo.ml.anomaly_detector import detect_all_anomalies
 
-    alerts = detect_all_anomalies(
-        session,
-        lookback_days=lookback_days,
-        threshold_sigma=threshold_sigma,
-        dispatch_alerts=dispatch_alerts,
-    )
+    def compute() -> list[Any]:
+        return detect_all_anomalies(
+            session,
+            lookback_days=lookback_days,
+            threshold_sigma=threshold_sigma,
+            dispatch_alerts=dispatch_alerts,
+        )
+
+    if dispatch_alerts:
+        # Sending alerts is an action, not a read: never serve it from the cache.
+        alerts, computed_at = compute(), datetime.now(UTC)
+    else:
+        alerts, computed_at = _cached_fleet_result(
+            ("anomalies", lookback_days, threshold_sigma), compute
+        )
+    response.headers["X-Cryo-Computed-At"] = computed_at.isoformat()
 
     return [
         AnomalyAlertRead(
@@ -611,12 +654,14 @@ class MaintenanceSignalRead(BaseModel):
 @router.get("/signals", response_model=list[MaintenanceSignalRead])
 def detect_maintenance_signals(
     session: SessionDep,
+    response: Response,
     _principal: Annotated[Principal, Depends(require_viewer)],
 ) -> list[MaintenanceSignalRead]:
     """Detect all maintenance signals (file degradation, latency spikes, cost spikes)."""
     from cryo.signals import detect_all_signals
 
-    signals = detect_all_signals(session)
+    signals, computed_at = _cached_fleet_result(("signals",), lambda: detect_all_signals(session))
+    response.headers["X-Cryo-Computed-At"] = computed_at.isoformat()
 
     return [
         MaintenanceSignalRead(

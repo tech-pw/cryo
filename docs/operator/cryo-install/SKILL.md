@@ -23,7 +23,7 @@ Kubernetes 1.27+, Helm 3, an external Postgres, and amd64 nodes. The chart insta
 | Digest | Required when |
 |---|---|
 | `image.digest` | always, in prod |
-| `migration.image.digest` | always, in prod |
+| `migration.image.digest` | only when `migration.image.repository` is set; otherwise the migration job uses `image.digest` |
 | `native.image.digest` | `native.enabled` |
 | `spark.k8s.image.digest` | `spark.k8s.enabled` |
 | `web.image.digest` | `web.enabled` |

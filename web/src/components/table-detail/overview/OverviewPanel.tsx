@@ -38,7 +38,18 @@ import {
 import { useOperationLauncher } from "../operations/OperationLauncher";
 import { FileLayoutCard } from "./FileLayoutCard";
 import { MaintenanceImpact } from "./MaintenanceImpact";
-import { gradeLetter, healthTrendPoints, integerScore, isTableScanned, readDeductions, scoreTrendAnswer, topBySeverity } from "./gradeReasons";
+import {
+  gradeLetter,
+  gradeUnchangedAfterMaintenance,
+  healthTrendPoints,
+  integerScore,
+  isTableScanned,
+  readDeductions,
+  readDesignFindings,
+  scoreTrendAnswer,
+  topBySeverity,
+  type DesignFinding
+} from "./gradeReasons";
 import { OptimizationChecks } from "./OptimizationChecks";
 import { OverviewCard } from "./OverviewCard";
 import { ScoreTrend } from "./ScoreTrend";
@@ -98,6 +109,8 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
   const points = healthTrendPoints(trends.data?.trend_points ?? []);
   const trendText = trendAnswerText(scoreTrendAnswer(points));
   const auditRows = audit.data ?? [];
+  const designFindings = readDesignFindings(stats?.raw);
+  const gradeStuck = gradeUnchangedAfterMaintenance(points, auditRows);
   const pendingRows = compliance.data?.pending_deletion?.pending_rows ?? 0;
   const workflowPreset = presets.data?.find((item) => item.id === preset.data?.preset_id);
   // The score panel already names every deduction; a second callout would repeat the worst one.
@@ -111,6 +124,8 @@ export const OverviewPanel = ({ onScan, onPreview, onEdit }: { onScan?: () => vo
         grade={letter}
         deductions={deductions}
         deductionsRecorded={readDeductions(stats?.raw) != null}
+        designFindings={designFindings}
+        gradeStuck={gradeStuck}
         trendText={trendText}
         status={maintenance.data}
         workflowName={preset.data?.preset_name ?? null}
@@ -205,6 +220,8 @@ function HealthHero({
   grade,
   deductions,
   deductionsRecorded,
+  designFindings,
+  gradeStuck,
   trendText,
   status,
   workflowName,
@@ -222,6 +239,8 @@ function HealthHero({
   grade: string | null;
   deductions: Deduction[];
   deductionsRecorded: boolean;
+  designFindings: DesignFinding[];
+  gradeStuck: boolean;
   trendText: string;
   status: MaintenanceStatusRead | undefined;
   workflowName: string | null;
@@ -323,6 +342,33 @@ function HealthHero({
             <p>{deductionsRecorded ? "Review file layout and maintenance history below for the supporting evidence." : "Refresh the table stats to collect the evidence behind this score."}</p>
           </div>
         )}
+        {gradeStuck ? (
+          <p className="td-grade-stuck" role="note">
+            {designFindings.length
+              ? "The grade didn't change after the last maintenance run. The remaining issues are structural (see Design findings), and maintenance can't change them."
+              : deductions.length
+                ? "The grade didn't change after the last maintenance run. The deductions above need the listed action or a settings change, not a repeat run."
+                : "The grade didn't change after the last maintenance run."}
+          </p>
+        ) : null}
+        {designFindings.length ? (
+          <section className="td-design-findings" aria-labelledby="overview-design-findings">
+            <h3 id="overview-design-findings">Design findings</h3>
+            <p className="td-overview-caption">
+              Not graded. These come from the partition spec and data distribution, so maintenance can't change them.
+            </p>
+            <ul>
+              {designFindings.map((item) => (
+                <li key={item.label} data-severity={item.severity === "critical" ? "critical" : "warning"}>
+                  <p>
+                    <b>{item.label}</b> <span className="td-finding-reason">{item.reason}</span>
+                  </p>
+                  {item.recommendation ? <p className="td-finding-rec">{item.recommendation}</p> : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         <OtherOperations tableId={tableId} stats={stats} audit={audit} orphanBytes={orphanBytes} deductions={deductions} />
         <footer className="td-hero-footer">
           <span>

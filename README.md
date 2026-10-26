@@ -205,6 +205,21 @@ The UI starts empty. `make seed` writes five small Iceberg tables, but it doesn'
 source, scan or enqueue maintenance, and it needs host PySpark. The
 [illustrated quickstart](https://tech-pw.github.io/cryo/quickstart/) walks through the rest.
 
+### Install on Kubernetes
+
+Each release tag publishes the Helm chart to GHCR as an OCI artifact, signed with cosign keyless.
+No clone needed. Chart versions equal the release tag without the `v` (tag `v0.1.6` is chart
+`0.1.6`), and the packaged defaults pin that release's `ghcr.io/tech-pw/cryo`, `cryo-web` and
+`cryo-spark` images by digest.
+
+```bash
+helm install cryo oci://ghcr.io/tech-pw/charts/cryo --version <version> \
+  --namespace cryo --create-namespace \
+  --set global.envFromSecret=cryo-secrets
+```
+
+The [chart README](deploy/helm/cryo/README.md) lists the values a production install must set.
+
 > [!WARNING]
 > The chart default `CRYO_ENVIRONMENT=dev` leaves `POST /api/v1/auth/token` open, so anyone who can
 > reach the API can issue themselves a role. In production, set `CRYO_ENVIRONMENT=prod`, keep the
@@ -469,6 +484,12 @@ cd web && npm run build && npm run test
 | Grafana | http://localhost:3000 (admin / admin) |
 
 </details>
+
+## Community
+
+Questions, ideas and show-and-tell live in [GitHub Discussions](https://github.com/tech-pw/cryo/discussions).
+Bugs go to [Issues](https://github.com/tech-pw/cryo/issues). See [`SUPPORT.md`](./SUPPORT.md) and
+[`MAINTAINERS.md`](./MAINTAINERS.md).
 
 ## Contributing
 
