@@ -758,7 +758,6 @@
   overflow: hidden;
   color: var(--sidebar-text);
   font-size: 11px;
-  opacity: 0.7;
   text-decoration: none;
   white-space: nowrap;
   text-overflow: ellipsis;
