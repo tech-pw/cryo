@@ -1,7 +1,7 @@
 """Drop engine_impl='rust' from native destinations
 
-Revision ID: 20261026_1200
-Revises: 20261022_1200
+Revision ID: 20261026_1210
+Revises: 20261026_1200
 
 The Rust cryo-engine is removed, and the API now accepts only engine_impl='go'. A row still
 holding 'rust' would fail validation the next time someone edits that destination.
@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "20261026_1200"
-down_revision = "20261022_1200"
+revision = "20261026_1210"
+down_revision = "20261026_1200"
 branch_labels = None
 depends_on = None
 
