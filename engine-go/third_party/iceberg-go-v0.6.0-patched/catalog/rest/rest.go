@@ -465,7 +465,8 @@ func fromProps(props iceberg.Properties, o *options) {
 			verify := strings.ToLower(v) == "true"
 			if o.tlsConfig == nil {
 				o.tlsConfig = &tls.Config{
-					InsecureSkipVerify: verify,
+					MinVersion:         tls.VersionTLS12,
+					InsecureSkipVerify: verify, //nolint:gosec // explicit rest.tls.skip-verify opt-in
 				}
 			} else {
 				o.tlsConfig.InsecureSkipVerify = verify
