@@ -7,12 +7,10 @@ on:
       - "docs/**"
       - "**.md"
       - "site/**"
+  # No paths-ignore on pull requests: these jobs are required status checks on main, and a
+  # skipped workflow never reports them, which would leave docs-only PRs unmergeable.
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**.md"
-      - "site/**"
   # GitHub Actions does not reliably fire push events for force-pushes (confirmed live,
   # 2026-10-12: a force-push to main from the OSS sync job produced no CI run at all,
   # and this workflow has no other way to re-run against current main since dispatch
