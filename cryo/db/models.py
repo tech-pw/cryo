@@ -1626,11 +1626,15 @@ class QueryLog(Base):
     engine: Mapped[str] = mapped_column(Text, nullable=False)  # trino, spark, etc.
     query_text: Mapped[str | None] = mapped_column(Text)  # Full SQL (optional)
     query_type: Mapped[str | None] = mapped_column(Text)  # SELECT, INSERT, etc.
+    # none_as_null: Python None must be SQL NULL. Without it SQLAlchemy stored the JSON scalar
+    # null, and jsonb_array_length on it failed every layout-recommendation refresh (#255).
     filter_columns: Mapped[JsonList | None] = mapped_column(
-        JSONB
+        JSONB(none_as_null=True)
     )  # [{column, operator, cardinality}]
-    join_columns: Mapped[JsonList | None] = mapped_column(JSONB)  # [column, ...]
-    projection_columns: Mapped[JsonList | None] = mapped_column(JSONB)  # Selected columns
+    join_columns: Mapped[JsonList | None] = mapped_column(JSONB(none_as_null=True))  # [column, ...]
+    projection_columns: Mapped[JsonList | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )  # Selected columns
     executed_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     duration_ms: Mapped[int | None] = mapped_column(BigInteger)
     rows_read: Mapped[int | None] = mapped_column(BigInteger)

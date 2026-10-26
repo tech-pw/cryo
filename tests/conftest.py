@@ -128,7 +128,21 @@ def _register_sqlite_jsonb_array_length(
         parsed = _json.loads(value) if isinstance(value, str) else value
         return len(parsed) if isinstance(parsed, list) else None
 
+    def _jsonb_typeof(value: object) -> str | None:
+        # Postgres jsonb_typeof: SQL NULL -> NULL, JSON null -> 'null' (#255).
+        if value is None:
+            return None
+        parsed = _json.loads(value) if isinstance(value, str) else value
+        if parsed is None:
+            return "null"
+        if isinstance(parsed, bool):
+            return "boolean"
+        if isinstance(parsed, int | float):
+            return "number"
+        return {list: "array", dict: "object", str: "string"}.get(type(parsed), "string")
+
     dbapi_connection.create_function("jsonb_array_length", 1, _jsonb_array_length)
+    dbapi_connection.create_function("jsonb_typeof", 1, _jsonb_typeof)
 
 
 @event.listens_for(Engine, "connect")

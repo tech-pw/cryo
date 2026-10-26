@@ -825,6 +825,11 @@ class SchedulerService:
                     generate_layout_recommendation(session, table_id)
                     generated += 1
                 except Exception as exc:  # noqa: BLE001
+                    # A failed statement aborts the transaction. Without the rollback every
+                    # later table failed with InFailedSqlTransaction, hiding the real error
+                    # behind ~400 cascade warnings a day (#255). generate_layout_recommendation
+                    # commits each table, so this only discards the failed table's work.
+                    session.rollback()
                     logger.warning(
                         "Layout recommendation generation failed for table %s: %s",
                         table_id,
