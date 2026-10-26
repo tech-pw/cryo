@@ -153,17 +153,30 @@ _DEADLINE_CEILING_SECONDS = 14_400
 
 
 def cap_deadline_seconds_for_table(seconds: int, *, total_size_gb: float | None) -> int:
-    """Same intent as cap_deadline_seconds, scaled by table size.
+    """The Job deadline for this table: the size tier's deadline, never above the ceiling.
+
+    A destination configured below the base deadline (DISPATCH_DEADLINE_SECONDS) keeps its
+    own shorter window on every table -- the config can shrink the window, same as
+    cap_dispatch_profile's min() for CPU/memory. A destination at or above the base gets the
+    tier's deadline, which for large tables is longer than the base.
+
+    Before #180 this was min(seconds, tier). With the default base of 7200s that is still
+    7200s for every tier, so the 300GB+ tiers never took effect: 578-785GB tables kept
+    timing out at 7200s although their tier is 10800s.
 
     Unknown size takes the base (smallest) tier -- same fail-safe-small choice
     _tier_fraction makes for CPU/memory when size isn't known yet.
     """
-    if total_size_gb is not None:
-        for upper_bound, ceiling in _DEADLINE_SIZE_TIERS:
-            if total_size_gb < upper_bound:
-                return min(seconds, ceiling)
-        return min(seconds, _DEADLINE_CEILING_SECONDS)
-    return cap_deadline_seconds(seconds)
+    if total_size_gb is None:
+        return cap_deadline_seconds(seconds)
+    tier_deadline = _DEADLINE_CEILING_SECONDS
+    for upper_bound, ceiling in _DEADLINE_SIZE_TIERS:
+        if total_size_gb < upper_bound:
+            tier_deadline = ceiling
+            break
+    if seconds < DISPATCH_DEADLINE_SECONDS:
+        return min(seconds, tier_deadline)
+    return min(tier_deadline, _DEADLINE_CEILING_SECONDS)
 
 
 _LIGHTWEIGHT_OPS = frozenset(

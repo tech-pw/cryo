@@ -1238,6 +1238,7 @@ class Worker:
         self._store.mark_status(job.id, final_status, engine_ref=engine_ref, error=error)
         if final_status is JobStatus.FAILED and is_table_not_found_error(error):
             self._deactivate_dropped_table(job.table_id, error)
+        self._update_failure_backoff(job.table_id, final_status, error)
         safe_publish(
             self._run_events,
             job.run_id,
@@ -1281,6 +1282,19 @@ class Worker:
         if self._on_job_finished is not None:
             self._on_job_finished()
         return self._store.get_job(job.id)
+
+    def _update_failure_backoff(self, table_id: str, status: JobStatus, error: str | None) -> None:
+        """Per-table backoff after consecutive deadline/OOM failures (#180), regardless of
+        the preset's adaptive_routing. Best-effort: bookkeeping never fails the job."""
+        if status not in {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.PARTIAL}:
+            return
+        update_backoff = getattr(self._store, "update_resource_failure_backoff", None)
+        if not callable(update_backoff):
+            return
+        try:
+            update_backoff(table_id, status, error)
+        except Exception:
+            logger.exception("Failed to update the failure backoff for table %s", table_id)
 
     def _deactivate_dropped_table(self, table_id: str, error: str | None) -> None:
         """Best-effort: never let reconciliation bookkeeping fail the job it's reacting to.
