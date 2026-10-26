@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
+from dataclasses import replace
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -221,9 +222,8 @@ def gate_orphan_removal_on_shared_location(
         operation.type is not OperationType.REMOVE_ORPHAN_FILES for operation in plan.operations
     ):
         return plan
-    return MaintenancePlan(
-        table_ref=plan.table_ref,
-        mode=plan.mode,
+    return replace(
+        plan,
         operations=tuple(
             operation
             for operation in plan.operations
@@ -268,9 +268,8 @@ def gate_gc_disabled(plan: MaintenancePlan, *, gc_disabled: bool) -> Maintenance
         return plan
     if all(operation.type not in _GC_OPERATION_TYPES for operation in plan.operations):
         return plan
-    return MaintenancePlan(
-        table_ref=plan.table_ref,
-        mode=plan.mode,
+    return replace(
+        plan,
         operations=tuple(
             operation for operation in plan.operations if operation.type not in _GC_OPERATION_TYPES
         ),
@@ -310,9 +309,8 @@ def gate_engine_unsupported(
     dropped = [op for op in plan.operations if op.type in unsupported]
     if not dropped:
         return plan
-    return MaintenancePlan(
-        table_ref=plan.table_ref,
-        mode=plan.mode,
+    return replace(
+        plan,
         operations=tuple(op for op in plan.operations if op.type not in unsupported),
         notes=(*plan.notes, *dict.fromkeys(unsupported[op.type] for op in dropped)),
     )

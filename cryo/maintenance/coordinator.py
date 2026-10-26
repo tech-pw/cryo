@@ -396,6 +396,10 @@ class BatchMaintenance:
         # cryo/engines/spark/sql.py::_render_optimize); selection and planning use the same
         # threshold, so the work a table was chosen for is the work that runs.
         params.setdefault("min_file_size_mb", settings.scan_small_file_mb)
+        if table_ids:
+            # Explicit tables are an operator's ad-hoc request, which also skips the cooldown;
+            # the expiry minimum interval only guards scheduled repeats (#179).
+            params.setdefault("expire_snapshots_min_interval_hours", 0)
         shared_ids = self._shared_location_ids(dry_run=dry_run, now=started, report=report)
         if report.orphan_gate_closed:
             params["skip_operations"] = [OperationType.REMOVE_ORPHAN_FILES.value]

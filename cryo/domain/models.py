@@ -69,11 +69,23 @@ class Operation:
 
 
 @dataclass(frozen=True)
+class OptimizeTruncation:
+    """OPTIMIZE packed only some of the qualifying partitions because max_chunks capped it."""
+
+    planned_partitions: int
+    candidate_partitions: int
+    max_chunks: int
+
+
+@dataclass(frozen=True)
 class MaintenancePlan:
     table_ref: str
     mode: Mode
     operations: tuple[Operation, ...]
     notes: tuple[str, ...] = ()
+    # Set when the plan rewrites fewer partitions than qualified. The run then must not count
+    # as a full pass (#199): it does not start the nightly cooldown.
+    optimize_truncation: OptimizeTruncation | None = None
 
 
 @dataclass(frozen=True)

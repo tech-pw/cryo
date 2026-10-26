@@ -79,6 +79,9 @@ class SQLJobStore:
                 session,
                 table.id,
             )
+            hours_since_expire = _hours_since_last_expire_snapshots(session, table.id)
+            if hours_since_expire is not None:
+                stats["hours_since_last_expire_snapshots"] = hours_since_expire
             partitions = _latest_partitions(session, table.id)
             source_config = dict(table.source.config) if table.source is not None else {}
             return TableMaintenanceData(
@@ -499,6 +502,10 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
     assignment = session.get(TableAssignment, job.table_id)
     if assignment is not None and assignment.param_overrides:
         params.update(assignment.param_overrides)
+    if job.run is not None and job.run.kind == "adhoc":
+        # An operator asked for this run; the expiry minimum interval only exists to stop
+        # scheduled runs from repeating it (#179).
+        params.setdefault("expire_snapshots_min_interval_hours", 0)
     guardrails = dict(preset.guardrails) if preset else {}
     summary = dict(job.run.summary or {}) if job.run else {}
     operations = _coerce_operations(preset.operations) if preset else None
@@ -619,6 +626,30 @@ def _coerce_operations(raw: Any) -> tuple[OperationType, ...] | None:
         except ValueError:
             continue
     return tuple(sort_operations_canonically(operations))
+
+
+def _hours_since_last_expire_snapshots(session: Session, table_id: uuid.UUID) -> float | None:
+    """Age of the table's last successful expire_snapshots, for the planner's minimum interval.
+
+    Deliberately separate from _last_maintained_at, which must stay reclaim-only: expiry is
+    metadata work and starting the compaction cooldown on it would block real reclaims. But
+    with no gate of its own, every run re-expired every table it planned, even an hour after
+    the previous expiry (#179).
+    """
+    last = session.scalar(
+        select(func.max(AuditLog.ts)).where(
+            AuditLog.table_id == table_id,
+            AuditLog.status.in_(("OK", "succeeded")),
+            AuditLog.action == OperationType.EXPIRE_SNAPSHOTS.value,
+        )
+    )
+    if last is None:
+        return None
+    if isinstance(last, str):
+        last = datetime.fromisoformat(last)
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return max(0.0, (datetime.now(UTC) - last).total_seconds() / 3600)
 
 
 def _last_maintained_at(session: Session, table_id: uuid.UUID) -> datetime | None:

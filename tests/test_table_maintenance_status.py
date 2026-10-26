@@ -452,7 +452,9 @@ def test_route_returns_inactive_and_the_omitted_contract(monkeypatch: Any) -> No
     statement = str(session.scalar_statements[0])
     assert "LIMIT" in statement.upper()
     assert "finished_at" in statement
-    assert "plan" not in statement
+    # The plan JSON is never loaded. The WHERE may read plan->>'optimize_truncation'
+    # server-side (#199: a truncated OPTIMIZE does not start the cooldown).
+    assert "plan" not in statement.split("FROM", 1)[0]
 
 
 def test_route_uses_settings_for_the_stats_age_window(monkeypatch: Any) -> None:
