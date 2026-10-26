@@ -16,8 +16,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: docs-pages
-  cancel-in-progress: false
+  # Deploys (push / workflow_dispatch) share the single "docs-pages" group and are
+  # never cancelled, so Pages publishes stay serialized. Each PR gets its own group
+  # so PRs neither queue behind nor cancel each other; a newer push to the same PR
+  # cancels that PR's older run.
+  group: ${{ github.event_name == 'pull_request' && format('docs-pages-pr-{0}', github.event.pull_request.number) || 'docs-pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
