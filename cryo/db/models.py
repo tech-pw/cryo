@@ -211,6 +211,13 @@ class Table(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # #120: set when a complete catalog listing no longer contains the table. The row is a
+    # tombstone (inactive, hidden from /tables by default); a later listing that has the
+    # table again clears it. Nothing is hard-deleted.
+    removed_from_catalog_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), index=True
+    )
+    removed_reason: Mapped[str | None] = mapped_column(Text)
     # Tracks scans that fail to even read the table (e.g. a stale dbt __dbt_tmp pointer whose
     # metadata.json was deleted), as distinct from a table that scans fine but needs maintenance.
     # consecutive_scan_failures resets to 0 on any successful scan -- a single transient blip

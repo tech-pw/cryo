@@ -1091,6 +1091,7 @@ def list_tables(
     maintenance_overdue: Annotated[bool, Query()] = False,
     p95_breach: Annotated[bool, Query()] = False,
     no_reads_days: Annotated[int | None, Query(ge=1, le=3660)] = None,
+    include_removed: Annotated[bool, Query()] = False,
 ) -> PaginatedTables:
     predicate = _parse_filter(filter)
     tenant_id = require_tenant(session)
@@ -1121,6 +1122,10 @@ def list_tables(
     )
     stmt = scope_by_tenant(stmt, Table, tenant_id)
     count_stmt = scope_by_tenant(count_stmt, Table, tenant_id)
+    if not include_removed:
+        # Tables the catalog no longer lists (#120) stay in the DB but leave the registry.
+        stmt = stmt.where(Table.removed_from_catalog_at.is_(None))
+        count_stmt = count_stmt.where(Table.removed_from_catalog_at.is_(None))
     if predicate is not None:
         stmt = stmt.where(predicate)
         count_stmt = count_stmt.where(predicate)

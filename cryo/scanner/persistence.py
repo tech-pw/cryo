@@ -157,6 +157,9 @@ def record_table_scan_outcome(
         # of ~1,200 dead catalog entries each 6-hourly scan (live 2026-09-24), so they flapped
         # back into scheduling until the cleanup daemon deactivated them again.
         table.is_active = True
+        # A table that scans cleanly is in the catalog, so a #120 tombstone no longer holds.
+        table.removed_from_catalog_at = None
+        table.removed_reason = None
         table.consecutive_scan_failures = 0
         table.last_scan_error = None
         table.last_scan_error_at = None

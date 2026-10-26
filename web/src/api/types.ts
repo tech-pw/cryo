@@ -194,6 +194,8 @@ export interface TableRead {
   location?: string | null;
   first_seen_at: string;
   is_active: boolean;
+  removed_from_catalog_at?: string | null;
+  removed_reason?: string | null;
   consecutive_scan_failures?: number;
   last_scan_error?: string | null;
   last_scan_error_at?: string | null;

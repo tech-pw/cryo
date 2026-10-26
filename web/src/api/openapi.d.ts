@@ -668,7 +668,11 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete Table Alert Subscription */
+        /**
+         * Delete Table Alert Subscription
+         * @description Unsubscribe. Only the subscriber (whoever created it, or the subscribed address
+         *     itself) or an admin may remove a subscription; other viewers get 403.
+         */
         delete: operations["delete_table_alert_subscription_api_v1_tables__table_id__alert_subscriptions__subscription_id__delete"];
         options?: never;
         head?: never;
@@ -13369,6 +13373,10 @@ export interface components {
             first_seen_at: string;
             /** Is Active */
             is_active: boolean;
+            /** Removed From Catalog At */
+            removed_from_catalog_at?: string | null;
+            /** Removed Reason */
+            removed_reason?: string | null;
             /**
              * Consecutive Scan Failures
              * @default 0
@@ -15146,6 +15154,7 @@ export interface operations {
                 maintenance_overdue?: boolean;
                 p95_breach?: boolean;
                 no_reads_days?: number | null;
+                include_removed?: boolean;
             };
             header?: never;
             path?: never;

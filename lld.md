@@ -179,6 +179,9 @@ CREATE TABLE cryo.tables (
     table_name       text NOT NULL,
     first_seen_at    timestamptz NOT NULL DEFAULT now(),
     is_active        boolean NOT NULL DEFAULT true,
+    removed_from_catalog_at timestamptz,         -- #120 soft delete: scanner found it gone from
+                                              -- the catalog; cleared when the table is listed again
+    removed_reason   text,                       -- e.g. 'not_found_in_catalog: <source>/<schema>'
     UNIQUE (source_id, schema_name, table_name)
 );
 ```

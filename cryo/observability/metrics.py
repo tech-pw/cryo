@@ -127,6 +127,18 @@ scanner_tables_scanned_total = Counter(
     ["source"],
 )
 
+tables_removed_from_catalog_total = Counter(
+    "cryo_tables_removed_from_catalog_total",
+    "Registry tables tombstoned because the catalog no longer lists them (#120)",
+    ["source"],
+)
+
+missing_table_reconcile_aborted_total = Counter(
+    "cryo_missing_table_reconcile_aborted_total",
+    "Missing-table reconciles that removed nothing because a safety guard tripped",
+    ["source", "reason"],
+)
+
 scanner_scan_duration_seconds = Histogram(
     "cryo_scanner_scan_duration_seconds",
     "Duration of individual table scans",

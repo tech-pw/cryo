@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -449,7 +450,7 @@ def record_scan_chunk_finished(
     chunk_id: int,
     num_chunks: int,
     status: str,
-    summary_update: dict[str, int],
+    summary_update: Mapping[str, Any],
     error: str | None = None,
 ) -> None:
     with session_factory() as session:
@@ -495,6 +496,12 @@ def record_scan_chunk_finished(
                 "unreadable": unreadable,
             }
         )
+        for key in _RECONCILE_COUNTER_KEYS:
+            if key in summary_update:
+                chunk[key] = int(summary_update.get(key) or 0)
+        removed_tables = summary_update.get("removed_tables")
+        if isinstance(removed_tables, list) and removed_tables:
+            summary["removed_tables"] = [str(name) for name in removed_tables]
         chunk.pop("current_table", None)
         if error:
             chunk["error"] = error
@@ -642,8 +649,19 @@ def _recompute_chunk_totals(summary: dict[str, Any]) -> None:
     )
     for key in ("assigned", "scanned", "skipped", "failed", "unreadable"):
         summary[key] = sum(int(chunk.get(key) or 0) for chunk in chunk_values)
+    for key in _RECONCILE_COUNTER_KEYS:
+        if any(key in chunk for chunk in chunk_values):
+            summary[key] = sum(int(chunk.get(key) or 0) for chunk in chunk_values)
     # Surface remaining work for the UI (pending + still running).
     summary["chunks_remaining"] = int(summary["chunks_pending"]) + int(summary["chunks_running"])
+
+
+# Missing-table reconcile counters (#120); only chunk 0 ever reports non-zero values.
+_RECONCILE_COUNTER_KEYS = (
+    "removed_from_catalog",
+    "restored_to_catalog",
+    "missing_table_reconcile_skipped",
+)
 
 
 def _append_failed_table(

@@ -699,6 +699,10 @@ class TableRead(OrmModel):
     location: str | None = None
     first_seen_at: datetime
     is_active: bool
+    # Set when the scanner found the table gone from the catalog (#120). The row is kept
+    # (soft delete) so history survives and a re-listed table is restored automatically.
+    removed_from_catalog_at: datetime | None = None
+    removed_reason: str | None = None
     consecutive_scan_failures: int = 0
     last_scan_error: str | None = None
     last_scan_error_at: datetime | None = None

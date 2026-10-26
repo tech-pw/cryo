@@ -280,6 +280,31 @@ class Settings(BaseSettings):
         ),
     )
     scan_dead_table_lookback_days: int = Field(default=30, ge=1)
+    scan_remove_missing_tables_enabled: bool = Field(
+        default=True,
+        description=(
+            "Tombstone registry rows whose table is no longer in a complete catalog listing "
+            "(#120): removed_from_catalog_at is set and the table goes inactive. Reversible: a "
+            "table that shows up again is restored on the next scan. Nothing is hard-deleted."
+        ),
+    )
+    scan_missing_table_max_fraction: float = Field(
+        default=0.2,
+        ge=0,
+        le=1,
+        description=(
+            "Mass-removal guard: if one scan would remove more than this share of a source's "
+            "registered tables, it removes none and records why. Ignored for at most "
+            "scan_missing_table_guard_min_count removals, so small catalogs still reconcile."
+        ),
+    )
+    scan_missing_table_max_count: int = Field(
+        default=500,
+        ge=0,
+        description="Mass-removal guard: never remove more than this many tables per source "
+        "per scan; above it, remove none and record why.",
+    )
+    scan_missing_table_guard_min_count: int = Field(default=5, ge=0)
     dispatch_heartbeat_stall_minutes: int = Field(
         default=1560,
         ge=1,
