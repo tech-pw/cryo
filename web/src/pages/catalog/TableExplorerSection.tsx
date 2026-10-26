@@ -78,6 +78,7 @@ import {
 import { schemaTableName, tableTooltipName } from "../../lib/tableLabels";
 import { useTableExplorerSelection } from "../useTableExplorerSelection";
 import { formatRelative } from "../operations/runState";
+import { isManualTrigger } from "../../components/table-detail/runs/runModel";
 import { useExplorerViewParam } from "./CatalogDashboard";
 import { TRIAGE_VIEWS, useTriageCounts } from "./tablesTriage";
 
@@ -356,7 +357,7 @@ export const LastRunCell = ({ table }: { table: TableRead }) => {
       </span>
       <span className="pl-3.5 text-xs text-muted-foreground">
         {last.status.charAt(0).toUpperCase() + last.status.slice(1)}
-        {last.trigger === "schedule" ? " · nightly" : last.trigger ? " · manual" : ""}
+        {last.trigger ? (isManualTrigger(last.trigger) ? " · manual" : " · nightly") : ""}
       </span>
     </Link>
   );
@@ -818,6 +819,19 @@ export const TableExplorerSection = () => {
     onError: (error) => toast.error((error as Error).message)
   });
 
+  // Same refresh as a run started from table detail, so Runs and each table's Maintenance tab show it at once.
+  const onRunQueued = (message: string, runId: string) => {
+    void queryClient.invalidateQueries({ queryKey: ["runs"] });
+    void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    void queryClient.invalidateQueries({ queryKey: ["cost-dashboard"] });
+    void queryClient.invalidateQueries({ queryKey: ["table-runs"] });
+    void queryClient.invalidateQueries({ queryKey: ["table-maintenance-status"] });
+    toast.success(message, {
+      description: `Run ${runId.slice(0, 8)}`,
+      action: { label: "View run", onClick: () => navigate(`/runs/${runId}`) }
+    });
+  };
+
   const run = useMutation({
     mutationFn: (args: { destinationId: UUID; presetId: UUID; mode: Mode }) => {
       if (selection?.mode === "filter") {
@@ -837,7 +851,7 @@ export const TableExplorerSection = () => {
         trigger: "web"
       });
     },
-    onSuccess: (result) => toast.success(`Run queued: ${result.run_id}`),
+    onSuccess: (result) => onRunQueued("Run queued", result.run_id),
     onError: (error) => toast.error((error as Error).message)
   });
 
@@ -858,7 +872,7 @@ export const TableExplorerSection = () => {
         trigger: "web-manifest-rewrite"
       });
     },
-    onSuccess: (result) => toast.success(`Manifest rewrite queued: ${result.run_id}`),
+    onSuccess: (result) => onRunQueued("Manifest rewrite queued", result.run_id),
     onError: (error) => toast.error((error as Error).message)
   });
 

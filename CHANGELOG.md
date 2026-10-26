@@ -32,9 +32,9 @@ All notable changes to Cryo will be documented in this file. The format is based
   before-and-after scorecard.
 - `LICENSE` and `deploy/helm/cryo/LICENSE` are now the verbatim Apache License 2.0 text. The
   previous copies had reworded clauses, so GitHub could not identify the license.
-- The GitHub mirror sync now also rewrites file contents and commit messages through
-  `scripts/oss_mirror_replacements.txt` (internal hostnames, buckets, IPs, Slack IDs) and strips
-  internal working docs from history. See `docs/OSS_MIRROR.md`.
+- GitHub (`tech-pw/cryo`) is now the only source of truth. The GitLab-to-GitHub mirror sync
+  (`scripts/sync_oss_mirror.sh`, its exclude list, the `.gitlab-ci.yml` sync job and
+  `docs/OSS_MIRROR.md`) is removed, so pull requests merged here are no longer overwritten.
 - GitHub CI installs Python dependencies from `uv.lock` (the same lock the image ships) instead
   of resolving the newest releases on every run, builds `cryo-engine-go` for the scanner parity
   tests, and skips CodeQL and the Pages deploy while the repository is private. Lint, mypy,

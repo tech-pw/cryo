@@ -13,6 +13,7 @@ from cryo.domain.models import (
 )
 from cryo.engines.base import RenderedStatement
 from cryo.engines.expire_data_sql import expire_data_metadata, render_expire_data_delete
+from cryo.engines.table_ref import split_table_ref
 from cryo.planner.partitions import DEFAULT_RENDERABLE_CAPABILITIES
 
 
@@ -545,12 +546,15 @@ def _timestamp_string(value: Any) -> str:
 
 
 def _spark_table(table_ref: str) -> tuple[str, str]:
-    parts = table_ref.split(".")
-    if len(parts) >= 3:
-        return parts[0], ".".join(parts[1:])
-    if len(parts) == 2:
-        return "spark_catalog", table_ref
-    raise ValueError("table_ref must be schema.table or catalog.schema.table")
+    parts = split_table_ref(table_ref)
+    # Procedures take the name inside a SQL string literal ('cat.db.t'), where backticks
+    # still quote but a single quote would end the literal.
+    if any("'" in part for part in parts):
+        raise ValueError(f"table reference contains a single quote: {table_ref!r}")
+    quoted = [_quote_identifier(part) for part in parts]
+    if len(quoted) >= 3:
+        return quoted[0], ".".join(quoted[1:])
+    return "spark_catalog", ".".join(quoted)
 
 
 _REWRITE_JOB_ORDERS = frozenset({"bytes-asc", "bytes-desc", "files-asc", "files-desc", "none"})

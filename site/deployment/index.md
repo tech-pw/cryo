@@ -26,7 +26,7 @@ The scheduler and the governor are leader-elected, so several replicas may start
 
 **Helm chart**
 
-The chart lives at `deploy/helm/cryo`. Defaults are committed, and overrides are per environment.
+The chart lives at `deploy/helm/cryo` and each release tag publishes it to `oci://ghcr.io/tech-pw/charts/cryo`, signed with cosign keyless. Defaults are committed, and overrides are per environment.
 
 **Stores**
 
@@ -35,6 +35,18 @@ PostgreSQL and Redis are required. PostgreSQL is always external, so you can use
 **Engines**
 
 Engines stay outside the chart. Cryo reaches them through source and destination configs stored in the database.
+
+## Install the chart
+
+No clone needed. The chart version `X.Y.Z` is the release tag without its `v`, and the published defaults pin that release's `ghcr.io/tech-pw/cryo`, `cryo-web` and `cryo-spark` images by digest.
+
+**terminal**
+
+```
+$ helm install cryo oci://ghcr.io/tech-pw/charts/cryo --version X.Y.Z --namespace cryo --create-namespace
+```
+
+The chart README lists the values a production install must set, including the database connection, the production environment flag, and OIDC.
 
 ## Request floor
 

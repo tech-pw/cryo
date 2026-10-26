@@ -2,7 +2,7 @@ name: docs
 
 on:
   push:
-    branches: [main, gitlab-main]
+    branches: [main]
     paths:
       - "site/**"
       - "CHANGELOG.md"

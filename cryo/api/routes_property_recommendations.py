@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from cryo.api.deps import SessionDep, require_editor, require_viewer
 from cryo.api.security import Principal
 from cryo.db.models import AuditLog, Table, TableStats
+from cryo.db.tenant_scope import get_scoped_resource
 from cryo.scanner.property_recommendations import (
     apply_table_properties,
     compute_property_recommendations,
@@ -68,8 +69,7 @@ def get_property_recommendations(
     session: SessionDep,
     _principal: ViewerPrincipalDep,
 ) -> PropertyRecommendationsResponse:
-    if session.get(Table, table_id) is None:
-        raise HTTPException(status_code=404, detail="Table not found")
+    get_scoped_resource(session, Table, table_id, resource_type="Table")
 
     items = compute_property_recommendations(session, table_id)
     stats = session.get(TableStats, table_id)
@@ -109,8 +109,7 @@ def apply_table_properties_endpoint(
     session: SessionDep,
     principal: EditorPrincipalDep,
 ) -> ApplyTablePropertiesResponse:
-    if session.get(Table, table_id) is None:
-        raise HTTPException(status_code=404, detail="Table not found")
+    get_scoped_resource(session, Table, table_id, resource_type="Table")
 
     if "format-version" in payload.properties:
         raise HTTPException(
