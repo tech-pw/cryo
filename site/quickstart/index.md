@@ -11,7 +11,7 @@ Start the local control plane. The UI comes up empty. Screenshots on this site a
 
 Before you start
 
-You need Docker, Python 3.12 or newer, Node 22 or newer, and curl. This is a local control plane, not the production topology. The repository is private until the public flip, so this clone is not an anonymous download.
+You need Docker, Python 3.12 or newer, Node 22 or newer, and curl. This is a local control plane, not the production topology.
 
 ## Install and start
 

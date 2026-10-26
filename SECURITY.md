@@ -18,16 +18,12 @@ patched. Pin your deployment to a tagged release when you need a stable target.
 
 ## Reporting a vulnerability
 
-**Preferred, after the repository is public:** Open a [GitHub Security Advisory][gh-sa]
-against this repository. Advisories are visible only to the maintainer team until a fix
-is published. That form returns 404 while the repository is private. GitHub private
-vulnerability reporting exists only on public repositories.
-
-Until the public flip, if you already have access to this private repository, open a
-private security issue for the maintainer team. Do not file a public issue, and do not
-send findings to a guessed or personal address. No fallback security mailbox is published.
-Route non-security support questions according to
-[`docs/SUPPORT_POLICY.md`](./docs/SUPPORT_POLICY.md).
+Open a [GitHub Security Advisory][gh-sa] against this repository. Advisories are visible
+only to the maintainer team until a fix is published, and private vulnerability reporting
+is enabled, so the report never becomes a public issue. Do not file a public GitHub issue
+for a security-sensitive finding, and do not send findings to a guessed or personal
+address. No fallback security mailbox is published. Route non-security support questions
+according to [`docs/SUPPORT_POLICY.md`](./docs/SUPPORT_POLICY.md).
 
 When reporting, please include:
 
