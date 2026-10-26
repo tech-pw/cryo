@@ -257,5 +257,9 @@ class FlinkMaintenanceConfig:
                 params.get("min_input_files", params.get("min_small_files", 5))
             ),
             rewrite_partial_progress_enabled=True,
-            expire_max_snapshot_age_ms=int(params.get("retention_days", 7)) * 24 * 3600 * 1000,
+            expire_max_snapshot_age_ms=(
+                int(params["retention_hours"]) * 3600 * 1000
+                if params.get("retention_hours")
+                else int(params.get("retention_days", 7)) * 24 * 3600 * 1000
+            ),
         )

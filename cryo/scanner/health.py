@@ -187,6 +187,18 @@ def _file_count_thresholds(
     }
 
 
+def health_thresholds_for(stats: Mapping[str, Any]) -> dict[str, int | float]:
+    """The warn/crit limits compute_health_score grades this table against.
+
+    Public so projections (cryo.advisor.path_to_a) grade with the same per-table limits
+    rather than a copy of the flat HEALTH_THRESHOLDS.
+    """
+    thresholds = _scaled_thresholds(float(stats.get("total_size_gb") or 0))
+    thresholds.update(_file_count_thresholds(stats, thresholds))
+    thresholds.update(_snapshot_thresholds(stats, thresholds))
+    return thresholds
+
+
 def compute_design_findings(stats: Mapping[str, Any]) -> list[DesignFinding]:
     """Structural findings (partition count, partition skew) reported beside the grade (#264)."""
     thresholds = _scaled_thresholds(float(stats.get("total_size_gb") or 0))
@@ -239,9 +251,7 @@ def compute_health_score(
     Structural findings (partition count, partition skew) are excluded from the score and
     reported by :func:`compute_design_findings` instead (#264).
     """
-    thresholds = _scaled_thresholds(float(stats.get("total_size_gb") or 0))
-    thresholds.update(_file_count_thresholds(stats, thresholds))
-    thresholds.update(_snapshot_thresholds(stats, thresholds))
+    thresholds = health_thresholds_for(stats)
     deductions: list[HealthDeduction] = []
     score = 100
     total_files = int(stats.get("total_files") or 0)
@@ -502,6 +512,10 @@ def _as_datetime(value: Any) -> datetime | None:
         except ValueError:
             return None
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def grade_for_score(score: int) -> str:
+    return _grade(score)
 
 
 def _grade(score: int) -> str:
