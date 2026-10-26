@@ -15,6 +15,13 @@ All notable changes to Cryo will be documented in this file. The format is based
 - `.github/ISSUE_TEMPLATE/` (bug, feature) and `.github/PULL_REQUEST_TEMPLATE.md`.
 - Initial `CHANGELOG.md`.
 
+### Security
+- The web UI's nginx now sends `Content-Security-Policy` (with `frame-ancestors 'none'`),
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and `Referrer-Policy` on every
+  response, error pages included. `index.html` and SPA routes are `no-cache` so a deploy shows
+  up at once. Hashed `/assets/*` files are cached for a year as `immutable`. HSTS is a chart
+  value (`web.hsts`), off by default for installs without TLS (#260).
+
 ### Changed
 - Docs site homepage: "Compact first, then clean up" is replaced by a scroll-driven story of one
   1 TB table. It decays for 30 days, then goes through each operation in order while a pinned

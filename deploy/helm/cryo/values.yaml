@@ -429,6 +429,14 @@ web:
   # The web Deployment injects CRYO_API_UPSTREAM as the API Service FQDN and
   # NGINX_ENTRYPOINT_LOCAL_RESOLVERS so nginx uses the pod nameserver, not kube-dns.
   port: 8080
+  # Strict-Transport-Security from the web nginx. Off by default because an install without
+  # TLS must not send it. Turn it on only when the UI is served over HTTPS: browsers then
+  # refuse plain HTTP for this host for maxAgeSeconds.
+  hsts:
+    enabled: false
+    maxAgeSeconds: 31536000
+    includeSubDomains: false
+    preload: false
   probe:
     livenessInitialDelaySeconds: 5
     readinessInitialDelaySeconds: 3

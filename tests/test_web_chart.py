@@ -38,7 +38,7 @@ def test_web_injects_api_fqdn_and_local_resolvers() -> None:
     docs = render("--set", "web.enabled=true", "--namespace", "cryo")
     env = {item["name"]: item["value"] for item in _web_container(docs)["env"]}
     assert env["NGINX_ENTRYPOINT_LOCAL_RESOLVERS"] == "1"
-    assert env["NGINX_ENVSUBST_FILTER"] == "NGINX_LOCAL_RESOLVERS|CRYO_API_UPSTREAM"
+    assert env["NGINX_ENVSUBST_FILTER"] == "NGINX_LOCAL_RESOLVERS|CRYO_API_UPSTREAM|CRYO_WEB_HSTS"
     assert env["CRYO_API_UPSTREAM"] == ("http://cryo-api.cryo.svc.cluster.local:8000")
 
 
