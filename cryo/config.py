@@ -3,8 +3,11 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_SECRET_KEY = "dev-only-change-me"
+MIN_SECRET_KEY_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -21,7 +24,7 @@ class Settings(BaseSettings):
     environment: Literal["dev", "test", "staging", "prod"] = "dev"
     database_url: str = "postgresql+psycopg://cryo:cryo@localhost:5432/cryo"
     redis_url: str = "redis://localhost:6379/0"
-    secret_key: str = "dev-only-change-me"
+    secret_key: str = DEFAULT_SECRET_KEY
     jwt_secret: str | None = Field(
         default=None,
         description="HS256 secret for API JWTs. Defaults to secret_key when unset.",
@@ -1531,6 +1534,23 @@ class Settings(BaseSettings):
         ge=1,
         description="Default workload forecast horizon for smart-maintenance API endpoints.",
     )
+
+    @model_validator(mode="after")
+    def _require_real_keys_outside_dev(self) -> Settings:
+        # secret_key signs HS256 API tokens and is the Fernet key for stored connection
+        # secrets, so the published default makes both forgeable/readable.
+        if self.environment not in {"staging", "prod"}:
+            return self
+        for name in ("secret_key", "jwt_secret"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if value == DEFAULT_SECRET_KEY or len(value) < MIN_SECRET_KEY_LENGTH:
+                raise ValueError(
+                    f"CRYO_{name.upper()} must be set to a random value of at least "
+                    f"{MIN_SECRET_KEY_LENGTH} characters when CRYO_ENVIRONMENT={self.environment}"
+                )
+        return self
 
 
 @lru_cache
