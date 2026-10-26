@@ -121,6 +121,13 @@ so `rewrite_data_files` lost races on moderate-write tables.
 
 Regression tests: `table/commit_conflict_test.go`.
 
+### 5. TLS 1.2 floor on the REST catalog client
+
+`catalog/rest/rest.go`, `rest.tls.skip-verify` handling: the `tls.Config` built here had
+no `MinVersion`. Go clients already default to TLS 1.2, so this changes nothing at runtime;
+it states the floor explicitly so a static scan (gosec G402) can see it. `InsecureSkipVerify`
+stays an explicit operator opt-in through `rest.tls.skip-verify=true`, as upstream.
+
 ## Removing this fork
 
 Once a released `apache/iceberg-go` version fixes these upstream (Avro day-transform

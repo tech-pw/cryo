@@ -30,7 +30,7 @@ export const OpsPanel = () => {
 
   const deepHealth = useQuery({
     queryKey: ["deep-health"],
-    queryFn: () => getDeepHealth(),
+    queryFn: () => getDeepHealth(api),
     refetchInterval: 60_000
   });
   const shallowHealth = useQuery({
@@ -40,7 +40,7 @@ export const OpsPanel = () => {
   });
 
   const loadMetrics = useMutation({
-    mutationFn: () => getMetricsText(80),
+    mutationFn: () => getMetricsText(api, 80),
     onSuccess: setMetricsPreview,
     onError: (error) => toast.error((error as Error).message)
   });
@@ -123,12 +123,6 @@ export const OpsPanel = () => {
               ) : null}
             </div>
             <div className="flex h-7 items-center gap-1">
-              <Button variant="ghost" size="sm" className="-ml-2 h-7" asChild>
-                <a href="/healthz/deep" target="_blank" rel="noreferrer">
-                  <ExternalLink className="size-3.5" />
-                  Open JSON
-                </a>
-              </Button>
               <Button
                 size="sm"
                 className="h-7"
@@ -166,29 +160,21 @@ export const OpsPanel = () => {
         <Card className="md:col-span-3">
           <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 p-3">
             <CardTitle>Prometheus metrics</CardTitle>
-            <div className="flex shrink-0 gap-2">
-              <Button size="sm" loading={loadMetrics.isPending} onClick={() => loadMetrics.mutate()}>
-                Preview
-              </Button>
-              <Button size="sm" asChild>
-                <a href="/metrics" target="_blank" rel="noreferrer">
-                  <ExternalLink className="size-3.5" />
-                  Open scrape URL
-                </a>
-              </Button>
-            </div>
+            <Button size="sm" loading={loadMetrics.isPending} onClick={() => loadMetrics.mutate()}>
+              Preview
+            </Button>
           </CardHeader>
           <CardContent className="px-3 pb-3 pt-0">
             <p className="text-sm text-muted-foreground">
-              Exposes registered Prometheus metrics at <code>/metrics</code> for scraping. Preview loads the first
-              lines only.
+              Prometheus scrapes <code>/metrics</code> on the API Service inside the cluster. The web UI does not
+              expose it. Preview loads the first lines only.
             </p>
             {metricsPreview ? (
               <PrometheusPreview text={metricsPreview} />
             ) : (
               <EmptyState
                 title="No preview loaded"
-                description="Click Preview or open the scrape URL in a new tab."
+                description="Click Preview to load the first lines."
               />
             )}
           </CardContent>
