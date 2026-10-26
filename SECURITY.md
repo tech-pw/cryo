@@ -59,9 +59,10 @@ while the dev token is on. The route is on only when `CRYO_ENVIRONMENT` is `dev`
 no `CRYO_OIDC_ISSUER_URL` is set. `CRYO_ALLOW_DEV_TOKEN_IN_PROD` turns it back on in any
 environment.
 
-The chart default is `CRYO_ENVIRONMENT: dev`. A default `helm install` with no OIDC issuer leaves
-the route open. A public install must set `prod`, leave the dev-token override false, and set an
-issuer before the API is reachable.
+The chart defaults to `CRYO_ENVIRONMENT: prod`. A bare `helm install` refuses to render until
+every enabled image is pinned by digest, and the API refuses to start without a real
+`CRYO_SECRET_KEY`. Setting `dev` for a throwaway install re-opens the route unless an OIDC issuer
+is set.
 
 `CRYO_SECRET_KEY` defaults to `dev-only-change-me`. It signs HS256 API tokens (unless
 `CRYO_JWT_SECRET` is set) and encrypts stored connection secrets. In `staging` and `prod`, every
