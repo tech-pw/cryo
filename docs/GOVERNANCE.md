@@ -21,6 +21,11 @@ contributor volume justifies it (see [`research-and-roadmap.md`](./research-and-
 
 Read [CONTRIBUTING.md](../CONTRIBUTING.md) for setup, commit conventions, and PR expectations.
 
+## Maintainers
+
+The current maintainers are listed in [`MAINTAINERS.md`](../MAINTAINERS.md). Review ownership
+per path is in [`.github/CODEOWNERS`](../.github/CODEOWNERS); keep the two in sync.
+
 ## Maintainer responsibilities
 
 - Keep `main` deployable (CI: lint, typecheck, tests).
