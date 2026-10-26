@@ -872,6 +872,51 @@ class Settings(BaseSettings):
         gt=0,
         description="Burst capacity for expensive API endpoint rate limiting.",
     )
+    auth_login_throttle_enabled: bool = Field(
+        default=True,
+        description=(
+            "Throttle failed password and Google sign-ins per account and per client IP. "
+            "Counters live in Redis so the limit holds across API replicas."
+        ),
+    )
+    auth_login_max_failures: int = Field(
+        default=5,
+        gt=0,
+        description="Failed sign-ins for one account within the window before it gets 429.",
+    )
+    auth_login_ip_max_failures: int = Field(
+        default=20,
+        gt=0,
+        description=(
+            "Failed sign-ins from one client IP (any account) within the window before it "
+            "gets 429. Higher than the per-account limit so offices behind one NAT still work."
+        ),
+    )
+    auth_login_window_seconds: int = Field(
+        default=15 * 60,
+        gt=0,
+        description="Length of the failed sign-in window, and the longest a lockout lasts.",
+    )
+    api_docs_enabled: bool | None = Field(
+        default=None,
+        description=(
+            "Serve /docs, /redoc and /openapi.json. Unset means on everywhere except "
+            "CRYO_ENVIRONMENT=prod, where the schema (every route and model) stays private."
+        ),
+    )
+    metrics_bearer_token: str | None = Field(
+        default=None,
+        description=(
+            "When set, the API's root /metrics requires 'Authorization: Bearer <token>' "
+            "(set bearer_token / credentials in the Prometheus scrape config). Unset keeps "
+            "it open for in-cluster scrapers; do not route it through a public Ingress."
+        ),
+    )
+
+    def api_docs_served(self) -> bool:
+        if self.api_docs_enabled is not None:
+            return self.api_docs_enabled
+        return self.environment != "prod"
 
     # Alerting integrations
     pagerduty_routing_key: str | None = Field(
