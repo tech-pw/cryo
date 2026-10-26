@@ -547,7 +547,7 @@ _NATIVE_CELLS = (
             "Partitioned Iceberg v3 tables must not contain deletion vectors.",
             "The plan must not request z-order compaction.",
         ),
-        limitations=("Rust native compaction remains blocked upstream.",),
+        limitations=("An unset engine_impl keeps native optimize off; it routes to the fallback.",),
         fallback_engines=(EngineType.TRINO, EngineType.SPARK_EMR),
         owner="engines/native",
         evidence=_NATIVE_EVIDENCE,

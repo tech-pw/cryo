@@ -3,7 +3,8 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MaintenanceActions } from "./MaintenanceActions";
-import { OperationLauncherProvider } from "./OperationLauncher";
+import { OperationLauncherProvider, useOperationLauncher } from "./OperationLauncher";
+import type { RunnableOperation } from "./operationCatalog";
 
 const mocks = vi.hoisted(() => ({
   getEffectivePreset: vi.fn(),
@@ -27,6 +28,27 @@ const renderCart = () =>
       <MemoryRouter initialEntries={["/tables/t1"]}>
         <OperationLauncherProvider tableId="t1" tableName="events">
           <MaintenanceActions tableId="t1" stats={{}} audit={[]} orphanBytes={null} deductions={[]} />
+        </OperationLauncherProvider>
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+
+const LaunchButton = ({ op }: { op: RunnableOperation }) => {
+  const launcher = useOperationLauncher();
+  return (
+    <button type="button" onClick={() => launcher?.launch(op)}>
+      launch {op}
+    </button>
+  );
+};
+
+const renderWithLaunch = (op: RunnableOperation) =>
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter initialEntries={["/tables/t1"]}>
+        <OperationLauncherProvider tableId="t1" tableName="events">
+          <MaintenanceActions tableId="t1" stats={{}} audit={[]} orphanBytes={null} deductions={[]} />
+          <LaunchButton op={op} />
         </OperationLauncherProvider>
       </MemoryRouter>
     </QueryClientProvider>
@@ -101,5 +123,40 @@ describe("run cart", () => {
     renderCart();
     expect(await screen.findByText("Viewers can't run maintenance")).toBeInTheDocument();
     expect(addButton("Compact files")).toBeDisabled();
+  });
+
+  it("launching one operation submits only that operation and keeps the cart", async () => {
+    renderWithLaunch("expire_snapshots");
+    await waitFor(() => expect(addButton("Remove orphan files")).toBeEnabled());
+    fireEvent.click(addButton("Compact files"));
+    fireEvent.click(addButton("Remove orphan files"));
+
+    fireEvent.click(screen.getByRole("button", { name: "launch expire_snapshots" }));
+    const dialog = await screen.findByRole("dialog");
+    const steps = [...dialog.querySelectorAll(".td-cart-steps li b")].map((node) => node.textContent);
+    expect(steps).toEqual(["Expire snapshots"]);
+    expect(within(dialog).getByText(/Your run cart \(2 operations\) is not part of this run/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /files are deleted/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Queue Expire snapshots" }));
+
+    await waitFor(() => expect(mocks.runTableOperations).toHaveBeenCalledWith({ token: "t" }, "t1", { operations: ["expire_snapshots"] }));
+    expect(mocks.runTableOperations).toHaveBeenCalledTimes(1);
+    const bar = await screen.findByRole("region", { name: "Run cart" });
+    expect(within(bar).getByText("Compact files → Remove orphan files")).toBeInTheDocument();
+  });
+
+  it("cancelling a single launch leaves the cart review unchanged", async () => {
+    renderWithLaunch("expire_snapshots");
+    await waitFor(() => expect(addButton("Rewrite manifests")).toBeEnabled());
+    fireEvent.click(addButton("Rewrite manifests"));
+    fireEvent.click(screen.getByRole("button", { name: "launch expire_snapshots" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Review & run" }));
+    const cartDialog = await screen.findByRole("dialog");
+    const steps = [...cartDialog.querySelectorAll(".td-cart-steps li b")].map((node) => node.textContent);
+    expect(steps).toEqual(["Rewrite manifests"]);
   });
 });
