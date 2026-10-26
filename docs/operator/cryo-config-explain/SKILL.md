@@ -26,6 +26,8 @@ Read `TableStats.raw["health_deductions"]`. Do not recompute the score.
 
 `HEALTH_THRESHOLDS` keys are `small_file_pct`, `total_files`, `snapshot_count`, `snapshot_age_days`, `delete_file_pct`, `delete_file_count`, `manifest_count`, `partition_count`, `partition_skew_ratio`, `avg_files_per_partition`, `metadata_to_data_ratio`, each with `_warn` and `_crit`. Quote the row's deduction list, not these numbers, when explaining a table.
 
+`partition_count` and `partition_skew_ratio` are structural: they never lower the score. `compute_design_findings` reports them in `TableStats.raw["health_design_findings"]` with a recommendation, because maintenance can't change them. The `total_files` limits rise to 1.5x (warn) and 3x (crit) the layout floor, `max(total_partitions, data size / target file size)`. The `snapshot_count` limits rise to 1.5x and 3x `commits_per_day` times the effective expire window (7 days by default, tightened for fast writers as in `_expire_params`). The fixed values stay as the minimum.
+
 `MIN_SMALL_FILES_FOR_COMPACTION` is 128. A table under that floor can look fragmented by percentage and still never be scheduled. The grade and the plan answer different questions.
 
 ## Refuse

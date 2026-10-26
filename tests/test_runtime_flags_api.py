@@ -46,6 +46,7 @@ def test_runtime_flags_follow_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         "native_engine_enabled": False,
         "maintenance_writes_enabled": False,
         "native_engine_fallback": NATIVE_ENGINE_SQL_FALLBACK,
+        "display_timezone": "UTC",
     }
 
     _patch_settings(
@@ -59,6 +60,7 @@ def test_runtime_flags_follow_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         "native_engine_enabled": True,
         "maintenance_writes_enabled": True,
         "native_engine_fallback": NATIVE_ENGINE_SQL_FALLBACK,
+        "display_timezone": "UTC",
     }
 
     _patch_settings(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, SupportsFloat, cast
 
 from sqlalchemy import and_, case, desc, func, literal, select
@@ -29,6 +29,7 @@ from cryo.db.repositories import presets
 from cryo.db.repositories import scanner as scanner_repo
 from cryo.domain.enums import CostPrecision, OperationType
 from cryo.observability.correlation import correlation_summary
+from cryo.reporting.impact_signals import realized_reclaim_conditions
 
 _OPERATION_RECLAIM_FIELDS: tuple[tuple[OperationType, str], ...] = (
     (OperationType.EXPIRE_SNAPSHOTS, "reclaim_expire_bytes"),
@@ -148,23 +149,37 @@ def dashboard_datalake(
         )
     ]
 
+    # One point per day over the latest row per table that day. Grouping on the exact
+    # scan_at made each point whichever few tables shared a timestamp, so the chart was a
+    # sawtooth of unrelated subsets rather than the fleet (issue #190).
+    latest_stats = _latest_history_rows_per_table_day(
+        session,
+        TableStatsHistory,
+        (
+            TableStatsHistory.total_size_gb,
+            TableStatsHistory.total_files,
+            TableStatsHistory.small_files_count,
+            TableStatsHistory.overall_score,
+        ),
+    )
     drift_rows = list(
         session.execute(
             select(
-                TableStatsHistory.scan_at,
-                func.coalesce(func.sum(TableStatsHistory.total_size_gb), 0.0),
-                func.coalesce(func.sum(TableStatsHistory.total_files), 0),
-                func.coalesce(func.sum(TableStatsHistory.small_files_count), 0),
-                func.avg(TableStatsHistory.overall_score),
+                func.max(latest_stats.c.scan_at),
+                func.coalesce(func.sum(latest_stats.c.total_size_gb), 0.0),
+                func.coalesce(func.sum(latest_stats.c.total_files), 0),
+                func.coalesce(func.sum(latest_stats.c.small_files_count), 0),
+                func.avg(latest_stats.c.overall_score),
             )
-            .group_by(TableStatsHistory.scan_at)
-            .order_by(desc(TableStatsHistory.scan_at))
+            .where(latest_stats.c.rn == 1)
+            .group_by(latest_stats.c.day)
+            .order_by(desc(latest_stats.c.day))
             .limit(drift_limit)
         )
     )
     drift = [
         {
-            "scan_at": scan_at,
+            "scan_at": _as_utc(scan_at) if isinstance(scan_at, datetime) else scan_at,
             "total_size_gb": float(total_size_gb or 0),
             "total_files": int(total_files or 0),
             "small_files_count": int(small_files_count or 0),
@@ -210,6 +225,45 @@ _IMPROVED_RUN_LOOKBACK = timedelta(hours=36)
 _IMPROVED_JOB_WINDOW = timedelta(hours=24)
 _IMPROVED_HISTORY_LOOKBACK = timedelta(days=7)
 _IMPROVED_MAX_TABLES = 2000
+
+
+def _day_bucket(session: Session, column: Any) -> Any:
+    if session.get_bind().dialect.name == "postgresql":
+        return func.date_trunc("day", column)
+    return func.date(column)
+
+
+def _as_day(value: object) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _as_utc(value).date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
+def _latest_history_rows_per_table_day(
+    session: Session, history: Any, value_columns: tuple[Any, ...]
+) -> Any:
+    """Latest history row per table per UTC day, ranked as ``rn == 1``.
+
+    Same shape as cryo.api.dashboard_routes._latest_rows_per_table_day (the fleet health
+    trend) without its tenant scoping, which these fleet dashboards don't apply.
+    """
+    day = _day_bucket(session, history.scan_at)
+    return select(
+        day.label("day"),
+        history.table_id.label("table_id"),
+        history.scan_at.label("scan_at"),
+        *[column.label(column.key) for column in value_columns],
+        func.row_number()
+        .over(
+            partition_by=(history.table_id, day),
+            order_by=(history.scan_at.desc(), history.id.desc()),
+        )
+        .label("rn"),
+    ).subquery()
 
 
 def _running_job_count(session: Session) -> int:
@@ -495,7 +549,9 @@ def dashboard_cost(
     # Same fleet-wide materialization trap as dashboard_datalake -- aggregate in SQL / load
     # only the reclaim columns needed for savings_by_operation (never TableStats.raw).
     totals = _sql_aggregate_cost_totals(session, settings=settings)
-    totals["total_realized_savings_usd"] = _total_realized_savings(session, settings=settings)
+    realized_usd, realized_bytes = _total_realized_savings(session, settings=settings)
+    totals["total_realized_savings_usd"] = realized_usd
+    totals["total_realized_bytes_freed"] = realized_bytes
     savings_by_operation = _sql_aggregate_savings_by_operation(session, settings=settings)
     cost_by_schema = _sql_aggregate_cost_by_schema(session)
     top_opportunities = _top_cost_opportunities(session, limit=top_limit)
@@ -510,20 +566,31 @@ def dashboard_cost(
     }
 
 
-def _total_realized_savings(session: Session, *, settings: Settings) -> float:
-    """All-time cumulative $ saved from completed maintenance runs -- distinct from
-    _realized_savings_by_day's trend, which is bounded to the last `limit` days. This is
-    "cost saved to date," not "cost saved recently"."""
-    total_bytes = session.scalar(
-        select(func.coalesce(func.sum(AuditLog.actual_bytes_freed), 0)).where(
-            AuditLog.actual_bytes_freed.isnot(None)
-        )
-    )
-    return bytes_to_usd(
-        int(total_bytes or 0),
+def _total_realized_savings(
+    session: Session, *, settings: Settings
+) -> tuple[float | None, int | None]:
+    """Monthly storage value of every byte maintenance has freed, plus the byte total.
+
+    This is a $/month storage rate for the cumulative bytes freed (not lifetime dollars, and
+    not net of data written since), so the UI labels it per month (issue #189). Only
+    successful reclaim actions count, the same rows Impact and per-run savings use. Returns
+    ``(None, None)`` when no such action reported bytes: unmeasured is not $0.
+    """
+    total_bytes, measured = session.execute(
+        select(
+            func.coalesce(func.sum(AuditLog.actual_bytes_freed), 0),
+            func.count(AuditLog.actual_bytes_freed),
+        ).where(AuditLog.actual_bytes_freed.isnot(None), *realized_reclaim_conditions())
+    ).one()
+    if not measured:
+        return None, None
+    freed = int(total_bytes or 0)
+    usd = bytes_to_usd(
+        freed,
         price_per_gb_month=settings.cost_price_per_gb_month,
         use_gib=settings.cost_use_gib,
     )
+    return usd, freed
 
 
 def table_cost(session: Session, table_id: uuid.UUID) -> dict[str, object] | None:
@@ -572,7 +639,7 @@ def _sql_aggregate_cost_totals(session: Session, *, settings: Settings) -> dict[
             + TableCost.reclaim_optimize_bytes
             + TableCost.reclaim_manifests_bytes,
         ),
-        else_=func.coalesce(TableStats.reclaimable_bytes, 0),
+        else_=TableStats.reclaimable_bytes,
     )
     storage_expr = case(
         (
@@ -596,10 +663,11 @@ def _sql_aggregate_cost_totals(session: Session, *, settings: Settings) -> dict[
             func.coalesce(func.sum(current_expr), 0.0),
             func.coalesce(func.sum(projected_expr), 0.0),
             func.coalesce(func.sum(savings_expr), 0.0),
-            func.coalesce(func.sum(reclaim_expr), 0),
+            func.sum(reclaim_expr),
             func.coalesce(func.sum(storage_expr), 0),
             func.sum(request_savings_expr),
             func.count(request_savings_expr),
+            func.count(reclaim_expr),
         )
         .select_from(Table)
         .outerjoin(TableStats, TableStats.table_id == Table.id)
@@ -651,7 +719,10 @@ def _sql_aggregate_cost_totals(session: Session, *, settings: Settings) -> dict[
         "projected_monthly_cost_usd": round(float(row[1] or 0), 4),
         "projected_savings_usd_month": round(float(row[2] or 0), 4),
         "current_storage_bytes": int(row[4] or 0),
-        "reclaimable_bytes": int(row[3] or 0),
+        # None, not 0, when no table has a measured reclaimable figure -- the datalake
+        # endpoint's rule (issue #189). The count says how much of the fleet the sum covers.
+        "reclaimable_bytes": int(row[3] or 0) if row[7] else None,
+        "reclaimable_tables_measured": int(row[7] or 0),
         "precision_coverage": precision_coverage,
         "orphan_scan_stale": orphan_scan_stale,
         "last_full_cost_scan_at": last_full_scan,
@@ -777,25 +848,36 @@ def _cost_trend(
     settings: Settings | None = None,
 ) -> list[dict[str, object]]:
     settings = settings or Settings()
-    drift_rows = list(
-        session.execute(
+    # Latest row per table per day, as for the datalake drift series (issue #190).
+    latest_cost = _latest_history_rows_per_table_day(
+        session,
+        TableCostHistory,
+        (
+            TableCostHistory.current_monthly_cost_usd,
+            TableCostHistory.projected_savings_usd_month,
+        ),
+    )
+    drift_rows = [
+        (_as_utc(scan_at) if isinstance(scan_at, datetime) else scan_at, current, savings)
+        for scan_at, current, savings in session.execute(
             select(
-                TableCostHistory.scan_at,
-                func.coalesce(func.sum(TableCostHistory.current_monthly_cost_usd), 0.0),
-                func.coalesce(func.sum(TableCostHistory.projected_savings_usd_month), 0.0),
+                func.max(latest_cost.c.scan_at),
+                func.coalesce(func.sum(latest_cost.c.current_monthly_cost_usd), 0.0),
+                func.coalesce(func.sum(latest_cost.c.projected_savings_usd_month), 0.0),
             )
-            .group_by(TableCostHistory.scan_at)
-            .order_by(desc(TableCostHistory.scan_at))
+            .where(latest_cost.c.rn == 1)
+            .group_by(latest_cost.c.day)
+            .order_by(desc(latest_cost.c.day))
             .limit(limit)
         )
-    )
+    ]
     realized_by_day = _realized_savings_by_day(session, settings=settings, limit=limit)
     return [
         {
             "scan_at": scan_at,
             "current_monthly_cost_usd": float(current_cost or 0),
             "projected_savings_usd_month": float(savings or 0),
-            "realized_usd_month": realized_by_day.get(scan_at.date()) if scan_at else None,
+            "realized_usd_month": realized_by_day.get(_as_day(scan_at)) if scan_at else None,
         }
         for scan_at, current_cost, savings in reversed(drift_rows)
     ]
@@ -807,14 +889,14 @@ def _realized_savings_by_day(
     settings: Settings,
     limit: int,
 ) -> dict[Any, float]:
-    day_bucket = func.date_trunc("day", AuditLog.ts).label("day_bucket")
+    day_bucket = _day_bucket(session, AuditLog.ts).label("day_bucket")
     rows = list(
         session.execute(
             select(
                 day_bucket,
                 func.coalesce(func.sum(AuditLog.actual_bytes_freed), 0),
             )
-            .where(AuditLog.actual_bytes_freed.isnot(None))
+            .where(AuditLog.actual_bytes_freed.isnot(None), *realized_reclaim_conditions())
             .group_by(day_bucket)
             .order_by(desc(day_bucket))
             .limit(limit)
@@ -824,7 +906,7 @@ def _realized_savings_by_day(
     for day, freed_bytes in rows:
         if day is None:
             continue
-        day_key = day.date() if hasattr(day, "date") else day
+        day_key = _as_day(day)
         result[day_key] = bytes_to_usd(
             int(freed_bytes or 0),
             price_per_gb_month=settings.cost_price_per_gb_month,
@@ -1324,8 +1406,6 @@ def realized_savings_for_run(session: Session, run_id: uuid.UUID) -> dict[str, i
     ``realized_bytes_freed`` is None when no successful action reported bytes.
     A SQL SUM of NULLs would otherwise look like a measured zero.
     """
-    from cryo.reporting.impact_signals import _RECLAIM_ACTIONS, _SUCCESS_STATUSES
-
     row = session.execute(
         select(
             func.coalesce(func.sum(AuditLog.actual_bytes_freed), 0),
@@ -1334,11 +1414,7 @@ def realized_savings_for_run(session: Session, run_id: uuid.UUID) -> dict[str, i
         )
         .select_from(AuditLog)
         .join(MaintenanceJob, AuditLog.job_id == MaintenanceJob.id)
-        .where(
-            MaintenanceJob.run_id == run_id,
-            AuditLog.action.in_(_RECLAIM_ACTIONS),
-            AuditLog.status.in_(tuple(_SUCCESS_STATUSES)),
-        )
+        .where(MaintenanceJob.run_id == run_id, *realized_reclaim_conditions())
     ).one()
     measured = int(row[1] or 0)
     return {

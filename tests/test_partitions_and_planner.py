@@ -555,8 +555,11 @@ def test_planner_includes_partitions_without_last_write_at() -> None:
     assert not any("Skipped hot partition" in note for note in plan.notes)
 
 
-def test_planner_hot_cold_filter_off_by_default() -> None:
-    """Move 14: filter only kicks in when partition_write_idle_hours > 0."""
+def test_planner_hot_cold_filter_off_when_explicitly_zero() -> None:
+    """Move 14: an explicit partition_write_idle_hours=0 turns the filter off.
+
+    Unset is no longer "off" for a day-partitioned table (#265): see
+    tests/test_compaction_target_and_hot_partitions.py."""
     from datetime import UTC, datetime, timedelta
 
     hot_write = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
@@ -584,7 +587,12 @@ def test_planner_hot_cold_filter_off_by_default() -> None:
             },
         ],
         Mode.STANDARD,
-        {"min_small_files": 128, "chunk_size_gb": 100, "max_partitions_per_chunk": 100},
+        {
+            "min_small_files": 128,
+            "chunk_size_gb": 100,
+            "max_partitions_per_chunk": 100,
+            "partition_write_idle_hours": 0,
+        },
     )
     assert not any("Skipped hot partition" in note for note in plan.notes)
     optimize_ops = [op for op in plan.operations if op.type.value == "optimize"]
