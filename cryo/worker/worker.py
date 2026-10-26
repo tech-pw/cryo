@@ -287,6 +287,11 @@ class InMemoryJobStore:
             job.replica = replica
         job.error = error
 
+    def set_deferred_reason(self, job_id: str, reason: str) -> None:
+        job = self.jobs[job_id]
+        if job.status is JobStatus.DEFERRED:
+            job.error = reason
+
     def record_audit(self, record: AuditRecord) -> None:
         self.audit.append(record)
 
