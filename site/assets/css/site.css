@@ -1331,6 +1331,29 @@ h3:hover .anchor,
 }
 
 
+/* ---------- checklist ---------- */
+
+.checklist {
+    list-style: none;
+    padding-left: 0 !important;
+}
+
+.checklist>li {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+}
+
+.checklist input[type="checkbox"] {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--accent);
+    transform: translateY(2px);
+}
+
+
 /* ---------- steps ---------- */
 
 .steps {

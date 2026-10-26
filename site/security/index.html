@@ -1,0 +1,181 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Security · Cryo</title><meta name="description" content="Cryo authentication and production hardening. OIDC setup and role claims, the viewer, operator and admin roles, the dev token, CRYO_SECRET_KEY, stored credentials, egress, and a hardening checklist."><link rel="canonical" href="https://tech-pw.github.io/cryo/security/"><link rel="alternate" type="text/markdown" href="../security/index.md" title="Markdown version"><meta name="theme-color" content="#F5FAFD" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0F16" media="(prefers-color-scheme: dark)"><meta property="og:type" content="website"><meta property="og:site_name" content="Cryo"><meta property="og:title" content="Security · Cryo"><meta property="og:description" content="Cryo authentication and production hardening. OIDC setup and role claims, the viewer, operator and admin roles, the dev token, CRYO_SECRET_KEY, stored credentials, egress, and a hardening checklist."><meta property="og:url" content="https://tech-pw.github.io/cryo/security/"><meta property="og:image" content="https://tech-pw.github.io/cryo/assets/img/og.png"><meta name="twitter:card" content="summary_large_image"><link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="../assets/fonts/ibm-plex-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin><script>(function(){try{var t=localStorage.getItem("cryo-site-theme");if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}})()</script><link rel="stylesheet" href="../assets/css/site.css?v=b11406fefc"></head><body class="docs" data-page="security" data-root="../"><a class="skip" href="#main">Skip to content</a><header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><a class="logo" href="../" aria-label="Cryo home"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true"><g stroke-width="1.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
+    <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
+    <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
+    <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
+    <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
+    <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
+    <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
+    <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
+    <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="2" stroke-linecap="round" style="stroke:var(--cryo-mark-dash,#5C667A)">
+    <path d="M17 19.5L20 22.3"/>
+    <path d="M27.6 14.5L29 18"/>
+    <path d="M13.9 34.1L17.2 34.7"/>
+  </g>
+  <g stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
+    <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
+    <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="1.1">
+    <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
+    <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
+    <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
+  </g>
+  <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)"/>
+  <g stroke="#FFFFFF" stroke-linecap="round">
+    <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
+    <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><nav class="hdr-tabs" aria-label="Sections"><a class="hdr-tab" href="../quickstart/">Get started</a><a class="hdr-tab" href="../concepts/">Concepts</a><a class="hdr-tab" href="../health/" aria-current="true">Operate</a><a class="hdr-tab" href="../reference/">Reference</a></nav><div class="hdr-end"><button class="search-open" type="button" aria-label="Search the docs" aria-haspopup="dialog"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="so-text">Search</span><kbd class="so-kbd">⌘K</kbd></button><a class="icon-btn" href="https://github.com/tech-pw/cryo" aria-label="Cryo on GitHub"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><button class="icon-btn theme-toggle" type="button" aria-label="Toggle colour theme"><svg class="i-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="i-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></button></div></div></header><div class="shell"><nav class="side" id="side" aria-label="Documentation"><div class="side-in"><div class="nav-group"><p class="nav-label">Get started</p><ul><li><a class="nav-link" href="../">Overview</a></li><li><a class="nav-link" href="../quickstart/">Quickstart</a></li><li><a class="nav-link" href="../benchmark/">Benchmark</a></li><li><a class="nav-link" href="../onboarding/">Connect a lakehouse</a></li></ul></div><div class="nav-group"><p class="nav-label">Concepts</p><ul><li><a class="nav-link" href="../concepts/">How Cryo fits</a></li><li><a class="nav-link" href="../architecture/">Architecture</a></li><li><a class="nav-link" href="../maintenance/">Maintenance</a></li></ul></div><div class="nav-group"><p class="nav-label">Operate</p><ul><li><a class="nav-link" href="../health/">Health and cost</a></li><li><a class="nav-link" href="../tables/">Tables</a></li><li><a class="nav-link" href="../table-detail/">Table detail</a></li><li><a class="nav-link" href="../engines/">Engines</a></li><li><a class="nav-link" href="../deployment/">Deployment</a></li><li><a class="nav-link" href="../install/">Install on Kubernetes</a></li><li><a class="nav-link" href="../security/" aria-current="page">Security</a></li></ul></div><div class="nav-group"><p class="nav-label">Reference</p><ul><li><a class="nav-link" href="../reference/">Reference</a></li></ul></div></div><button class="side-collapse" type="button" aria-label="Collapse sidebar" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg></button></nav><div class="scrim" hidden></div><main class="main" id="main"><article class="doc"><header class="doc-head"><nav class="crumbs" aria-label="Breadcrumb"><a href="../" aria-label="Cryo home"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></a><span class="crumb-sep" aria-hidden="true">›</span><span>Operate</span><span class="crumb-sep" aria-hidden="true">›</span><span class="crumb-here" aria-current="page">Security</span></nav><h1>Security</h1><p class="lede">How people sign in to Cryo, what each role can do, which secrets Cryo keeps and how they're protected, and what to check before an install is reachable.</p><div class="doc-meta"><span>Updated <time datetime="2026-10-26">2026-10-26</time></span><span class="dot" aria-hidden="true"></span><span>6 min read</span><span class="meta-links"><a href="https://github.com/tech-pw/cryo/edit/main/site/_src/pages/security.html"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>Edit this page</a><button class="share-page" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"/></svg><span>Share</span></button><a href="https://github.com/tech-pw/cryo/issues/new?title=docs%3A%20Security&body=Page%3A%20https%3A%2F%2Ftech-pw.github.io%2Fcryo%2Fsecurity%2F%0A%0AWhat%20is%20wrong%20or%20missing%3F%0A&labels=documentation"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="13" rx="5"/><path d="M9 7a3 3 0 0 1 6 0M3 13h4M17 13h4M4 7l3 2M20 7l-3 2M4 19l3-2M20 19l-3-2"/></svg>Report an issue</a><a class="md-page" href="../security/index.md">View as Markdown</a></span><button class="copy-page" type="button" data-md="../security/index.md">Copy page</button></div></header><details class="toc-m"><summary>On this page</summary><ul><li class="toc-l2"><a href="#sign-in">How sign-in works</a></li><li class="toc-l2"><a href="#oidc">OIDC setup</a></li><li class="toc-l3"><a href="#role-claims">Role mapping</a></li><li class="toc-l2"><a href="#roles">Roles</a></li><li class="toc-l2"><a href="#dev-token">The dev token</a></li><li class="toc-l2"><a href="#secret-key">CRYO_SECRET_KEY and token lifetime</a></li><li class="toc-l2"><a href="#stored-credentials">What Cryo stores</a></li><li class="toc-l2"><a href="#egress">Network and egress</a></li><li class="toc-l2"><a href="#checklist">Production hardening checklist</a></li><li class="toc-l2"><a href="#reporting">Reporting a vulnerability</a></li><li class="toc-l2"><a href="#read-next">Where to go next</a></li></ul></details><div class="prose"><aside class="callout callout-caution" role="note"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2.8 20h18.4L12 4zM12 10v4.5M12 17.5h.01"/></svg><div class="callout-body"><p class="callout-title">Local defaults are for development only</p><p>The local stack and an unconfigured install run with <code>CRYO_ENVIRONMENT=dev</code> and the published default <code>CRYO_SECRET_KEY</code>. In that state anyone who can reach the API can mint an admin token. Use the <a href="#checklist">hardening checklist</a> before an install is reachable by anyone else.</p></div></aside>
+
+<h2 id="sign-in">How sign-in works<a class="anchor" href="#sign-in" aria-label="Link to How sign-in works">#</a></h2>
+<p>Every API route needs a bearer token, except the sign-in routes and the health checks. Cryo accepts two kinds of token:</p>
+<dl>
+  <dt>Tokens from your identity provider (OIDC)</dt>
+  <dd>The UI sends you to your provider, and the API swaps the authorization code for the provider's access token (PKCE is supported). Cryo then checks each request's token against the provider's JWKS. This is the production sign-in.</dd>
+  <dt>Tokens Cryo signs itself (HS256)</dt>
+  <dd>These are issued by password sign-in for local users, by Google sign-in, and by the dev token route. They're signed with <code>CRYO_JWT_SECRET</code>, or with <code>CRYO_SECRET_KEY</code> when that's unset, and they last 24 hours.</dd>
+</dl>
+<p><code>/healthz</code>, <code>/readyz</code>, <code>/healthz/deep</code> and <code>/metrics</code> need no token. Keep them off the public internet; see <a href="../install/#verify">Install</a>.</p>
+
+<h2 id="oidc">OIDC setup<a class="anchor" href="#oidc" aria-label="Link to OIDC setup">#</a></h2>
+<p>Register Cryo as a confidential client with the authorization-code flow, then set these in the Secret that <code>global.envFromSecret</code> names:</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Setting</th><th>What it is</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_OIDC_ISSUER_URL</code></td><td>The issuer. Cryo reads <code>/.well-known/openid-configuration</code> under it, and tokens must carry exactly this <code>iss</code>, without a trailing slash.</td></tr>
+    <tr><td><code>CRYO_OIDC_CLIENT_ID</code></td><td>The client ID. OIDC is on only when the issuer and the client ID are both set.</td></tr>
+    <tr><td><code>CRYO_OIDC_CLIENT_SECRET</code></td><td>Used for the code exchange and refresh. Without it, sign-in can't complete.</td></tr>
+    <tr><td><code>CRYO_OIDC_REDIRECT_URI</code></td><td><code>https://&lt;your-cryo-host&gt;/login/callback</code>. Register the same URI at the provider. The default is <code>http://localhost:5173/login/callback</code>.</td></tr>
+    <tr><td><code>CRYO_OIDC_AUDIENCE</code></td><td>Optional. The <code>aud</code> that access tokens must carry. Defaults to the client ID.</td></tr>
+    <tr><td><code>CRYO_OIDC_JWKS_URI</code></td><td>Optional. Overrides the JWKS URL from discovery.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The provider's <strong>access token</strong> must be a JWT signed with RS256, RS384, RS512, ES256, ES384 or ES512, and it must carry <code>exp</code> and <code>sub</code>. Some providers issue opaque access tokens or use another audience by default. Configure yours to issue a JWT access token for Cryo's audience.</p>
+
+<h3 id="role-claims">Role mapping<a class="anchor" href="#role-claims" aria-label="Link to Role mapping">#</a></h3>
+<p>Cryo reads roles from the <code>role</code>, <code>roles</code>, <code>scope</code>, <code>scopes</code> and <code>groups</code> claims. Each claim can be a string separated by spaces or commas, or a list. Only the exact role names count, in any letter case: <code>viewer</code>, <code>operator</code>, <code>admin</code> and <code>evidence_collector</code>. A group called <code>cryo-admins</code> doesn't map to anything, so have your provider emit the role name itself. A valid token with no recognized role is rejected with 401.</p>
+
+<h2 id="roles">Roles<a class="anchor" href="#roles" aria-label="Link to Roles">#</a></h2>
+<div class="tbl">
+<table>
+  <thead><tr><th>Role</th><th>Can do</th></tr></thead>
+  <tbody>
+    <tr><td><code>viewer</code></td><td>Read catalogs, tables, runs and health. Can't start maintenance.</td></tr>
+    <tr><td><code>operator</code></td><td>Everything a viewer can, plus run maintenance. Can't change users, sign-in or connections.</td></tr>
+    <tr><td><code>admin</code></td><td>Everything an operator can, plus sources, destinations, presets and their rules, per-table parameter overrides, local users, sign-in settings and integration settings.</td></tr>
+    <tr><td><code>evidence_collector</code></td><td>A service role for recording deployed layout-conformance evidence. It doesn't include viewer rights, and admin doesn't include it.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The first admin has to come from your identity provider, because only an admin can create local users. After that, an admin can add password users and turn on Google sign-in under Settings. Password sign-in is on by default, but it does nothing until a local user exists. Turn it off in Settings if you sign in only through OIDC.</p>
+
+<h2 id="dev-token">The dev token<a class="anchor" href="#dev-token" aria-label="Link to The dev token">#</a></h2>
+<p><code>POST /api/v1/auth/token</code> issues a <code>viewer</code>, <code>operator</code> or <code>admin</code> token to anyone who asks, with no identity check. It exists for the local stack and for tests. When it's off, it returns 503.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Setting</th><th>Dev token</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_ENVIRONMENT=prod</code></td><td>Off</td></tr>
+    <tr><td><code>dev</code>, <code>test</code> or <code>staging</code></td><td>On, even when OIDC is configured</td></tr>
+    <tr><td><code>CRYO_ALLOW_DEV_TOKEN_IN_PROD=true</code></td><td>On in every environment</td></tr>
+  </tbody>
+</table>
+</div>
+<aside class="callout callout-note" role="note"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8h.01M11 12h1v5h1"/><circle cx="12" cy="12" r="9"/></svg><div class="callout-body"><p class="callout-title">Stricter defaults are on the way</p><p>A pending change (<a href="https://github.com/tech-pw/cryo/pull/213">#213</a>) turns the dev token on only in <code>dev</code> or <code>test</code> with no OIDC issuer set, makes <code>prod</code> the chart default, and stops every process in <code>staging</code> or <code>prod</code> from starting when <code>CRYO_SECRET_KEY</code> or <code>CRYO_JWT_SECRET</code> is the default or shorter than 32 characters. The checklist below is already safe under both the current and the new rules.</p></div></aside>
+<p>To confirm it's off, <code>GET /api/v1/auth/config</code> should report <code>"dev_token_enabled":false</code>, and a <code>POST</code> to the token route should return 503.</p>
+
+<h2 id="secret-key">CRYO_SECRET_KEY and token lifetime<a class="anchor" href="#secret-key" aria-label="Link to CRYO_SECRET_KEY and token lifetime">#</a></h2>
+<p><code>CRYO_SECRET_KEY</code> does two jobs:</p>
+<ul>
+  <li>It signs Cryo's own HS256 tokens, unless <code>CRYO_JWT_SECRET</code> is set.</li>
+  <li>It's the encryption key for the connection secrets Cryo stores. Cryo derives a Fernet key from its SHA-256 hash.</li>
+</ul>
+<p>The code default is <code>dev-only-change-me</code>. Because that value is published, a deployment that keeps it accepts tokens anyone can forge, and anyone with a copy of the database can decrypt its stored secrets. Generate a random value of at least 32 characters, for example with <code>openssl rand -hex 32</code>.</p>
+<p>Set <code>CRYO_JWT_SECRET</code> to a separate random value, so you can rotate token signing without touching stored secrets.</p>
+<dl>
+  <dt>Rotating <code>CRYO_JWT_SECRET</code></dt>
+  <dd>Every HS256 token stops working at once, and people sign in again. Cryo can't revoke a single HS256 token, so rotation is the way to end every session. Tokens from your identity provider aren't affected. Their lifetime and refresh follow your provider's settings.</dd>
+  <dt>Rotating <code>CRYO_SECRET_KEY</code></dt>
+  <dd>There's no re-encryption tool. After a change, every stored secret fails to decrypt until an admin enters it again. Rotate only when you have to, and keep the old key until every secret has been re-entered. If <code>CRYO_JWT_SECRET</code> is unset, this rotation also ends every HS256 session.</dd>
+</dl>
+
+<h2 id="stored-credentials">What Cryo stores<a class="anchor" href="#stored-credentials" aria-label="Link to What Cryo stores">#</a></h2>
+<p>These are encrypted in PostgreSQL with the key above, stored with an <code>enc:</code> prefix:</p>
+<ul>
+  <li>the secret part of each source and destination (<code>secret_ref</code>), such as an S3 secret access key</li>
+  <li>AWS credentials for cost insights and S3 access logs</li>
+  <li>API keys for the AI providers</li>
+  <li>Slack and other webhook URLs</li>
+</ul>
+<p>Everything else in a source or destination <code>config</code> is stored as plain JSON. Keep credentials out of <code>config</code>. Better still, give the pods an IAM role through <code>serviceAccount.annotations</code> (IRSA on EKS), so no static AWS key is stored at all.</p>
+<p>Local users' passwords are stored as salted PBKDF2-SHA256 hashes. The database URL, the Redis URL, the OIDC client secret and the keys themselves never go into the database. They live in the Kubernetes Secret.</p>
+
+<h2 id="egress">Network and egress<a class="anchor" href="#egress" aria-label="Link to Network and egress">#</a></h2>
+<p>Cryo has no inbound path except the API, and the UI's web pod in front of it. Its pods make outbound connections to:</p>
+<ul>
+  <li>PostgreSQL and Redis</li>
+  <li>your catalogs: Iceberg REST, Hive Metastore (Thrift), AWS Glue, Polaris or Nessie</li>
+  <li>your engines: Trino over HTTP, and Spark. Spark on Kubernetes and the native lanes create Jobs through the Kubernetes API.</li>
+  <li>the object storage that holds the table files, plus AWS APIs such as STS, Glue and cost data when you use them</li>
+  <li>the OIDC issuer for discovery, JWKS and token exchange, and <code>oauth2.googleapis.com</code> if Google sign-in is on</li>
+  <li>Slack or webhook URLs, if you configure notifications</li>
+  <li>an AI provider, if you configure one. <code>api.openai.com</code> and <code>*.openai.azure.com</code> are allowed. Any other OpenAI-compatible origin must be listed exactly in <code>CRYO_LLM_ALLOWED_ORIGINS</code>.</li>
+</ul>
+<p>A default-deny egress NetworkPolicy that opens only these destinations is a good fit. The chart doesn't ship one.</p>
+
+<h2 id="checklist">Production hardening checklist<a class="anchor" href="#checklist" aria-label="Link to Production hardening checklist">#</a></h2>
+<ul class="checklist">
+  <li><input type="checkbox" aria-label="Done"> <code>CRYO_ENVIRONMENT=prod</code> is set in <code>global.env</code>.</li>
+  <li><input type="checkbox" aria-label="Done"> <code>CRYO_ALLOW_DEV_TOKEN_IN_PROD</code> is unset or <code>false</code>.</li>
+  <li><input type="checkbox" aria-label="Done"> <code>CRYO_SECRET_KEY</code> is a random value of at least 32 characters, it's stored in a Secret, and it's backed up with the database.</li>
+  <li><input type="checkbox" aria-label="Done"> <code>CRYO_JWT_SECRET</code> is set to a different random value.</li>
+  <li><input type="checkbox" aria-label="Done"> OIDC is configured, the access token carries a Cryo role, and you've signed in as an admin through it.</li>
+  <li><input type="checkbox" aria-label="Done"> <code>/api/v1/auth/config</code> reports <code>"dev_token_enabled":false</code>, and <code>POST /api/v1/auth/token</code> returns 503.</li>
+  <li><input type="checkbox" aria-label="Done"> Password sign-in is off in Settings unless you need local users.</li>
+  <li><input type="checkbox" aria-label="Done"> Every image is pinned by digest. In <code>prod</code>, the chart enforces this.</li>
+  <li><input type="checkbox" aria-label="Done"> The UI is served over TLS, and <code>/metrics</code> and <code>/healthz/deep</code> aren't reachable from outside your network.</li>
+  <li><input type="checkbox" aria-label="Done"> Credentials are in each connection's secret field or come from an IAM role, never from its <code>config</code>.</li>
+  <li><input type="checkbox" aria-label="Done"> Egress is limited to the destinations above.</li>
+</ul>
+
+<h2 id="reporting">Reporting a vulnerability<a class="anchor" href="#reporting" aria-label="Link to Reporting a vulnerability">#</a></h2>
+<p>Don't open a public issue with details. Follow <a href="https://github.com/tech-pw/cryo/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+
+<h2 id="read-next">Where to go next<a class="anchor" href="#read-next" aria-label="Link to Where to go next">#</a></h2>
+<div class="linkcards"><a class="linkcard" href="../install/"><span class="lc-title">Install on Kubernetes</span><span class="lc-desc">A production install with these settings.</span></a><a class="linkcard" href="../deployment/"><span class="lc-title">Deployment</span><span class="lc-desc">What the release runs and what it requests.</span></a></div>
+</div><aside class="community"><div><p class="cm-h">Stuck, or have an idea?</p><p>Cryo is built in the open. Ask in GitHub Discussions, open an issue, or send a pull request.</p></div><div class="cm-actions"><a class="btn btn-sm" href="https://github.com/tech-pw/cryo/discussions">Discussions</a><a class="btn btn-sm" href="https://github.com/tech-pw/cryo/issues">Issues</a><a class="btn btn-sm btn-primary" href="https://github.com/tech-pw/cryo"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>Star on GitHub</a></div></aside><nav class="pager" aria-label="Previous and next pages"><a class="pg pg-prev" href="../install/"><span class="pg-k">Previous</span><span class="pg-t">Install on Kubernetes</span></a><a class="pg pg-next" href="../reference/"><span class="pg-k">Next</span><span class="pg-t">Reference</span></a></nav></article></main><aside class="toc" aria-label="On this page"><p class="toc-h">On this page</p><ul><li class="toc-l2"><a href="#sign-in">How sign-in works</a></li><li class="toc-l2"><a href="#oidc">OIDC setup</a></li><li class="toc-l3"><a href="#role-claims">Role mapping</a></li><li class="toc-l2"><a href="#roles">Roles</a></li><li class="toc-l2"><a href="#dev-token">The dev token</a></li><li class="toc-l2"><a href="#secret-key">CRYO_SECRET_KEY and token lifetime</a></li><li class="toc-l2"><a href="#stored-credentials">What Cryo stores</a></li><li class="toc-l2"><a href="#egress">Network and egress</a></li><li class="toc-l2"><a href="#checklist">Production hardening checklist</a></li><li class="toc-l2"><a href="#reporting">Reporting a vulnerability</a></li><li class="toc-l2"><a href="#read-next">Where to go next</a></li></ul><a class="toc-top" href="#main">Back to top ↑</a></aside></div><footer class="foot"><div class="foot-in"><div class="foot-brand"><a class="logo" href="../"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true"><g stroke-width="1.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
+    <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
+    <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
+    <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
+    <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
+    <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
+    <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
+    <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
+    <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="2" stroke-linecap="round" style="stroke:var(--cryo-mark-dash,#5C667A)">
+    <path d="M17 19.5L20 22.3"/>
+    <path d="M27.6 14.5L29 18"/>
+    <path d="M13.9 34.1L17.2 34.7"/>
+  </g>
+  <g stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
+    <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
+    <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="1.1">
+    <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
+    <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
+    <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
+  </g>
+  <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)"/>
+  <g stroke="#FFFFFF" stroke-linecap="round">
+    <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
+    <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><p>Apache-2.0, self-hosted Iceberg maintenance. Every decision explained.</p></div><div><p class="foot-h">Docs</p><ul><li><a href="../quickstart/">Quickstart</a></li><li><a href="../benchmark/">Benchmark</a></li><li><a href="../concepts/">Concepts</a></li><li><a href="../architecture/">Architecture</a></li><li><a href="../reference/">Reference</a></li></ul></div><div><p class="foot-h">Operate</p><ul><li><a href="../maintenance/">Maintenance</a></li><li><a href="../health/">Health and cost</a></li><li><a href="../engines/">Engines</a></li><li><a href="../deployment/">Deployment</a></li></ul></div><div><p class="foot-h">Project</p><ul><li><a href="https://github.com/tech-pw/cryo">GitHub</a></li><li><a href="https://github.com/tech-pw/cryo/issues">Issues</a></li><li><a href="../llms.txt">llms.txt</a></li><li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 licence</a></li></ul></div></div><p class="foot-fine">Apache, Apache Iceberg, Iceberg and Apache Spark are trademarks of The Apache Software Foundation. Other names may be trademarks of their respective owners.</p></footer><dialog class="search" id="search" aria-label="Search the docs"><form method="dialog" class="search-box"><div class="search-field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="search-input" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="search-list"><kbd>Esc</kbd></div><ul class="search-list" id="search-list" role="listbox"></ul><p class="search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to open</span></p></form></dialog><script src="../assets/js/site.js?v=af4e3140cc" defer></script></body></html>

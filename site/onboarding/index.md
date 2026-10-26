@@ -39,7 +39,11 @@ This makes one `list_namespaces()` call. It proves the endpoint is reachable and
 
 Done when the panel reports the schema count. That number is also the first honest signal that you pointed at the catalog you meant to.
 
-- [authentication](#auth): Storage credentials
+### Storage credentials
+
+Once the test passes, Cryo walks the catalog to find which buckets your tables actually live in, and shows them ranked by how many tables each holds. Buckets appear as they are found rather than after the whole walk, so you can pick one without waiting.
+
+Each bucket is read-probed with the credentials on this screen and labelled **Readable**, **No access** or **Not found**. Resolve the ones marked no-access here — see [authentication](#auth) below.
 
 ### Review and save
 

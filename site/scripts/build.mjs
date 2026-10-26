@@ -251,7 +251,15 @@ const PAGE_SUMMARIES = {
   reference: "What is in the box, what is not, and how Cryo compares with adjacent tools.",
 };
 
-function htmlToMarkdown(html) {
+// Code is held out as placeholders until the outermost call returns. Otherwise the tag and
+// indent stripping below eats YAML indentation and anything in code that looks like a tag.
+function htmlToMarkdown(html, holds = null) {
+  const top = holds === null;
+  if (top) holds = [];
+  const keep = (text) => {
+    holds.push(text);
+    return `\u0001${holds.length - 1}\u0001`;
+  };
   let s = dropNamedElement(dropNamedElement(dropNamedElement(html, "script"), "style"), "svg")
     .replace(/<button(?![^>]*data-go)[\s\S]*?<\/button>/gi, "")
     .replace(/<aside class="tj-[a-z]+"[\s\S]*?<\/aside>/gi, "")
@@ -261,21 +269,22 @@ function htmlToMarkdown(html) {
       const title = /<span class="code-title[^"]*">([\s\S]*?)<\/span>/i.exec(fig);
       const code = /<code>([\s\S]*?)<\/code>/i.exec(fig);
       const label = title ? inlineText(title[1]) : "";
-      const body = code ? decodeEntities(code[1]).replace(/\n$/, "") : "";
-      return `\n\n${label ? `**${label}**\n\n` : ""}\`\`\`\n${body}\n\`\`\`\n\n`;
+      const body = code ? decodeEntities(dropHtmlTags(code[1])).replace(/\n$/, "") : "";
+      return `\n\n${label ? `**${label}**\n\n` : ""}${keep(`\`\`\`\n${body}\n\`\`\``)}\n\n`;
     })
     .replace(/<a class="anchor"[^>]*>[\s\S]*?<\/a>/gi, "");
-  s = s.replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_, code) => `\n\n\`\`\`\n${decodeEntities(code).replace(/\n$/, "")}\n\`\`\`\n\n`);
+  s = s.replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_, code) => `\n\n${keep(`\`\`\`\n${decodeEntities(dropHtmlTags(code)).replace(/\n$/, "")}\n\`\`\``)}\n\n`);
+  s = s.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_, c) => keep(`\`${decodeEntities(dropHtmlTags(c))}\``));
   s = s.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, lvl, inner) => `\n\n${"#".repeat(Number(lvl))} ${inlineText(inner)}\n\n`);
   s = s.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, inner) => {
-    const link = /<a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(inner);
-    const note = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(inner);
-    if (link && note) return `\n- [${inlineText(link[2])}](${link[1]}): ${inlineText(note[1])}\n`;
     const step = /<p class="step-title"[^>]*>([\s\S]*?)<\/p>/i.exec(inner);
     if (step) {
       const rest = inner.replace(/<p class="step-title"[\s\S]*?<\/p>/i, "");
-      return `\n\n### ${inlineText(step[1])}\n\n${htmlToMarkdown(rest)}\n`;
+      return `\n\n### ${inlineText(step[1])}\n\n${htmlToMarkdown(rest, holds)}\n`;
     }
+    const link = /<a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(inner);
+    const note = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(inner);
+    if (link && note) return `\n- [${inlineText(link[2])}](${link[1]}): ${inlineText(note[1])}\n`;
     return `\n- ${inlineText(inner)}\n`;
   });
   s = s.replace(/<p class="ops-phase"[^>]*>([\s\S]*?)<\/p>/gi, (_, inner) => `\n\n**${inlineText(inner)}**\n\n`);
@@ -292,7 +301,8 @@ function htmlToMarkdown(html) {
   s = s.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, (_, inner) => `\n\n${inlineText(inner)}\n\n`);
   s = s.replace(/<br\s*\/?>/gi, "\n");
   s = dropHtmlTags(s).replace(/ +/g, " ");
-  return decodeEntities(s).replace(/[ \t]+\n/g, "\n").replace(/^[ \t]+/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+  const md = decodeEntities(s).replace(/[ \t]+\n/g, "\n").replace(/^[ \t]+/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+  return top ? md.replace(/\u0001(\d+)\u0001/g, (_, i) => holds[Number(i)]) : md;
 }
 
 function escapePipes(value) {

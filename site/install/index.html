@@ -1,0 +1,248 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Install on Kubernetes · Cryo</title><meta name="description" content="Production Helm install for Cryo. Prerequisites, the Secret, a secure values file, helm upgrade --install, migrations, verification, upgrade and uninstall."><link rel="canonical" href="https://tech-pw.github.io/cryo/install/"><link rel="alternate" type="text/markdown" href="../install/index.md" title="Markdown version"><meta name="theme-color" content="#F5FAFD" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0B0F16" media="(prefers-color-scheme: dark)"><meta property="og:type" content="website"><meta property="og:site_name" content="Cryo"><meta property="og:title" content="Install on Kubernetes · Cryo"><meta property="og:description" content="Production Helm install for Cryo. Prerequisites, the Secret, a secure values file, helm upgrade --install, migrations, verification, upgrade and uninstall."><meta property="og:url" content="https://tech-pw.github.io/cryo/install/"><meta property="og:image" content="https://tech-pw.github.io/cryo/assets/img/og.png"><meta name="twitter:card" content="summary_large_image"><link rel="icon" href="../assets/svg/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="../assets/fonts/ibm-plex-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin><script>(function(){try{var t=localStorage.getItem("cryo-site-theme");if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme="light"}})()</script><link rel="stylesheet" href="../assets/css/site.css?v=b11406fefc"></head><body class="docs" data-page="install" data-root="../"><a class="skip" href="#main">Skip to content</a><header class="hdr"><div class="hdr-in"><button class="hdr-menu" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="side"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><a class="logo" href="../" aria-label="Cryo home"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true"><g stroke-width="1.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
+    <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
+    <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
+    <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
+    <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
+    <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
+    <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
+    <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
+    <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="2" stroke-linecap="round" style="stroke:var(--cryo-mark-dash,#5C667A)">
+    <path d="M17 19.5L20 22.3"/>
+    <path d="M27.6 14.5L29 18"/>
+    <path d="M13.9 34.1L17.2 34.7"/>
+  </g>
+  <g stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
+    <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
+    <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="1.1">
+    <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
+    <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
+    <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
+  </g>
+  <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)"/>
+  <g stroke="#FFFFFF" stroke-linecap="round">
+    <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
+    <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><nav class="hdr-tabs" aria-label="Sections"><a class="hdr-tab" href="../quickstart/">Get started</a><a class="hdr-tab" href="../concepts/">Concepts</a><a class="hdr-tab" href="../health/" aria-current="true">Operate</a><a class="hdr-tab" href="../reference/">Reference</a></nav><div class="hdr-end"><button class="search-open" type="button" aria-label="Search the docs" aria-haspopup="dialog"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="so-text">Search</span><kbd class="so-kbd">⌘K</kbd></button><a class="icon-btn" href="https://github.com/tech-pw/cryo" aria-label="Cryo on GitHub"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><button class="icon-btn theme-toggle" type="button" aria-label="Toggle colour theme"><svg class="i-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="i-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></button></div></div></header><div class="shell"><nav class="side" id="side" aria-label="Documentation"><div class="side-in"><div class="nav-group"><p class="nav-label">Get started</p><ul><li><a class="nav-link" href="../">Overview</a></li><li><a class="nav-link" href="../quickstart/">Quickstart</a></li><li><a class="nav-link" href="../benchmark/">Benchmark</a></li><li><a class="nav-link" href="../onboarding/">Connect a lakehouse</a></li></ul></div><div class="nav-group"><p class="nav-label">Concepts</p><ul><li><a class="nav-link" href="../concepts/">How Cryo fits</a></li><li><a class="nav-link" href="../architecture/">Architecture</a></li><li><a class="nav-link" href="../maintenance/">Maintenance</a></li></ul></div><div class="nav-group"><p class="nav-label">Operate</p><ul><li><a class="nav-link" href="../health/">Health and cost</a></li><li><a class="nav-link" href="../tables/">Tables</a></li><li><a class="nav-link" href="../table-detail/">Table detail</a></li><li><a class="nav-link" href="../engines/">Engines</a></li><li><a class="nav-link" href="../deployment/">Deployment</a></li><li><a class="nav-link" href="../install/" aria-current="page">Install on Kubernetes</a></li><li><a class="nav-link" href="../security/">Security</a></li></ul></div><div class="nav-group"><p class="nav-label">Reference</p><ul><li><a class="nav-link" href="../reference/">Reference</a></li></ul></div></div><button class="side-collapse" type="button" aria-label="Collapse sidebar" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg></button></nav><div class="scrim" hidden></div><main class="main" id="main"><article class="doc"><header class="doc-head"><nav class="crumbs" aria-label="Breadcrumb"><a href="../" aria-label="Cryo home"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></a><span class="crumb-sep" aria-hidden="true">›</span><span>Operate</span><span class="crumb-sep" aria-hidden="true">›</span><span class="crumb-here" aria-current="page">Install on Kubernetes</span></nav><h1>Install on Kubernetes</h1><p class="lede">Install a released Cryo with Helm, against your own PostgreSQL and Redis, with the dev token off and every image pinned by digest. Then sign in, add a source and run the first scan.</p><div class="doc-meta"><span>Updated <time datetime="2026-10-26">2026-10-26</time></span><span class="dot" aria-hidden="true"></span><span>7 min read</span><span class="meta-links"><a href="https://github.com/tech-pw/cryo/edit/main/site/_src/pages/install.html"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>Edit this page</a><button class="share-page" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13"/></svg><span>Share</span></button><a href="https://github.com/tech-pw/cryo/issues/new?title=docs%3A%20Install%20on%20Kubernetes&body=Page%3A%20https%3A%2F%2Ftech-pw.github.io%2Fcryo%2Finstall%2F%0A%0AWhat%20is%20wrong%20or%20missing%3F%0A&labels=documentation"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="13" rx="5"/><path d="M9 7a3 3 0 0 1 6 0M3 13h4M17 13h4M4 7l3 2M20 7l-3 2M4 19l3-2M20 19l-3-2"/></svg>Report an issue</a><a class="md-page" href="../install/index.md">View as Markdown</a></span><button class="copy-page" type="button" data-md="../install/index.md">Copy page</button></div></header><details class="toc-m"><summary>On this page</summary><ul><li class="toc-l2"><a href="#before">What you need</a></li><li class="toc-l2"><a href="#install">Install</a></li><li class="toc-l2"><a href="#migrations">How migrations run</a></li><li class="toc-l2"><a href="#verify">Check the install</a></li><li class="toc-l2"><a href="#bundled-redis">Using the bundled Redis</a></li><li class="toc-l2"><a href="#upgrade">Upgrade</a></li><li class="toc-l2"><a href="#uninstall">Uninstall</a></li><li class="toc-l2"><a href="#read-next">Where to go next</a></li></ul></details><div class="prose"><aside class="callout callout-important" role="note"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 3h7L21 8.5v7L15.5 21h-7L3 15.5v-7L8.5 3zM12 8v5M12 16h.01"/></svg><div class="callout-body"><p class="callout-title">Read Security first</p><p>This page uses the settings from <a href="../security/">Security</a>: <code>CRYO_ENVIRONMENT=prod</code>, a random <code>CRYO_SECRET_KEY</code> of at least 32 characters, and OIDC for sign-in. Nothing here turns on the dev token.</p></div></aside>
+
+<h2 id="before">What you need<a class="anchor" href="#before" aria-label="Link to What you need">#</a></h2>
+<dl>
+  <dt>Kubernetes</dt>
+  <dd>Version 1.27 or newer (the chart's <code>kubeVersion</code> is <code>&gt;=1.27.0-0</code>), with <strong>amd64 nodes</strong>. The published images are amd64-only, so every Cryo pod gets a <code>kubernetes.io/arch: amd64</code> node selector.</dd>
+  <dt>Tools</dt>
+  <dd>Helm 3, <code>kubectl</code>, <code>git</code>, <code>openssl</code>, and <a href="https://github.com/google/go-containerregistry/tree/main/cmd/crane"><code>crane</code></a> to look up image digests.</dd>
+  <dt>PostgreSQL</dt>
+  <dd>An external database and a user that owns it. Cryo keeps its tables in a schema called <code>cryo</code> in that database. The first migration runs <code>CREATE EXTENSION IF NOT EXISTS pgcrypto</code>, so either give the user that privilege or create the extension first. <code>pgvector</code> is optional. Without it, the migration logs a warning and AI search falls back to a slower path. The local stack runs PostgreSQL 16.</dd>
+  <dt>Redis</dt>
+  <dd>An external Redis for the job queue. Postgres is the source of truth, so Redis doesn't need persistence. You can use the chart's single in-namespace Redis instead (see <a href="#bundled-redis">Using the bundled Redis</a>).</dd>
+  <dt>An OIDC client</dt>
+  <dd>A confidential client at your identity provider with redirect URI <code>https://&lt;your-cryo-host&gt;/login/callback</code>. Its access tokens must carry a Cryo role. <a href="../security/#oidc">Security</a> lists the exact claims.</dd>
+  <dt>Network</dt>
+  <dd>Cryo's pods must be able to reach PostgreSQL, Redis, your catalogs, your engines (Trino or Spark), the object storage that holds the table files, and the OIDC issuer. <a href="../security/#egress">Security</a> has the full list.</dd>
+</dl>
+
+<h2 id="install">Install<a class="anchor" href="#install" aria-label="Link to Install">#</a></h2>
+<ol class="steps"><li><p class="step-title">Pick a version and get its chart</p><p>The chart isn't in a Helm repository. Take it from the git tag that matches the image tag, so the chart and the images come from the same release. This page uses <code>v0.1.5</code>. Use the newest <code>v*</code> tag, and use it everywhere this page says <code>v0.1.5</code>.</p>
+    <figure class="code" data-lang="bash"><figcaption class="code-bar"><span class="code-title">terminal</span><button class="copy" type="button" data-copy="export CRYO_VERSION=v0.1.5
+git clone --depth 1 --branch &quot;$CRYO_VERSION&quot; https://github.com/tech-pw/cryo.git &quot;cryo-$CRYO_VERSION&quot;
+cd &quot;cryo-$CRYO_VERSION&quot;" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">export</span> CRYO_VERSION=v0.1.5</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">git</span> clone <span class="tk-o">--depth</span> 1 <span class="tk-o">--branch</span> <span class="tk-s">"$CRYO_VERSION"</span> <span class="tk-u">https://github.com/tech-pw/cryo.git</span> <span class="tk-s">"cryo-$CRYO_VERSION"</span></span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">cd</span> <span class="tk-s">"cryo-$CRYO_VERSION"</span></span></code></pre></figure></li><li><p class="step-title">Look up the image digests</p><p>The release images are public on GHCR: <code>ghcr.io/tech-pw/cryo</code> runs the API, workers and migrations, and <code>ghcr.io/tech-pw/cryo-web</code> is the UI. With <code>CRYO_ENVIRONMENT=prod</code>, the chart won't render until every enabled image has a <code>sha256</code> digest, so a moved tag can't change what runs.</p>
+    <figure class="code" data-lang="bash"><figcaption class="code-bar"><span class="code-title">terminal</span><button class="copy" type="button" data-copy="export CRYO_DIGEST=$(crane digest &quot;ghcr.io/tech-pw/cryo:$CRYO_VERSION&quot;)
+export CRYO_WEB_DIGEST=$(crane digest &quot;ghcr.io/tech-pw/cryo-web:$CRYO_VERSION&quot;)
+echo &quot;$CRYO_DIGEST $CRYO_WEB_DIGEST&quot;" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">export</span> CRYO_DIGEST=$(crane digest <span class="tk-s">"ghcr.io/tech-pw/cryo:$CRYO_VERSION"</span>)</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">export</span> CRYO_WEB_DIGEST=$(crane digest <span class="tk-s">"ghcr.io/tech-pw/cryo-web:$CRYO_VERSION"</span>)</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">echo</span> <span class="tk-s">"$CRYO_DIGEST $CRYO_WEB_DIGEST"</span></span></code></pre></figure>
+    <p class="expect">Done when both values start with <code>sha256:</code>.</p></li><li><p class="step-title">Write the settings file</p><p>Every Cryo process reads its <code>CRYO_*</code> settings from the Secret named by <code>global.envFromSecret</code>, and that includes the migration Job. Save the settings below as <code>cryo.env</code> and replace every placeholder. Keeping them in a file keeps them out of your shell history.</p>
+    <figure class="code" data-lang="text"><figcaption class="code-bar"><span class="code-title">cryo.env</span><button class="copy" type="button" data-copy="CRYO_DATABASE_URL=postgresql+psycopg://cryo:REPLACE_ME@postgres.example.internal:5432/cryo
+CRYO_REDIS_URL=redis://redis.example.internal:6379/0
+CRYO_OIDC_ISSUER_URL=https://idp.example.com/realms/data
+CRYO_OIDC_CLIENT_ID=cryo
+CRYO_OIDC_CLIENT_SECRET=REPLACE_ME
+CRYO_OIDC_REDIRECT_URI=https://cryo.example.com/login/callback" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln">CRYO_DATABASE_URL=postgresql+psycopg://cryo:REPLACE_ME@postgres.example.internal:5432/cryo</span>
+<span class="ln">CRYO_REDIS_URL=redis://redis.example.internal:6379/0</span>
+<span class="ln">CRYO_OIDC_ISSUER_URL=https://idp.example.com/realms/data</span>
+<span class="ln">CRYO_OIDC_CLIENT_ID=cryo</span>
+<span class="ln">CRYO_OIDC_CLIENT_SECRET=REPLACE_ME</span>
+<span class="ln">CRYO_OIDC_REDIRECT_URI=https://cryo.example.com/login/callback</span></code></pre></figure>
+    <p><code>CRYO_OIDC_ISSUER_URL</code> must match the <code>iss</code> claim in your tokens. If your provider's access tokens use an audience other than the client ID, add <code>CRYO_OIDC_AUDIENCE</code> as well.</p></li><li><p class="step-title">Create the namespace and the Secret</p><p>Add two random keys to the file: one encrypts stored secrets, the other signs Cryo's own tokens. Then load the file into the Secret and delete it.</p>
+    <figure class="code" data-lang="bash"><figcaption class="code-bar"><span class="code-title">terminal</span><button class="copy" type="button" data-copy="echo &quot;CRYO_SECRET_KEY=$(openssl rand -hex 32)&quot; &gt;&gt; cryo.env
+echo &quot;CRYO_JWT_SECRET=$(openssl rand -hex 32)&quot; &gt;&gt; cryo.env
+kubectl create namespace cryo
+kubectl -n cryo create secret generic cryo-secrets --from-env-file=cryo.env
+rm cryo.env" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">echo</span> <span class="tk-s">"CRYO_SECRET_KEY=$(openssl rand -hex 32)"</span> &gt;&gt; cryo.env</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">echo</span> <span class="tk-s">"CRYO_JWT_SECRET=$(openssl rand -hex 32)"</span> &gt;&gt; cryo.env</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">kubectl</span> create namespace cryo</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">kubectl</span> <span class="tk-o">-n</span> cryo create secret generic cryo<span class="tk-o">-secrets</span> <span class="tk-o">--from-env-file</span>=cryo.env</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">rm</span> cryo.env</span></code></pre></figure>
+    <p><strong>Keep <code>CRYO_SECRET_KEY</code>.</strong> It also encrypts the connection secrets Cryo stores, so back it up alongside the database. If you lose it or change it, those stored secrets can't be read. See <a href="../security/#secret-key">Security</a>.</p></li><li><p class="step-title">Write the values file</p><p>Save this as <code>cryo-values.yaml</code>. It sets <code>prod</code>, takes both images from the release, turns on the UI and points every process at the Secret. The bundled Redis is off because <code>CRYO_REDIS_URL</code> points at your own. The digests are passed on the command line in the next step.</p>
+    <figure class="code" data-lang="yaml"><figcaption class="code-bar"><span class="code-title">cryo-values.yaml</span><button class="copy" type="button" data-copy="global:
+  envFromSecret: cryo-secrets
+  env:
+    CRYO_ENVIRONMENT: prod
+image:
+  repository: ghcr.io/tech-pw/cryo
+  tag: v0.1.5
+migration:
+  image:
+    repository: ghcr.io/tech-pw/cryo
+    tag: v0.1.5
+web:
+  enabled: true
+  image:
+    repository: ghcr.io/tech-pw/cryo-web
+    tag: v0.1.5
+redis:
+  enabled: false" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln">global:</span>
+<span class="ln">  envFromSecret: cryo-secrets</span>
+<span class="ln">  env:</span>
+<span class="ln">    CRYO_ENVIRONMENT: prod</span>
+<span class="ln">image:</span>
+<span class="ln">  repository: ghcr.io/tech-pw/cryo</span>
+<span class="ln">  tag: v0.1.5</span>
+<span class="ln">migration:</span>
+<span class="ln">  image:</span>
+<span class="ln">    repository: ghcr.io/tech-pw/cryo</span>
+<span class="ln">    tag: v0.1.5</span>
+<span class="ln">web:</span>
+<span class="ln">  enabled: true</span>
+<span class="ln">  image:</span>
+<span class="ln">    repository: ghcr.io/tech-pw/cryo-web</span>
+<span class="ln">    tag: v0.1.5</span>
+<span class="ln">redis:</span>
+<span class="ln">  enabled: false</span></code></pre></figure>
+    <p>The native and Spark-on-Kubernetes lanes are off by default. If you turn on <code>native.enabled</code> or <code>spark.k8s.enabled</code>, pin those images by digest too. <code>deploy/helm/cryo/values.yaml</code> documents every other setting and its default.</p></li><li><p class="step-title">Render, then install</p><p>Render first. A missing digest or a typo fails at this point, before anything touches the cluster.</p>
+    <figure class="code" data-lang="bash"><figcaption class="code-bar"><span class="code-title">terminal</span><button class="copy" type="button" data-copy="helm template cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest=&quot;$CRYO_DIGEST&quot; --set migration.image.digest=&quot;$CRYO_DIGEST&quot; --set web.image.digest=&quot;$CRYO_WEB_DIGEST&quot; &gt; /dev/null
+helm upgrade --install cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest=&quot;$CRYO_DIGEST&quot; --set migration.image.digest=&quot;$CRYO_DIGEST&quot; --set web.image.digest=&quot;$CRYO_WEB_DIGEST&quot; --wait --timeout 15m" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">helm</span> template cryo ./deploy/helm/cryo <span class="tk-o">--namespace</span> cryo <span class="tk-o">-f</span> cryo<span class="tk-o">-values</span>.yaml <span class="tk-o">--set</span> image.digest=<span class="tk-s">"$CRYO_DIGEST"</span> <span class="tk-o">--set</span> migration.image.digest=<span class="tk-s">"$CRYO_DIGEST"</span> <span class="tk-o">--set</span> web.image.digest=<span class="tk-s">"$CRYO_WEB_DIGEST"</span> &gt; /dev/null</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">helm</span> upgrade <span class="tk-o">--install</span> cryo ./deploy/helm/cryo <span class="tk-o">--namespace</span> cryo <span class="tk-o">-f</span> cryo<span class="tk-o">-values</span>.yaml <span class="tk-o">--set</span> image.digest=<span class="tk-s">"$CRYO_DIGEST"</span> <span class="tk-o">--set</span> migration.image.digest=<span class="tk-s">"$CRYO_DIGEST"</span> <span class="tk-o">--set</span> web.image.digest=<span class="tk-s">"$CRYO_WEB_DIGEST"</span> <span class="tk-o">--wait</span> <span class="tk-o">--timeout</span> 15m</span></code></pre></figure>
+    <p class="expect">Done when Helm prints <code>STATUS: deployed</code>. With the release name <code>cryo</code>, the Services are <code>cryo-api</code> on port 8000 and <code>cryo-web</code> on port 80.</p></li></ol>
+
+<h2 id="migrations">How migrations run<a class="anchor" href="#migrations" aria-label="Link to How migrations run">#</a></h2>
+<p>Every <code>helm install</code> and <code>helm upgrade</code> starts with a hook Job called <code>cryo-migrate-&lt;revision&gt;</code>. It runs <code>alembic upgrade head</code> with the same image and Secret. The release waits for the Job, and no Deployment changes until it succeeds. Helm deletes the Job when it succeeds and keeps it when it fails, so after a failed install you can still read the log:</p>
+<figure class="code" data-lang="bash"><figcaption class="code-bar"><span class="code-title">terminal</span><button class="copy" type="button" data-copy="kubectl -n cryo get jobs -l app.kubernetes.io/component=migration
+kubectl -n cryo logs job/cryo-migrate-1" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">kubectl</span> <span class="tk-o">-n</span> cryo get jobs <span class="tk-o">-l</span> app.kubernetes.io/component=migration</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">kubectl</span> <span class="tk-o">-n</span> cryo logs job/cryo<span class="tk-o">-migrate-1</span></span></code></pre></figure>
+<p>After a successful install, check which revision the database is on:</p>
+<figure class="code" data-lang="bash"><figcaption class="code-bar"><span class="code-title">terminal</span><button class="copy" type="button" data-copy="kubectl -n cryo exec deploy/cryo-api -- alembic current" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">kubectl</span> <span class="tk-o">-n</span> cryo exec deploy/cryo<span class="tk-o">-api</span> -- alembic current</span></code></pre></figure>
+<p class="expect">Done when it prints one revision ending in <code>(head)</code>.</p>
+
+<h2 id="verify">Check the install<a class="anchor" href="#verify" aria-label="Link to Check the install">#</a></h2>
+<ol class="steps"><li><p class="step-title">Pods are ready</p><figure class="code" data-lang="bash"><figcaption class="code-bar"><span class="code-title">terminal</span><button class="copy" type="button" data-copy="kubectl -n cryo get pods" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">kubectl</span> <span class="tk-o">-n</span> cryo get pods</span></code></pre></figure>
+    <p class="expect">Done when the api, worker, governor, scheduler and web pods are all <code>Running</code> and ready. The scanner worker can stay at zero replicas until there's scan work.</p></li><li><p class="step-title">The API answers and the dev token is off</p><p>In a second terminal, run <code>kubectl -n cryo port-forward svc/cryo-api 8000:8000</code>. <code>/healthz</code> only shows that the process is up. <code>/healthz/deep</code> checks PostgreSQL and Redis as well.</p>
+    <figure class="code" data-lang="bash"><figcaption class="code-bar"><span class="code-title">terminal</span><button class="copy" type="button" data-copy="curl -s localhost:8000/healthz
+curl -s localhost:8000/healthz/deep
+curl -s localhost:8000/api/v1/auth/config
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8000/api/v1/auth/token -H 'content-type: application/json' -d '{&quot;role&quot;:&quot;admin&quot;}'" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">curl</span> <span class="tk-o">-s</span> localhost:8000/healthz</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">curl</span> <span class="tk-o">-s</span> localhost:8000/healthz/deep</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">curl</span> <span class="tk-o">-s</span> localhost:8000/api/v1/auth/config</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">curl</span> <span class="tk-o">-s</span> <span class="tk-o">-o</span> /dev/null <span class="tk-o">-w</span> <span class="tk-s">'%{http_code}\n'</span> <span class="tk-o">-X</span> POST localhost:8000/api/v1/auth/token <span class="tk-o">-H</span> <span class="tk-s">'content-type: application/json'</span> <span class="tk-o">-d</span> <span class="tk-s">'{"role":"admin"}'</span></span></code></pre></figure>
+    <p class="expect">Done when <code>/healthz</code> reports <code>"environment":"prod"</code> and <code>/healthz/deep</code> returns <code>"status":"ok"</code>. The auth config should show <code>"mode":"oidc"</code> and <code>"dev_token_enabled":false</code>, and the token request should print <code>503</code>.</p></li><li><p class="step-title">Expose the UI</p><p>The chart has no Ingress. Point your own Ingress or load balancer at the <code>cryo-web</code> Service on port 80, using the host from <code>CRYO_OIDC_REDIRECT_URI</code>. The web pod serves the UI and forwards <code>/api/</code> to the API, so you only need one host. Ask Cryo streams server-sent events, so turn proxy buffering off and allow a read timeout of at least 60 seconds.</p>
+    <figure class="code" data-lang="yaml"><figcaption class="code-bar"><span class="code-title">cryo-ingress.yaml</span><button class="copy" type="button" data-copy="apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cryo
+  namespace: cryo
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: &quot;off&quot;
+    nginx.ingress.kubernetes.io/proxy-read-timeout: &quot;60&quot;
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [cryo.example.com]
+      secretName: cryo-tls
+  rules:
+    - host: cryo.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cryo-web
+                port:
+                  number: 80" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln">apiVersion: networking.k8s.io/v1</span>
+<span class="ln">kind: Ingress</span>
+<span class="ln">metadata:</span>
+<span class="ln">  name: cryo</span>
+<span class="ln">  namespace: cryo</span>
+<span class="ln">  annotations:</span>
+<span class="ln">    nginx.ingress.kubernetes.io/proxy-buffering: "off"</span>
+<span class="ln">    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"</span>
+<span class="ln">spec:</span>
+<span class="ln">  ingressClassName: nginx</span>
+<span class="ln">  tls:</span>
+<span class="ln">    - hosts: [cryo.example.com]</span>
+<span class="ln">      secretName: cryo-tls</span>
+<span class="ln">  rules:</span>
+<span class="ln">    - host: cryo.example.com</span>
+<span class="ln">      http:</span>
+<span class="ln">        paths:</span>
+<span class="ln">          - path: /</span>
+<span class="ln">            pathType: Prefix</span>
+<span class="ln">            backend:</span>
+<span class="ln">              service:</span>
+<span class="ln">                name: cryo-web</span>
+<span class="ln">                port:</span>
+<span class="ln">                  number: 80</span></code></pre></figure>
+    <p>These annotations are for ingress-nginx, so use your controller's equivalents if you run a different one. The web pod also forwards <code>/metrics</code> and <code>/healthz/deep</code>, and neither needs a login. If the host can be reached from outside your network, block both at the Ingress.</p></li><li><p class="step-title">Sign in</p><p>Open <code>https://cryo.example.com</code> and sign in through your identity provider. You need the <code>admin</code> role in your access token to add sources. If <code>/api/v1/auth/config</code> returns 503 with <code>OIDC issuer discovery failed</code>, the API can't reach <code>CRYO_OIDC_ISSUER_URL/.well-known/openid-configuration</code>.</p>
+    <p class="expect">Done when Home loads. It stays empty until the first scan.</p></li><li><p class="step-title">Add a source and run the first scan</p><p>Follow <a href="../onboarding/">Connect a lakehouse</a> to add a catalog and start a scan. The scanner CronJob also scans every source every six hours, as set by <code>scanner.schedule</code>.</p>
+    <p class="expect">Done when Tables lists your tables with grades.</p></li></ol>
+
+<h2 id="bundled-redis">Using the bundled Redis<a class="anchor" href="#bundled-redis" aria-label="Link to Using the bundled Redis">#</a></h2>
+<p>When <code>redis.enabled</code> is <code>true</code>, which is the chart default, the chart runs one Redis pod with no volume behind a ClusterIP Service called <code>cryo-redis</code>. The chart doesn't set <code>CRYO_REDIS_URL</code> for you, so put <code>CRYO_REDIS_URL=redis://cryo-redis:6379/0</code> in the Secret. In <code>prod</code>, the Redis image needs a digest too:</p>
+<figure class="code" data-lang="bash"><figcaption class="code-bar"><span class="code-title">terminal</span><button class="copy" type="button" data-copy="export REDIS_DIGEST=$(crane digest redis:7-alpine)
+helm upgrade --install cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest=&quot;$CRYO_DIGEST&quot; --set migration.image.digest=&quot;$CRYO_DIGEST&quot; --set web.image.digest=&quot;$CRYO_WEB_DIGEST&quot; --set redis.enabled=true --set redis.image.digest=&quot;$REDIS_DIGEST&quot; --wait --timeout 15m" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">export</span> REDIS_DIGEST=$(crane digest redis:7<span class="tk-o">-alpine</span>)</span>
+<span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">helm</span> upgrade <span class="tk-o">--install</span> cryo ./deploy/helm/cryo <span class="tk-o">--namespace</span> cryo <span class="tk-o">-f</span> cryo<span class="tk-o">-values</span>.yaml <span class="tk-o">--set</span> image.digest=<span class="tk-s">"$CRYO_DIGEST"</span> <span class="tk-o">--set</span> migration.image.digest=<span class="tk-s">"$CRYO_DIGEST"</span> <span class="tk-o">--set</span> web.image.digest=<span class="tk-s">"$CRYO_WEB_DIGEST"</span> <span class="tk-o">--set</span> redis.enabled=true <span class="tk-o">--set</span> redis.image.digest=<span class="tk-s">"$REDIS_DIGEST"</span> <span class="tk-o">--wait</span> <span class="tk-o">--timeout</span> 15m</span></code></pre></figure>
+
+<h2 id="upgrade">Upgrade<a class="anchor" href="#upgrade" aria-label="Link to Upgrade">#</a></h2>
+<p>Back up the database first, because migrations only move forward. Then repeat the install with the new tag: check out its chart, look up its digests, change the three <code>tag</code> values in <code>cryo-values.yaml</code>, render, and run <code>helm upgrade --install</code>. The migration hook runs before any pod changes.</p>
+
+<h2 id="uninstall">Uninstall<a class="anchor" href="#uninstall" aria-label="Link to Uninstall">#</a></h2>
+<figure class="code" data-lang="bash"><figcaption class="code-bar"><span class="code-title">terminal</span><button class="copy" type="button" data-copy="helm uninstall cryo --namespace cryo" aria-label="Copy code"><span class="copy-label">Copy</span></button></figcaption><pre tabindex="0"><code><span class="ln"><span class="tk-p" aria-hidden="true">$ </span><span class="tk-cmd">helm</span> uninstall cryo <span class="tk-o">--namespace</span> cryo</span></code></pre></figure>
+<p>This removes the Deployments, Services, CronJobs, ServiceAccount and RBAC that the release created. These are left behind:</p>
+<ul>
+  <li><strong>The database.</strong> The <code>cryo</code> schema stays in PostgreSQL, with its run history, audit rows and stored connections. Drop it yourself if you want them gone.</li>
+  <li><strong>Redis keys</strong> in your external Redis. The bundled Redis has no volume, so its data goes when its pod does.</li>
+  <li><strong>The Secret</strong> <code>cryo-secrets</code> and the namespace, because you created them outside the chart.</li>
+  <li><strong>Runtime Jobs</strong> started by the native or Spark lanes. They aren't part of the release and are removed through <code>ttlSecondsAfterFinished</code>. Check with <code>kubectl -n cryo get jobs,pods</code>.</li>
+  <li><strong>Changes to your tables.</strong> Maintenance that already ran is permanent. Compacted files and expired snapshots don't come back.</li>
+</ul>
+
+<h2 id="read-next">Where to go next<a class="anchor" href="#read-next" aria-label="Link to Where to go next">#</a></h2>
+<div class="linkcards"><a class="linkcard" href="../security/"><span class="lc-title">Security</span><span class="lc-desc">Roles, OIDC claims, the dev token and a hardening checklist.</span></a><a class="linkcard" href="../deployment/"><span class="lc-title">Deployment</span><span class="lc-desc">What the release runs and what it requests.</span></a><a class="linkcard" href="../onboarding/"><span class="lc-title">Connect a lakehouse</span><span class="lc-desc">Add the first source and run the first scan.</span></a></div>
+</div><aside class="community"><div><p class="cm-h">Stuck, or have an idea?</p><p>Cryo is built in the open. Ask in GitHub Discussions, open an issue, or send a pull request.</p></div><div class="cm-actions"><a class="btn btn-sm" href="https://github.com/tech-pw/cryo/discussions">Discussions</a><a class="btn btn-sm" href="https://github.com/tech-pw/cryo/issues">Issues</a><a class="btn btn-sm btn-primary" href="https://github.com/tech-pw/cryo"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.16-.89-1.16-.73-.5.06-.49.06-.49.8.06 1.22.83 1.22.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.28.82 2.15 0 3.07-1.87 3.74-3.65 3.94.29.25.54.74.54 1.5v2.22c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>Star on GitHub</a></div></aside><nav class="pager" aria-label="Previous and next pages"><a class="pg pg-prev" href="../deployment/"><span class="pg-k">Previous</span><span class="pg-t">Deployment</span></a><a class="pg pg-next" href="../security/"><span class="pg-k">Next</span><span class="pg-t">Security</span></a></nav></article></main><aside class="toc" aria-label="On this page"><p class="toc-h">On this page</p><ul><li class="toc-l2"><a href="#before">What you need</a></li><li class="toc-l2"><a href="#install">Install</a></li><li class="toc-l2"><a href="#migrations">How migrations run</a></li><li class="toc-l2"><a href="#verify">Check the install</a></li><li class="toc-l2"><a href="#bundled-redis">Using the bundled Redis</a></li><li class="toc-l2"><a href="#upgrade">Upgrade</a></li><li class="toc-l2"><a href="#uninstall">Uninstall</a></li><li class="toc-l2"><a href="#read-next">Where to go next</a></li></ul><a class="toc-top" href="#main">Back to top ↑</a></aside></div><footer class="foot"><div class="foot-in"><div class="foot-brand"><a class="logo" href="../"><svg class="logo-mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 64 64" aria-hidden="true"><g stroke-width="1.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M11 9L15.33 11.5L11 14L6.67 11.5Z" fill="#EAF7FD"/>
+    <path d="M6.67 11.5L11 14V19L6.67 16.5Z" fill="#68C1EA"/>
+    <path d="M11 14L15.33 11.5V16.5L11 19Z" fill="#277ABE"/>
+    <path d="M25 4L28.46 6L25 8L21.54 6Z" fill="#EAF7FD"/>
+    <path d="M21.54 6L25 8V12L21.54 10Z" fill="#68C1EA"/>
+    <path d="M25 8L28.46 6V10L25 12Z" fill="#277ABE"/>
+    <path d="M7 29L10.46 31L7 33L3.54 31Z" fill="#EAF7FD"/>
+    <path d="M3.54 31L7 33V37L3.54 35Z" fill="#68C1EA"/>
+    <path d="M7 33L10.46 31V35L7 37Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="2" stroke-linecap="round" style="stroke:var(--cryo-mark-dash,#5C667A)">
+    <path d="M17 19.5L20 22.3"/>
+    <path d="M27.6 14.5L29 18"/>
+    <path d="M13.9 34.1L17.2 34.7"/>
+  </g>
+  <g stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)">
+    <path d="M37 19L53.45 28.5L37 38L20.55 28.5Z" fill="#EAF7FD"/>
+    <path d="M20.55 28.5L37 38V57L20.55 47.5Z" fill="#68C1EA"/>
+    <path d="M37 38L53.45 28.5V47.5L37 57Z" fill="#277ABE"/>
+  </g>
+  <g fill="none" stroke-width="1.1">
+    <path d="M45.23 23.75L28.78 33.25M28.78 23.75L45.23 33.25" stroke="#B8E1F3"/>
+    <path d="M28.78 33.25V52.25M20.55 38L37 47.5" stroke="#EAF7FD"/>
+    <path d="M45.23 33.25V52.25M37 47.5L53.45 38" stroke="#68C1EA"/>
+  </g>
+  <path d="M37 19L53.45 28.5V47.5L37 57L20.55 47.5V28.5ZM20.55 28.5L37 38L53.45 28.5M37 38V57" fill="none" stroke-width="2.6" stroke-linejoin="round" style="stroke:var(--cryo-mark-line,#143E60)"/>
+  <g stroke="#FFFFFF" stroke-linecap="round">
+    <path d="M24.2 34.5V41.5" stroke-width="2.4"/>
+    <path d="M30.5 24.8L36 21.6" stroke-width="2"/>
+  </g></svg><span class="logo-word"><span class="logo-cr">Cr</span><span class="logo-yo">yo</span></span></a><p>Apache-2.0, self-hosted Iceberg maintenance. Every decision explained.</p></div><div><p class="foot-h">Docs</p><ul><li><a href="../quickstart/">Quickstart</a></li><li><a href="../benchmark/">Benchmark</a></li><li><a href="../concepts/">Concepts</a></li><li><a href="../architecture/">Architecture</a></li><li><a href="../reference/">Reference</a></li></ul></div><div><p class="foot-h">Operate</p><ul><li><a href="../maintenance/">Maintenance</a></li><li><a href="../health/">Health and cost</a></li><li><a href="../engines/">Engines</a></li><li><a href="../deployment/">Deployment</a></li></ul></div><div><p class="foot-h">Project</p><ul><li><a href="https://github.com/tech-pw/cryo">GitHub</a></li><li><a href="https://github.com/tech-pw/cryo/issues">Issues</a></li><li><a href="../llms.txt">llms.txt</a></li><li><a href="https://www.apache.org/licenses/LICENSE-2.0">Apache-2.0 licence</a></li></ul></div></div><p class="foot-fine">Apache, Apache Iceberg, Iceberg and Apache Spark are trademarks of The Apache Software Foundation. Other names may be trademarks of their respective owners.</p></footer><dialog class="search" id="search" aria-label="Search the docs"><form method="dialog" class="search-box"><div class="search-field"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" class="search-input" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="search-list"><kbd>Esc</kbd></div><ul class="search-list" id="search-list" role="listbox"></ul><p class="search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to open</span></p></form></dialog><script src="../assets/js/site.js?v=af4e3140cc" defer></script></body></html>

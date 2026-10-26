@@ -104,7 +104,7 @@ data files opened
 Plan · 1 chunk
 
 38 of 100 GB
-WHERE event_date = DATE '2026-10-11'
+`WHERE event_date = DATE '2026-10-11'`
 
 No SQL yet: the plan holds this predicate.
 

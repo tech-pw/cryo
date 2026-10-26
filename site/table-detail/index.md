@@ -179,7 +179,7 @@ Live snapshots, how many are referenced by tags or branches, how many are exclud
 
 ### Excluded from Cryo expiry
 
-Right under the summary: snapshots Cryo's expiry must keep, with a label, who excluded them and when. On Spark, expiry keeps each excluded id by tagging it `cryo-protect-`. Trino's `expire_snapshots` can't skip a single snapshot, so exclusions only hold on Spark workflows.
+Right under the summary: snapshots Cryo's expiry must keep, with a label, who excluded them and when. On Spark, expiry keeps each excluded id by tagging it `cryo-protect-<id>`. Trino's `expire_snapshots` can't skip a single snapshot, so exclusions only hold on Spark workflows.
 
 ### Commits
 

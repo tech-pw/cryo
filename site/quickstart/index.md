@@ -2,7 +2,7 @@
 title: Quickstart
 description: Clone Cryo and start the local stack. Migrations run. The UI does not show a graded lake until you add a source and scan.
 canonical: https://tech-pw.github.io/cryo/quickstart/
-updated: 2026-10-06
+updated: 2026-10-26
 ---
 
 # Quickstart
@@ -11,7 +11,11 @@ Start the local control plane. The UI comes up empty. Screenshots on this site a
 
 Before you start
 
-You need Docker, Python 3.12 or newer, Node 22 or newer, and curl. This is a local control plane, not the production topology. The repository is private until the public flip, so this clone is not an anonymous download.
+You need Docker, Python 3.12 or newer, Node 22 or newer, and curl. This is a local control plane, not the production topology.
+
+Development only
+
+The local stack runs with `CRYO_ENVIRONMENT=dev` and the published default `CRYO_SECRET_KEY`. Its dev sign-in hands an admin token to anyone who can reach the API. Don't expose it. For a real install, follow [Install on Kubernetes](https://tech-pw.github.io/cryo/install/) and [Security](https://tech-pw.github.io/cryo/security/).
 
 ## Install and start
 
@@ -50,7 +54,11 @@ $ make seed
 
 Done when the log prints those five table names. The dashboard still does not show them until a source exists and a scan runs.
 
-- [http://localhost:5173](http://localhost:5173): Open the UI
+### Open the UI
+
+Open [http://localhost:5173](http://localhost:5173). On macOS, `open http://localhost:5173` does the same thing.
+
+Done when the login screen loads. Dev sign-in is a role (`viewer`, `operator`, or `admin`), not an arbitrary username.
 
 ## What runs locally
 
@@ -106,7 +114,7 @@ Read https://tech-pw.github.io/cryo/llms.txt, then answer only from those pages.
 
 ## Where to go next
 
-How Cryo fitsWhat source, preset and destination mean once you look past the demo.MaintenanceThe fixed order the seeded tables run through.Health and costWhy the seeded tables show the grades they show.DeploymentMove from make up to a Kubernetes install.
+How Cryo fitsWhat source, preset and destination mean once you look past the demo.MaintenanceThe fixed order the seeded tables run through.Health and costWhy the seeded tables show the grades they show.Install on KubernetesMove from the local stack to a Kubernetes install.
 
 Source: https://tech-pw.github.io/cryo/quickstart/
 Markdown: https://tech-pw.github.io/cryo/quickstart/index.md

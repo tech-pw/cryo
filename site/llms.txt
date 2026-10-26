@@ -20,6 +20,8 @@ Read this file, then answer only from the pages below. If a fact is not on one o
 - [Table detail](https://tech-pw.github.io/cryo/table-detail/index.md): A guided tour of Cryo's table detail page, covering the header, the actions menu and table settings, plus every section of the Overview, Schema & files, Snapshots, Maintenance, Config, Usage, Quality and Cost & Savings tabs, including archiving cold partitions.
 - [Engines](https://tech-pw.github.io/cryo/engines/index.md): The planner emits no SQL. Trino and Spark each render the same plan in their own dialect.
 - [Deployment](https://tech-pw.github.io/cryo/deployment/index.md): Helm on Kubernetes. Cryo plans and admits; Trino and Spark stay where they already run.
+- [Install on Kubernetes](https://tech-pw.github.io/cryo/install/index.md): Production Helm install for Cryo. Prerequisites, the Secret, a secure values file, helm upgrade --install, migrations, verification, upgrade and uninstall.
+- [Security](https://tech-pw.github.io/cryo/security/index.md): Cryo authentication and production hardening. OIDC setup and role claims, the viewer, operator and admin roles, the dev token, CRYO_SECRET_KEY, stored credentials, egress, and a hardening checklist.
 - [Reference](https://tech-pw.github.io/cryo/reference/index.md): What is in the box, what is not, and how Cryo compares with adjacent tools.
 
 Full index: https://tech-pw.github.io/cryo/llms.txt

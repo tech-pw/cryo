@@ -1,0 +1,133 @@
+---
+title: Security
+lede: How people sign in to Cryo, what each role can do, which secrets Cryo keeps and how they're protected, and what to check before an install is reachable.
+description: Cryo authentication and production hardening. OIDC setup and role claims, the viewer, operator and admin roles, the dev token, CRYO_SECRET_KEY, stored credentials, egress, and a hardening checklist.
+updated: 2026-10-26
+---
+<callout type="caution" title="Local defaults are for development only">
+  <p>The local stack and an unconfigured install run with <code>CRYO_ENVIRONMENT=dev</code> and the published default <code>CRYO_SECRET_KEY</code>. In that state anyone who can reach the API can mint an admin token. Use the <a href="#checklist">hardening checklist</a> before an install is reachable by anyone else.</p>
+</callout>
+
+<h2 id="sign-in">How sign-in works</h2>
+<p>Every API route needs a bearer token, except the sign-in routes and the health checks. Cryo accepts two kinds of token:</p>
+<dl>
+  <dt>Tokens from your identity provider (OIDC)</dt>
+  <dd>The UI sends you to your provider, and the API swaps the authorization code for the provider's access token (PKCE is supported). Cryo then checks each request's token against the provider's JWKS. This is the production sign-in.</dd>
+  <dt>Tokens Cryo signs itself (HS256)</dt>
+  <dd>These are issued by password sign-in for local users, by Google sign-in, and by the dev token route. They're signed with <code>CRYO_JWT_SECRET</code>, or with <code>CRYO_SECRET_KEY</code> when that's unset, and they last 24 hours.</dd>
+</dl>
+<p><code>/healthz</code>, <code>/readyz</code>, <code>/healthz/deep</code> and <code>/metrics</code> need no token. Keep them off the public internet; see <a href="@/install/#verify">Install</a>.</p>
+
+<h2 id="oidc">OIDC setup</h2>
+<p>Register Cryo as a confidential client with the authorization-code flow, then set these in the Secret that <code>global.envFromSecret</code> names:</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Setting</th><th>What it is</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_OIDC_ISSUER_URL</code></td><td>The issuer. Cryo reads <code>/.well-known/openid-configuration</code> under it, and tokens must carry exactly this <code>iss</code>, without a trailing slash.</td></tr>
+    <tr><td><code>CRYO_OIDC_CLIENT_ID</code></td><td>The client ID. OIDC is on only when the issuer and the client ID are both set.</td></tr>
+    <tr><td><code>CRYO_OIDC_CLIENT_SECRET</code></td><td>Used for the code exchange and refresh. Without it, sign-in can't complete.</td></tr>
+    <tr><td><code>CRYO_OIDC_REDIRECT_URI</code></td><td><code>https://&lt;your-cryo-host&gt;/login/callback</code>. Register the same URI at the provider. The default is <code>http://localhost:5173/login/callback</code>.</td></tr>
+    <tr><td><code>CRYO_OIDC_AUDIENCE</code></td><td>Optional. The <code>aud</code> that access tokens must carry. Defaults to the client ID.</td></tr>
+    <tr><td><code>CRYO_OIDC_JWKS_URI</code></td><td>Optional. Overrides the JWKS URL from discovery.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The provider's <strong>access token</strong> must be a JWT signed with RS256, RS384, RS512, ES256, ES384 or ES512, and it must carry <code>exp</code> and <code>sub</code>. Some providers issue opaque access tokens or use another audience by default. Configure yours to issue a JWT access token for Cryo's audience.</p>
+
+<h3 id="role-claims">Role mapping</h3>
+<p>Cryo reads roles from the <code>role</code>, <code>roles</code>, <code>scope</code>, <code>scopes</code> and <code>groups</code> claims. Each claim can be a string separated by spaces or commas, or a list. Only the exact role names count, in any letter case: <code>viewer</code>, <code>operator</code>, <code>admin</code> and <code>evidence_collector</code>. A group called <code>cryo-admins</code> doesn't map to anything, so have your provider emit the role name itself. A valid token with no recognized role is rejected with 401.</p>
+
+<h2 id="roles">Roles</h2>
+<div class="tbl">
+<table>
+  <thead><tr><th>Role</th><th>Can do</th></tr></thead>
+  <tbody>
+    <tr><td><code>viewer</code></td><td>Read catalogs, tables, runs and health. Can't start maintenance.</td></tr>
+    <tr><td><code>operator</code></td><td>Everything a viewer can, plus run maintenance. Can't change users, sign-in or connections.</td></tr>
+    <tr><td><code>admin</code></td><td>Everything an operator can, plus sources, destinations, presets and their rules, per-table parameter overrides, local users, sign-in settings and integration settings.</td></tr>
+    <tr><td><code>evidence_collector</code></td><td>A service role for recording deployed layout-conformance evidence. It doesn't include viewer rights, and admin doesn't include it.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The first admin has to come from your identity provider, because only an admin can create local users. After that, an admin can add password users and turn on Google sign-in under Settings. Password sign-in is on by default, but it does nothing until a local user exists. Turn it off in Settings if you sign in only through OIDC.</p>
+
+<h2 id="dev-token">The dev token</h2>
+<p><code>POST /api/v1/auth/token</code> issues a <code>viewer</code>, <code>operator</code> or <code>admin</code> token to anyone who asks, with no identity check. It exists for the local stack and for tests. When it's off, it returns 503.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th>Setting</th><th>Dev token</th></tr></thead>
+  <tbody>
+    <tr><td><code>CRYO_ENVIRONMENT=prod</code></td><td>Off</td></tr>
+    <tr><td><code>dev</code>, <code>test</code> or <code>staging</code></td><td>On, even when OIDC is configured</td></tr>
+    <tr><td><code>CRYO_ALLOW_DEV_TOKEN_IN_PROD=true</code></td><td>On in every environment</td></tr>
+  </tbody>
+</table>
+</div>
+<callout type="note" title="Stricter defaults are on the way">
+  <p>A pending change (<a href="https://github.com/tech-pw/cryo/pull/213">#213</a>) turns the dev token on only in <code>dev</code> or <code>test</code> with no OIDC issuer set, makes <code>prod</code> the chart default, and stops every process in <code>staging</code> or <code>prod</code> from starting when <code>CRYO_SECRET_KEY</code> or <code>CRYO_JWT_SECRET</code> is the default or shorter than 32 characters. The checklist below is already safe under both the current and the new rules.</p>
+</callout>
+<p>To confirm it's off, <code>GET /api/v1/auth/config</code> should report <code>"dev_token_enabled":false</code>, and a <code>POST</code> to the token route should return 503.</p>
+
+<h2 id="secret-key">CRYO_SECRET_KEY and token lifetime</h2>
+<p><code>CRYO_SECRET_KEY</code> does two jobs:</p>
+<ul>
+  <li>It signs Cryo's own HS256 tokens, unless <code>CRYO_JWT_SECRET</code> is set.</li>
+  <li>It's the encryption key for the connection secrets Cryo stores. Cryo derives a Fernet key from its SHA-256 hash.</li>
+</ul>
+<p>The code default is <code>dev-only-change-me</code>. Because that value is published, a deployment that keeps it accepts tokens anyone can forge, and anyone with a copy of the database can decrypt its stored secrets. Generate a random value of at least 32 characters, for example with <code>openssl rand -hex 32</code>.</p>
+<p>Set <code>CRYO_JWT_SECRET</code> to a separate random value, so you can rotate token signing without touching stored secrets.</p>
+<dl>
+  <dt>Rotating <code>CRYO_JWT_SECRET</code></dt>
+  <dd>Every HS256 token stops working at once, and people sign in again. Cryo can't revoke a single HS256 token, so rotation is the way to end every session. Tokens from your identity provider aren't affected. Their lifetime and refresh follow your provider's settings.</dd>
+  <dt>Rotating <code>CRYO_SECRET_KEY</code></dt>
+  <dd>There's no re-encryption tool. After a change, every stored secret fails to decrypt until an admin enters it again. Rotate only when you have to, and keep the old key until every secret has been re-entered. If <code>CRYO_JWT_SECRET</code> is unset, this rotation also ends every HS256 session.</dd>
+</dl>
+
+<h2 id="stored-credentials">What Cryo stores</h2>
+<p>These are encrypted in PostgreSQL with the key above, stored with an <code>enc:</code> prefix:</p>
+<ul>
+  <li>the secret part of each source and destination (<code>secret_ref</code>), such as an S3 secret access key</li>
+  <li>AWS credentials for cost insights and S3 access logs</li>
+  <li>API keys for the AI providers</li>
+  <li>Slack and other webhook URLs</li>
+</ul>
+<p>Everything else in a source or destination <code>config</code> is stored as plain JSON. Keep credentials out of <code>config</code>. Better still, give the pods an IAM role through <code>serviceAccount.annotations</code> (IRSA on EKS), so no static AWS key is stored at all.</p>
+<p>Local users' passwords are stored as salted PBKDF2-SHA256 hashes. The database URL, the Redis URL, the OIDC client secret and the keys themselves never go into the database. They live in the Kubernetes Secret.</p>
+
+<h2 id="egress">Network and egress</h2>
+<p>Cryo has no inbound path except the API, and the UI's web pod in front of it. Its pods make outbound connections to:</p>
+<ul>
+  <li>PostgreSQL and Redis</li>
+  <li>your catalogs: Iceberg REST, Hive Metastore (Thrift), AWS Glue, Polaris or Nessie</li>
+  <li>your engines: Trino over HTTP, and Spark. Spark on Kubernetes and the native lanes create Jobs through the Kubernetes API.</li>
+  <li>the object storage that holds the table files, plus AWS APIs such as STS, Glue and cost data when you use them</li>
+  <li>the OIDC issuer for discovery, JWKS and token exchange, and <code>oauth2.googleapis.com</code> if Google sign-in is on</li>
+  <li>Slack or webhook URLs, if you configure notifications</li>
+  <li>an AI provider, if you configure one. <code>api.openai.com</code> and <code>*.openai.azure.com</code> are allowed. Any other OpenAI-compatible origin must be listed exactly in <code>CRYO_LLM_ALLOWED_ORIGINS</code>.</li>
+</ul>
+<p>A default-deny egress NetworkPolicy that opens only these destinations is a good fit. The chart doesn't ship one.</p>
+
+<h2 id="checklist">Production hardening checklist</h2>
+<ul class="checklist">
+  <li><input type="checkbox" aria-label="Done"> <code>CRYO_ENVIRONMENT=prod</code> is set in <code>global.env</code>.</li>
+  <li><input type="checkbox" aria-label="Done"> <code>CRYO_ALLOW_DEV_TOKEN_IN_PROD</code> is unset or <code>false</code>.</li>
+  <li><input type="checkbox" aria-label="Done"> <code>CRYO_SECRET_KEY</code> is a random value of at least 32 characters, it's stored in a Secret, and it's backed up with the database.</li>
+  <li><input type="checkbox" aria-label="Done"> <code>CRYO_JWT_SECRET</code> is set to a different random value.</li>
+  <li><input type="checkbox" aria-label="Done"> OIDC is configured, the access token carries a Cryo role, and you've signed in as an admin through it.</li>
+  <li><input type="checkbox" aria-label="Done"> <code>/api/v1/auth/config</code> reports <code>"dev_token_enabled":false</code>, and <code>POST /api/v1/auth/token</code> returns 503.</li>
+  <li><input type="checkbox" aria-label="Done"> Password sign-in is off in Settings unless you need local users.</li>
+  <li><input type="checkbox" aria-label="Done"> Every image is pinned by digest. In <code>prod</code>, the chart enforces this.</li>
+  <li><input type="checkbox" aria-label="Done"> The UI is served over TLS, and <code>/metrics</code> and <code>/healthz/deep</code> aren't reachable from outside your network.</li>
+  <li><input type="checkbox" aria-label="Done"> Credentials are in each connection's secret field or come from an IAM role, never from its <code>config</code>.</li>
+  <li><input type="checkbox" aria-label="Done"> Egress is limited to the destinations above.</li>
+</ul>
+
+<h2 id="reporting">Reporting a vulnerability</h2>
+<p>Don't open a public issue with details. Follow <a href="https://github.com/tech-pw/cryo/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+
+<h2 id="read-next">Where to go next</h2>
+<linkcards>
+  <linkcard href="@/install/" title="Install on Kubernetes">A production install with these settings.</linkcard>
+  <linkcard href="@/deployment/" title="Deployment">What the release runs and what it requests.</linkcard>
+</linkcards>

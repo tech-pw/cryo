@@ -224,8 +224,8 @@ Exclusions are managed through the API for now, at `/api/v1/maintenance/exclusio
 
 ```
 $ curl -X POST "$CRYO/api/v1/maintenance/exclusions" \
--H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
--d '{"source_id": "", "schema_name": "finance", "reason": "Compacted by the finance team"}'
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d '{"source_id": "<lakehouse id>", "schema_name": "finance", "reason": "Compacted by the finance team"}'
 ```
 
 Add `"table_name"` to exclude one table instead of the whole schema. `GET` lists the rules, with the number of tables each one covers, and `DELETE /api/v1/maintenance/exclusions/{id}` removes one. Viewers can list; operators can add and remove.

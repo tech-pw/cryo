@@ -58,18 +58,18 @@ A compaction of one table, as each engine receives it.
 
 ```
 ALTER TABLE prod.orders_daily
-EXECUTE optimize
-WHERE ts >= TIMESTAMP '2026-09-01'
+  EXECUTE optimize
+  WHERE ts >= TIMESTAMP '2026-09-01'
 ```
 
 **Spark**
 
 ```
 CALL prod.system.rewrite_data_files(
-table => 'prod.orders_daily',
-strategy => 'sort',
-sort_order => 'ts ASC',
-options => map('target-file-size-bytes', '536870912')
+  table => 'prod.orders_daily',
+  strategy => 'sort',
+  sort_order => 'ts ASC',
+  options => map('target-file-size-bytes', '536870912')
 )
 ```
 
@@ -90,7 +90,7 @@ cryo.local/settings/connections?tab=engines
 *Cryo engines run inside the deployment. Your engines are clusters you connected.*
 
 Cryo engines
-Shipped with Cryo and run inside the deployment: the native engine (a subprocess on Cryo's workers) and Spark on Kubernetes (an engine with submit_mode: k8s). Migrations seed them.
+Shipped with Cryo and run inside the deployment: the native engine (a subprocess on Cryo's workers) and Spark on Kubernetes (an engine with `submit_mode: k8s`). Migrations seed them.
 Your engines
 Trino, EMR Serverless or Flink clusters you added with New engine. Presets and manual runs can target any of them.
 
