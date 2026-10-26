@@ -19,6 +19,16 @@ class UnsupportedPredicateError(ValueError):
     pass
 
 
+# Stock Trino refuses expire_snapshots and remove_orphan_files with a retention under these
+# catalog session defaults (INVALID_PROCEDURE_ARGUMENT), while Cryo plans down to one day for
+# hot tables (issue #139). The floor is only the minimum the procedure argument must meet.
+TRINO_DEFAULT_MIN_RETENTION_DAYS = 7
+_MIN_RETENTION_SESSION_PROPERTY = {
+    OperationType.EXPIRE_SNAPSHOTS: "expire_snapshots_min_retention",
+    OperationType.REMOVE_ORPHAN_FILES: "remove_orphan_files_min_retention",
+}
+
+
 def session_setup() -> list[str]:
     return [
         "SET SESSION task_min_writer_count = 8",
@@ -55,7 +65,9 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
         )
     elif operation.type is OperationType.CONVERT_DELETES:
         # Trino does not expose Spark's delete-file-threshold options; OPTIMIZE is the closest
-        # equivalent and rewrites data files to compact delete fragments.
+        # equivalent and rewrites data files to compact delete fragments. The execution planner
+        # relabels this operation as optimize for Trino destinations (issue #198), so this branch
+        # only serves callers that render a plan directly. The metadata says what really runs.
         sql = _render_optimize(table_ref, operation)
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
         sql = f"ALTER TABLE {table_ref} EXECUTE optimize_manifests"
@@ -74,7 +86,7 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
         )
     else:
         raise ValueError(f"Unsupported operation: {operation.type}")
-    return RenderedStatement(
+    statement = RenderedStatement(
         action=operation.type,
         sql=sql,
         engine=EngineType.TRINO,
@@ -83,14 +95,42 @@ def _render_operation(table_ref: str, operation: Operation) -> RenderedStatement
             **expire_data_metadata(operation.type.value, operation.params),
         },
     )
+    if operation.type is OperationType.CONVERT_DELETES:
+        statement.metadata["trino_procedure"] = "optimize"
+    session_properties = _min_retention_session_properties(operation)
+    if session_properties:
+        statement.metadata["catalog_session_properties"] = session_properties
+    return statement
+
+
+def _min_retention_session_properties(operation: Operation) -> dict[str, str]:
+    """Catalog session properties that let Trino accept a retention under its 7d default.
+
+    Only emitted when the plan asks for less than the default, so a 7d+ plan sends exactly
+    the statements it always did. The floor is set to the plan's own retention (never below
+    one day), not lower, so the session cannot permit anything the plan did not ask for.
+    """
+    prop = _MIN_RETENTION_SESSION_PROPERTY.get(operation.type)
+    if prop is None:
+        return {}
+    retention_days = int(operation.params.get("retention_days", TRINO_DEFAULT_MIN_RETENTION_DAYS))
+    if retention_days >= TRINO_DEFAULT_MIN_RETENTION_DAYS:
+        return {}
+    return {prop: f"{max(retention_days, 1)}d"}
 
 
 def _render_expire(table_ref: str, params: dict[str, Any]) -> str:
     retention_days = int(params.get("retention_days", 7))
     retain_last = int(params.get("retain_last", 1))
     # Trino 483 expire_snapshots cannot keep a specific snapshot id, and it has no
-    # set_snapshots procedure. Emitting one used to fail the whole expire (and the
-    # rest of the plan) whenever a Cryo exclusion row existed.
+    # set_snapshots procedure or tag DDL. Running it anyway could delete a snapshot the
+    # operator protected (issue #198), so refuse. The execution planner drops expire for
+    # such tables on Trino destinations with a plan note before it ever reaches here.
+    if params.get("protected_snapshot_ids"):
+        raise UnsupportedPredicateError(
+            "expire_snapshots cannot keep protected snapshots on Trino destinations; "
+            "route this table's expiry to a Spark destination or remove the exclusions."
+        )
     return (
         f"ALTER TABLE {table_ref} "
         "EXECUTE expire_snapshots("
