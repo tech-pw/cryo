@@ -30,6 +30,7 @@ interface AuthSettings {
   google_client_id: string | null;
   google_hosted_domain: string | null;
   google_auto_provision: boolean;
+  google_admin_emails?: string[];
 }
 
 interface GoogleTestResult {
@@ -90,6 +91,7 @@ export const AccessControl = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [userRole, setUserRole] = useState("viewer");
+  const [adminEmail, setAdminEmail] = useState("");
   const [clientId, setClientId] = useState<string | null>(null);
   const [domain, setDomain] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -117,17 +119,45 @@ export const AccessControl = () => {
   const effectiveClientId = clientId ?? settings.data?.google_client_id ?? "";
   const effectiveDomain = domain ?? settings.data?.google_hosted_domain ?? "";
 
+  const refreshPeople = () => {
+    void queryClient.invalidateQueries({ queryKey: ["auth-users"] });
+    void queryClient.invalidateQueries({ queryKey: ["auth-settings"] });
+  };
+
   const createUser = useMutation({
     mutationFn: () =>
       authFetch(token, "/api/v1/auth/users", {
         method: "POST",
-        body: JSON.stringify({ username, password, role: userRole })
+        body: JSON.stringify({ username, password: password || null, role: userRole })
       }),
     onSuccess: () => {
       setUsername("");
       setPassword("");
       setError(null);
-      void queryClient.invalidateQueries({ queryKey: ["auth-users"] });
+      refreshPeople();
+    },
+    onError: (err: Error) => setError(err.message)
+  });
+
+  const addGoogleAdmin = useMutation({
+    mutationFn: (email: string) => {
+      const normalized = email.trim().toLowerCase();
+      const existing = users.data?.find((user) => user.username === normalized);
+      if (existing) {
+        return authFetch(token, `/api/v1/auth/users/${existing.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ role: "admin", disabled: false })
+        });
+      }
+      return authFetch(token, "/api/v1/auth/users", {
+        method: "POST",
+        body: JSON.stringify({ username: normalized, password: null, role: "admin" })
+      });
+    },
+    onSuccess: () => {
+      setAdminEmail("");
+      setError(null);
+      refreshPeople();
     },
     onError: (err: Error) => setError(err.message)
   });
@@ -140,10 +170,14 @@ export const AccessControl = () => {
       }),
     onSuccess: () => {
       setError(null);
-      void queryClient.invalidateQueries({ queryKey: ["auth-users"] });
+      refreshPeople();
     },
     onError: (err: Error) => setError(err.message)
   });
+
+  const googleAdmins = settings.data?.google_admin_emails ?? [];
+  const testedEmail = testResult?.ok ? testResult.email : null;
+  const testedEmailIsAdmin = testedEmail ? googleAdmins.includes(testedEmail) : false;
 
   const testGoogle = useMutation({
     mutationFn: async () => {
@@ -232,14 +266,15 @@ export const AccessControl = () => {
                 <Input id="new-username" value={username} onChange={(event) => setUsername(event.target.value)} required />
               </div>
               <div className="min-w-0">
-                <Label htmlFor="new-password">Password</Label>
+                <Label htmlFor="new-password">Password (optional)</Label>
                 <Input
                   id="new-password"
                   type="password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   minLength={8}
-                  required
+                  placeholder="Blank = Google sign-in only"
+                  aria-describedby="new-user-hint"
                 />
               </div>
               <div className="min-w-0">
@@ -259,6 +294,10 @@ export const AccessControl = () => {
                 Add user
               </Button>
             </form>
+            <p id="new-user-hint" className="mt-2 text-xs text-muted-foreground">
+              Leave the password blank for someone who signs in with Google, and use their Google email
+              as the username.
+            </p>
             <ul className="mt-3 flex flex-col gap-2">
               {(users.data ?? []).map((user) => (
                 <li
@@ -266,6 +305,13 @@ export const AccessControl = () => {
                   className="flex flex-wrap items-center gap-2 rounded-[var(--radius-default)] border border-border bg-[var(--color-surface-sunken)] px-3 py-2 text-sm"
                 >
                   <span className="min-w-40 font-medium">{user.username}</span>
+                  <Badge variant="secondary">
+                    {user.has_password
+                      ? user.username.includes("@")
+                        ? "Password or Google"
+                        : "Password"
+                      : "Google"}
+                  </Badge>
                   <select
                     aria-label={`Role for ${user.username}`}
                     value={user.role}
@@ -415,6 +461,68 @@ export const AccessControl = () => {
                   description={testResult.message}
                 />
               ) : null}
+              {testedEmail && !testedEmailIsAdmin ? (
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">{testedEmail} is not a Cryo admin yet.</span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    loading={addGoogleAdmin.isPending}
+                    onClick={() => addGoogleAdmin.mutate(testedEmail)}
+                  >
+                    Add {testedEmail} as admin
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <h3 className="text-sm font-medium">3. Admins who sign in with Google</h3>
+              <p className="text-xs text-muted-foreground">
+                Only people with a Cryo user can sign in with Google. Add at least one admin by Google
+                email before turning off dev sign-in, or nobody will be able to manage Cryo.
+              </p>
+              {googleAdmins.length ? (
+                <ul className="flex flex-wrap gap-2" aria-label="Google admins">
+                  {googleAdmins.map((email) => (
+                    <li key={email}>
+                      <Badge variant="outline">{email}</Badge>
+                    </li>
+                  ))}
+                </ul>
+              ) : settings.data ? (
+                <Alert
+                  variant="warning"
+                  title="No admin can sign in with Google yet"
+                  description={
+                    effectiveDomain
+                      ? `Add an admin with an @${effectiveDomain.replace(/^@/, "")} Google email.`
+                      : "Add an admin by Google email."
+                  }
+                />
+              ) : null}
+              <form
+                className="flex flex-wrap items-end gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  addGoogleAdmin.mutate(adminEmail);
+                }}
+              >
+                <div className="min-w-64 flex-1">
+                  <Label htmlFor="google-admin-email">Admin Google email</Label>
+                  <Input
+                    id="google-admin-email"
+                    type="email"
+                    value={adminEmail}
+                    onChange={(event) => setAdminEmail(event.target.value)}
+                    placeholder={effectiveDomain ? `name@${effectiveDomain.replace(/^@/, "")}` : "name@company.com"}
+                    required
+                  />
+                </div>
+                <Button type="submit" variant="secondary" loading={addGoogleAdmin.isPending}>
+                  Add as admin
+                </Button>
+              </form>
             </div>
             </CardContent>
           </Card>

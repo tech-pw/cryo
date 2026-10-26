@@ -40,6 +40,8 @@ The Secret must also hold `CRYO_SECRET_KEY`. The code default is `dev-only-chang
 
 `CRYO_ENVIRONMENT: dev` leaves `POST /api/v1/auth/token` open. That route self-issues `viewer`, `operator`, or `admin` with no identity check. A production install sets `CRYO_ENVIRONMENT=prod`, leaves `CRYO_ALLOW_DEV_TOKEN_IN_PROD` unset, and configures OIDC before the Service is exposed. OIDC does not turn the dev token off.
 
+Google sign-in is the other way off the dev token. Under Settings > Access & policy, paste a Google OAuth Client ID, test it, enable it, and add at least one admin by Google email. The sign-in page then shows "Sign in with Google" in every auth mode. Only people with a Cryo user can sign in. A user added without a password signs in with Google only, and its username must be the Google email. To bootstrap the first admin without the dev token, set `CRYO_GOOGLE_ADMIN_EMAILS` to a comma-separated list. Those emails become admins on their first Google sign-in if no Cryo user exists for them. The list never changes an existing user's role. Turn `CRYO_ALLOW_DEV_TOKEN_IN_PROD` off only after an admin has signed in with Google.
+
 Catalogs and engines are not Helm values. Create them with `POST /api/v1/sources` and `POST /api/v1/destinations` after migrate. Supported source types are `rest`, `hive`, `glue`, `polaris`, and `nessie`. Unity Catalog and JDBC are rejected.
 
 ## Upgrade

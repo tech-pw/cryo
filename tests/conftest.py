@@ -32,6 +32,7 @@ from cryo.db.models import (
     Destination,
     FleetImpactHistory,
     LLMObservation,
+    LocalUser,
     MaintenanceJob,
     MaintenanceRun,
     PartitionAccessDaily,
@@ -60,6 +61,7 @@ from cryo.workflows.approvals import ApprovalRequest  # noqa: F401 — register 
 from tests.test_presets_api_db import api_db  # noqa: F401 — shared API+DB test client fixture
 
 UUID_ID_MODELS = (
+    LocalUser,
     Source,
     Destination,
     Preset,

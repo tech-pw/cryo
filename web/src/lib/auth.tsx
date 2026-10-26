@@ -315,7 +315,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id_token: idToken })
       });
-      if (!response.ok) throw new Error("Google sign-in was rejected");
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+        throw new Error(typeof body?.detail === "string" ? body.detail : "Google sign-in was rejected");
+      }
       const payload = (await response.json()) as TokenPayload;
       const nextSubject = decodeJwtSubject(payload.access_token);
       persistSession(decodeJwtRole(payload.access_token), nextSubject, payload.access_token, "local");
