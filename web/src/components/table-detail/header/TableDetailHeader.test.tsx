@@ -150,7 +150,7 @@ describe("TableDetailHeader", () => {
     const onRunOperation = vi.fn();
     renderHeader({ scanned: true, hasWorkflow: true, onRunOperation });
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    expect(screen.getByRole("group", { name: "Add to run" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Run one operation" })).toBeInTheDocument();
     expect(screen.getByText("deletes files")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Compact files" }));
     expect(onRunOperation).toHaveBeenCalledWith("optimize");

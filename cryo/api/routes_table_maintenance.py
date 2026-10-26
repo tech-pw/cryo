@@ -26,10 +26,10 @@ from cryo.db.models import MaintenanceJob, Source, Table, TableStats
 from cryo.db.repositories.exclusions import excluded_table_ids
 from cryo.domain.enums import Mode, OperationType
 from cryo.maintenance.selection import (
-    COOLDOWN_JOB_STATUSES,
     DEFAULT_MIN_DELETE_FILE_PCT,
     BlockingReason,
     MaintenanceEligibilityFacts,
+    job_starts_cooldown,
     maintenance_blocking_reasons,
     nightly_selection_eligible,
 )
@@ -112,7 +112,7 @@ def _latest_successful_finished_at(session: Session, table_id: uuid.UUID) -> dat
         select(MaintenanceJob.finished_at)
         .where(
             MaintenanceJob.table_id == table_id,
-            MaintenanceJob.status.in_(COOLDOWN_JOB_STATUSES),
+            job_starts_cooldown(),
             MaintenanceJob.finished_at.is_not(None),
         )
         .order_by(MaintenanceJob.finished_at.desc())

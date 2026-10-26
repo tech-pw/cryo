@@ -1,6 +1,6 @@
 import type { DestinationRead, EngineType, JsonObject } from "../api/types";
 
-export type NativeEngineImpl = "go" | "rust";
+export type NativeEngineImpl = "go";
 
 export const NATIVE_ENGINE_IMPL_DEFAULT: NativeEngineImpl = "go";
 
@@ -14,7 +14,6 @@ export const ENGINE_TYPE_OPTIONS: EngineTypeOption[] = [
   { label: "Trino", value: "trino" },
   { label: "Spark EMR", value: "spark_emr" },
   { label: "Native (iceberg-go)", value: "native", nativeImpl: "go" },
-  { label: "Native (iceberg-rust)", value: "native", nativeImpl: "rust" },
   { label: "Flink (config only)", value: "flink" }
 ];
 
@@ -22,7 +21,6 @@ export const ENGINE_VIRTUAL_OPTIONS = [
   { label: "Trino", value: "trino" },
   { label: "Spark EMR", value: "spark_emr" },
   { label: "Native (iceberg-go)", value: "native:go" },
-  { label: "Native (iceberg-rust)", value: "native:rust" },
   { label: "Flink (config only)", value: "flink" }
 ] as const;
 
@@ -63,9 +61,6 @@ export const engineVirtualOptions = (
     if (option.value === "native:go") {
       return { ...option, label: nativeEngineOptionLabel(false, "go") };
     }
-    if (option.value === "native:rust") {
-      return { ...option, label: nativeEngineOptionLabel(false, "rust") };
-    }
     return option;
   });
 };
@@ -81,9 +76,6 @@ export const NATIVE_UNSUPPORTED_OPS = [
 
 export const nativeUnsupportedOpTooltip =
   "Not executed by the native engine; configure a compatible Trino or Spark fallback.";
-
-export const nativeRustOptimizeTooltip =
-  "Compaction is not available on iceberg-rust; use Native (iceberg-go) or Trino/Spark.";
 
 export const nativeGoDeleteFilesRewriteError =
   "Rewrite is blocked on iceberg-go for tables with delete files (iceberg-go bug). Snapshot expiry and orphan removal will still run.";
@@ -106,14 +98,12 @@ const ENGINE_TAG_COLORS: Record<EngineType, string> = {
   flink: "gray"
 };
 
-export const resolveNativeEngineImpl = (config?: JsonObject | null): NativeEngineImpl => {
-  const configured = config?.engine_impl;
-  if (configured === "go" || configured === "rust") return configured;
-  return NATIVE_ENGINE_IMPL_DEFAULT;
-};
+// The Rust engine is gone, so every native destination runs iceberg-go. A config still
+// carrying engine_impl="rust" (migration 20261026_1200 strips it) reads as go too.
+export const resolveNativeEngineImpl = (_config?: JsonObject | null): NativeEngineImpl =>
+  NATIVE_ENGINE_IMPL_DEFAULT;
 
-export const formatNativeImplLabel = (impl: NativeEngineImpl): string =>
-  impl === "go" ? "iceberg-go" : "iceberg-rust";
+export const formatNativeImplLabel = (_impl: NativeEngineImpl): string => "iceberg-go";
 
 export const formatEngineLabel = (
   engine: string | null | undefined,
@@ -142,20 +132,16 @@ export const isNativeDestination = (destination: DestinationRead | null | undefi
 
 export const nativeSupportsOperation = (
   operation: string,
-  impl: NativeEngineImpl = NATIVE_ENGINE_IMPL_DEFAULT
+  _impl: NativeEngineImpl = NATIVE_ENGINE_IMPL_DEFAULT
 ): boolean => {
-  if ((NATIVE_UNSUPPORTED_OPS as readonly string[]).includes(operation)) return false;
-  if (operation === "optimize" && impl === "rust") return false;
-  return true;
+  return !(NATIVE_UNSUPPORTED_OPS as readonly string[]).includes(operation);
 };
 
 export const engineVirtualFromDestination = (
   engine: EngineType,
-  config?: JsonObject | null
+  _config?: JsonObject | null
 ): EngineVirtualValue => {
-  if (engine === "native") {
-    return resolveNativeEngineImpl(config) === "rust" ? "native:rust" : "native:go";
-  }
+  if (engine === "native") return "native:go";
   return engine as EngineVirtualValue;
 };
 
@@ -163,7 +149,6 @@ export const parseEngineVirtual = (
   virtual: string
 ): { engine: EngineType; engine_impl?: NativeEngineImpl } => {
   if (virtual === "native:go") return { engine: "native", engine_impl: "go" };
-  if (virtual === "native:rust") return { engine: "native", engine_impl: "rust" };
   return { engine: virtual as EngineType };
 };
 
