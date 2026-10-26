@@ -76,6 +76,11 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# The published benchmark harness is a frozen artifact: it is the code that
+# produced the results, and reformatting it would break the protocol freeze.
+# force-exclude applies it even when the path is passed explicitly.
+force-exclude = true
+extend-exclude = ["benchmarks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
