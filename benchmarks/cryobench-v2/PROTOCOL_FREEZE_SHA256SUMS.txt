@@ -1,0 +1,32 @@
+# CryoBench V2 -- protocol freeze
+#
+# The original freeze: the SHA-256 of the protocol and the controller scripts
+# as they ran when the data was collected. These are the checksums that
+# attest the protocol did not change while the benchmark ran. They match the
+# internal repository, not the published tree.
+#
+# The published checksums: the same files after the internal identifiers were
+# replaced with placeholders for publication. The scrub changed the bytes of
+# three of the four files, so these differ from the originals.
+#
+# A reader who wants to check the published file matches the second block.
+# A reader who wants to check provenance matches the first.
+#
+# The replacements: <benchmark-bucket>, <benchmark-cluster>, <region>, <node>,
+# <home>, <internal-host>, <internal-domain>, and the benchmark namespace.
+# No measured number was changed -- the analysis outputs regenerate
+# byte-identically from the scrubbed data, which is what proves it.
+
+## Original freeze (as run)
+
+b099defe8692cf9e80bdc32495d1b4997db3d60312228f43434720e402bdb582  CRYOBENCH_V2_PROTOCOL.md
+11dc497a5d9b8e508e7453137d7ee61a9458d67d764ebb307421c320169d04ec  p4/controller_p4.py
+46d20346caf8e2929144c40a700adcf4c689fd6f3b8554ef115845a9b03950a0  p1/controller.py
+ce117c9f8d8604e48bad629e30cfd629b0b7a34c9c3397f6c2195bc81e51ed35  make_controller.py
+
+## Published checksums (after the identifier scrub)
+
+4cf3bedb315199ca753138761f99d647353b9ab217c52e24b1a4b4f4fafa2ba6  CRYOBENCH_V2_PROTOCOL.md
+11dc497a5d9b8e508e7453137d7ee61a9458d67d764ebb307421c320169d04ec  harness/p4/controller_p4.py
+7eab2a265238aae43154b382e54701c9ce32d84ab9b79e9bba590c9932bef79c  harness/p1/controller.py
+9f24494333deb0adf3aa75da956eb390f9ba0de74d84c6acb61b4b2c162ef831  harness/make_controller.py

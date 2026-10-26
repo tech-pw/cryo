@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: JOBNAME
+  namespace: cryo-bench
+  labels: {benchmark-run: 20261020-spark-001, benchmark-version: v2, purpose: v2p1-controller}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 172800
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels: {benchmark-version: v2, v2-job: JOBNAME}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: bench-v2-controller
+      containers:
+        - name: controller
+          image: ghcr.io/tech-pw/cryo@sha256:b440406dca311463c3ba672a8b6b6d469442f23851681662984effe82df1c691
+          command: ["python", "-u", "/opt/v2/controller.py"]
+          env:
+            - {name: ACTION, value: "JOBACTION"}
+            - {name: TRIALS, value: "JOBTRIALS"}
+            - {name: CYCLES, value: "JOBCYCLES"}
+          volumeMounts: [{name: code, mountPath: /opt/v2}]
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 300m, memory: 512Mi}
+      volumes: [{name: code, configMap: {name: v2-p1-code}}]

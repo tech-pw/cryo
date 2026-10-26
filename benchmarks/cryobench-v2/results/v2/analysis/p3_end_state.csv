@@ -1,0 +1,7 @@
+arm,table,snapshots,ops,maintenance_commits,gib_rewritten,final_data_files,final_delete_files,max_data_files,max_delete_files,tw_mean_data_files,tw_mean_delete_files
+a0,events,36,{'append': 36},0,0.0,108,0,108,0,54.47469011049339,0.0
+a0,orders,37,{'append': 1; 'overwrite': 36},0,0.0,40,39,40,39,21.97924032904617,20.949527554863966
+a1,events,42,{'append': 36; 'replace': 6},6,0.0442060986533761,25,0,30,0,13.52048668292819,0.0
+a1,orders,40,{'append': 1; 'overwrite': 36; 'replace': 3},3,0.0,40,39,40,39,21.963439450836304,20.933017797731903
+a3,events,41,{'append': 36; 'replace': 5},5,0.07357155531644821,16,0,21,0,9.951447263576139,0.0
+a3,orders,48,{'append': 1; 'overwrite': 36; 'replace': 11},11,1.406465783715248,3,5,8,10,2.883986368008413,4.874602598392808

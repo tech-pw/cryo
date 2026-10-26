@@ -123,4 +123,28 @@ updated: 2026-10-23
 </ul>
 <p>Cryo ran with default settings throughout. The protocol was written and frozen before any scored run, compute was measured from Kubernetes pod requests, and rewritten bytes came from Iceberg's own snapshot summaries. Discovery was also checked at fleet scale: all 100 tables in a 100-table catalog were discovered, with exact file counts, in about two and a half minutes.</p>
 
+<h2 id="hardware">Hardware and versions</h2>
+<p>The numbers above were measured on one cluster. The protocol, the harness, the raw per-trial data and the analysis scripts are all in the repository, so you can check them — or rerun the tests.</p>
+<div class="tbl">
+<table>
+  <thead><tr><th></th><th></th></tr></thead>
+  <tbody>
+    <tr><td>Nodes</td><td>6</td></tr>
+    <tr><td>Node type</td><td><code>r6a.8xlarge</code> — 32 vCPU, 128 GiB, on-demand</td></tr>
+    <tr><td>Region</td><td><code>ap-south-1</code> (Mumbai)</td></tr>
+    <tr><td>Spark</td><td>4.1.2</td></tr>
+    <tr><td>Iceberg</td><td>1.11.0</td></tr>
+    <tr><td>Trino</td><td>480, read-only, 6 vCPU / 20 GiB guaranteed</td></tr>
+    <tr><td>Object store</td><td>S3 Standard</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The benchmark used about 48 vCPU on average for about 24 hours in total, across every phase.</p>
+<p><a href="https://github.com/tech-pw/cryo/tree/main/benchmarks/cryobench-v2"><b>The harness is in the repository</b></a> — the frozen protocol, the phase controllers, the raw per-trial data and the analysis scripts. Every analysis table on this page regenerates from the published data:</p>
+<codeblock lang="bash" title="terminal">
+$ cd benchmarks/cryobench-v2
+$ for s in p1_analysis p2_analysis p3_analysis; do python harness/analysis/$s.py; done
+</codeblock>
+<p>The <a href="https://github.com/tech-pw/cryo/blob/main/benchmarks/cryobench-v2/CLAIMS.md">claims register</a> says what each phase does and does not establish. It also records the claims this benchmark does <em>not</em> support — that compaction always improves latency, that Cryo saves compute, that it maintains tables faster than a scheduled job — which is the more useful half of the result.</p>
+
 <callout type="tip" title="Try it on your own tables">The fastest way to see this on your lake is the <a href="@/quickstart/">Quickstart</a>. Point Cryo at a catalog, let it grade every table, and review the plan before anything runs.</callout>
