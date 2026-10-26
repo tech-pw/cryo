@@ -409,7 +409,9 @@ redis:
   image:
     repository: redis
     tag: "7-alpine"
-    digest: ""
+    # Pinned so the prod default renders without overrides (the chart refuses prod
+    # without digests). Multi-arch index digest of redis:7-alpine, 2026-10-26.
+    digest: "sha256:57e4255cc971b1c8d6f8a6ca283ac01bc3ecdd914273ef6bfaede87aaecd6541"
     pullPolicy: IfNotPresent
   port: 6379
   probe:
