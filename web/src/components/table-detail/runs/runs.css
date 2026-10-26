@@ -5,6 +5,7 @@
   --tone-running: var(--color-chart-primary);
   --tone-queued: var(--color-muted-subtle);
   --tone-skipped: var(--color-border-strong);
+  --tone-change: var(--color-ink);
   margin-top: 16px;
   padding: 20px;
   border: 1px solid var(--color-border);
@@ -100,15 +101,24 @@
   width: max-content;
 }
 
+/* Pinned so operation names stay readable when the timeline is scrolled to recent runs. */
 .td-grid-label {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
   padding-right: 12px;
+  background: var(--color-surface-raised);
+  box-shadow: -4px 0 0 var(--color-surface-raised);
   color: var(--color-ink);
   font-size: 12px;
   white-space: nowrap;
 }
 
 .td-grid-label--bars {
-  align-self: end;
+  align-items: flex-end;
   color: var(--color-muted);
   font-size: 11px;
 }
@@ -272,32 +282,87 @@
   font-size: 13px;
   line-height: 1.5;
 }
+/* Config changes: a small badge above a faint guide, so they mark the timeline without competing with run cells. */
 .td-grid-bar--change {
-  align-items: center;
+  align-items: flex-end;
+  padding-bottom: 2px;
 }
-.td-grid-bar--change span {
-  width: 2px;
-  height: 28px;
+.td-grid-bar--change::before,
+.td-grid-cell--change::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  border-left: 1px dashed var(--color-muted);
+  opacity: 0.6;
+  transform: translateX(-0.5px);
+}
+.td-grid-bar--change::before {
+  bottom: 18px;
+}
+.td-grid-change-badge,
+.td-grid-bar--change .td-grid-change-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 14px;
+  height: 14px;
   min-height: 0;
-  border-radius: 1px;
-  background: var(--color-ink);
+  padding: 0 2px;
+  border-radius: 999px;
+  background: var(--tone-change);
+  color: var(--color-surface-raised);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.td-grid-bar--change:hover .td-grid-change-badge {
+  filter: brightness(1.1);
+}
+.td-grid-bar--change[data-selected] {
+  outline-offset: 0;
 }
 .td-grid-cell--change {
+  position: relative;
+  width: 14px;
   background: transparent;
-  border-left: 2px solid var(--color-ink);
-  border-radius: 0;
+  border-color: transparent;
 }
-.td-grid-legend-change i {
-  width: 2px;
-  height: 11px;
-  border-radius: 1px;
-  background: var(--color-ink);
+.td-grid-cell--change:hover {
+  transform: none;
+}
+.td-grid-cell--change:hover::before {
+  opacity: 0.9;
+}
+.td-grid-legend-change .td-grid-change-badge {
+  min-width: 13px;
+  height: 13px;
 }
 .td-run-detail--change {
   grid-template-columns: minmax(0, 1fr);
 }
 .td-run-detail--change .td-run-statement {
+  margin: 8px 0 0;
+}
+.td-run-detail--change .td-run-status svg {
+  color: var(--tone-change);
+}
+.td-change-list {
+  display: grid;
+  gap: 12px;
+  max-height: 320px;
   margin: 12px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.td-change-list li + li {
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
 }
 .td-grid-legend-manual i {
   width: 8px;
