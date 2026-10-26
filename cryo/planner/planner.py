@@ -468,15 +468,17 @@ def _candidate_partitions(
     today = datetime.now(UTC).date()
     candidates: list[OptimizeCandidate] = []
     for row in partitions:
-        if skip_open and is_open_time_partition(fields, row, today):
-            partition_value = row.get("partition_value", row.get("partition_values", "<unknown>"))
-            notes.append(f"Skipped open partition {partition_value}: it is the current period.")
-            continue
+        # Activity first: a partition written recently reports why. The calendar check then
+        # catches a current period that is quiet right now but will take more appends.
         if idle_hours > 0 and not _partition_is_cold(row, idle_hours):
             partition_value = row.get("partition_value", row.get("partition_values", "<unknown>"))
             notes.append(
                 f"Skipped hot partition {partition_value}: writes within last {idle_hours}h."
             )
+            continue
+        if skip_open and is_open_time_partition(fields, row, today):
+            partition_value = row.get("partition_value", row.get("partition_values", "<unknown>"))
+            notes.append(f"Skipped open partition {partition_value}: it is the current period.")
             continue
         small_files = _small_files(row)
         if small_files < min_small_files:
