@@ -199,9 +199,8 @@ export interface SkipColumn {
   startedAt: string;
 }
 
-/** An operator change (config, exclusion, hold) that happened between runs. */
-export interface ChangeColumn {
-  kind: "change";
+/** One operator change (config, exclusion, hold) recorded in the audit log. */
+export interface ChangeEntry {
   key: string;
   action: string;
   label: string;
@@ -209,6 +208,15 @@ export interface ChangeColumn {
   detail: string | null;
   actor: string | null;
   startedAt: string;
+}
+
+/**
+ * Operator changes that happened between two runs, as one column. The top-level fields mirror the
+ * latest entry; `entries` holds all of them, oldest first.
+ */
+export interface ChangeColumn extends ChangeEntry {
+  kind: "change";
+  entries: ChangeEntry[];
 }
 
 export type GridColumn = RunColumn | SkipColumn | ChangeColumn;
@@ -259,11 +267,10 @@ export const skipReasonText = (reason: string | null) =>
 export const changeColumns = (audit: AuditEntry[]): ChangeColumn[] =>
   audit
     .filter((entry) => CHANGE_ACTIONS.has(entry.action ?? ""))
-    .map((entry) => {
+    .map((entry): ChangeColumn => {
       const action = entry.action ?? "";
       const at = entry.ts ?? entry.created_at ?? "";
-      return {
-        kind: "change" as const,
+      const change: ChangeEntry = {
         key: `change-${entry.id ?? at}`,
         action,
         label: CHANGE_LABEL[action] ?? action.replaceAll("_", " "),
@@ -272,6 +279,7 @@ export const changeColumns = (audit: AuditEntry[]): ChangeColumn[] =>
         actor: entry.actor ?? null,
         startedAt: at
       };
+      return { kind: "change", ...change, entries: [change] };
     })
     .filter((column) => column.startedAt.length > 0)
     .sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
@@ -334,7 +342,22 @@ export const mergeSkipColumns = (
     // Operator changes are the point of this row; never drop one to make room for a skip.
     kept.unshift(column);
   }
-  return kept;
+  return groupAdjacentChanges(kept);
+};
+
+/** Back-to-back changes with no run or skip between them share one column. */
+const groupAdjacentChanges = (columns: GridColumn[]): GridColumn[] => {
+  const grouped: GridColumn[] = [];
+  for (const column of columns) {
+    const last = grouped[grouped.length - 1];
+    if (column.kind === "change" && last?.kind === "change") {
+      const entries = [...last.entries, ...column.entries];
+      grouped[grouped.length - 1] = { ...last, ...column, key: last.key, entries };
+      continue;
+    }
+    grouped.push(column);
+  }
+  return grouped;
 };
 
 /** Grid rows: the four core operations always, extras only if some shown run used them. */
