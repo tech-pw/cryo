@@ -349,6 +349,66 @@ it's the only item in §6 that changes *which* tables get selected rather than h
 selected table is processed — worth scoping as its own doc once there's a clean baseline to
 measure it against.
 
+## 8. Expire driver kill, 2026-10-19
+
+`cdp.unified_bq.gold_dbt_pw_bq` (28,400 GB, 179,020 data files) ran `expire_snapshots` as
+`cryo-spark-069a3d881f`. The driver pod exited 137, reason `OOMKilled`, after 12m 51s.
+The wrapper Job succeeded. The stored error was broadcast INFO because a cgroup SIGKILL
+does not print a JVM exception, and `get_job_run` was reading the driver log only.
+`jobs.error=engine_step_failed_on_recover` is recovery bookkeeping, not the Spark cause.
+
+That pod was the lightweight profile: 1 executor, `spark.driver.memory=1024m`. Deadline
+had already scaled with table size. Driver memory had not. Spark 4.1.2
+([`BasicDriverFeatureStep`](https://github.com/apache/spark/blob/v4.1.2/resource-managers/kubernetes/core/src/main/scala/org/apache/spark/deploy/k8s/features/BasicDriverFeatureStep.scala))
+sets container memory to `spark.driver.memory` plus `spark.driver.memoryOverhead`
+(default `max(10% of heap, 384MiB)`). It does not read
+`spark.kubernetes.driver.limit.memory` or `request.memory`. Those confs are gone.
+`spark.driver.memoryOverhead=384m` is what Spark actually adds
+([Kubernetes docs](https://spark.apache.org/docs/latest/running-on-kubernetes.html)).
+Pinning overhead to 384m does not shrink the 3072 MiB tier: 10% of 3072 is 307, so the
+default was already 384.
+
+Iceberg 1.11 `ExpireSnapshotsSparkAction.expireFiles` anti-joins every file still
+reachable from a retained snapshot against the delete candidates. `stream_results`
+only changes how delete paths are collected. `snapshot_ids` does not shrink the
+valid-file side. Scan stats have `total_files` (data files only) and
+`total_delete_files`, not snapshot ids, and the planner does not read the catalog.
+So this is not a batched CALL.
+
+The incident path is the governor's async `submit()`, not `execute()`. `submit()`
+returns before the driver exists, so an in-process retry never ran for this kill.
+`fallback_sweep` is what resubmits.
+
+What ships, for `expire_snapshots` and `remove_orphan_files` only:
+
+- Executor count stays 1. The data plane did not die. The size-based executor ceiling
+  (`total_size_gb`) is unchanged for every other op.
+- Driver heap comes from data files plus delete files: under 10k files 1024MiB, under
+  50k 2048MiB, under 200k 3072MiB, at or above 200k 4096MiB. If both counts are missing,
+  file count stays unknown and the heap stays 1024MiB. A MOR table with delete files
+  must not be sized from data files alone. 179,020 data files starts at 3072MiB, not at
+  the pod that was killed.
+- One step-up, only when the container status reason is `OOMKilled`, adds 2048MiB and
+  stops at 4096MiB. Exit 137 with any other reason (eviction, preemption) does not
+  match. A SQL error, a timeout, or a second kill does not submit another pod. Exit 137
+  is not a peak-heap sample, so the next size is not "the exact GB".
+- The step lives in `fallback_sweep`, which is the path that actually saw this kill.
+  `execute()` has the same step for the blocking path, and an OOM does not spend a
+  catalog retry. The sweep refuses the step when the pod that just died was already at
+  4096, before it submits. A 3072 kill is not called the ceiling.
+- The marker is `oom-step` at the front of the audit row's `detail`, not in
+  `engine_ref`. `engine_ref` is a random `cryo-spark-<hex>` and cannot carry it. A
+  later success overwrites detail. A second kill reads the marker and finalizes FAILED.
+- `spark.sql.autoBroadcastJoinThreshold=-1` and `spark.driver.maxResultSize` at
+  heap minus 256MiB, for these two ops only. The broadcast disable is the workaround
+  Iceberg users needed ([ICEBERG-3703](https://github.com/apache/iceberg/issues/3703));
+  it does not shrink the anti-join.
+- The stored error starts with `OOMKilled exit 137`. The "at driver heap ceiling; not
+  splitting the CALL" line is emitted only when the pod that died was already at 4096.
+
+The 7–12.7 GiB lane figure above is a different runtime. That gate failed. It is not
+a reason to put 16GiB on every expire.
+
 ## Appendix: competitor survey
 
 | Platform | How it runs maintenance | What Cryo takes from it |

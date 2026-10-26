@@ -52,7 +52,7 @@ FIELD_MAP = {
 # Explorer-only fields: not in SUPPORTED_FIELDS, so preset rules (evaluated in Python against
 # candidate rows that carry none of these) can't reference them.
 _TIMESTAMP_FIELDS = frozenset({"last_snapshot_committed_at", "scan_at"})
-EXPLORER_FIELDS = frozenset({"scan_at", *COMPUTED_FIELDS})
+EXPLORER_FIELDS = frozenset({"scan_at", "last_scan_error_kind", *COMPUTED_FIELDS})
 
 
 def compile_predicate(predicate: Mapping[str, Any] | None) -> ColumnElement[bool] | None:
