@@ -42,6 +42,10 @@ class AnomalyAlert:
     detected_at: datetime
 
 
+# Fewest historical values a detector will score a current value against.
+MIN_BASELINE_POINTS = 5
+
+
 def calculate_statistics(values: Sequence[float]) -> tuple[float, float]:
     """
     Calculate mean and standard deviation.
@@ -102,7 +106,7 @@ def detect_anomaly_mad(
     Returns:
         Tuple of (is_anomaly, expected_value, deviation_sigma)
     """
-    if len(historical_values) < 5:
+    if len(historical_values) < MIN_BASELINE_POINTS:
         return False, current_value, 0.0
 
     median, mad = calculate_mad(historical_values)
@@ -156,7 +160,7 @@ def detect_anomaly_zscore(
     Returns:
         Tuple of (is_anomaly, expected_value, deviation_sigma)
     """
-    if len(historical_values) < 5:
+    if len(historical_values) < MIN_BASELINE_POINTS:
         return False, current_value, 0.0
 
     mean, std_dev = calculate_statistics(historical_values)
@@ -231,7 +235,7 @@ def _anomalies_from_history(
 ) -> list[AnomalyAlert]:
     """Anomalies for one table from its history rows, oldest first (scan_at, small_files_count,
     total_size_gb, overall_score, p95_query_latency_ms)."""
-    if len(history) < 5:
+    if len(history) < MIN_BASELINE_POINTS:
         return []  # Not enough history for anomaly detection
 
     # Get current (latest) stats
@@ -241,7 +245,10 @@ def _anomalies_from_history(
     historical = history[:-1]
     current_weekday = current.scan_at.weekday()
     weekday_historical = [h for h in historical if h.scan_at.weekday() == current_weekday]
-    if len(weekday_historical) >= 3:
+    # Narrow to the same weekday only when that still leaves a usable baseline. With 3-4 points
+    # the detectors refuse to score, so narrowing silently disabled detection, e.g. for any table
+    # whose recent history straddles midnight.
+    if len(weekday_historical) >= MIN_BASELINE_POINTS:
         historical = weekday_historical
 
     anomalies = []
