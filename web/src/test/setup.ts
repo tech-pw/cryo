@@ -40,6 +40,12 @@ Object.defineProperty(globalThis, "matchMedia", {
   })
 });
 
+// jsdom doesn't implement scrollIntoView. Components call it from timers that can fire after a
+// test finishes, so the TypeError escapes as an unhandled error and fails the whole run.
+if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}
+
 afterEach(() => cleanup());
 
 // jsdom tears its window down when the worker finishes a file, and a timer or
