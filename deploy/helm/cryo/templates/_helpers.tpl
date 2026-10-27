@@ -136,3 +136,7 @@ default install gets a real, annotatable SA; point serviceAccount.name at an exi
 {{- define "cryo.serviceAccountName" -}}
 {{- default (include "cryo.fullname" .) .Values.serviceAccount.name }}
 {{- end }}
+
+{{- define "cryo.secretStoreName" -}}
+{{- default (printf "%s-secret-store" (include "cryo.fullname" .)) .Values.externalSecret.secretStore.name }}
+{{- end }}

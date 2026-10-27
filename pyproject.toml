@@ -40,7 +40,7 @@ dependencies = [
     "sqlalchemy[asyncio]",
     "sqlglot>=25.0.0",
     "structlog>=24.0.0",
-    "kubernetes>=30.0.0,<31",
+    "kubernetes>=30.0.0,<38",
     "trino",
     "uvicorn[standard]",
 ]

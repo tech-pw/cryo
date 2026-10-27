@@ -276,6 +276,7 @@ Top-level values in `deploy/helm/cryo/values.yaml`. The chart's own schema,
 | `api` | `object` | *(object)* | no | - |
 | `backup` | `object` | *(object)* | no | - |
 | `containerSecurityContext` | `object` | *(object)* | no | - |
+| `externalSecret` | `object` | *(object)* | no | - |
 | `global` | `object` | *(object)* | no | - |
 | `governor` | `object` | *(object)* | no | - |
 | `image` | `object` | *(object)* | no | - |

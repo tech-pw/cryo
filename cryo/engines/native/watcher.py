@@ -226,7 +226,7 @@ class NativeJobWatcher:
                     continue
 
                 status = job.status
-                if status.succeeded is not None and status.succeeded >= 1:
+                if status is not None and status.succeeded is not None and status.succeeded >= 1:
                     pods = _get_job_pods(batch_api, dispatch.k8s_job_name, namespace)
                     stdout = _read_pod_logs(pods, "cryo-engine", k8s_client)
                     self._finalize_success(session, dispatch.id, stdout)
@@ -234,7 +234,7 @@ class NativeJobWatcher:
                     finalized += 1
                     continue
 
-                if status.failed is not None and status.failed >= 1:
+                if status is not None and status.failed is not None and status.failed >= 1:
                     pods = _get_job_pods(batch_api, dispatch.k8s_job_name, namespace)
                     stderr = _read_pod_logs(pods, "cryo-engine", k8s_client) or ""
                     if _parse_batch_results(stderr):
