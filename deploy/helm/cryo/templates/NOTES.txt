@@ -14,5 +14,5 @@ Web UI: {{ if .Values.web.enabled }}enabled{{ else }}off (web.enabled is false){
 helm upgrade reruns the pre-upgrade migration Job (alembic upgrade head).
 helm uninstall does not delete external Postgres or the warehouse.
 
-Render locally with: helm template {{ .Release.Name }} <chart>
+Render locally with: helm template {{ .Release.Name }} <chart> --set global.env.CRYO_ENVIRONMENT=dev
 That command does not need a cluster.
