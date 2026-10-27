@@ -15,6 +15,7 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -490,7 +491,7 @@ def create_native_job(
     try:
         core_api.create_namespaced_secret(
             namespace=namespace,
-            body={
+            body={  # type: ignore[arg-type]  # the client serializes plain-dict manifests
                 "apiVersion": "v1",
                 "kind": "Secret",
                 "metadata": {
@@ -503,7 +504,10 @@ def create_native_job(
             },
         )
         secret_created = True
-        created_job = batch_api.create_namespaced_job(body=job_manifest, namespace=namespace)
+        created_job = batch_api.create_namespaced_job(
+            body=job_manifest,  # type: ignore[arg-type]  # the client serializes plain-dict manifests
+            namespace=namespace,
+        )
         _adopt_payload_secret(
             core_api,
             secret_name=payload_secret_name,
@@ -606,12 +610,12 @@ def _poll_job_until_done(
             job = batch_api.read_namespaced_job(name=job_name, namespace=namespace)
             status = job.status
 
-            if status.succeeded is not None and status.succeeded >= 1:
+            if status is not None and status.succeeded is not None and status.succeeded >= 1:
                 pods = _get_job_pods(batch_api, job_name, namespace)
                 stdout_text = _read_pod_logs(pods, "cryo-engine", k8s_client)
                 return _parse_job_result(stdout_text, table_ref, job_name)
 
-            if status.failed is not None and status.failed >= 1:
+            if status is not None and status.failed is not None and status.failed >= 1:
                 pods = _get_job_pods(batch_api, job_name, namespace)
                 stderr_text = _read_pod_logs(pods, "cryo-engine", k8s_client)
                 return NativeExecuteResult(
@@ -645,7 +649,7 @@ def _poll_job_until_done(
         )
 
 
-def _safe_load_k8s() -> tuple[type, type] | tuple[None, None]:
+def _safe_load_k8s() -> tuple[ModuleType, ModuleType] | tuple[None, None]:
     try:
         from kubernetes import client as k8s_client
         from kubernetes import config as k8s_config
@@ -728,7 +732,7 @@ def _get_job_pods(
             namespace=namespace,
             label_selector=label_selector,
         )
-        return pods.items  # type: ignore[no-any-return]
+        return pods.items
     except Exception:
         return []
 
@@ -736,7 +740,7 @@ def _get_job_pods(
 def _read_pod_logs(
     pods: list[client.V1Pod],
     container_name: str,
-    k8s_client: type | None,
+    k8s_client: ModuleType | None,
 ) -> str | None:
     """Read a completed pod's full stdout so every batched table's result line is seen.
 
@@ -763,10 +767,14 @@ def _read_pod_logs(
 
     core_api = client.CoreV1Api()
     for pod in pods:
+        name = pod.metadata.name if pod.metadata else None
+        pod_namespace = pod.metadata.namespace if pod.metadata else None
+        if not name or not pod_namespace:
+            continue
         try:
             logs: str = core_api.read_namespaced_pod_log(
-                name=pod.metadata.name,
-                namespace=pod.metadata.namespace,
+                name=name,
+                namespace=pod_namespace,
                 container=container_name,
             )
             return logs
