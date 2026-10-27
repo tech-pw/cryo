@@ -17,10 +17,16 @@ Redis is rendered when `redis.enabled` is true. The chart does not inject `CRYO_
 Every release tag publishes this chart to `oci://ghcr.io/tech-pw/charts/cryo`. Helm 3.8+ installs it with no clone:
 
 ```sh
+kubectl create namespace cryo
+kubectl -n cryo create secret generic cryo-secrets \
+  --from-literal=CRYO_DATABASE_URL='postgresql+psycopg://<user>:<password>@<host>:5432/cryo' \
+  --from-literal=CRYO_SECRET_KEY="$(openssl rand -base64 48)"
 helm install cryo oci://ghcr.io/tech-pw/charts/cryo --version <version> \
-  --namespace cryo --create-namespace
+  --namespace cryo --set global.envFromSecret=cryo-secrets
 helm show values oci://ghcr.io/tech-pw/charts/cryo --version <version>
 ```
+
+The pre-install migration Job reads that Secret and the install waits for it, so create the Secret first.
 
 The chart version is the release tag without its `v`: tag `v0.1.6` is chart `0.1.6`, and `appVersion` matches. The release workflow stamps the packaged `values.yaml` so `image`, `migration.image`, `native.image`, `web.image` and `spark.k8s.image` point at `ghcr.io/tech-pw/cryo`, `cryo-web` and `cryo-spark` for that tag, pinned by digest. The committed `values.yaml` in this repo still uses the local `cryo:latest` placeholders. See `scripts/stamp_helm_chart_release.sh`.
 
@@ -78,6 +84,16 @@ In `prod`, `POST /api/v1/auth/token` (self-issued roles, no identity check) is o
 
 Google sign-in is the other way off the dev token. Under Settings > Access & policy, paste a Google OAuth Client ID, test it, enable it, and add at least one admin by Google email. The sign-in page then shows "Sign in with Google" in every auth mode. By default only people with a Cryo user can sign in. Once sign-in is restricted to a domain, you can switch on "Give new Google accounts viewer access": anyone on that domain then gets a viewer user on their first sign-in, and an admin raises their role under People. Role changes and disables apply to signed-in sessions within a minute, and the Access page lists recent access changes. A user added without a password signs in with Google only, and its username must be the Google email. To bootstrap the first admin without the dev token, set `CRYO_GOOGLE_ADMIN_EMAILS` to a comma-separated list. Those emails become admins on their first Google sign-in if no Cryo user exists for them. The list never changes an existing user's role. Turn `CRYO_ALLOW_DEV_TOKEN_IN_PROD` off only after an admin has signed in with Google.
 
+### Secret from AWS Secrets Manager
+
+To have the chart create `global.envFromSecret` instead of creating it by hand, install the [External Secrets Operator](https://external-secrets.io/) and set `externalSecret.enabled=true`. `externalSecret.data` must map `CRYO_DATABASE_URL`. With `secretStore.create=true` (the default) the chart renders a SecretStore for AWS Secrets Manager that authenticates as the chart ServiceAccount, so set `secretStore.region` and an `eks.amazonaws.com/role-arn` on `serviceAccount.annotations` that can read the secret. To reuse a SecretStore you already run, set `secretStore.create=false` and `secretStore.name`.
+
+Do not turn `externalSecret.enabled` off on a release that has it on. With the default `target.creationPolicy=Owner`, deleting the ExternalSecret deletes the Secret, and every Cryo pod reads it.
+
+### S3 access on EKS
+
+Pods do not all run as `serviceAccount`. With `native.enabled` or `spark.k8s.enabled` on, the API, worker and scheduler run as `<release>-native`, Spark drivers and executors as `<release>-spark`, and the Governor as `<release>-governor`. Each takes its own annotations: `native.serviceAccountAnnotations`, `spark.k8s.serviceAccountAnnotations`, `governor.serviceAccount.annotations`, and `analysis.serviceAccountAnnotations`. Put the IRSA role on the one the workload runs as, or it reads S3 as the node instance role.
+
 Catalogs and engines are not Helm values. Create them with `POST /api/v1/sources` and `POST /api/v1/destinations` after migrate. Supported source types are `rest`, `hive`, `glue`, `polaris`, and `nessie`. Unity Catalog and JDBC are rejected.
 
 ## Production hardening
@@ -128,7 +144,7 @@ Uninstall does not drop the external database or object storage.
 ## Render without a cluster
 
 ```sh
-helm template cryo deploy/helm/cryo
+helm template cryo deploy/helm/cryo --set global.env.CRYO_ENVIRONMENT=dev
 ```
 
 That checks the templates. It does not prove the Kubernetes APIs on a cluster accept the objects.

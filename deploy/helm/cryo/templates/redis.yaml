@@ -36,6 +36,9 @@ spec:
           securityContext:
             {{- toYaml (merge (dict "readOnlyRootFilesystem" true) $.Values.containerSecurityContext) | nindent 12 }}
           args:
+            # The Service and probes use redis.port, so the server has to listen on it too.
+            - --port
+            - {{ .Values.redis.port | quote }}
             - --maxmemory
             - {{ .Values.redis.maxmemory | quote }}
             - --maxmemory-policy

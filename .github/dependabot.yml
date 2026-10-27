@@ -15,6 +15,10 @@ updates:
     ignore:
       - dependency-name: typescript
         update-types: ["version-update:semver-major"]
+      # v9 rewrites the table API; ~600 type errors across 37 files. Planned as its own
+      # migration (#344) rather than a dependency bump.
+      - dependency-name: "@tanstack/react-table"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

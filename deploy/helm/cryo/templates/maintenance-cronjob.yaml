@@ -43,7 +43,7 @@ spec:
           restartPolicy: Never
           # Time after SIGTERM to delete lane pods, finalize jobs and post the report.
           terminationGracePeriodSeconds: 120
-          serviceAccountName: {{ if .Values.native.enabled }}{{ include "cryo.fullname" . }}-native{{ else }}{{ include "cryo.serviceAccountName" . }}{{ end }}
+          serviceAccountName: {{ if or .Values.native.enabled .Values.spark.k8s.enabled }}{{ include "cryo.fullname" . }}-native{{ else }}{{ include "cryo.serviceAccountName" . }}{{ end }}
           {{- include "cryo.imagePullSecrets" . | nindent 10 }}
           {{- include "cryo.nodeSelector" . | nindent 10 }}
           {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 10 }}
