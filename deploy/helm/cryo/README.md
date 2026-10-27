@@ -78,6 +78,16 @@ In `prod`, `POST /api/v1/auth/token` (self-issued roles, no identity check) is o
 
 Google sign-in is the other way off the dev token. Under Settings > Access & policy, paste a Google OAuth Client ID, test it, enable it, and add at least one admin by Google email. The sign-in page then shows "Sign in with Google" in every auth mode. By default only people with a Cryo user can sign in. Once sign-in is restricted to a domain, you can switch on "Give new Google accounts viewer access": anyone on that domain then gets a viewer user on their first sign-in, and an admin raises their role under People. Role changes and disables apply to signed-in sessions within a minute, and the Access page lists recent access changes. A user added without a password signs in with Google only, and its username must be the Google email. To bootstrap the first admin without the dev token, set `CRYO_GOOGLE_ADMIN_EMAILS` to a comma-separated list. Those emails become admins on their first Google sign-in if no Cryo user exists for them. The list never changes an existing user's role. Turn `CRYO_ALLOW_DEV_TOKEN_IN_PROD` off only after an admin has signed in with Google.
 
+### Secret from AWS Secrets Manager
+
+To have the chart create `global.envFromSecret` instead of creating it by hand, install the [External Secrets Operator](https://external-secrets.io/) and set `externalSecret.enabled=true`. `externalSecret.data` must map `CRYO_DATABASE_URL`. With `secretStore.create=true` (the default) the chart renders a SecretStore for AWS Secrets Manager that authenticates as the chart ServiceAccount, so set `secretStore.region` and an `eks.amazonaws.com/role-arn` on `serviceAccount.annotations` that can read the secret. To reuse a SecretStore you already run, set `secretStore.create=false` and `secretStore.name`.
+
+Do not turn `externalSecret.enabled` off on a release that has it on. With the default `target.creationPolicy=Owner`, deleting the ExternalSecret deletes the Secret, and every Cryo pod reads it.
+
+### S3 access on EKS
+
+Pods do not all run as `serviceAccount`. With `native.enabled` or `spark.k8s.enabled` on, the API, worker and scheduler run as `<release>-native`, Spark drivers and executors as `<release>-spark`, and the Governor as `<release>-governor`. Each takes its own annotations: `native.serviceAccountAnnotations`, `spark.k8s.serviceAccountAnnotations`, `governor.serviceAccount.annotations`, and `analysis.serviceAccountAnnotations`. Put the IRSA role on the one the workload runs as, or it reads S3 as the node instance role.
+
 Catalogs and engines are not Helm values. Create them with `POST /api/v1/sources` and `POST /api/v1/destinations` after migrate. Supported source types are `rest`, `hive`, `glue`, `polaris`, and `nessie`. Unity Catalog and JDBC are rejected.
 
 ## Production hardening

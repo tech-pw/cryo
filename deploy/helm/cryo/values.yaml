@@ -60,6 +60,36 @@ global:
   envFromSecret: ""
   envFromConfigMap: ""
 
+# Creates the Secret named by global.envFromSecret through the External Secrets Operator,
+# instead of you creating it by hand. Needs ESO installed (external-secrets.io/v1 CRDs).
+# `data` follows the ExternalSecret CRD; it must map CRYO_DATABASE_URL.
+#
+# secretStore.create renders a namespaced SecretStore for AWS Secrets Manager that
+# authenticates as the chart ServiceAccount, so serviceAccount.annotations must carry an
+# eks.amazonaws.com/role-arn that can read the secret. Set create=false and name to reuse a
+# SecretStore you already run.
+#
+# Turning this off on a release that had it on deletes the ExternalSecret. With
+# target.creationPolicy=Owner the generated Secret goes with it, and every pod that reads
+# global.envFromSecret fails to start.
+externalSecret:
+  enabled: false
+  refreshInterval: 1h
+  secretStore:
+    create: true
+    name: ""
+    # Required when create is true. There is no default, so a store cannot silently point
+    # at the wrong region.
+    region: ""
+  target:
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data: []
+  # - secretKey: CRYO_DATABASE_URL
+  #   remoteRef:
+  #     key: <secret name in Secrets Manager>
+  #     property: CRYO_DATABASE_URL
+
 observability:
   prometheusScrape: true
   metricsPort: 8081
@@ -121,6 +151,10 @@ governor:
     periodSeconds: 30
     readinessFailureThreshold: 2
     livenessFailureThreshold: 3
+  # The {{ fullname }}-governor ServiceAccount governor-rbac.yaml creates when native or
+  # spark.k8s is on. Set eks.amazonaws.com/role-arn if the Governor reads object storage.
+  serviceAccount:
+    annotations: {}
   resources:
     requests:
       cpu: 250m
@@ -321,6 +355,10 @@ native:
     pullPolicy: Always # see the comment on image.pullPolicy above
   # Overridden to the chart-managed SA when enabled=true (see worker/governor templates).
   serviceAccount: default
+  # The {{ fullname }}-native ServiceAccount rbac-native.yaml creates when native or
+  # spark.k8s is on. The API, worker and scheduler run under it then, not under
+  # serviceAccount, so its S3 role (eks.amazonaws.com/role-arn) goes here too.
+  serviceAccountAnnotations: {}
   # Keep logs/results available across short Governor outages.
   ttlSecondsAfterFinished: 3600
   maxCpu: 4000m
@@ -372,6 +410,8 @@ native:
 # cryo/analysis/dispatch.py (not here) pending real R1 profiling numbers against the live fleet.
 analysis:
   enabled: false
+  # The {{ fullname }}-analysis ServiceAccount the analysis Job pods run under.
+  serviceAccountAnnotations: {}
 
 spark:
   # Cryo-managed Spark-on-Kubernetes (cryo.engines.spark.k8s) -- no cloud Spark
@@ -389,6 +429,9 @@ spark:
       pullPolicy: IfNotPresent
     # Overridden to the chart-managed SA when enabled=true (see rbac-spark.yaml).
     serviceAccount: default
+    # The {{ fullname }}-spark ServiceAccount the driver and executor pods run under.
+    # Set eks.amazonaws.com/role-arn here for the table data Spark reads and writes.
+    serviceAccountAnnotations: {}
     driverCpuMilli: 1000
     driverMemMib: 2048
     executorCpuMilli: 2000
