@@ -9,9 +9,20 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          "react-vendor": ["react", "react-dom", "react-router-dom", "@tanstack/react-query"],
-          recharts: ["recharts"]
+        // Vite 8 bundles with Rolldown, which only takes the function form.
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return undefined;
+          if (/[\\/]node_modules[\\/](recharts|d3-[^\\/]+|victory-vendor)[\\/]/.test(id)) {
+            return "recharts";
+          }
+          if (
+            /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler|@tanstack[\\/]react-query|@tanstack[\\/]query-core)[\\/]/.test(
+              id
+            )
+          ) {
+            return "react-vendor";
+          }
+          return undefined;
         }
       }
     }
