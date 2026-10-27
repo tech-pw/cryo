@@ -17,10 +17,16 @@ Redis is rendered when `redis.enabled` is true. The chart does not inject `CRYO_
 Every release tag publishes this chart to `oci://ghcr.io/tech-pw/charts/cryo`. Helm 3.8+ installs it with no clone:
 
 ```sh
+kubectl create namespace cryo
+kubectl -n cryo create secret generic cryo-secrets \
+  --from-literal=CRYO_DATABASE_URL='postgresql+psycopg://<user>:<password>@<host>:5432/cryo' \
+  --from-literal=CRYO_SECRET_KEY="$(openssl rand -base64 48)"
 helm install cryo oci://ghcr.io/tech-pw/charts/cryo --version <version> \
-  --namespace cryo --create-namespace
+  --namespace cryo --set global.envFromSecret=cryo-secrets
 helm show values oci://ghcr.io/tech-pw/charts/cryo --version <version>
 ```
+
+The pre-install migration Job reads that Secret and the install waits for it, so create the Secret first.
 
 The chart version is the release tag without its `v`: tag `v0.1.6` is chart `0.1.6`, and `appVersion` matches. The release workflow stamps the packaged `values.yaml` so `image`, `migration.image`, `native.image`, `web.image` and `spark.k8s.image` point at `ghcr.io/tech-pw/cryo`, `cryo-web` and `cryo-spark` for that tag, pinned by digest. The committed `values.yaml` in this repo still uses the local `cryo:latest` placeholders. See `scripts/stamp_helm_chart_release.sh`.
 
@@ -138,7 +144,7 @@ Uninstall does not drop the external database or object storage.
 ## Render without a cluster
 
 ```sh
-helm template cryo deploy/helm/cryo
+helm template cryo deploy/helm/cryo --set global.env.CRYO_ENVIRONMENT=dev
 ```
 
 That checks the templates. It does not prove the Kubernetes APIs on a cluster accept the objects.

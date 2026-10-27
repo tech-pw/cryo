@@ -126,3 +126,18 @@ def test_component_service_accounts_have_no_annotations_by_default() -> None:
     docs = render("--set", "native.enabled=true", "--set", "spark.k8s.enabled=true")
     for name in ("cryo-native", "cryo-spark", "cryo-governor"):
         assert "annotations" not in docs[f"ServiceAccount/{name}"]["metadata"], name
+
+
+def test_redis_listens_on_the_configured_port() -> None:
+    redis = render("--set", "redis.port=6380")["Deployment/cryo-redis"]
+    args = redis["spec"]["template"]["spec"]["containers"][0]["args"]
+    assert args[args.index("--port") + 1] == "6380"
+
+
+def test_maintenance_runs_as_native_when_only_spark_k8s_is_on() -> None:
+    """-native holds the Job/Secret bindings; it exists with native or spark.k8s on."""
+    docs = render("--set", "maintenance.enabled=true", "--set", "spark.k8s.enabled=true")
+    cron = next(d for k, d in docs.items() if k.startswith("CronJob/") and "maintenance" in k)
+    assert cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["serviceAccountName"] == (
+        "cryo-native"
+    )

@@ -570,6 +570,8 @@ podDisruptionBudget:
 #     anywhere in the cluster.
 #   - egress, when non-empty, restricts every Cryo pod's egress to DNS, this release's pods
 #     and these rules: add your database, catalog, object storage and engine endpoints.
+#     With native, spark.k8s or maintenance on, Cryo creates Jobs, pods and Secrets, so
+#     also allow the Kubernetes API server, or those calls time out.
 #     Empty leaves egress unrestricted.
 networkPolicy:
   enabled: false
