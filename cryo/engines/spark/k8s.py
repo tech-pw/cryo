@@ -463,7 +463,7 @@ class SparkK8sClient:
             core_api = self._core_client()
             core_api.create_namespaced_secret(
                 namespace=cfg.namespace,
-                body={
+                body={  # type: ignore[arg-type]  # the client serializes plain-dict manifests
                     "apiVersion": "v1",
                     "kind": "Secret",
                     "metadata": {
@@ -540,7 +540,10 @@ class SparkK8sClient:
         }
 
         batch_api = self._batch_client()
-        created_job = batch_api.create_namespaced_job(body=job_manifest, namespace=cfg.namespace)
+        created_job = batch_api.create_namespaced_job(
+            body=job_manifest,  # type: ignore[arg-type]  # the client serializes plain-dict manifests
+            namespace=cfg.namespace,
+        )
         if credentials_secret_name and core_api is not None:
             _adopt_credentials_secret(
                 core_api,
@@ -649,7 +652,7 @@ class SparkK8sClient:
                 )
             raise
         status = job.status
-        if status.failed and status.failed >= 1:
+        if status is not None and status.failed and status.failed >= 1:
             detail = _read_pod_log_tail(
                 job_id, self._config.namespace, label_selector=f"job-name={job_id}"
             )
@@ -659,7 +662,7 @@ class SparkK8sClient:
             # "OOMKilled exit " would otherwise miss the step-up.
             detail = _prefix_oomkilled(detail)
             return JobRunResult(job_run_id=job_id, state=JobRunState.FAILED, state_details=detail)
-        if status.succeeded and status.succeeded >= 1:
+        if status is not None and status.succeeded and status.succeeded >= 1:
             # Wrapper finished but we never saw a driver pod -- don't trust that as success.
             return JobRunResult(
                 job_run_id=job_id,
@@ -744,7 +747,8 @@ class SparkK8sClient:
         try:
             batch_api = self._batch_client()
             job = batch_api.read_namespaced_job(name=job_id, namespace=self._config.namespace)
-            secret_name = (job.metadata.annotations or {}).get("cryo/credentials-secret-name")
+            annotations = job.metadata.annotations if job.metadata else None
+            secret_name = (annotations or {}).get("cryo/credentials-secret-name")
         except Exception as exc:  # noqa: BLE001 - Job may already be TTL-deleted
             if not _is_not_found(exc):
                 logger.warning(
@@ -905,7 +909,9 @@ def cleanup_stale_driver_pods(
             age_seconds = now - start_time.timestamp()
             if age_seconds < older_than_seconds:
                 continue
-            pod_name = pod.metadata.name
+            pod_name = pod.metadata.name if pod.metadata else None
+            if not pod_name:
+                continue
             try:
                 api.delete_namespaced_pod(name=pod_name, namespace=namespace)
                 deleted += 1
@@ -1083,9 +1089,12 @@ def _read_pod_log_tail(
         else:
             pods = [core_api.read_namespaced_pod(name=pod_name, namespace=namespace)]
         for pod in pods:
+            name = pod.metadata.name if pod.metadata else None
+            if not name:
+                continue
             try:
                 logs: str = core_api.read_namespaced_pod_log(
-                    name=pod.metadata.name,
+                    name=name,
                     namespace=namespace,
                     tail_lines=2000,
                 )
