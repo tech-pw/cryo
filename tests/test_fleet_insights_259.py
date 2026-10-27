@@ -197,3 +197,32 @@ def test_fleet_cache_computes_once_per_ttl(monkeypatch):
     monkeypatch.setattr(advanced_routes, "FLEET_INSIGHTS_TTL_SECONDS", 0.0)
     third, _ = advanced_routes._cached_fleet_result(("signals",), compute)
     assert third == [3]
+
+
+def test_history_straddling_midnight_still_scores_the_latest_scan():
+    """Regression: 3-4 same-weekday points used to replace the whole baseline, and the detector
+    then refused to score fewer than 5, so nothing was flagged. Hit daily between ~04:00 and
+    ~06:00 UTC by the hourly fixture above."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from cryo.ml.anomaly_detector import _anomalies_from_history
+
+    midnight = datetime(2026, 10, 27, tzinfo=UTC)
+    values = [50, 52, 48, 51, 49, 50, 53, 2000]
+    # Three points on Monday evening, the latest five (including the spike) on Tuesday.
+    history = [
+        SimpleNamespace(
+            scan_at=midnight + timedelta(hours=offset - 3),
+            small_files_count=small,
+            total_size_gb=10.0,
+            overall_score=80,
+            p95_query_latency_ms=None,
+        )
+        for offset, small in enumerate(values)
+    ]
+    same_day = [h for h in history[:-1] if h.scan_at.weekday() == history[-1].scan_at.weekday()]
+    assert len(same_day) == 4
+
+    anomalies = _anomalies_from_history(uuid4(), "t", history, threshold_sigma=3.0)
+    assert any(a.metric_name == "small_files_count" for a in anomalies)
