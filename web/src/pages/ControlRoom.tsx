@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ColumnDef, RowSelectionState } from "@tanstack/react-table";
+import type { RowSelectionState } from "@tanstack/react-table";
 import {
   Activity,
   CirclePause,
@@ -48,7 +48,7 @@ import {
 } from "../components/ui/alert-dialog";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { DataTable } from "../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../components/ui/data-table";
 import { Input } from "../components/ui/input";
 import { Skeleton } from "../components/ui/skeleton";
 import { useAuth } from "../lib/auth";
@@ -660,7 +660,7 @@ export const ControlRoom = () => {
     onError: (error) => toast.error((error as Error).message)
   });
 
-  const effectColumns = useMemo<ColumnDef<EffectReceiptRead, unknown>[]>(
+  const effectColumns = useMemo<DataTableColumnDef<EffectReceiptRead, unknown>[]>(
     () => [
       {
         id: "state",
@@ -729,7 +729,7 @@ export const ControlRoom = () => {
     [canOperate, resolveEffect]
   );
 
-  const intentColumns = useMemo<ColumnDef<MaintenanceIntentRead, unknown>[]>(
+  const intentColumns = useMemo<DataTableColumnDef<MaintenanceIntentRead, unknown>[]>(
     () => [
       {
         id: "status",
@@ -798,7 +798,7 @@ export const ControlRoom = () => {
     [destinations.data]
   );
 
-  const pauseColumns = useMemo<ColumnDef<MaintenanceControlRead, unknown>[]>(
+  const pauseColumns = useMemo<DataTableColumnDef<MaintenanceControlRead, unknown>[]>(
     () => [
       {
         id: "scope",

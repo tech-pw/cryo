@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -16,7 +15,7 @@ import { EmptyState, QueryErrorAlert } from "../../components/common";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { Input } from "../../components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { useAuth } from "../../lib/auth";
@@ -80,7 +79,7 @@ export const InventoryTab = () => {
     (brokenPage + 1) * BROKEN_PAGE_SIZE
   );
 
-  const brokenColumns = useMemo<ColumnDef<TableRead, unknown>[]>(
+  const brokenColumns = useMemo<DataTableColumnDef<TableRead, unknown>[]>(
     () => [
       {
         id: "table",
@@ -138,7 +137,7 @@ export const InventoryTab = () => {
     []
   );
 
-  const observationColumns = useMemo<ColumnDef<Record<string, unknown>, unknown>[]>(
+  const observationColumns = useMemo<DataTableColumnDef<Record<string, unknown>, unknown>[]>(
     () => [
       {
         accessorKey: "recorded_at",

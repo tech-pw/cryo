@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -29,7 +28,7 @@ import { Alert } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { DataTable } from "../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../components/ui/data-table";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
 import { MetricTile } from "../components/ui/stat";
@@ -312,7 +311,7 @@ export const SLAStatus = () => {
       .sort((a, b) => a.compliancePercent - b.compliancePercent);
   }, [slas, breachedOnly]);
 
-  const slaColumns: ColumnDef<SLAStatusRow, unknown>[] = [
+  const slaColumns: DataTableColumnDef<SLAStatusRow, unknown>[] = [
     {
       id: "table_name",
       header: "Table",
@@ -420,7 +419,7 @@ export const SLAStatus = () => {
     }
   ];
 
-  const schemaColumns: ColumnDef<SchemaMatrixRow, unknown>[] = [
+  const schemaColumns: DataTableColumnDef<SchemaMatrixRow, unknown>[] = [
     { id: "schema_name", header: "Schema", cell: ({ row }) => row.original.schema_name },
     { id: "tables", header: "Tables", cell: ({ row }) => row.original.tables },
     { id: "breached", header: "Breached", cell: ({ row }) => row.original.breached },

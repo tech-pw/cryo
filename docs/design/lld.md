@@ -1062,6 +1062,11 @@ assign" is one transactional call that stays correct even as the datalake change
 - **Table Explorer**: shared TanStack `DataTable` with row selection and a "select all matching
   filter" action that sends the *filter*, not page IDs. Column filters map to the predicate
   grammar. A sticky **BulkAssignBar** exposes assign and run actions.
+- **DataTable** (`web/src/components/ui/data-table.tsx`) is built on TanStack Table v9 and registers
+  only row selection, column visibility, column sizing and column resizing. Sorting, filtering and
+  pagination are server-side, so their client features are not registered. Type page columns as
+  `DataTableColumnDef<Row>`, which binds that feature set. A bare `ColumnDef` from
+  `@tanstack/react-table` needs the feature generic and will not type-check against `DataTable`.
 - **PlanPreview**: modal showing per-table rendered SQL (Trino/Spark) + chunk/partition/load estimate
   **and the plan-accurate projected savings by operation** before any execution.
 - **RunConsole**: WebSocket-driven; per-engine concurrency gauges (Trino active OPTIMIZEs by replica,
