@@ -641,6 +641,17 @@ class EffectivePresetResponse(BaseModel):
     rule_id: uuid.UUID | None = None
 
 
+class TableEffectivePresetRead(BaseModel):
+    """The preset that maintains a table, and why. ``provenance="none"``: unmaintained."""
+
+    preset_id: uuid.UUID | None = None
+    preset_name: str | None = None
+    provenance: PresetProvenance
+    rule_id: uuid.UUID | None = None
+    # A paused preset still owns its tables (#119); nothing is scheduled until it resumes.
+    paused: bool = False
+
+
 class TableParamOverridePatch(BaseModel):
     param_overrides: JsonDict
 
@@ -732,6 +743,8 @@ class TableRead(OrmModel):
     stats: TableStatsRead | None = None
     # Populated by GET /tables only (bounded to the page); detail views leave it null.
     maintenance: TableMaintenanceRead | None = None
+    # GET /tables only, like `maintenance`. Detail views use GET /tables/{id}/effective-preset.
+    effective_preset: TableEffectivePresetRead | None = None
 
 
 TableMaintenanceState = Literal[

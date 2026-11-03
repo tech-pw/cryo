@@ -11,7 +11,7 @@ import {
   filtersToSearchParamEntries,
   searchParamsForSavedView
 } from "../../lib/tableFilters";
-import { SlaBulletBar, SmallFileRatio, TableExplorerSection } from "./TableExplorerSection";
+import { EffectivePresetCell, SlaBulletBar, SmallFileRatio, TableExplorerSection } from "./TableExplorerSection";
 
 vi.mock("../../lib/auth", () => ({
   useAuth: () => ({
@@ -351,5 +351,50 @@ describe("TableExplorerSection filters", () => {
       expect(location).toContain("view=savings");
       expect(location).toContain("sort=-projected_savings_usd_month");
     });
+  });
+});
+
+describe("effective preset coverage (#330)", () => {
+  beforeEach(() => {
+    vi.mocked(listTables).mockReset();
+    vi.mocked(listTables).mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 });
+  });
+
+  it("sends the coverage facet as effective_provenance, not in the predicate", async () => {
+    renderExplorer("/tables?coverage=default,unmaintained");
+    await waitFor(() => expect(listTables).toHaveBeenCalled());
+    const args = vi.mocked(listTables).mock.calls.at(-1)?.[1];
+    expect(args?.effective_provenance).toEqual(["default", "none"]);
+    expect(JSON.stringify(args?.predicate ?? null)).not.toContain("provenance");
+  });
+
+  it("maps By rule to both rule provenances and drops unknown keys", () => {
+    const filters = filtersFromSearchParams(new URLSearchParams("coverage=rule,bogus"));
+    expect(filters.coverage).toEqual(["rule"]);
+    expect(filtersToSearchParamEntries(filters)).toContainEqual(["coverage", "rule"]);
+    expect(explorerPredicate(filters)).toEqual(explorerPredicate({ ...filters, coverage: undefined }));
+  });
+
+  it("omits effective_provenance without a coverage filter", async () => {
+    renderExplorer("/tables");
+    await waitFor(() => expect(listTables).toHaveBeenCalled());
+    expect(vi.mocked(listTables).mock.calls.at(-1)?.[1].effective_provenance).toBeUndefined();
+  });
+});
+
+describe("EffectivePresetCell", () => {
+  it("shows the preset with where it comes from, and flags a paused preset", () => {
+    render(
+      <EffectivePresetCell
+        effective={{ preset_id: "p1", preset_name: "nightly", provenance: "default", paused: true }}
+      />
+    );
+    expect(screen.getByText("nightly")).toBeInTheDocument();
+    expect(screen.getByText("Default, paused")).toBeInTheDocument();
+  });
+
+  it("says Unmaintained when nothing covers the table", () => {
+    render(<EffectivePresetCell effective={{ provenance: "none", paused: false }} />);
+    expect(screen.getByText("Unmaintained")).toBeInTheDocument();
   });
 });
