@@ -172,7 +172,7 @@ JSONB, and OOMKilled the api pod on 2026-09-24. The Helm values live under `main
 
 ## Canary log
 
-- 2026-09-24: `--table-ids` on two small `mview` tables. Both succeeded: 10/10 statements OK
+- 2026-09-24: `--table-ids` on two small `mart` tables. Both succeeded: 10/10 statements OK
   in canonical order, 85 files compacted into 15, 197 orphan files removed, 39 expired files
   deleted, the Go rescan ran, one Slack message was sent and no lane objects were left behind.
   Total runtime was about 4 min, most of it spent on the shared-S3 snapshot refresh (~1.5 min)

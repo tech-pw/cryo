@@ -129,7 +129,7 @@ def test_execute_retries_basemetastore_nosuchkey_then_succeeds(monkeypatch) -> N
 
 def _expire_plan() -> MaintenancePlan:
     return MaintenancePlan(
-        table_ref="cdp.unified_bq.gold_dbt_pw_bq",
+        table_ref="analytics.events.gold_dbt_events_wide",
         mode=Mode.DEEP,
         operations=(
             Operation(
@@ -147,7 +147,7 @@ def test_execute_steps_driver_heap_once_on_oomkilled_then_stops() -> None:
     in front of the INFO tail. The pod that died ran at 3072, so it must not claim
     the ceiling. That message is for a pod that was already at 4096.
     """
-    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats(
+    engine = SparkK8sEngine(config={"catalog": "analytics"}).with_table_stats(
         {"total_size_gb": 28400.5, "total_files": 179_020}
     )
     mock_client = MagicMock()
@@ -181,7 +181,9 @@ def test_execute_steps_driver_heap_once_on_oomkilled_then_stops() -> None:
 
 def test_execute_says_ceiling_only_when_the_dead_pod_was_at_it() -> None:
     """At or above 200k files the first pod is already at 4096, so no step-up runs."""
-    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats({"total_files": 250_000})
+    engine = SparkK8sEngine(config={"catalog": "analytics"}).with_table_stats(
+        {"total_files": 250_000}
+    )
     mock_client = MagicMock()
     mock_client.submit_spark_sql.return_value = "cryo-spark-oom"
     mock_client.wait_for_completion.return_value = JobRunResult(
@@ -199,7 +201,9 @@ def test_execute_says_ceiling_only_when_the_dead_pod_was_at_it() -> None:
 
 def test_execute_does_not_call_a_3072_kill_the_ceiling() -> None:
     """A second kill below 4096 must not claim the ceiling. That hid a missed step-up."""
-    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats({"total_files": 20_000})
+    engine = SparkK8sEngine(config={"catalog": "analytics"}).with_table_stats(
+        {"total_files": 20_000}
+    )
     mock_client = MagicMock()
     mock_client.submit_spark_sql.side_effect = ["cryo-spark-oom0", "cryo-spark-oom1"]
     mock_client.wait_for_completion.side_effect = [
@@ -226,7 +230,9 @@ def test_execute_does_not_spend_a_catalog_retry_on_oom() -> None:
 
     A later catalog race still gets its retries.
     """
-    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats({"total_files": 179_020})
+    engine = SparkK8sEngine(config={"catalog": "analytics"}).with_table_stats(
+        {"total_files": 179_020}
+    )
     mock_client = MagicMock()
     mock_client.submit_spark_sql.side_effect = [
         "cryo-spark-oom",
@@ -260,7 +266,9 @@ def test_execute_does_not_spend_a_catalog_retry_on_oom() -> None:
 
 
 def test_execute_does_not_step_up_on_a_sql_error_that_mentions_oom() -> None:
-    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats({"total_files": 179_020})
+    engine = SparkK8sEngine(config={"catalog": "analytics"}).with_table_stats(
+        {"total_files": 179_020}
+    )
     mock_client = MagicMock()
     mock_client.submit_spark_sql.return_value = "cryo-spark-sql"
     mock_client.wait_for_completion.return_value = JobRunResult(
@@ -278,7 +286,7 @@ def test_execute_does_not_step_up_on_a_sql_error_that_mentions_oom() -> None:
 
 def test_submit_passes_data_plus_delete_files() -> None:
     """total_files excludes delete files. A MOR expire is sized from both."""
-    engine = SparkK8sEngine(config={"catalog": "cdp"}).with_table_stats(
+    engine = SparkK8sEngine(config={"catalog": "analytics"}).with_table_stats(
         {"total_files": 100_000, "total_delete_files": 90_000}
     )
     mock_client = MagicMock()
@@ -470,7 +478,7 @@ def test_with_source_config_source_catalog_wins_over_destination_default() -> No
     only applies when the source has none."""
     engine = SparkK8sEngine(
         config={
-            "catalog": "cdp",
+            "catalog": "analytics",
             "spark_k8s": {
                 "catalog_impl": "hive",
                 "catalog_uri": "thrift://retired-hms:9083",

@@ -385,6 +385,9 @@ export const buildDefaultPresetFormValues = (destinations: DestinationRead[]): P
 export const DEFAULT_PRESET_NEEDS_SCHEDULE =
   "The default preset needs a schedule, otherwise the tables it covers are never maintained.";
 
+export const PAUSE_CANCELS_QUEUED =
+  "Its queued jobs are cancelled; jobs already admitted or running finish.";
+
 /**
  * Plain-language warning for a save that changes who maintains tables (#119), or null.
  * `coveredTables` is how many tables currently resolve to this preset.
@@ -404,8 +407,8 @@ export const presetLifecycleWarning = (
   }
   if (!before.paused && after.paused) {
     return coveredTables == null
-      ? "Pausing holds this preset's tables. They will not be maintained until you resume it."
-      : `Pausing holds this preset. ${count} ${noun} will stop being maintained until you resume it.`;
+      ? `Pausing holds this preset's tables. They will not be maintained until you resume it. ${PAUSE_CANCELS_QUEUED}`
+      : `Pausing holds this preset. ${count} ${noun} will stop being maintained until you resume it. ${PAUSE_CANCELS_QUEUED}`;
   }
   if (before.is_default && !after.is_default) {
     return coveredTables == null

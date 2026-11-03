@@ -54,7 +54,7 @@ Architecture and contracts:
 - [`native-iceberg-go-compaction-plan.md`](./native-iceberg-go-compaction-plan.md), [`native-datafusion-compaction-plan.md`](./native-datafusion-compaction-plan.md): native compaction designs
 - [`native-pod-overhaul.md`](./native-pod-overhaul.md), [`native-dispatch-hardening-plan.md`](./native-dispatch-hardening-plan.md): native Kubernetes dispatch
 - [`native-go-compaction-throughput.md`](./native-go-compaction-throughput.md): local compaction throughput loop
-- [`native-iceberg-rust-engine-errors.md`](./native-iceberg-rust-engine-errors.md): native Rust engine review
+- [`native-iceberg-rust-engine-errors.md`](./native-iceberg-rust-engine-errors.md): review of the removed Rust native engine (historical)
 - [`amoro-evaluation.md`](./amoro-evaluation.md): Apache Amoro evaluation
 
 ## Research and design

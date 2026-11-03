@@ -109,7 +109,7 @@ def test_delete_files_green_when_none() -> None:
 
 def test_partition_match_red_when_dominant_filter_not_a_partition_field(session) -> None:
     """Regression coverage for the highest-weighted new item: confirmed live 2026-09-14 that
-    gold_batches_pw / gold_dbt_orders_base_fact class tables can be dominant-CPU-cost with a
+    gold_batches / gold_dbt_orders_base_fact class tables can be dominant-CPU-cost with a
     perfectly reasonable file layout purely because the hot filter column isn't the partition
     key. This is the exact gap layout_analyzer.py never closes (it recommends sort order from
     the same data but never flags the partition scheme itself)."""
