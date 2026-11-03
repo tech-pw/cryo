@@ -19,8 +19,13 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ## [Unreleased](https://github.com/tech-pw/cryo/compare/v0.2.0...HEAD)
 
+### Added
+
+- `make demo` takes the local stack from an empty UI to graded tables and one finished maintenance run: it seeds the fragmented fixtures, scans `local-rest`, assigns `local-standard` and runs `optimize` + `optimize_manifests` through the API (`scripts/demo.py`). The Quickstart now ends there, with a check after each step (#217).
+
 ### Fixed
 
+- `make seed-fragmented`, `make seed-docker` and `make smoke-file-counts` pointed the Spark container at `localhost:8181`, which inside the container is not the REST catalog. They now use `iceberg-rest:8181` (#217).
 - Native `expire_snapshots` now deletes the files only the expired snapshots referenced, as Spark and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests, and shared-location tables (none of which plan `remove_orphan_files`) leaked them (#374).
 
 ### Changed

@@ -77,9 +77,11 @@ Open **http://localhost:5173** and sign in with a role (`viewer`, `operator` or 
 curl -s http://localhost:8000/healthz   # liveness only; does not touch Postgres
 ```
 
-The UI starts empty. `make seed` writes five small Iceberg tables, but it doesn't register a
-source, scan or enqueue maintenance, and it needs host PySpark. The
-[illustrated quickstart](https://tech-pw.github.io/cryo/quickstart/) walks through the rest.
+The UI starts empty. To see a graded table and a finished maintenance run, run `make demo`: it
+seeds fragmented tables (Spark runs in a container), scans the `local-rest` source, assigns the
+`local-standard` preset and runs `optimize` on Trino. The
+[illustrated quickstart](https://tech-pw.github.io/cryo/quickstart/) does the same one step at a
+time. `make seed` (five unfragmented tables) needs host PySpark and Java instead.
 
 Running it for real? Jump to [Install on Kubernetes](#install-on-kubernetes).
 
