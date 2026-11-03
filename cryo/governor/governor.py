@@ -57,6 +57,7 @@ from cryo.queue.reconcile import (
     reconcile_stuck_admitted_jobs,
 )
 from cryo.queue.redis_queue import MaintenanceQueue
+from cryo.scheduler.continuous import is_continuous_trigger
 from cryo.triggers.evaluator import TriggerEvaluator
 from cryo.worker.worker import DestinationConfig, JobStore, MaintenanceJobRecord
 
@@ -837,6 +838,10 @@ class Governor:
         return _BLOCKED
 
     def _signal_triggered(self, job: MaintenanceJobRecord, wave: _DestinationWave) -> bool:
+        # A continuous job exists because a signal fired; letting the same signal also skip
+        # cooldown, off-peak windows, deadlines and budget would make drift jobs unthrottled.
+        if is_continuous_trigger(job.run_trigger):
+            return False
         table_uuid = _job_table_uuid(job)
         if wave.session is None or not self._enable_signal_triggers or table_uuid is None:
             return False

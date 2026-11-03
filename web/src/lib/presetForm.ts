@@ -1,4 +1,11 @@
-import type { DestinationRead, JsonObject, Mode, PresetRead, PresetWrite } from "../api/types";
+import type {
+  ContinuousSettings,
+  DestinationRead,
+  JsonObject,
+  Mode,
+  PresetRead,
+  PresetWrite
+} from "../api/types";
 import { validateCronExpression } from "./cron";
 import {
   EDITABLE_GUARDRAIL_KEYS,
@@ -50,7 +57,107 @@ export interface PresetFormValues {
   native_min_gb: number;
   latency_p99_ms: number;
   routing_rules?: RoutingRuleFormRow[];
+  continuous_enabled?: boolean;
+  continuous_max_commits?: number | null;
+  continuous_max_small_files_added?: number | null;
+  continuous_max_delete_file_pct?: number | null;
+  continuous_max_score_drop?: number | null;
+  continuous_debounce_minutes?: number | null;
+  continuous_max_delay_minutes?: number | null;
+  continuous_min_interval_minutes?: number | null;
+  continuous_max_runs_per_hour?: number | null;
+  continuous_max_runs_per_day?: number | null;
+  continuous_max_maintenance_commits_per_day?: number | null;
 }
+
+// Mirrors cryo.api.schemas.ContinuousSettings defaults.
+export const CONTINUOUS_DEFAULTS = {
+  debounce_seconds: 300,
+  max_delay_seconds: 3600,
+  min_interval_seconds: 1800,
+  max_runs_per_hour: 2,
+  max_runs_per_day: 24,
+  max_maintenance_commits_per_day: 48
+} as const;
+
+type ContinuousFormValues = Pick<
+  PresetFormValues,
+  | "continuous_enabled"
+  | "continuous_max_commits"
+  | "continuous_max_small_files_added"
+  | "continuous_max_delete_file_pct"
+  | "continuous_max_score_drop"
+  | "continuous_debounce_minutes"
+  | "continuous_max_delay_minutes"
+  | "continuous_min_interval_minutes"
+  | "continuous_max_runs_per_hour"
+  | "continuous_max_runs_per_day"
+  | "continuous_max_maintenance_commits_per_day"
+>;
+
+const minutes = (seconds: number | null | undefined, fallback: number): number =>
+  Math.round((seconds ?? fallback) / 60);
+
+export const continuousToFormValues = (
+  continuous: ContinuousSettings | null | undefined
+): ContinuousFormValues => ({
+  continuous_enabled: Boolean(continuous?.enabled),
+  continuous_max_commits: continuous?.max_commits ?? null,
+  continuous_max_small_files_added: continuous?.max_small_files_added ?? null,
+  continuous_max_delete_file_pct:
+    continuous?.max_delete_file_ratio != null ? Math.round(continuous.max_delete_file_ratio * 1000) / 10 : null,
+  continuous_max_score_drop: continuous?.max_score_drop ?? null,
+  continuous_debounce_minutes: minutes(continuous?.debounce_seconds, CONTINUOUS_DEFAULTS.debounce_seconds),
+  continuous_max_delay_minutes: minutes(continuous?.max_delay_seconds, CONTINUOUS_DEFAULTS.max_delay_seconds),
+  continuous_min_interval_minutes: minutes(
+    continuous?.min_interval_seconds,
+    CONTINUOUS_DEFAULTS.min_interval_seconds
+  ),
+  continuous_max_runs_per_hour:
+    continuous === null || continuous === undefined
+      ? CONTINUOUS_DEFAULTS.max_runs_per_hour
+      : continuous.max_runs_per_hour,
+  continuous_max_runs_per_day:
+    continuous === null || continuous === undefined
+      ? CONTINUOUS_DEFAULTS.max_runs_per_day
+      : continuous.max_runs_per_day,
+  continuous_max_maintenance_commits_per_day:
+    continuous === null || continuous === undefined
+      ? CONTINUOUS_DEFAULTS.max_maintenance_commits_per_day
+      : continuous.max_maintenance_commits_per_day
+});
+
+const hasContinuousThreshold = (values: ContinuousFormValues): boolean =>
+  [
+    values.continuous_max_commits,
+    values.continuous_max_small_files_added,
+    values.continuous_max_delete_file_pct,
+    values.continuous_max_score_drop
+  ].some((value) => value != null);
+
+/** The preset's continuous block, or null when continuous mode was never configured. */
+export const formValuesToContinuous = (values: ContinuousFormValues): ContinuousSettings | null => {
+  if (!values.continuous_enabled && !hasContinuousThreshold(values)) return null;
+  const seconds = (value: number | null | undefined, fallback: number) =>
+    value == null ? fallback : Math.round(value * 60);
+  return {
+    enabled: Boolean(values.continuous_enabled),
+    max_commits: values.continuous_max_commits ?? null,
+    max_small_files_added: values.continuous_max_small_files_added ?? null,
+    max_delete_file_ratio:
+      values.continuous_max_delete_file_pct != null ? values.continuous_max_delete_file_pct / 100 : null,
+    max_score_drop: values.continuous_max_score_drop ?? null,
+    debounce_seconds: seconds(values.continuous_debounce_minutes, CONTINUOUS_DEFAULTS.debounce_seconds),
+    max_delay_seconds: seconds(values.continuous_max_delay_minutes, CONTINUOUS_DEFAULTS.max_delay_seconds),
+    min_interval_seconds: seconds(
+      values.continuous_min_interval_minutes,
+      CONTINUOUS_DEFAULTS.min_interval_seconds
+    ),
+    max_runs_per_hour: values.continuous_max_runs_per_hour ?? null,
+    max_runs_per_day: values.continuous_max_runs_per_day ?? null,
+    max_maintenance_commits_per_day: values.continuous_max_maintenance_commits_per_day ?? null
+  };
+};
 
 // Membership is the default op set for a new preset; the sequence mirrors the canonical
 // order in ./operationOrder.ts (compact -> manifests -> expire -> orphan).
@@ -170,7 +277,8 @@ export const presetToFormValues = (
     spark_min_gb: prefs.spark_min_gb,
     native_min_gb: prefs.native_min_gb,
     latency_p99_ms: prefs.latency_p99_ms,
-    routing_rules: readRoutingRules(guardrails)
+    routing_rules: readRoutingRules(guardrails),
+    ...continuousToFormValues(preset?.continuous)
   };
 };
 
@@ -265,7 +373,8 @@ export const formValuesToPresetWrite = (
       existingPreset?.guardrails,
       guardrailsPatch,
       EDITABLE_GUARDRAIL_KEYS
-    )
+    ),
+    continuous: formValuesToContinuous(values)
   };
 };
 
@@ -378,12 +487,19 @@ export const buildDefaultPresetFormValues = (destinations: DestinationRead[]): P
     spark_min_gb: base.spark_min_gb ?? PRESET_GUARDRAIL_DEFAULTS.spark_min_gb,
     native_min_gb: base.native_min_gb ?? PRESET_GUARDRAIL_DEFAULTS.native_min_gb,
     latency_p99_ms: base.latency_p99_ms ?? PRESET_GUARDRAIL_DEFAULTS.latency_p99_ms,
-    routing_rules: base.routing_rules ?? []
+    routing_rules: base.routing_rules ?? [],
+    ...continuousToFormValues(null)
   };
 };
 
 export const DEFAULT_PRESET_NEEDS_SCHEDULE =
   "The default preset needs a schedule, otherwise the tables it covers are never maintained.";
+
+export const CONTINUOUS_NEEDS_THRESHOLD =
+  "Continuous maintenance needs at least one threshold: commits, small files, delete-file share or score drop.";
+
+export const CONTINUOUS_NEEDS_EXPIRE =
+  "Continuous maintenance needs a mode that expires snapshots; manifest only does not, so compaction would pile up snapshots.";
 
 export const PAUSE_CANCELS_QUEUED =
   "Its queued jobs are cancelled; jobs already admitted or running finish.";
@@ -458,6 +574,24 @@ export const validatePresetFormValues = (values: PresetFormValues): Record<strin
 
   const routingError = validateRoutingRules(values.routing_rules);
   if (routingError) errors.routing_rules = routingError;
+
+  if (values.continuous_enabled) {
+    if (!hasContinuousThreshold(values)) {
+      errors.continuous_enabled = CONTINUOUS_NEEDS_THRESHOLD;
+    }
+    if (values.mode === "manifest_only") {
+      errors.continuous_enabled = CONTINUOUS_NEEDS_EXPIRE;
+    }
+    const debounce = values.continuous_debounce_minutes ?? CONTINUOUS_DEFAULTS.debounce_seconds / 60;
+    const maxDelay = values.continuous_max_delay_minutes ?? CONTINUOUS_DEFAULTS.max_delay_seconds / 60;
+    if (debounce > maxDelay) {
+      errors.continuous_debounce_minutes = "Quiet period must not exceed the maximum delay";
+    }
+    const pct = values.continuous_max_delete_file_pct;
+    if (pct != null && (!Number.isFinite(pct) || pct <= 0 || pct > 100)) {
+      errors.continuous_max_delete_file_pct = "Delete-file share must be between 0 and 100";
+    }
+  }
 
   return Object.keys(errors).length ? errors : null;
 };

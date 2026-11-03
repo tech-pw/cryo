@@ -112,6 +112,39 @@ class Settings(BaseSettings):
         gt=0,
         description="Seconds between refreshes of the commit watcher's watched-table list.",
     )
+    continuous_maintenance_enabled: bool = Field(
+        default=True,
+        description=(
+            "Kill switch for drift-triggered maintenance. Presets still opt in one by one "
+            "with a continuous block; false stops every continuous trigger."
+        ),
+    )
+    continuous_events_per_tick: int = Field(
+        default=500,
+        ge=1,
+        description="cryo:maintenance-eval entries the scheduler reads per tick.",
+    )
+    continuous_evaluations_per_tick: int = Field(
+        default=50,
+        ge=1,
+        description="Pending tables the scheduler evaluates per tick, soonest due first.",
+    )
+    continuous_drift_sweep_seconds: float = Field(
+        default=300.0,
+        gt=0,
+        description=(
+            "Seconds between sweeps of cryo.table_drift that re-add drifted tables to the "
+            "pending set, so drift survives a Redis restart or a trimmed stream."
+        ),
+    )
+    continuous_rescan_wait_seconds: int = Field(
+        default=1800,
+        ge=0,
+        description=(
+            "How long a due table waits for the targeted rescan it requested before being "
+            "maintained from its older scan stats anyway. 0 skips the rescan."
+        ),
+    )
 
     # Fleet-cost day-over-day / week-over-week spike & decline thresholds for the daily
     # report (see cryo/reporting/cost_signals.py). Defaults are reasonable starting points,

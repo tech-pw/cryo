@@ -34,6 +34,15 @@ print.
 | `CRYO_SCAN_NUM_CHUNKS` | `int` | `4` | - |
 | `CRYO_SCAN_SMALL_FILE_MB` | `float` | `89.6` | - |
 | `CRYO_SCAN_NEEDS_COMPACTION_THRESHOLD` | `int` | `128` | - |
+| `CRYO_EVENTS_PROBE_MAX_TABLES_PER_POLL` | `int` | `100` | Most watched tables the commit watcher loads from the catalog in one poll. Tables past the cap wait for the next poll, oldest-probed first. |
+| `CRYO_EVENTS_PROBE_MIN_TABLE_INTERVAL_SECONDS` | `float` | `30.0` | Minimum seconds between two catalog probes of the same watched table. |
+| `CRYO_EVENTS_PROBE_TIMEOUT_SECONDS` | `float` | `10.0` | Seconds one catalog load_table may take before the probe gives up. |
+| `CRYO_EVENTS_TARGET_REFRESH_SECONDS` | `float` | `300.0` | Seconds between refreshes of the commit watcher's watched-table list. |
+| `CRYO_CONTINUOUS_MAINTENANCE_ENABLED` | `bool` | `true` | Kill switch for drift-triggered maintenance. Presets still opt in one by one with a continuous block; false stops every continuous trigger. |
+| `CRYO_CONTINUOUS_EVENTS_PER_TICK` | `int` | `500` | cryo:maintenance-eval entries the scheduler reads per tick. |
+| `CRYO_CONTINUOUS_EVALUATIONS_PER_TICK` | `int` | `50` | Pending tables the scheduler evaluates per tick, soonest due first. |
+| `CRYO_CONTINUOUS_DRIFT_SWEEP_SECONDS` | `float` | `300.0` | Seconds between sweeps of cryo.table_drift that re-add drifted tables to the pending set, so drift survives a Redis restart or a trimmed stream. |
+| `CRYO_CONTINUOUS_RESCAN_WAIT_SECONDS` | `int` | `1800` | How long a due table waits for the targeted rescan it requested before being maintained from its older scan stats anyway. 0 skips the rescan. |
 | `CRYO_REPORT_COST_DOD_SPIKE_PCT` | `float` | `10.0` | Day-over-day fleet cost increase (%) that flags a spike. |
 | `CRYO_REPORT_COST_DOD_DECLINE_PCT` | `float` | `30.0` | Day-over-day fleet cost decrease (%) that flags a decline worth noting. |
 | `CRYO_REPORT_COST_WOW_SPIKE_PCT` | `float` | `15.0` | Week-over-week fleet cost increase (%) that flags a spike. |
@@ -278,6 +287,7 @@ Top-level values in `deploy/helm/cryo/values.yaml`. The chart's own schema,
 | `api` | `object` | *(object)* | no | - |
 | `backup` | `object` | *(object)* | no | - |
 | `containerSecurityContext` | `object` | *(object)* | no | - |
+| `events` | `object` | *(object)* | no | - |
 | `externalSecret` | `object` | *(object)* | no | - |
 | `global` | `object` | *(object)* | no | - |
 | `governor` | `object` | *(object)* | no | - |

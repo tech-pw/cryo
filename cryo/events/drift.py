@@ -41,6 +41,14 @@ def small_files_in_commit(files_added: int, bytes_added: int, *, small_file_byte
     return files_added if bytes_added / files_added < small_file_bytes else 0
 
 
+def writer_commit_count(event: TableCommitted) -> int:
+    """Commits in the event that a writer made, as opposed to maintenance."""
+    if event.snapshots_added == 0:
+        # Watermark-only event: the probe saw a new snapshot but not what it contained.
+        return 1
+    return max(0, event.snapshots_added - event.maintenance_commits)
+
+
 def accumulate_drift(
     session: Session,
     *,
@@ -65,10 +73,7 @@ def accumulate_drift(
             baseline_score=stats.overall_score,
         )
         session.add(drift)
-    writer_commits = max(0, event.snapshots_added - event.maintenance_commits)
-    if event.snapshots_added == 0:
-        # Watermark-only event: the probe saw a new snapshot but not what it contained.
-        writer_commits = 1
+    writer_commits = writer_commit_count(event)
     drift.maintenance_commits = int(drift.maintenance_commits or 0) + event.maintenance_commits
     drift.last_snapshot_id = event.snapshot_id
     if writer_commits == 0:

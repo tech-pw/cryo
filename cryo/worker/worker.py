@@ -104,6 +104,8 @@ class MaintenanceJobRecord:
     # need it (most) don't pay for the extra query.
     run_status: str | None = None
     run_created_at: datetime | None = None
+    # The parent run's trigger ("cron", "manual", "continuous:<signal>", ...).
+    run_trigger: str | None = None
     # Explicit operation subset recorded at creation by dedupe (jobs.operations); None means
     # "whatever the run summary / mode plans".
     requested_operations: tuple[str, ...] | None = None

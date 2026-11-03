@@ -111,6 +111,8 @@ export type DestinationWrite = Pick<
   | "query_log_retention_days"
 > & { secret_ref?: string | null };
 
+export type ContinuousSettings = components["schemas"]["ContinuousSettings"];
+
 export interface PresetRead {
   id: UUID;
   name: string;
@@ -126,6 +128,8 @@ export interface PresetRead {
   is_default?: boolean;
   // #119: held (no scheduled runs, no fallthrough) while still configured; enabled=false retires.
   paused?: boolean;
+  // #77: drift-triggered maintenance; null means the preset only runs on its cron.
+  continuous?: ContinuousSettings | null;
   created_at: string;
   updated_at: string;
 }

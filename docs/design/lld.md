@@ -816,6 +816,47 @@ outlives its cron period. Past the deadline the Governor defers the run's remain
 the **Governor** enforces real limits at admission time. Leader-elected (Redis lock) so only one
 scheduler is active.
 
+### 9.1 Continuous (drift-triggered) presets (#77)
+
+A preset's optional `continuous` JSONB block (`ContinuousSettings` in `cryo/api/schemas.py`,
+parsed by `cryo/scheduler/continuous.py::parse_continuous`) adds a second trigger. NULL or
+`enabled: false` keeps the preset cron-only.
+
+```
+cryo events (EventsRunner)
+  watcher: LiveCatalogSnapshotProbe.load_table(t) per due table, <= events_probe_max_tables_per_poll
+           walk snapshots current -> last seen; summary deltas; "replace" = maintenance
+  consumer: apply_commit_delta(TableStats) + accumulate_drift(cryo.table_drift)
+            XADD cryo:maintenance-eval {table_id, snapshot_id, writer_commits, ...}
+scheduler tick (ContinuousDispatcher, after cron + backlog dispatch)
+  XREADGROUP cryo-scheduler-continuous   (own pending first; NOGROUP -> recreate group)
+  SET NX cryo:continuous:seen:{table}:{snapshot}   -> duplicates dropped
+  ZADD NX cryo:continuous:pending {table: now}     -> one pending entry per table
+  every continuous_drift_sweep_seconds: re-add table_drift rows with commits > 0
+  for the soonest-due continuous_evaluations_per_tick tables:
+     evaluate(config, drift, history):  threshold -> debounce/max_delay -> min_interval
+                                        -> runs/hour -> runs/day -> maintenance commits/day
+     active job for the table          -> continuous_coalesced (once per job), recheck later
+     scan_at < drift.first_commit_at   -> request a one-table scan, wait <= rescan_wait
+     build_scheduled_run([table], trigger="continuous:<signal>") -> _submit_run
+```
+
+Thresholds: `max_commits` (writer commits), `max_small_files_added`, `max_delete_file_ratio`
+(`TableStats.delete_file_pct / 100`, kept current by commit deltas) and `max_score_drop`
+(`table_drift.baseline_score - estimated_score`). The worker resets `table_drift` when a job
+for the table ends `succeeded` or `skipped`.
+
+Server-side validation rejects an enabled block with no threshold, `debounce_seconds >
+max_delay_seconds`, a mode without `expire_snapshots` (`manifest_only`) and
+`params.skip_operations` containing `expire_snapshots`: compaction commits snapshots, so a
+continuous preset that never expires them grows the snapshot count it is meant to control.
+
+A continuous job is an ordinary job. `MaintenanceJobRecord.run_trigger` carries the run's
+trigger, and `Governor._signal_triggered` returns False for `continuous:*`, so drift jobs never
+take the signal bypass in `_gate_admission`: cooldown, off-peak windows, deadlines, budget,
+engine load and the per-table lock all apply. Audit actions: `continuous_trigger`,
+`continuous_coalesced`, `continuous_deferred` (once per reason change), `continuous_rescan`.
+
 ---
 
 ## 10. Governor (`cryo/governor`) — wave scheduler / admission control
