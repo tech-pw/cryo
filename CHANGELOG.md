@@ -12,6 +12,11 @@ All notable changes to Cryo will be documented in this file. The format is based
   (re-rendered in October), so the 0.2.0 note that it still showed the old mark is out of date;
   `site/README.md` now describes how the published 720p copy is made.
 
+### Changed
+- Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become
+  skipped with `cancelled: preset paused`). Admitted and running jobs finish, and a run left
+  with nothing active is marked cancelled. Before, queued jobs drained after a pause (#330).
+
 ### Security
 - CI runs trufflehog alongside gitleaks: on every PR and push to `main` over the new commits,
   and weekly over the full history. It fails on verified credentials, and on credentials whose
