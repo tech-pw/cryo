@@ -99,6 +99,18 @@ class OperationCapability(FrozenModel):
     evidence: tuple[CapabilityEvidence, ...]
 
 
+class SchedulingCapability(FrozenModel):
+    """A way a maintenance run can be started, independent of engine and operation."""
+
+    trigger: str
+    label: str
+    maturity: MaturityTier
+    summary: str
+    limitations: tuple[str, ...] = ()
+    owner: str
+    evidence: tuple[CapabilityEvidence, ...]
+
+
 class CapabilityManifest(FrozenModel):
     schema_version: str
     source: str
@@ -107,3 +119,4 @@ class CapabilityManifest(FrozenModel):
     engines: tuple[EngineCapability, ...]
     catalogs: tuple[CatalogCapability, ...]
     matrix: tuple[OperationCapability, ...]
+    scheduling: tuple[SchedulingCapability, ...] = ()

@@ -163,21 +163,10 @@ def table_analysis_from_go_payload(
     table_obj: object | None = None,
     table_obj_loader: Callable[[], object] | None = None,
 ) -> TableAnalysis:
-    fields = list(payload.get("partition_fields") or [])
-    # Drop Go-only field_id from persisted partition_fields shape.
-    clean_fields = [
-        {
-            "base_column": f.get("base_column"),
-            "partition_field": f.get("partition_field"),
-            "transform": f.get("transform"),
-            "transform_param": f.get("transform_param"),
-            "col_type": f.get("col_type") or "",
-        }
-        for f in fields
-        if isinstance(f, Mapping)
-    ]
+    clean_fields = _clean_partition_fields(payload.get("partition_fields"))
     partition_rows = [
-        _partition_from_go(part, clean_fields) for part in (payload.get("partitions") or [])
+        _partition_from_go(part, clean_fields, payload.get("default_spec_id"))
+        for part in (payload.get("partitions") or [])
     ]
     total_files = int(payload.get("total_files") or 0)
     total_size_bytes = int(payload.get("total_size_bytes") or 0)
@@ -385,6 +374,7 @@ def table_analysis_from_go_payload(
         "gc_enabled": payload.get("gc_enabled"),
         "file_size_bins": _file_size_bins(payload),
         "manifest_stats": manifest_stats(manifest_count, manifest_total_bytes, total_files),
+        "spec_migration": _spec_migration_from_go(payload),
         "scan_engine": "go",
         "wair_file_sample": list(payload.get("wair_file_sample") or []),
         "wair_file_sample_complete": total_files == 0
@@ -446,7 +436,42 @@ def table_analysis_from_go_payload(
     )
 
 
-def _partition_from_go(part: Mapping[str, Any], fields: list[dict[str, Any]]) -> PartitionAnalysis:
+def _clean_partition_fields(fields: Any) -> list[dict[str, Any]]:
+    """Drop Go-only field_id from the persisted partition_fields shape."""
+    return [
+        {
+            "base_column": f.get("base_column"),
+            "partition_field": f.get("partition_field"),
+            "transform": f.get("transform"),
+            "transform_param": f.get("transform_param"),
+            "col_type": f.get("col_type") or "",
+        }
+        for f in (fields or [])
+        if isinstance(f, Mapping)
+    ]
+
+
+def _spec_migration_from_go(payload: Mapping[str, Any]) -> dict[str, Any]:
+    default_spec_id = payload.get("default_spec_id")
+    return {
+        "default_spec_id": int(default_spec_id) if default_spec_id is not None else None,
+        "old_spec_partitions": int(payload.get("old_spec_partitions") or 0),
+        "old_spec_files": int(payload.get("old_spec_files") or 0),
+        "old_spec_bytes": int(payload.get("old_spec_bytes") or 0),
+    }
+
+
+def _partition_from_go(
+    part: Mapping[str, Any],
+    fields: list[dict[str, Any]],
+    default_spec_id: Any = None,
+) -> PartitionAnalysis:
+    # Only rows written under an older spec carry their own fields. Go omits an empty list,
+    # so an older unpartitioned spec arrives with none.
+    spec_id = part.get("partition_spec_id")
+    older_spec = default_spec_id is not None and spec_id is not None and spec_id != default_spec_id
+    if older_spec or part.get("partition_fields") is not None:
+        fields = _clean_partition_fields(part.get("partition_fields") or [])
     values = dict(part.get("partition_values") or {})
     key = str(part.get("partition_key") or "_unpartitioned")
     files = int(part.get("files") or 0)
@@ -454,7 +479,6 @@ def _partition_from_go(part: Mapping[str, Any], fields: list[dict[str, Any]]) ->
     delete_files = int(part.get("delete_files") or 0)
     size_bytes = int(part.get("size_bytes") or 0)
     primary = fields[0] if fields else {}
-    spec_id = part.get("partition_spec_id")
     raw_value = part.get("partition_value")
     if raw_value is None:
         raw_value = next(iter(values.values()), key)

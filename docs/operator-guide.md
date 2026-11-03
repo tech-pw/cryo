@@ -457,6 +457,7 @@ Log exploration (Loki via Grafana Explore):
 | Cause | Action |
 |-------|--------|
 | Catalog timeout | Retry scan; increase scanner memory; reduce `num_chunks` temporarily |
+| Discovery timeout (`discover tables(<source>) exceeded …` in the run's `last_error`) | Listing the catalog took longer than `CRYO_SCAN_DISCOVERY_TIMEOUT_SECONDS` (default 1800). Raise it. It is separate from `CRYO_SCAN_TABLE_TIMEOUT_SECONDS`, which bounds one table. A chunk that discovered nothing because listing failed is `failed`. If other sources listed, it is `partial_failed`. Neither is reported `succeeded`. |
 | Auth failure | Rotate credentials in secret store; verify IRSA/SA role |
 | Single table error | Scanner isolates per-table failures; inspect `audit_logs` / table detail |
 | Scheduler disabled | PATCH `/api/v1/scanner/config` → `enabled: true` |
@@ -481,13 +482,18 @@ What keeps a bad listing from removing real tables:
 - Any discovery error in the scan skips the reconcile for that scan.
 - Out-of-allowlist schemas are never treated as dropped.
 - Mass guard: if more than `CRYO_SCAN_MISSING_TABLE_MAX_FRACTION` (default 0.2) of a source's
-  registered tables, or more than `CRYO_SCAN_MISSING_TABLE_MAX_COUNT` (default 500), would be
-  removed, nothing is removed. The scan writes a `missing_table_reconcile_aborted` audit row
-  and increments `cryo_missing_table_reconcile_aborted_total`. The fraction is ignored for
+  registered tables would be removed, nothing is removed. The scan writes a
+  `missing_table_reconcile_aborted` audit row and increments
+  `cryo_missing_table_reconcile_aborted_total`. The fraction is ignored for
   `CRYO_SCAN_MISSING_TABLE_GUARD_MIN_COUNT` (default 5) or fewer removals.
+- Per-scan limit: one scan removes at most `CRYO_SCAN_MISSING_TABLE_MAX_COUNT` (default 500)
+  tables per source. The ones Cryo last saw longest ago go first (last successful scan, or
+  registration time if never scanned). The rest are removed by the next scans, and each capped
+  scan writes a `missing_table_reconcile_capped` audit row with the remainder. A backlog of
+  1,200 missing tables drains in three scans.
 
 Turn it off with `CRYO_SCAN_REMOVE_MISSING_TABLES_ENABLED=false`. After a guard abort, check
-the catalog. If the drop was real, raise the limits for one scan.
+the catalog. If the drop was real, raise `CRYO_SCAN_MISSING_TABLE_MAX_FRACTION` for one scan.
 
 ### Unmatched tables (no effective preset)
 
@@ -548,6 +554,85 @@ left a large table unmatched until someone looked by hand.
   (`preset_paused`, `preset_resumed`, `preset_default_set`, `preset_default_unset`,
   `preset_enabled`, `preset_disabled`) with the actor and affected-table count. The
   `preset_paused` row also carries `cancelled_jobs=` and `cancelled_runs=`.
+
+### Continuous maintenance (drift-triggered presets)
+
+Continuous mode is opt-in per preset and off by default. It needs the commit watcher:
+set `events.enabled: true` in the Helm values (one `cryo events` pod). Without it a continuous
+preset still runs on its cron and never triggers between runs.
+
+How a table becomes due:
+
+1. The watcher loads each watched table from the live catalog, walks the snapshots committed
+   since the last one it saw and adds their summary counts to `cryo.table_drift`. Watched
+   tables are the scanner's streaming tables plus every table whose effective preset is
+   continuous. Compaction's own `replace` commits are not drift.
+2. The scheduler evaluates a drifted table. If any threshold is reached, it waits for
+   `debounce_seconds` of writer quiet, capped at `max_delay_seconds` after the first
+   unmaintained commit.
+3. The table is then held back by `min_interval_seconds` since its last maintenance, by the
+   per-table `max_runs_per_hour` and `max_runs_per_day`, and by the churn guard
+   `max_maintenance_commits_per_day`. The churn guard counts successful snapshot-committing
+   operations in the audit log.
+4. If the table's scan is older than its drift, the scheduler requests a one-table scan first,
+   so the planner sees the partitions the writer touched. It waits up to
+   `CRYO_CONTINUOUS_RESCAN_WAIT_SECONDS` (default 1800) for the scan.
+5. The scheduler enqueues a one-table run with trigger `continuous:<signal>`. The governor
+   admits it through every gate a cron job passes, including cooldown and off-peak windows.
+   There is no bypass.
+
+Tuning thresholds:
+
+- **Start from the writer's commit rate.** A table taking a commit a minute with
+  `max_commits: 60` becomes due about hourly. Set `min_interval_seconds` to the shortest gap
+  you accept between rewrites of the same table. Keep `cooldown_hours` on the preset
+  compatible with it: cooldown still applies at admission.
+- **`debounce_seconds` should exceed the writer's usual gap between commits** inside a burst.
+  If it doesn't, every burst triggers mid-write and raises commit conflicts. Writers that never
+  pause are handled by `max_delay_seconds`.
+- **Prefer `max_small_files_added` for append streams** and `max_delete_file_ratio` (0 to 1)
+  for upsert/CDC tables. `max_score_drop` is an estimate from the last scan plus deltas. It
+  works as a backstop, not as the primary trigger.
+- **The churn guard is the cap on snapshots maintenance itself adds.** Each compaction commits
+  a snapshot. Keep `max_maintenance_commits_per_day` below what your `expire_snapshots`
+  retention (`retain_last`, `retention_days`) clears in a day.
+- **Fleet limits:** `CRYO_EVENTS_PROBE_MAX_TABLES_PER_POLL` (catalog loads per watcher poll,
+  default 100) and `CRYO_EVENTS_PROBE_MIN_TABLE_INTERVAL_SECONDS` (default 30) bound catalog
+  load. At 100 tables per 5 s poll, 1,000 watched tables are each probed about every 50 s.
+  `CRYO_CONTINUOUS_EVALUATIONS_PER_TICK` bounds scheduler work per tick.
+- **Kill switch:** `CRYO_CONTINUOUS_MAINTENANCE_ENABLED=false` stops all continuous triggers.
+  Drift keeps accumulating.
+
+What to watch:
+
+| Metric | Meaning |
+|--------|---------|
+| `cryo_events_snapshot_probes_total{outcome}` | Watcher catalog loads: `committed`, `unchanged`, `failed` |
+| `cryo_events_commits_observed_total{kind}` | Commits read from snapshot summaries: `writer`, `maintenance` |
+| `cryo_continuous_events_consumed_total{outcome}` | Stream entries: `new`, `duplicate`, `maintenance`, `invalid` |
+| `cryo_continuous_triggers_total{signal}` | Continuous runs enqueued, by the threshold that fired |
+| `cryo_continuous_coalesced_total` | Due tables that already had an active job |
+| `cryo_continuous_deferrals_total{reason}` | `min_interval`, `rate_limit_hour`, `rate_limit_day`, `churn_cap` |
+| `cryo_continuous_pending_tables` | Tables waiting for evaluation |
+| `cryo_continuous_drift_to_completion_seconds` | First drift commit to the job that reset it |
+| `cryo_worker_commit_conflicts_total{outcome}` | Lost commits: `retried`, `deferred`, `gave_up` |
+
+Every trigger, coalesce, deferral and rescan writes an `audit_log` row with
+`origin=continuous`. The row's actions are `continuous_trigger`, `continuous_coalesced`,
+`continuous_deferred` and `continuous_rescan`. The detail carries the signal, the measured
+value and the threshold. A steadily rising `rate_limit_*` or `churn_cap` count means the
+thresholds are tighter than the limits allow: raise the thresholds rather than the limits.
+
+Commit conflicts. A maintenance commit loses when a writer commits to the same table first.
+Iceberg rejects the commit and leaves the table unchanged. The worker re-runs the operation once
+in place (`CRYO_WORKER_COMMIT_CONFLICT_RETRIES`, backoff
+`CRYO_WORKER_COMMIT_CONFLICT_RETRY_BACKOFF_SECONDS`). If every failure of the job is still a
+conflict, the job is deferred with `commit_conflict: n of K`. The reconciler re-queues it and
+it is re-planned from current stats. After `CRYO_WORKER_COMMIT_CONFLICT_MAX_DEFERRALS`
+conflicts (default 3) it fails with a `commit_conflict_give_up` audit row.
+`cryo_worker_commit_conflicts_total{outcome}` counts `retried`, `deferred` and `gave_up`.
+Steady `gave_up` on one table means maintenance is racing a writer that never pauses. Raise
+`debounce_seconds`, or move the table's window off the writer's busy hours.
 
 ### API memory / OOM (cryo-api)
 

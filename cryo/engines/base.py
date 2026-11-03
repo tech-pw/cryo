@@ -184,6 +184,38 @@ def is_table_not_found_error(message: str | None) -> bool:
     )
 
 
+# Optimistic-concurrency losses: another writer committed to the table between the
+# maintenance operation reading its base snapshot and committing. Iceberg rejects the commit
+# without changing table state, so the operation can be retried or re-planned safely. A
+# CommitStateUnknownException is the opposite case (the commit may have landed) and is never a
+# conflict. Matched case-insensitively against the messages Iceberg (Java and REST), Spark and
+# Trino surface for this.
+COMMIT_CONFLICT_MARKER = "[commit_conflict]"
+COMMIT_CONFLICT_GIVE_UP_ACTION = "commit_conflict_give_up"
+_COMMIT_CONFLICT_SIGNATURES = (
+    COMMIT_CONFLICT_MARKER,
+    "commitfailedexception",
+    "found conflicting files",
+    "found new conflicting delete files",
+    "found new delete for replaced data file",
+    "cannot commit changes based on stale",
+    "requirement failed: branch main has changed",
+    "failed to commit iceberg update",
+    "iceberg_commit_error",
+    "commit conflict",
+)
+
+
+def is_commit_conflict(message: str | None) -> bool:
+    """True when an engine failure is a lost optimistic commit against a concurrent writer."""
+    if not message:
+        return False
+    lowered = message.lower()
+    if "commitstateunknown" in lowered:
+        return False
+    return any(sig in lowered for sig in _COMMIT_CONFLICT_SIGNATURES)
+
+
 @dataclass(frozen=True)
 class RenderedStatement:
     action: OperationType

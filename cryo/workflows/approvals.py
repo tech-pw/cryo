@@ -349,6 +349,9 @@ def requires_approval(
             OperationType.EXPIRE_SNAPSHOTS: True,
             OperationType.EXPIRE_DATA: True,
             OperationType.REMOVE_ORPHAN_FILES: True,
+            # Not destructive, but it rewrites every old-spec file regardless of size, so an
+            # operator signs off on the cost first (#289).
+            OperationType.MIGRATE_PARTITION_SPEC: True,
         }
 
     return config_require_approval.get(operation_type, False)
@@ -532,6 +535,23 @@ def estimate_impact(
             "warning": (
                 "This operation permanently deletes files not referenced by any "
                 "snapshot or manifest."
+            ),
+        }
+
+    elif operation_type == OperationType.MIGRATE_PARTITION_SPEC:
+        migration = (stats.raw or {}).get("spec_migration") or {}
+        old_spec_bytes = int(migration.get("old_spec_bytes") or 0)
+        return {
+            "operation": "Migrate to current partition spec",
+            "table_name": table_name,
+            "default_spec_id": migration.get("default_spec_id"),
+            "old_spec_partitions": int(migration.get("old_spec_partitions") or 0),
+            "old_spec_files": int(migration.get("old_spec_files") or 0),
+            "estimated_rewrite_gb": old_spec_bytes / (1024**3),
+            "warning": (
+                "Rewrites every data file still written under an older partition spec, "
+                "whatever its size. No data is deleted; the old files are removed by "
+                "expire_snapshots later."
             ),
         }
 

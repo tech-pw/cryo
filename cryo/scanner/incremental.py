@@ -30,6 +30,7 @@ class CommitDelta:
     equality_delete_files_removed: int = 0
     position_delete_files_removed: int = 0
     snapshots_added: int = 0
+    sequence_number: int | None = None
 
     @property
     def carries_file_deltas(self) -> bool:
@@ -110,8 +111,18 @@ def apply_commit_delta(
     if stats is None:
         return False
 
-    current_watermark = stats.snapshot_watermark
-    if current_watermark is not None and delta.snapshot_id <= current_watermark:
+    # Snapshot ids are random 64-bit values, so only equality says "already applied"; an
+    # ordering check dropped roughly half of all real commits as stale. The sequence number
+    # is the table's monotonic commit counter, so it can order events when both sides have it.
+    if stats.snapshot_watermark is not None and delta.snapshot_id == stats.snapshot_watermark:
+        return False
+    previous_payload = dict((stats.raw or {}).get("smart_maintenance") or {})
+    last_sequence = previous_payload.get("last_commit_sequence_number")
+    if (
+        delta.sequence_number is not None
+        and isinstance(last_sequence, int)
+        and delta.sequence_number <= last_sequence
+    ):
         return False
 
     observed_now = (now or datetime.now(UTC)).astimezone(UTC)
@@ -198,6 +209,8 @@ def apply_commit_delta(
             },
         }
     )
+    if delta.sequence_number is not None:
+        smart_payload["last_commit_sequence_number"] = delta.sequence_number
     raw["smart_maintenance"] = smart_payload
     raw["commit_event_history"] = history
     raw["last_snapshot_committed_at"] = committed_at.isoformat()

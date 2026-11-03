@@ -1,6 +1,8 @@
 import type {
   AuditEntry,
   RemovedTablesMode,
+  SpecMigrationApprovalRead,
+  SpecMigrationRead,
   ColumnUsageResponse,
   MaintenanceImpactResponse,
   SkipEvaluationPage,
@@ -750,6 +752,16 @@ export const runTableOperations = (
   body: { operations: OperationType[]; trigger?: string; force?: boolean }
 ) =>
   apiFetch<MaintenanceRunResponse>(`/tables/${tableId}/maintenance/operations`, api, { method: "POST", body });
+
+/** Partitions still written under an older partition spec, with the approval a migration needs. */
+export const getTableSpecMigration = (api: ApiOptions, tableId: UUID) =>
+  apiFetch<SpecMigrationRead>(`/tables/${tableId}/spec-migration`, api);
+
+export const requestSpecMigrationApproval = (api: ApiOptions, tableId: UUID, body: { reason?: string } = {}) =>
+  apiFetch<SpecMigrationApprovalRead>(`/tables/${tableId}/spec-migration/approval-request`, api, {
+    method: "POST",
+    body
+  });
 
 export const listRuns = (
   api: ApiOptions,

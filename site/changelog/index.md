@@ -24,12 +24,17 @@ All notable changes to Cryo will be documented in this file. The format is based
 ### Added
 
 - A **Removed** quick view on the Tables page lists tables the scanner found gone from their catalog, with when and why, read-only. `GET /tables` takes `removed=exclude|include|only` (`include_removed=true` stays as an alias) (#330).
+- Opt-in continuous maintenance (#77). A preset's `continuous` block stays off unless enabled. While it is on, Cryo probes the live catalog, records per-table writer drift, and the scheduler enqueues that preset's maintenance through the normal governor, so cooldown, off-peak windows, deadlines and budget still apply. A commit lost to a concurrent writer is re-run in place, then the job is deferred and re-planned from current stats. After `CRYO_WORKER_COMMIT_CONFLICT_MAX_DEFERRALS` (default 3) it fails instead of retrying forever.
+- Migrate to current partition spec: an on-request, approval-gated `migrate_partition_spec` operation that rewrites partitions still written under an older partition spec, in optimize's budgeted chunks, on Spark (Trino cannot filter old-spec partitions). The Maintain tab shows what is left and the progress. Both scanners now read each file's partition values with its own spec and record the old-spec totals, and Path to grade A no longer implies a layout change migrates existing data on its own (#289).
 - Tables registry: an **Effective preset** column (preset, where it comes from, paused) and a **Coverage** filter with *On default* and *Unmaintained*. `GET /tables` rows carry `effective_preset`, and `GET /tables`, `/tables/group-by` and `/tables/export.csv` take `effective_provenance` (#330).
 
 ### Fixed
 
 - Turning off "Active only" on the Tables page now lists tables removed from the catalog. It used to drop only the `is_active` filter while the server kept hiding them. CSV export and group-by now hide removed tables by default too, so their totals match the list (#330).
 - Native `expire_snapshots` now deletes the files only the expired snapshots referenced, as Spark and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests, and shared-location tables (none of which plan `remove_orphan_files`) leaked them (#374).
+- The Spark fallback sweep no longer finalizes a job whose native dispatch is still running. It used to mark such a job terminal mid-run, so the governor's lock reconcile released its table lock as orphaned. When the sweep does end a job, it now releases the job's table lock and in-flight slot, and a second completion of the same job no longer drives the in-flight counter negative (#382).
+- A fleet scan whose catalog discovery failed no longer finishes `succeeded` with zero tables. The chunk is `failed` when nothing was discovered and `partial_failed` when other sources listed, and the discovery error becomes the run's `last_error`. A run with a `last_error` is never reported `succeeded`. Discovery has its own timeout, `CRYO_SCAN_DISCOVERY_TIMEOUT_SECONDS` (default 1800), instead of the per-table scan timeout, and heartbeats the chunk while it lists (#380).
+- The missing-table reconcile no longer removes nothing once more than `CRYO_SCAN_MISSING_TABLE_MAX_COUNT` (default 500) tables are missing. That count is now a per-scan removal limit, applied to the tables last seen longest ago first, so a backlog drains over several scans. `CRYO_SCAN_MISSING_TABLE_MAX_FRACTION` stays the catalog-outage guard that removes nothing (#381).
 
 ### Changed
 

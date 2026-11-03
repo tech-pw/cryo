@@ -164,6 +164,7 @@ def build_plan(
             if convert_op is not None:
                 operations.append(convert_op)
         operations.extend(optimize_ops)
+        operations.extend(_spec_migration_operations(stats, partitions, params, notes))
 
     if resolved_mode is Mode.DEEP:
         operations.append(Operation(OperationType.OPTIMIZE_MANIFESTS, dict(params)))
@@ -401,6 +402,187 @@ def _optimize_operations(
         _optimize_operation(params, tuple(candidate.predicate for candidate in chunk))
         for chunk in chunks
     ]
+
+
+def _spec_migration_operations(
+    stats: Mapping[str, Any],
+    partitions: Sequence[Mapping[str, Any]],
+    params: Mapping[str, Any],
+    notes: list[str],
+) -> list[Operation]:
+    """Rewrite partitions still written under an older partition spec into the default one.
+
+    Routine optimize never gets there: it selects by small files, and an old-spec partition
+    of well-sized files has none. Planned only when a run names the operation, under the
+    same chunk budget, partitions-per-chunk cap and max_chunks as optimize.
+    """
+    requested = {str(op) for op in params.get("requested_operations") or ()}
+    if OperationType.MIGRATE_PARTITION_SPEC.value not in requested:
+        return []
+    summary = spec_migration_summary(stats)
+    if summary is None:
+        notes.append(
+            "Skipped migrate_partition_spec: the last scan did not record the table's default "
+            "partition spec. Rescan the table, then request the migration again."
+        )
+        return []
+    default_spec_id, old_spec_partitions = summary
+    if old_spec_partitions == 0:
+        notes.append(
+            "Skipped migrate_partition_spec: every data file is already written under the "
+            f"default partition spec ({default_spec_id})."
+        )
+        return []
+
+    resolve_notes: list[str] = []
+    resolved = resolve_optimize_params(
+        stats, params, partition_fields_from_stats(stats, params), resolve_notes
+    )
+    notes.extend(note for note in resolve_notes if note not in notes)
+    operation_params = {**resolved, "rewrite_all": True}
+    write_aware = _is_write_aware(stats, params)
+    chunk_size_gb = _effective_chunk_size_gb(float(params.get("chunk_size_gb", 100)), write_aware)
+    max_parts = int(params.get("max_partitions_per_chunk", 100))
+    if write_aware:
+        max_parts = max(1, max_parts // 2)
+    capabilities = _predicate_capabilities(params)
+
+    candidates: list[OptimizeCandidate] = []
+    unpartitioned_rows = 0
+    seen_rows = 0
+    for row in partitions:
+        spec_id = _spec_id(row.get("partition_spec_id"))
+        if spec_id is None or spec_id == default_spec_id:
+            continue
+        if int(row.get("files_per_partition") or 0) <= 0:
+            continue
+        seen_rows += 1
+        partition_value = row.get("partition_value", row.get("partition_values", "<unknown>"))
+        storage_class = row.get("storage_class")
+        if storage_class in _ARCHIVED_CLASSES:
+            notes.append(
+                f"Skipped archived partition {partition_value}: its files are in {storage_class}, "
+                "and migrating would rewrite them to Standard and bill the minimum duration. "
+                "Restore it first."
+            )
+            continue
+        fields = _row_partition_fields(row)
+        if not fields:
+            unpartitioned_rows += 1
+            continue
+        predicate = build_predicate(fields, row)
+        unsupported_reason = predicate.unsupported_for(capabilities)
+        if unsupported_reason:
+            notes.append(
+                f"Skipped old-spec partition {partition_value} (spec {spec_id}): "
+                f"{unsupported_reason}."
+            )
+            continue
+        candidates.append(
+            OptimizeCandidate(
+                value=_sort_value(row),
+                size_gb=_partition_size_gb(row),
+                small_files=_small_files(row),
+                predicate=predicate,
+            )
+        )
+
+    if seen_rows < old_spec_partitions:
+        notes.append(
+            f"The last scan kept {seen_rows} of {old_spec_partitions} old-spec partition rows; "
+            "the rest are planned after a rescan."
+        )
+
+    if unpartitioned_rows:
+        # A filter on the default spec's columns cannot isolate files written before the table
+        # was partitioned: they carry no partition values. Only a whole-table rewrite does.
+        total_size_gb = _total_size_gb(stats)
+        if total_size_gb is not None and total_size_gb <= chunk_size_gb:
+            notes.append(
+                "Planned a full-table migrate_partition_spec: files written before the table was "
+                "partitioned cannot be selected by a partition filter, and the table is within "
+                f"the chunk size budget ({total_size_gb:g} GB <= {chunk_size_gb:g} GB)."
+            )
+            return [Operation(OperationType.MIGRATE_PARTITION_SPEC, operation_params)]
+        notes.append(
+            "Skipped the unpartitioned old-spec files: no partition filter selects them, and a "
+            "full-table rewrite of "
+            + (f"{total_size_gb:g} GB" if total_size_gb is not None else "an unknown size")
+            + f" exceeds the chunk size budget {chunk_size_gb:g} GB."
+        )
+
+    if not candidates:
+        notes.append("Skipped migrate_partition_spec: no old-spec partition could be filtered.")
+        return []
+
+    ordered = sorted(candidates, key=lambda candidate: candidate.value)
+    max_chunks = _optional_int(params.get("max_chunks"))
+    chunks = greedy_pack(
+        ordered,
+        gb_budget=chunk_size_gb,
+        max_parts=max_parts,
+        max_chunks=max_chunks,
+        oversize_alone=True,
+    )
+    planned = sum(len(chunk) for chunk in chunks)
+    notes.append(
+        f"Planned migrate_partition_spec: {planned} old-spec partition(s) in {len(chunks)} "
+        f"chunk(s), rewritten into partition spec {default_spec_id}."
+    )
+    if planned < len(ordered):
+        notes.append(
+            f"migrate_partition_spec limited to {planned} of {len(ordered)} old-spec partitions "
+            f"(max_chunks={max_chunks}); request the migration again for the rest."
+        )
+    return [
+        Operation(
+            OperationType.MIGRATE_PARTITION_SPEC,
+            dict(operation_params),
+            tuple(candidate.predicate for candidate in chunk),
+        )
+        for chunk in chunks
+    ]
+
+
+def spec_migration_summary(stats: Mapping[str, Any]) -> tuple[int, int] | None:
+    """(default spec id, partitions still holding data files of an older spec) from the scan."""
+    raw = (stats.get("raw") or {}).get("spec_migration")
+    if not isinstance(raw, Mapping):
+        return None
+    default_spec_id = _spec_id(raw.get("default_spec_id"))
+    if default_spec_id is None:
+        return None
+    return default_spec_id, int(raw.get("old_spec_partitions") or 0)
+
+
+def _row_partition_fields(row: Mapping[str, Any]) -> tuple[PartitionFieldSpec, ...]:
+    """The partition fields of the spec this row was written with, without void fields.
+
+    A field dropped from a v1 table stays in its spec as a void transform that always
+    yields null, so it cannot narrow a filter.
+    """
+    raw_fields = row.get("partition_fields") or ()
+    return partition_fields_from_stats(
+        {
+            "partition_fields": [
+                field
+                for field in raw_fields
+                if not (
+                    isinstance(field, Mapping)
+                    and str(field.get("transform") or "").strip().lower() == "void"
+                )
+            ]
+        }
+    )
+
+
+def _spec_id(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def full_table_optimize_allowed(

@@ -122,6 +122,7 @@ class _PartitionAccum:
     values: dict[str, Any]
     fields: list[dict[str, Any]]
     spec_id: int | None
+    older_spec: bool = False
     files: int = 0
     small: int = 0
     size_bytes: int = 0
@@ -210,6 +211,8 @@ def analyze_table(
         scan_time = scan_time.replace(tzinfo=UTC)
 
     fields = partition_fields(table_obj)
+    current_spec_id = default_spec_id(table_obj)
+    fields_by_older_spec = older_spec_fields(table_obj)
     manifests = _manifests(table_obj)
     props = _table_properties(table_obj)
     reduction_target_bytes = int(props["target_file_size_bytes"] or DEFAULT_REDUCTION_TARGET_BYTES)
@@ -267,15 +270,8 @@ def analyze_table(
                 equality_delete_files += 1
             elif delete_kind == "position":
                 position_delete_files += 1
-            values = data_file_partition_values(data_file, fields)
-            key = partition_key(values)
-            accum = partitions.setdefault(
-                key,
-                _PartitionAccum(
-                    values=values,
-                    fields=list(fields),
-                    spec_id=_optional_int(_attr(data_file, "spec_id", None)),
-                ),
+            accum = _partition_accum(
+                partitions, data_file, fields, current_spec_id, fields_by_older_spec
             )
             accum.delete_files += 1
             if delete_kind == "equality":
@@ -299,15 +295,8 @@ def analyze_table(
                 if len(wair_file_samples) > settings.scanner_wair_file_sample_size:
                     del wair_file_samples[max(wair_file_samples)]
 
-        values = data_file_partition_values(data_file, fields)
-        key = partition_key(values)
-        accum = partitions.setdefault(
-            key,
-            _PartitionAccum(
-                values=values,
-                fields=list(fields),
-                spec_id=_optional_int(_attr(data_file, "spec_id", None)),
-            ),
+        accum = _partition_accum(
+            partitions, data_file, fields, current_spec_id, fields_by_older_spec
         )
         accum.files += 1
         accum.size_bytes += file_size
@@ -539,6 +528,13 @@ def analyze_table(
         "unknown": unknown_file_sizes,
     }
     raw["manifest_stats"] = manifest_stats(len(manifests), manifest_total_bytes, total_files)
+    raw["spec_migration"] = spec_migration_totals(
+        [
+            (accum.spec_id, accum.older_spec, accum.files, accum.size_bytes)
+            for accum in partitions.values()
+        ],
+        current_spec_id,
+    )
     time_columns = _schema_time_columns(table_obj)
     if time_columns:
         raw["time_columns"] = time_columns
@@ -699,8 +695,34 @@ def _schema_time_columns(table_obj: object) -> list[str]:
 
 def partition_fields(table_obj: object) -> list[dict[str, Any]]:
     spec = _call_or_attr(table_obj, "spec", default=None)
-    raw_fields = list(_attr(spec, "fields", []) or []) if spec is not None else []
+    return _spec_fields(spec, _call_or_attr(table_obj, "schema", default=None))
+
+
+def default_spec_id(table_obj: object) -> int | None:
+    spec = _call_or_attr(table_obj, "spec", default=None)
+    return _optional_int(_attr(spec, "spec_id", None)) if spec is not None else None
+
+
+def older_spec_fields(table_obj: object) -> dict[int, list[dict[str, Any]]]:
+    """Fields of every spec except the default one, by spec id.
+
+    A file written before a partition spec change carries a partition tuple in its own
+    spec's layout. Reading it with the default spec's fields mislabels it.
+    """
+    current = default_spec_id(table_obj)
+    specs = _call_or_attr(table_obj, "specs", default=None)
+    if current is None or not isinstance(specs, Mapping):
+        return {}
     schema = _call_or_attr(table_obj, "schema", default=None)
+    return {
+        int(spec_id): _spec_fields(spec, schema)
+        for spec_id, spec in specs.items()
+        if _optional_int(spec_id) is not None and int(spec_id) != current
+    }
+
+
+def _spec_fields(spec: object, schema: object) -> list[dict[str, Any]]:
+    raw_fields = list(_attr(spec, "fields", []) or []) if spec is not None else []
     result: list[dict[str, Any]] = []
     for field in raw_fields:
         partition_field = str(_attr(field, "name", "") or "")
@@ -730,6 +752,51 @@ def data_file_partition_values(
         name = str(field["partition_field"])
         values[name] = _jsonable(_partition_value(partition, name, index))
     return values
+
+
+def _partition_accum(
+    partitions: dict[str, _PartitionAccum],
+    data_file: object,
+    fields: Sequence[Mapping[str, Any]],
+    current_spec_id: int | None,
+    fields_by_older_spec: Mapping[int, list[dict[str, Any]]],
+) -> _PartitionAccum:
+    spec_id = _optional_int(_attr(data_file, "spec_id", None))
+    older = current_spec_id is not None and spec_id is not None and spec_id != current_spec_id
+    own_fields: Sequence[Mapping[str, Any]] = (
+        fields_by_older_spec.get(spec_id, []) if older and spec_id is not None else fields
+    )
+    values = data_file_partition_values(data_file, own_fields)
+    key = partition_key(values)
+    if older:
+        # bucket(16, id) -> bucket(32, id) names the field id_bucket in both specs.
+        key = f"spec={spec_id}/{key}"
+    accum = partitions.get(key)
+    if accum is None:
+        accum = _PartitionAccum(
+            values=values, fields=[dict(f) for f in own_fields], spec_id=spec_id, older_spec=older
+        )
+        partitions[key] = accum
+    return accum
+
+
+def spec_migration_totals(
+    partitions: Iterable[tuple[int | None, bool, int, int]],
+    current_spec_id: int | None,
+) -> dict[str, Any]:
+    """Raw-stats summary of data still in an older partition spec.
+
+    ``partitions`` is (spec_id, older_spec, data_files, size_bytes) per partition, over the
+    full partition map rather than the rows kept after the per-table cap.
+    """
+    # Delete-only partitions hold no data to move into the new spec.
+    old = [(files, size) for _, older, files, size in partitions if older and files > 0]
+    return {
+        "default_spec_id": current_spec_id,
+        "old_spec_partitions": len(old),
+        "old_spec_files": sum(files for files, _ in old),
+        "old_spec_bytes": sum(size for _, size in old),
+    }
 
 
 def partition_key(values: Mapping[str, Any]) -> str:

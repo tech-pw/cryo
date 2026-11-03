@@ -98,6 +98,7 @@ def test_manifest_evidence_paths_and_symbols_exist() -> None:
         *(item.evidence for item in CAPABILITY_MANIFEST.engines),
         *(item.evidence for item in CAPABILITY_MANIFEST.catalogs),
         *(item.evidence for item in CAPABILITY_MANIFEST.matrix),
+        *(item.evidence for item in CAPABILITY_MANIFEST.scheduling),
     ]
 
     for evidence_group in evidence_groups:

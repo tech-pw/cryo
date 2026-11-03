@@ -13,6 +13,7 @@ import {
 import type { DestinationRead, PresetRead, PresetWrite, UUID } from "../../api/types";
 import { ConfirmAction } from "../confirm";
 import { CronInput } from "../CronInput";
+import { ContinuousFields } from "./ContinuousFields";
 import { PresetConfigFields } from "./PresetConfigFields";
 import { FilterBar } from "../FilterBar";
 import { Alert } from "../ui/alert";
@@ -352,6 +353,8 @@ export const PresetConfigForm = ({
               <p className="text-xs text-destructive" role="alert">{form.formState.errors.schedule_cron.message}</p>
             ) : null}
           </div>
+
+          <ContinuousFields disabled={disabled} />
 
           <PresetConfigFields destinations={destinations.data ?? []} />
 

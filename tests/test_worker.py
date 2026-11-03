@@ -35,6 +35,37 @@ def test_worker_builds_plan_executes_statements_and_marks_success() -> None:
     assert not locks.is_table_locked("table-1")
 
 
+class _DriftTrackingStore(InMemoryJobStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.drift_resets: list[str] = []
+
+    def reset_table_drift(self, table_id: str) -> None:
+        self.drift_resets.append(table_id)
+
+
+def _drift_fixture() -> tuple[InMemoryMaintenanceQueue, InMemoryLockStore, _DriftTrackingStore]:
+    queue, locks, base = _worker_fixture()
+    store = _DriftTrackingStore()
+    store.__dict__.update({k: v for k, v in base.__dict__.items() if k != "drift_resets"})
+    return queue, locks, store
+
+
+def test_worker_resets_table_drift_after_success() -> None:
+    queue, locks, store = _drift_fixture()
+    result = Worker(queue, store, lambda destination: FakeMaintenanceEngine(), locks).process_next()
+    assert result is not None and result.status is JobStatus.SUCCEEDED
+    assert store.drift_resets == ["table-1"]
+
+
+def test_worker_keeps_table_drift_when_maintenance_did_not_finish() -> None:
+    queue, locks, store = _drift_fixture()
+    engine = FakeMaintenanceEngine(fail_actions={OperationType.EXPIRE_SNAPSHOTS})
+    result = Worker(queue, store, lambda destination: engine, locks).process_next()
+    assert result is not None and result.status is JobStatus.PARTIAL
+    assert store.drift_resets == []
+
+
 def test_worker_defers_without_executing_when_another_job_owns_table() -> None:
     queue, locks, store = _worker_fixture()
     locks.release_table_lock("table-1", "job-1")

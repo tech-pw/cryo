@@ -518,13 +518,30 @@ def record_scan_chunk_finished(
             and int(summary.get("chunks_pending") or 0) == 0
         ):
             run.status = "failed" if int(summary.get("chunks_failed") or 0) else "succeeded"
-            if int(summary.get("failed") or 0) and run.status == "succeeded":
+            if run.status == "succeeded" and _run_has_errors(summary):
                 run.status = "partial_failed"
             run.finished_at = datetime.now(UTC)
         else:
             run.status = "running"
         run.summary = summary
         session.commit()
+
+
+def _run_has_errors(summary: Mapping[str, Any]) -> bool:
+    """A run that recorded an error must not finish as succeeded (#380).
+
+    Covers failed tables, a partial_failed chunk with no failed table (some sources failed
+    discovery), and a last_error left by an attempt that was later re-queued.
+    """
+    if int(summary.get("failed") or 0) or summary.get("last_error"):
+        return True
+    chunks = summary.get("chunks")
+    if not isinstance(chunks, Mapping):
+        return False
+    return any(
+        isinstance(chunk, Mapping) and chunk.get("status") == "partial_failed"
+        for chunk in chunks.values()
+    )
 
 
 def request_scan_cancel(session: Session, run: MaintenanceRun) -> None:
