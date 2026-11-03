@@ -525,6 +525,7 @@ class OperationType(str, Enum):
     COMPUTE_STATISTICS = "compute_statistics"
     REWRITE_POSITION_DELETES = "rewrite_position_deletes"
     EXPIRE_DATA = "expire_data"
+    MIGRATE_PARTITION_SPEC = "migrate_partition_spec"  # on request only, approval-gated (§6.5)
 
 class EngineType(str, Enum):
     TRINO = "trino"
@@ -662,6 +663,57 @@ reference specific data files and would be stale otherwise.
 The canonical sequence lives in exactly one place — `CORRECT_ORDER` in
 `cryo/planner/guardrails.py`. `build_plan` sorts by it rather than hand-appending, presets are
 normalised into it on write and read, and `web/src/lib/operationOrder.ts` mirrors it for the UI.
+
+`migrate_partition_spec` sits between `rewrite_position_deletes` and `optimize` in
+`CORRECT_ORDER` but belongs to no mode in `MODE_OPERATIONS` (§6.5).
+
+### 6.5 Partition spec migration (`migrate_partition_spec`, #289)
+After a partition spec change Iceberg writes new files with the default spec, and every older
+file keeps the spec it was written with until something rewrites it. Routine `optimize` never
+does: it picks partitions by small-file count, and an old-spec partition of well-sized files
+has none.
+
+**Scanner.** Both scanners read each data file's partition tuple with *its own* spec's fields
+(not the default spec's), key older-spec rows as `spec=<id>/<key>`, and persist that spec's
+fields on the row (`partition_fields`, `partition_spec_id`). Before this, the Go scanner
+collapsed old-spec files into one `<nil>` bucket and the Python scanner mislabelled their
+values. `raw["spec_migration"]` records `default_spec_id` and the old-spec
+`old_spec_partitions` / `old_spec_files` / `old_spec_bytes` (data files only), computed over
+every partition before the stored-row cap.
+
+**Planner.** `_spec_migration_operations` plans only when `requested_operations` names the
+operation. It selects rows whose `partition_spec_id` differs from `default_spec_id`, whatever
+their small-file count; builds each predicate from the row's own fields (void fields of a
+dropped column are left out); skips archived and delete-only partitions and unrenderable
+predicates with a note; and packs them with `greedy_pack` under optimize's guardrails (write-aware
+`chunk_size_gb`, `max_partitions_per_chunk`, `max_chunks`, oversize alone). Files written before
+the table was partitioned carry no partition values, so only a whole-table rewrite reaches them,
+planned only within the chunk budget. Each operation carries the resolved optimize params plus
+`rewrite_all: true`.
+
+**Approval.** `requires_approval` covers it by default. `job_store._job_record` sets
+`params["approved_operations"]` from approved, unexecuted, unexpired `ApprovalRequest` rows
+(never from a preset or override), and `build_execution_plan`'s `gate_unapproved_operations`
+drops the operation with a note when none covers it. The governor's approval gate reads a stored
+plan, which a job does not have at first admission, so this gate is the one that holds. The
+first OK audit row marks the request executed: one approval covers one run.
+
+**Engines.** Spark renders `rewrite_data_files(strategy => 'binpack', where => <old-spec
+filters>, options => map('target-file-size-bytes', …, 'rewrite-all', 'true', …))` with no
+`output-spec-id` (the default spec, even if it changed after the scan) and no table-property or
+sort side effects. Default-spec files the filter also matches are rewritten too. Trino is
+unsupported: `OPTIMIZE … WHERE` is enforced only when every spec still in use can enforce the
+filter, and an old-spec partition filter cannot be, so `gate_engine_unsupported` drops it and the
+renderer raises. The native engine routes it to its Spark fallback.
+
+**API and UI.** `GET /tables/{id}/spec-migration` returns the counts, the live approval, the
+baseline from the latest request's impact preview, the last run and whether the destination
+engine can run it. `POST /tables/{id}/spec-migration/approval-request` (operator) creates the
+request; an editor approves it under Decisions. `POST /tables/{id}/maintenance/operations` with
+`migrate_partition_spec` returns 409 without an approved request. The Maintain tab's spec
+migration card shows the remaining partitions, files and bytes, progress against the baseline,
+and the request/run actions. The Path to grade A advisor lists old-spec partitions as their own
+step and says a layout change's projection holds only after the migration.
 
 **GC gate.** `build_execution_plan` drops `expire_snapshots` and `remove_orphan_files` when the
 scan shows `gc.enabled` is false, and records a note on the plan. It reads
@@ -1075,6 +1127,8 @@ GET   /api/v1/tables/{id}/compatible-presets                  # presets whose de
 POST  /api/v1/maintenance/preview                             # dry-run -> per-table rendered SQL +
         # plan-accurate SavingsProjection (current/projected cost, savings by op) for the payload
 POST  /api/v1/maintenance/run                                 # create adhoc run + jobs
+GET   /api/v1/tables/{id}/spec-migration                      # old-spec counts, approval, last run (§6.5)
+POST  /api/v1/tables/{id}/spec-migration/approval-request     # operator; idempotent
         # body accepts either table_ids:[...] OR selection:{mode:"filter", filter:<predicate>}
 GET   /api/v1/maintenance/control                             # visible global/tenant/destination controls
 POST  /api/v1/maintenance/control/pause                       # operator; global requires admin

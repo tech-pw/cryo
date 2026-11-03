@@ -137,6 +137,10 @@ func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protoc
 	acc := newAccumulator(fields, opts)
 	acc.columnDefs = columnDefsFromSchema(tbl.Schema())
 	acc.columnTypes = columnTypesFromSchema(tbl.Schema())
+	currentSpec := tbl.Spec()
+	defaultSpecID := int32(currentSpec.ID())
+	acc.defaultSpecID = &defaultSpecID
+	acc.olderSpecFields = olderSpecFields(tbl)
 
 	fs, err := tbl.FS(ctx)
 	if err != nil {
@@ -409,8 +413,28 @@ func detectFormatVersion(tbl *table.Table) *int {
 }
 
 func partitionFields(tbl *table.Table) []protocol.ScanStatsPartitionField {
-	spec := tbl.Spec()
-	schema := tbl.Schema()
+	return specFields(tbl.Spec(), tbl.Schema())
+}
+
+// olderSpecFields maps every spec other than the default one to its fields, so files
+// written before a partition spec change are bucketed by the layout they were written in.
+func olderSpecFields(tbl *table.Table) map[int32][]protocol.ScanStatsPartitionField {
+	out := map[int32][]protocol.ScanStatsPartitionField{}
+	meta := tbl.Metadata()
+	if meta == nil {
+		return out
+	}
+	defaultID := meta.DefaultPartitionSpec()
+	for _, spec := range meta.PartitionSpecs() {
+		if spec.ID() == defaultID {
+			continue
+		}
+		out[int32(spec.ID())] = specFields(spec, tbl.Schema())
+	}
+	return out
+}
+
+func specFields(spec iceberg.PartitionSpec, schema *iceberg.Schema) []protocol.ScanStatsPartitionField {
 	out := make([]protocol.ScanStatsPartitionField, 0, spec.NumFields())
 	for i := 0; i < spec.NumFields(); i++ {
 		field := spec.Field(i)
@@ -500,8 +524,10 @@ func transformParam(transformRaw string) *int {
 }
 
 type partAccum struct {
-	values              map[string]any
-	specID              *int32
+	values map[string]any
+	specID *int32
+	// fields is set only for a partition written under an older spec.
+	fields              []protocol.ScanStatsPartitionField
 	files               int
 	small               int
 	sizeBytes           int64
@@ -526,7 +552,11 @@ type columnAccum struct {
 }
 
 type accumulator struct {
-	fields              []protocol.ScanStatsPartitionField
+	fields []protocol.ScanStatsPartitionField
+	// defaultSpecID is nil when the caller did not say which spec is current (parity
+	// fixtures); every file is then bucketed by fields, as before.
+	defaultSpecID       *int32
+	olderSpecFields     map[int32][]protocol.ScanStatsPartitionField
 	opts                Options
 	partitions          map[string]*partAccum
 	totalFiles          int64
@@ -617,13 +647,7 @@ func (a *accumulator) addRecord(rec FileRecord) {
 		for k, v := range rec.Partition {
 			values[k] = jsonable(v)
 		}
-		key := partitionKey(values)
-		acc := a.partitions[key]
-		if acc == nil {
-			specID := rec.SpecID
-			acc = &partAccum{values: values, specID: &specID}
-			a.partitions[key] = acc
-		}
+		acc := a.partitionFor(rec.SpecID, values)
 		acc.deleteFiles++
 		if kind == "equality" {
 			acc.equalityDeleteFiles++
@@ -647,13 +671,7 @@ func (a *accumulator) addRecord(rec FileRecord) {
 	for k, v := range rec.Partition {
 		values[k] = jsonable(v)
 	}
-	key := partitionKey(values)
-	acc := a.partitions[key]
-	if acc == nil {
-		specID := rec.SpecID
-		acc = &partAccum{values: values, specID: &specID}
-		a.partitions[key] = acc
-	}
+	acc := a.partitionFor(rec.SpecID, values)
 	acc.files++
 	acc.sizeBytes += rec.SizeBytes
 	if float64(rec.SizeBytes) < a.opts.SmallFileMB*float64(mb) {
@@ -662,6 +680,43 @@ func (a *accumulator) addRecord(rec FileRecord) {
 	if rec.SnapshotTimestampMs != nil {
 		acc.observeWrite(*rec.SnapshotTimestampMs, true)
 	}
+}
+
+func (a *accumulator) isOlderSpec(specID int32) bool {
+	return a.defaultSpecID != nil && specID != *a.defaultSpecID
+}
+
+// fieldsForSpec is the field list a file's partition tuple is read with: its own spec's,
+// not the default spec's. An older spec's field ids differ, so reading it with the default
+// fields made every old file look like one null partition.
+func (a *accumulator) fieldsForSpec(specID int32, defaultFields []protocol.ScanStatsPartitionField) []protocol.ScanStatsPartitionField {
+	if !a.isOlderSpec(specID) {
+		return defaultFields
+	}
+	return a.olderSpecFields[specID]
+}
+
+// partitionFor keys an older spec's partitions apart from the default spec's: after
+// bucket(16, id) -> bucket(32, id) both specs name the field id_bucket.
+func (a *accumulator) partitionFor(specID int32, values map[string]any) *partAccum {
+	key := partitionKey(values)
+	older := a.isOlderSpec(specID)
+	if older {
+		key = fmt.Sprintf("spec=%d/%s", specID, key)
+	}
+	acc := a.partitions[key]
+	if acc == nil {
+		id := specID
+		acc = &partAccum{values: values, specID: &id}
+		if older {
+			acc.fields = a.olderSpecFields[specID]
+			if acc.fields == nil {
+				acc.fields = []protocol.ScanStatsPartitionField{}
+			}
+		}
+		a.partitions[key] = acc
+	}
+	return acc
 }
 
 func (a *accumulator) countBelowTarget(size int64) {
@@ -736,21 +791,16 @@ func (a *accumulator) addDataFile(
 		// this. readDataFileMaps recovers from the same nil-partition-value panic as the
 		// data-file path; only `values` is needed here, nulls/vals are discarded since
 		// column stats never apply to delete-kind entries.
+		specFields := a.fieldsForSpec(df.SpecID(), fields)
 		_, _, values, note := readDataFileMaps(
 			df.NullValueCounts,
 			df.ValueCounts,
-			func() map[string]any { return partitionValues(df, fields) },
+			func() map[string]any { return partitionValues(df, specFields) },
 		)
 		if note != "" {
 			a.noteManifestError(note)
 		}
-		key := partitionKey(values)
-		acc := a.partitions[key]
-		if acc == nil {
-			specID := df.SpecID()
-			acc = &partAccum{values: values, specID: &specID}
-			a.partitions[key] = acc
-		}
+		acc := a.partitionFor(df.SpecID(), values)
 		acc.deleteFiles++
 		if kind == "equality" {
 			acc.equalityDeleteFiles++
@@ -770,10 +820,11 @@ func (a *accumulator) addDataFile(
 	// NullValueCounts/ValueCounts/Partition all call iceberg-go initializeMapData,
 	// which panics on nil date/timestamp partition values (v0.6.0). Recover per file
 	// so totals still land; column_quality / partition key may be degraded for that file.
+	specFields := a.fieldsForSpec(df.SpecID(), fields)
 	nulls, vals, values, note := readDataFileMaps(
 		df.NullValueCounts,
 		df.ValueCounts,
-		func() map[string]any { return partitionValues(df, fields) },
+		func() map[string]any { return partitionValues(df, specFields) },
 	)
 	if note != "" {
 		a.noteManifestError(note)
@@ -781,13 +832,7 @@ func (a *accumulator) addDataFile(
 	a.addColumnStats(nulls, vals)
 	a.addColumnBounds(df, nulls, vals)
 	a.addFileSample(df)
-	key := partitionKey(values)
-	acc := a.partitions[key]
-	if acc == nil {
-		specID := df.SpecID()
-		acc = &partAccum{values: values, specID: &specID}
-		a.partitions[key] = acc
-	}
+	acc := a.partitionFor(df.SpecID(), values)
 	acc.files++
 	acc.sizeBytes += size
 	if float64(size) < a.opts.SmallFileMB*float64(mb) {
@@ -1058,12 +1103,24 @@ func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) p
 		skew = math.Round((float64(maxFiles)/med)*10) / 10
 	}
 
+	var oldSpecPartitions int
+	var oldSpecFiles, oldSpecBytes int64
 	parts := make([]protocol.ScanStatsPartitionAccum, 0, len(a.partitions))
 	for key, acc := range a.partitions {
+		rowFields := a.fields
+		if acc.fields != nil {
+			rowFields = acc.fields
+			// Delete-only partitions hold no data to move into the new spec.
+			if acc.files > 0 {
+				oldSpecPartitions++
+				oldSpecFiles += int64(acc.files)
+				oldSpecBytes += acc.sizeBytes
+			}
+		}
 		partitionValue := key
 		// Match Python partition_row: first field in partition_fields order.
-		if len(a.fields) > 0 {
-			name := a.fields[0].PartitionField
+		if len(rowFields) > 0 {
+			name := rowFields[0].PartitionField
 			if v, ok := acc.values[name]; ok {
 				partitionValue = fmt.Sprint(v)
 			}
@@ -1090,6 +1147,7 @@ func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) p
 			PartitionValue:      partitionValue,
 			PartitionValues:     acc.values,
 			PartitionSpecID:     acc.specID,
+			PartitionFields:     acc.fields,
 			Files:               acc.files,
 			Small:               acc.small,
 			SizeBytes:           acc.sizeBytes,
@@ -1204,6 +1262,10 @@ func (a *accumulator) finish(schemaName, tableName string, meta *snapshotInfo) p
 		MaxFilesPerPartition: maxFiles,
 		AvgFilesPerPartition: avgFiles,
 		PartitionSkewRatio:   skew,
+		DefaultSpecID:        a.defaultSpecID,
+		OldSpecPartitions:    oldSpecPartitions,
+		OldSpecFiles:         oldSpecFiles,
+		OldSpecBytes:         oldSpecBytes,
 		FileFormats:          formats,
 		PartitionFields:      a.fields,
 		Partitions:           parts,

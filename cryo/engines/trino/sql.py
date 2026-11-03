@@ -84,6 +84,14 @@ def _render_operation(table_ref: str, operation: Operation, files_ref: str) -> R
         sql = _render_compute_statistics(table_ref, operation.params)
     elif operation.type is OperationType.EXPIRE_DATA:
         sql = render_expire_data_delete(table_ref, operation.params, quote="trino")
+    elif operation.type is OperationType.MIGRATE_PARTITION_SPEC:
+        # Trino enforces an OPTIMIZE WHERE only when every partition spec the table still
+        # uses can enforce it. An old-spec partition filter (a day range after a change to
+        # month, or a dropped identity column) cannot be, and OPTIMIZE fails planning.
+        raise UnsupportedPredicateError(
+            "migrate_partition_spec is not supported on Trino destinations; "
+            "route this table's spec migration to a Spark destination."
+        )
     elif operation.type is OperationType.REWRITE_POSITION_DELETES:
         # Trino has no ALTER TABLE EXECUTE equivalent of Iceberg's rewrite_position_delete_files
         # procedure (Spark-only as of the connectors this renderer targets). Route this

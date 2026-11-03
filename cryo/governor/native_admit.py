@@ -105,6 +105,7 @@ _SNAPSHOT_MUTATING_OPERATIONS: frozenset[OperationType] = frozenset(
         OperationType.OPTIMIZE_MANIFESTS,
         OperationType.CONVERT_DELETES,
         OperationType.REWRITE_POSITION_DELETES,
+        OperationType.MIGRATE_PARTITION_SPEC,
     }
 )
 

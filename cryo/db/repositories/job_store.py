@@ -664,6 +664,12 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         if trimmed is not None:
             operations = trimmed
             params["requested_operations"] = [op.value for op in trimmed]
+    # Never taken from a preset or a table override: build_execution_plan drops the operations
+    # it gates unless an approval request for this table names them.
+    params.pop("approved_operations", None)
+    approved = _approved_request_operations(session, job.table_id, params)
+    if approved:
+        params["approved_operations"] = approved
     actor_raw = summary.get("actor")
     actor = actor_raw if isinstance(actor_raw, str) and actor_raw else None
     # AutoComp (SIGMOD 2025): governor.decide_job_admission's min_benefit_score/min_moop_score
@@ -725,6 +731,30 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         requested_operations=(tuple(str(op) for op in job.operations) if job.operations else None),
         dedupe_key=job.dedupe_key,
     )
+
+
+_REQUEST_APPROVAL_GATED = (OperationType.MIGRATE_PARTITION_SPEC.value,)
+
+
+def _approved_request_operations(
+    session: Session, table_id: uuid.UUID, params: Mapping[str, Any]
+) -> list[str]:
+    requested = {str(op) for op in params.get("requested_operations") or ()}
+    gated = [op for op in _REQUEST_APPROVAL_GATED if op in requested]
+    if not gated:
+        return []
+    from cryo.workflows.approvals import ApprovalRequest, ApprovalStatus
+
+    rows = session.scalars(
+        select(ApprovalRequest.operation_type).where(
+            ApprovalRequest.table_id == table_id,
+            ApprovalRequest.operation_type.in_(gated),
+            ApprovalRequest.status == ApprovalStatus.APPROVED.value,
+            ApprovalRequest.executed_at.is_(None),
+            ApprovalRequest.expires_at > datetime.now(UTC),
+        )
+    )
+    return sorted(set(rows))
 
 
 def _intent_effect_destination_ids(intent: MaintenanceIntent | None) -> tuple[str, ...]:
@@ -926,6 +956,9 @@ def _latest_partitions(session: Session, table_id: uuid.UUID) -> Sequence[Mappin
             # compute_moop_scores scored these partitions.
             "compaction_benefit_score": row.compaction_benefit_score,
             "autocomp_traits": dict(row.autocomp_traits) if row.autocomp_traits else None,
+            # A row written under an older spec is filtered by that spec's own fields.
+            "partition_spec_id": row.partition_spec_id,
+            "partition_fields": list(row.partition_fields or []),
         }
         for row in rows
     ]

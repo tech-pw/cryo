@@ -111,7 +111,9 @@ def result_metrics_from_log(text: str | None) -> dict[str, Any] | None:
     return found
 
 
-_REWRITE_ACTIONS = frozenset({"optimize", "convert_deletes", "rewrite_position_deletes"})
+_REWRITE_ACTIONS = frozenset(
+    {"optimize", "convert_deletes", "rewrite_position_deletes", "migrate_partition_spec"}
+)
 
 
 def rewrite_file_counts(

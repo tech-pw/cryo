@@ -10,6 +10,7 @@ import {
 } from "../../api/maintenanceStatus";
 import { CompactionAnalysis } from "../../components/table-detail/maintenance/CompactionAnalysis";
 import { PathToAPanel } from "../../components/table-detail/maintenance/PathToAPanel";
+import { SpecMigrationCard } from "../../components/table-detail/maintenance/SpecMigrationCard";
 import { TableRunGrid } from "../../components/table-detail/runs/TableRunGrid";
 import { QueryErrorAlert } from "../../components/common";
 import { Badge } from "../../components/ui/badge";
@@ -213,6 +214,7 @@ export const MaintenanceTab = () => {
       <div className="td-mt-stage">
         <p className="td-mt-kicker">3 · Choose an action</p>
         <p className="td-mt-stage-description">Review a plan before running maintenance. Nightly eligibility and on-demand execution have separate checks.</p>
+        <SpecMigrationCard tableId={tableId} />
         <TableMaintenanceActions tableId={tableId} />
       </div>
       <div className="td-mt-stage">

@@ -13,6 +13,12 @@ All notable changes to Cryo will be documented in this file. The format is based
   `site/README.md` now describes how the published 720p copy is made.
 
 ### Added
+- Migrate to current partition spec: an on-request, approval-gated `migrate_partition_spec`
+  operation that rewrites partitions still written under an older partition spec, in
+  optimize's budgeted chunks, on Spark (Trino cannot filter old-spec partitions). The Maintain
+  tab shows what is left and the progress. Both scanners now read each file's partition values
+  with its own spec and record the old-spec totals, and Path to grade A no longer implies a
+  layout change migrates existing data on its own (#289).
 - Tables registry: an **Effective preset** column (preset, where it comes from, paused) and a
   **Coverage** filter with *On default* and *Unmaintained*. `GET /tables` rows carry
   `effective_preset`, and `GET /tables`, `/tables/group-by` and `/tables/export.csv` take
@@ -27,6 +33,17 @@ All notable changes to Cryo will be documented in this file. The format is based
   table lock as orphaned. When the sweep does end a job, it now releases the job's table lock
   and in-flight slot, and a second completion of the same job no longer drives the in-flight
   counter negative (#382).
+- A fleet scan whose catalog discovery failed no longer finishes `succeeded` with zero tables.
+  The chunk is `failed` when nothing was discovered and `partial_failed` when other sources
+  listed, and the discovery error becomes the run's `last_error`. A run with a `last_error` is
+  never reported `succeeded`. Discovery has its own timeout,
+  `CRYO_SCAN_DISCOVERY_TIMEOUT_SECONDS` (default 1800), instead of the per-table scan timeout,
+  and heartbeats the chunk while it lists (#380).
+- The missing-table reconcile no longer removes nothing once more than
+  `CRYO_SCAN_MISSING_TABLE_MAX_COUNT` (default 500) tables are missing. That count is now a
+  per-scan removal limit, applied to the tables last seen longest ago first, so a backlog drains
+  over several scans. `CRYO_SCAN_MISSING_TABLE_MAX_FRACTION` stays the catalog-outage guard
+  that removes nothing (#381).
 
 ### Changed
 - Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become

@@ -214,9 +214,14 @@ class ScanWorker:
                 logger.exception("Scan run %s failed", run_id)
                 return ScanWorkResult(run_id=run_id, status="failed")
 
+            discovery_error = _discovery_error(scan_summary)
             if scan_summary.cancelled:
                 status = "cancelled"
-            elif scan_summary.failed:
+            elif discovery_error and not scan_summary.discovered:
+                # Zero tables because listing failed is not an empty catalog (#380). Source-
+                # scoped chunks already raise for this in run_scan; a fleet chunk lands here.
+                status = "failed"
+            elif scan_summary.failed or discovery_error:
                 status = "partial_failed"
             else:
                 status = "succeeded"
@@ -241,7 +246,9 @@ class ScanWorker:
                     "removed_tables": list(scan_summary.removed_tables),
                     "new_tables_on_default": scan_summary.new_tables_on_default,
                 },
+                error=discovery_error,
             )
+            finished = f"Finished scan chunk {chunk_id + 1}/{num_chunks} with status {status}"
             safe_publish(
                 self._run_events,
                 parsed_run_id,
@@ -249,9 +256,7 @@ class ScanWorker:
                     run_id=parsed_run_id,
                     chunk_id=chunk_id,
                     level="warning" if status in {"partial_failed", "failed"} else "info",
-                    message=(
-                        f"Finished scan chunk {chunk_id + 1}/{num_chunks} with status {status}"
-                    ),
+                    message=f"{finished}: {discovery_error}" if discovery_error else finished,
                 ),
             )
             return ScanWorkResult(run_id=run_id, status=status, summary=scan_summary)
@@ -259,6 +264,14 @@ class ScanWorker:
     def _claim_accepted_run(self) -> dict[str, Any] | None:
         """DB fallback for stranded runs — atomically claims under row lock."""
         return scanner_repo.claim_next_stranded_scan_chunk(self._session_factory)
+
+
+def _discovery_error(summary: ScanSummary) -> str | None:
+    if not summary.discovery_errors:
+        return None
+    count = len(summary.discovery_errors)
+    noun = "source" if count == 1 else "sources"
+    return f"table discovery failed for {count} {noun}: " + "; ".join(summary.discovery_errors)
 
 
 def _parse_uuid(value: object) -> uuid.UUID | None:

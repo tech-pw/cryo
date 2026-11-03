@@ -457,6 +457,7 @@ Log exploration (Loki via Grafana Explore):
 | Cause | Action |
 |-------|--------|
 | Catalog timeout | Retry scan; increase scanner memory; reduce `num_chunks` temporarily |
+| Discovery timeout (`discover tables(<source>) exceeded …` in the run's `last_error`) | Listing the catalog took longer than `CRYO_SCAN_DISCOVERY_TIMEOUT_SECONDS` (default 1800). Raise it. It is separate from `CRYO_SCAN_TABLE_TIMEOUT_SECONDS`, which bounds one table. A chunk that discovered nothing because listing failed is `failed`. If other sources listed, it is `partial_failed`. Neither is reported `succeeded`. |
 | Auth failure | Rotate credentials in secret store; verify IRSA/SA role |
 | Single table error | Scanner isolates per-table failures; inspect `audit_logs` / table detail |
 | Scheduler disabled | PATCH `/api/v1/scanner/config` → `enabled: true` |
@@ -479,13 +480,18 @@ What keeps a bad listing from removing real tables:
 - Any discovery error in the scan skips the reconcile for that scan.
 - Out-of-allowlist schemas are never treated as dropped.
 - Mass guard: if more than `CRYO_SCAN_MISSING_TABLE_MAX_FRACTION` (default 0.2) of a source's
-  registered tables, or more than `CRYO_SCAN_MISSING_TABLE_MAX_COUNT` (default 500), would be
-  removed, nothing is removed. The scan writes a `missing_table_reconcile_aborted` audit row
-  and increments `cryo_missing_table_reconcile_aborted_total`. The fraction is ignored for
+  registered tables would be removed, nothing is removed. The scan writes a
+  `missing_table_reconcile_aborted` audit row and increments
+  `cryo_missing_table_reconcile_aborted_total`. The fraction is ignored for
   `CRYO_SCAN_MISSING_TABLE_GUARD_MIN_COUNT` (default 5) or fewer removals.
+- Per-scan limit: one scan removes at most `CRYO_SCAN_MISSING_TABLE_MAX_COUNT` (default 500)
+  tables per source. The ones Cryo last saw longest ago go first (last successful scan, or
+  registration time if never scanned). The rest are removed by the next scans, and each capped
+  scan writes a `missing_table_reconcile_capped` audit row with the remainder. A backlog of
+  1,200 missing tables drains in three scans.
 
 Turn it off with `CRYO_SCAN_REMOVE_MISSING_TABLES_ENABLED=false`. After a guard abort, check
-the catalog. If the drop was real, raise the limits for one scan.
+the catalog. If the drop was real, raise `CRYO_SCAN_MISSING_TABLE_MAX_FRACTION` for one scan.
 
 ### Unmatched tables (no effective preset)
 

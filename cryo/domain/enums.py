@@ -16,6 +16,9 @@ class OperationType(StrEnum):
     # is the "major" path for this same problem -- distinct type for audit-log clarity).
     REWRITE_POSITION_DELETES = "rewrite_position_deletes"
     EXPIRE_DATA = "expire_data"
+    # Rewrites every file of the partitions still in an older partition spec, so they move
+    # into the table's default spec. Planned only on request, and approval-gated (#289).
+    MIGRATE_PARTITION_SPEC = "migrate_partition_spec"
 
 
 class EngineType(StrEnum):
