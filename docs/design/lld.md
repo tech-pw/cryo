@@ -857,6 +857,25 @@ take the signal bypass in `_gate_admission`: cooldown, off-peak windows, deadlin
 engine load and the per-table lock all apply. Audit actions: `continuous_trigger`,
 `continuous_coalesced`, `continuous_deferred` (once per reason change), `continuous_rescan`.
 
+Commit conflicts (any job, not only continuous ones). `cryo/engines/base.py::is_commit_conflict`
+recognises a lost optimistic commit (Iceberg `CommitFailedException`, Spark "Found conflicting
+files", REST "branch main has changed", Trino `ICEBERG_COMMIT_ERROR`) and never a
+`CommitStateUnknownException`. The worker handles one in three steps:
+
+```
+1. retry   re-run the statement in place, worker_commit_conflict_retries times (default 1),
+           backoff worker_commit_conflict_retry_backoff_seconds * attempt. Not for durable-intent
+           jobs: their effect receipt resolves once per attempt.
+2. re-plan every failure of the job a conflict -> DEFERRED "commit_conflict: n of K". The
+           deferred-job reconciler re-queues it and the worker builds a new plan on its next run.
+3. give up n > worker_commit_conflict_max_deferrals (K, default 3) -> FAILED, or PARTIAL if
+           other operations landed, plus a commit_conflict_give_up audit row.
+```
+
+`n` is the count of the job's audit rows whose detail starts with `[commit_conflict]`. The count
+comes from the audit log because the reconciler rewrites a deferred job's `error`. A conflict
+mixed with any other failure follows the normal FAILED/PARTIAL path.
+
 ---
 
 ## 10. Governor (`cryo/governor`) — wave scheduler / admission control

@@ -27,6 +27,7 @@ from cryo.db.models import (
 from cryo.db.repositories.job_dedupe import supersede_covered_jobs
 from cryo.db.repositories.operation_exclusions import excluded_operations
 from cryo.domain.enums import JobStatus, Mode, OperationType
+from cryo.engines.base import COMMIT_CONFLICT_MARKER
 from cryo.observability.correlation import correlation_id_from_summary
 from cryo.worker.worker import (
     AuditRecord,
@@ -232,6 +233,45 @@ class SQLJobStore:
         with self._session_factory() as session:
             job = _load_job(session, uuid.UUID(job_id))
             job.engine_ref = engine_ref
+            session.commit()
+
+    def count_commit_conflicts(self, job_id: str) -> int:
+        with self._session_factory() as session:
+            return int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(AuditLog)
+                    .where(
+                        AuditLog.job_id == uuid.UUID(job_id),
+                        AuditLog.detail.startswith(COMMIT_CONFLICT_MARKER, autoescape=True),
+                    )
+                )
+                or 0
+            )
+
+    def record_job_event(
+        self,
+        *,
+        job_id: str,
+        table_id: str,
+        action: str,
+        status: str,
+        detail: str | None,
+        actor: str | None,
+    ) -> None:
+        """Audit a job-level event that is not one maintenance operation."""
+        with self._session_factory() as session:
+            session.add(
+                AuditLog(
+                    table_id=uuid.UUID(table_id),
+                    job_id=uuid.UUID(job_id),
+                    action=action,
+                    status=status,
+                    engine="worker",
+                    detail=detail,
+                    actor=actor,
+                )
+            )
             session.commit()
 
     def record_audit(self, record: AuditRecord) -> None:

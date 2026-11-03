@@ -478,6 +478,35 @@ def test_rate_limited_tables_are_deferred_with_one_audit_per_reason() -> None:
     assert score == (NOW + timedelta(minutes=30)).timestamp()
 
 
+def test_a_burst_of_100_commits_in_5_minutes_produces_one_job() -> None:
+    start = NOW - timedelta(hours=1)
+    state = _State(drift=DriftView(), scan_at=start)
+    harness = _Harness(state)
+    for commit in range(100):
+        at = start + timedelta(seconds=3 * commit)
+        state.drift = DriftView(
+            commits=commit + 1,
+            first_commit_at=start,
+            last_commit_at=at,
+        )
+        _publish(harness.redis, "t1", 1000 + commit)
+        harness.tick(at)
+        if harness.submitted and not harness.coverage:
+            harness.coverage["t1"] = [ActiveJob(job_id="job-1", operations=frozenset({"optimize"}))]
+            state.history = History(last_continuous_at=at, runs_last_hour=1, runs_last_day=1)
+    burst_end = start + timedelta(minutes=5)
+    for minute in range(1, 31):
+        at = burst_end + timedelta(minutes=minute)
+        harness.tick(at)
+        if harness.submitted and not harness.coverage:
+            harness.coverage["t1"] = [ActiveJob(job_id="job-1", operations=frozenset({"optimize"}))]
+            state.history = History(last_continuous_at=at, runs_last_hour=1, runs_last_day=1)
+
+    assert len(harness.submitted) == 1
+    assert harness.submitted[0].trigger == "continuous:commits"
+    assert harness.actions().count(AUDIT_TRIGGER) == 1
+
+
 def test_a_stale_scan_requests_a_rescan_before_planning() -> None:
     state = _State(drift=_drift(), scan_at=NOW - timedelta(days=1))
     harness = _Harness(state, rescan_wait_seconds=1800)

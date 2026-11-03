@@ -30,6 +30,7 @@ from cryo.db.models import (
 )
 from cryo.db.repositories import presets as preset_repo
 from cryo.db.tenant_scope import get_scoped_resource, require_tenant, scope_by_tenant, scoped_select
+from cryo.engines.base import COMMIT_CONFLICT_GIVE_UP_ACTION
 from cryo.reporting.maintenance_coverage import coverage_to_payload, measure_cohort_coverage
 from cryo.reporting.vitals import compute_cryo_vitals, cryo_vitals_to_payload
 from cryo.scheduler.continuous import AUDIT_ACTIONS as CONTINUOUS_AUDIT_ACTIONS
@@ -653,7 +654,9 @@ def get_table_health_trends(
     )
 
 
-_NON_OPERATION_AUDIT_ACTIONS = frozenset({"force_admit"}) | CONTINUOUS_AUDIT_ACTIONS
+_NON_OPERATION_AUDIT_ACTIONS = (
+    frozenset({"force_admit", COMMIT_CONFLICT_GIVE_UP_ACTION}) | CONTINUOUS_AUDIT_ACTIONS
+)
 _STATEMENT_PREFIXES = ("select ", "alter ", "execute ", "call ", "optimize ", "with ", "native:")
 
 

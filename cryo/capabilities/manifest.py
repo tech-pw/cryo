@@ -672,6 +672,8 @@ _SCHEDULING = (
             "Requires the `cryo events` process (Helm `events.enabled`).",
             "Watches at most `events_probe_max_tables_per_poll` tables per poll.",
             "Not load-tested against a real 1,000-table catalog.",
+            "A commit lost to a concurrent writer is retried once, then re-planned, and the "
+            "job fails after `worker_commit_conflict_max_deferrals` conflicts.",
         ),
         owner="scheduler",
         evidence=_evidence(

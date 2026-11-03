@@ -43,6 +43,9 @@ print.
 | `CRYO_CONTINUOUS_EVALUATIONS_PER_TICK` | `int` | `50` | Pending tables the scheduler evaluates per tick, soonest due first. |
 | `CRYO_CONTINUOUS_DRIFT_SWEEP_SECONDS` | `float` | `300.0` | Seconds between sweeps of cryo.table_drift that re-add drifted tables to the pending set, so drift survives a Redis restart or a trimmed stream. |
 | `CRYO_CONTINUOUS_RESCAN_WAIT_SECONDS` | `int` | `1800` | How long a due table waits for the targeted rescan it requested before being maintained from its older scan stats anyway. 0 skips the rescan. |
+| `CRYO_WORKER_COMMIT_CONFLICT_RETRIES` | `int` | `1` | Times the worker re-runs one operation in place after it loses its commit to a concurrent writer. Only for jobs without a durable intent; a lost commit leaves the table unchanged, so the re-run is safe. |
+| `CRYO_WORKER_COMMIT_CONFLICT_RETRY_BACKOFF_SECONDS` | `float` | `5.0` | Seconds before each in-place re-run, multiplied by the attempt number. |
+| `CRYO_WORKER_COMMIT_CONFLICT_MAX_DEFERRALS` | `int` | `3` | Commit conflicts one job may hit before it stops deferring and fails. Below the limit the job is deferred, re-queued by the reconciler and re-planned from the table's current stats. 0 fails on the first conflict that survives the in-place re-runs. |
 | `CRYO_REPORT_COST_DOD_SPIKE_PCT` | `float` | `10.0` | Day-over-day fleet cost increase (%) that flags a spike. |
 | `CRYO_REPORT_COST_DOD_DECLINE_PCT` | `float` | `30.0` | Day-over-day fleet cost decrease (%) that flags a decline worth noting. |
 | `CRYO_REPORT_COST_WOW_SPIKE_PCT` | `float` | `15.0` | Week-over-week fleet cost increase (%) that flags a spike. |

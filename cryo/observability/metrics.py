@@ -148,6 +148,12 @@ continuous_pending_tables = Gauge(
 
 # ==================== Worker Metrics ====================
 
+worker_commit_conflicts_total = Counter(
+    "cryo_worker_commit_conflicts_total",
+    "Maintenance commits lost to a concurrent writer, by what the worker did next.",
+    ["outcome"],  # outcome: retried, deferred, gave_up
+)
+
 worker_job_duration_seconds = Histogram(
     "cryo_worker_job_duration_seconds",
     "Duration of worker job execution",

@@ -145,6 +145,30 @@ class Settings(BaseSettings):
             "maintained from its older scan stats anyway. 0 skips the rescan."
         ),
     )
+    worker_commit_conflict_retries: int = Field(
+        default=1,
+        ge=0,
+        description=(
+            "Times the worker re-runs one operation in place after it loses its commit to a "
+            "concurrent writer. Only for jobs without a durable intent; a lost commit leaves "
+            "the table unchanged, so the re-run is safe."
+        ),
+    )
+    worker_commit_conflict_retry_backoff_seconds: float = Field(
+        default=5.0,
+        ge=0,
+        description="Seconds before each in-place re-run, multiplied by the attempt number.",
+    )
+    worker_commit_conflict_max_deferrals: int = Field(
+        default=3,
+        ge=0,
+        description=(
+            "Commit conflicts one job may hit before it stops deferring and fails. Below the "
+            "limit the job is deferred, re-queued by the reconciler and re-planned from the "
+            "table's current stats. 0 fails on the first conflict that survives the in-place "
+            "re-runs."
+        ),
+    )
 
     # Fleet-cost day-over-day / week-over-week spike & decline thresholds for the daily
     # report (see cryo/reporting/cost_signals.py). Defaults are reasonable starting points,

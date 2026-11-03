@@ -601,12 +601,24 @@ What to watch:
 | `cryo_continuous_deferrals_total{reason}` | `min_interval`, `rate_limit_hour`, `rate_limit_day`, `churn_cap` |
 | `cryo_continuous_pending_tables` | Tables waiting for evaluation |
 | `cryo_continuous_drift_to_completion_seconds` | First drift commit to the job that reset it |
+| `cryo_worker_commit_conflicts_total{outcome}` | Lost commits: `retried`, `deferred`, `gave_up` |
 
 Every trigger, coalesce, deferral and rescan writes an `audit_log` row with
 `origin=continuous`. The row's actions are `continuous_trigger`, `continuous_coalesced`,
 `continuous_deferred` and `continuous_rescan`. The detail carries the signal, the measured
 value and the threshold. A steadily rising `rate_limit_*` or `churn_cap` count means the
 thresholds are tighter than the limits allow: raise the thresholds rather than the limits.
+
+Commit conflicts. A maintenance commit loses when a writer commits to the same table first.
+Iceberg rejects the commit and leaves the table unchanged. The worker re-runs the operation once
+in place (`CRYO_WORKER_COMMIT_CONFLICT_RETRIES`, backoff
+`CRYO_WORKER_COMMIT_CONFLICT_RETRY_BACKOFF_SECONDS`). If every failure of the job is still a
+conflict, the job is deferred with `commit_conflict: n of K`. The reconciler re-queues it and
+it is re-planned from current stats. After `CRYO_WORKER_COMMIT_CONFLICT_MAX_DEFERRALS`
+conflicts (default 3) it fails with a `commit_conflict_give_up` audit row.
+`cryo_worker_commit_conflicts_total{outcome}` counts `retried`, `deferred` and `gave_up`.
+Steady `gave_up` on one table means maintenance is racing a writer that never pauses. Raise
+`debounce_seconds`, or move the table's window off the writer's busy hours.
 
 ### API memory / OOM (cryo-api)
 
