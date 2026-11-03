@@ -504,7 +504,7 @@ def execute_layout_recommendation(
     # Regression, 2026-08-11: recommended_columns comes straight from QueryPattern.column_name
     # telemetry (get_recommended_sort_columns in cryo/telemetry/patterns.py), which is never
     # validated against the table's real Iceberg schema. Confirmed live on
-    # lsq_pw.silver_prospect_activity_base: the recommendation included 'mx_customobject_1'
+    # crm.silver_prospect_activity_base: the recommendation included 'mx_customobject_1'
     # (not a real column -- almost certainly a query alias picked up from log parsing) and
     # 'activityevent' (real column is 'ActivityEvent', case mismatch) -- both dispatched a real
     # Spark job that failed deep in a Java stack trace with

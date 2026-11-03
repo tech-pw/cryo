@@ -76,11 +76,11 @@ A backend service ran this query pattern 11,610 times over 7 days, averaging **3
 ```sql
 WITH target_prospect AS (
   SELECT RelatedProspectId
-  FROM lsq_pw.silver_prospect_activity_base
+  FROM crm.silver_prospect_activity_base
   WHERE ProspectActivityAutoId = ${id}
   ORDER BY modifiedon DESC LIMIT 1)
 SELECT p.phone
-FROM lsq_pw.silver_prospect_base p
+FROM crm.silver_prospect_base p
 JOIN target_prospect t ON p.prospectid = t.RelatedProspectId
 ORDER BY CAST(p.lastmodifiedon AS TIMESTAMP) DESC LIMIT 1
 ```
@@ -105,14 +105,14 @@ This is precisely the pattern Iceberg's own partitioning guidance recommends for
 While verifying the  fix's own effectiveness (via a newly-available `mcp-trino` connection, 2026-08-19), the following was measured directly against the real, already-built table:
 
 ```sql
-SELECT count(*) FROM cdp.lsq_pw.gold_dbt_lsq_pw_prospect_activity_phone_lookup;
+SELECT count(*) FROM analytics.crm.gold_dbt_prospect_activity_phone_lookup;
 -- 1,099,271,900 rows
 ```
 
 A real point-lookup query was executed and its actual wall time measured via `system.runtime.queries`:
 
 ```sql
-SELECT phone FROM cdp.lsq_pw.gold_dbt_lsq_pw_prospect_activity_phone_lookup
+SELECT phone FROM analytics.crm.gold_dbt_prospect_activity_phone_lookup
 WHERE prospectactivityautoid = 3553216;
 -- wall_time: 5,345 ms
 ```
@@ -122,7 +122,7 @@ WHERE prospectactivityautoid = 3553216;
 ```sql
 SELECT count(*) AS file_count, sum(file_size_in_bytes) AS total_bytes,
        avg(file_size_in_bytes) AS avg_file_bytes
-FROM cdp.lsq_pw."gold_dbt_lsq_pw_prospect_activity_phone_lookup$files";
+FROM analytics.crm."gold_dbt_prospect_activity_phone_lookup$files";
 
 -- file_count:       129,375
 -- total_bytes:       39,927,202,046  (~37.2 GB)
@@ -396,4 +396,4 @@ Build order was executed as planned (3 → 1 → 4 → 2). Shared infrastructure
 - **[AutoComp: Automated Data Compaction Framework (arXiv:2504.04186)](https://arxiv.org/html/2504.04186v1)** — LinkedIn production research paper; the direct lineage source for Cryo's existing AutoComp-named compaction-candidate ranking.
 - Internal: the dbt Iceberg best-practices guide — the mandatory house standards this session's  fix and this RFC's targets (100MB–1GB partitions, 128MB–1GB files, delete+insert-over-merge guidance) are both drawn from.
 - Internal: Jira  (parent , "S3 and Trino Cost Reduction Initiative") — full ticket, root-cause writeup, and the original query pattern.
-- Internal: live measurements against `cdp.lsq_pw.gold_dbt_lsq_pw_prospect_activity_phone_lookup`, taken 2026-08-19 via the `mcp-trino` connection (§1.2) — row count, wall-clock timing, and `$files` metadata, all directly queried, not estimated.
+- Internal: live measurements against `analytics.crm.gold_dbt_prospect_activity_phone_lookup`, taken 2026-08-19 via the `mcp-trino` connection (§1.2) — row count, wall-clock timing, and `$files` metadata, all directly queried, not estimated.

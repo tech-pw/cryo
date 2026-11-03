@@ -80,7 +80,7 @@ Example source payload:
     "uri": "http://localhost:8181",
     "warehouse": "s3://warehouse/"
   },
-  "maintenance_schema_names": ["analytics", "cdp"],
+  "maintenance_schema_names": ["analytics", "marts"],
   "enabled": true
 }
 ```

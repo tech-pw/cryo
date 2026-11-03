@@ -226,8 +226,9 @@ def test_expire_submit_disables_broadcast_and_sizes_the_driver_from_file_count()
     client = SparkK8sClient(SparkK8sConfig(namespace="cryo"))
     with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
         client.submit_spark_sql(
-            "CALL cdp.system.expire_snapshots(table => 'cdp.unified_bq.gold_dbt_pw_bq')",
-            catalog="cdp",
+            "CALL analytics.system.expire_snapshots("
+            "table => 'analytics.events.gold_dbt_events_wide')",
+            catalog="analytics",
             operation="expire_snapshots",
             total_files=179_020,
         )
