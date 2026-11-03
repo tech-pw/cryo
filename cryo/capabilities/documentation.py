@@ -134,16 +134,10 @@ def render_capabilities_markdown(
         ]
     )
     lines.extend(
-        "| {label} (`{trigger}`) | **{maturity}** | {summary} | {limitations} | `{owner}` | "
-        "{evidence} |".format(
-            label=_escape(item.label),
-            trigger=_escape(item.trigger),
-            maturity=item.maturity.value.upper(),
-            summary=_escape(item.summary),
-            limitations=_join(item.limitations),
-            owner=_escape(item.owner),
-            evidence=_evidence_links(item.evidence),
-        )
+        f"| {_escape(item.label)} (`{_escape(item.trigger)}`) "
+        f"| **{item.maturity.value.upper()}** | {_escape(item.summary)} "
+        f"| {_join(item.limitations)} | `{_escape(item.owner)}` "
+        f"| {_evidence_links(item.evidence)} |"
         for item in manifest.scheduling
     )
 
