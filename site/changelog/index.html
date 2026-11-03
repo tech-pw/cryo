@@ -52,6 +52,9 @@
 </ul>
 <h3 id="unreleased-fixed">Fixed<a class="anchor" href="#unreleased-fixed" aria-label="Link to Fixed">#</a></h3>
 <ul>
+  <li>The Go scan subprocess now gets <code>GOMEMLIMIT</code> at 75% of the container memory limit (or <code>CRYO_SCAN_ENGINE_MEMLIMIT</code> when set), so one large table is collected inside the scanner pod instead of OOM-killing it. The table name is logged before the subprocess starts, and a kill (signal 9) is recorded as that table's scan failure, which the existing retry ladder backs off (#378).</li>
+</ul>
+<ul>
   <li>The governor's in-flight rebuild no longer fails on Postgres. <code>in_flight_counts</code> grouped by a second copy of <code>coalesce(replica, 'default')</code>, which Postgres rejects, so the correction never ran and capacity could drift toward zero. The query now groups by the same expression (#375).</li>
   <li><code>make seed-fragmented</code>, <code>make seed-docker</code> and <code>make smoke-file-counts</code> pointed the Spark container at <code>localhost:8181</code>, which inside the container is not the REST catalog. They now use <code>iceberg-rest:8181</code> (#217).</li>
 </ul>

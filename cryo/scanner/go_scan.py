@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import statistics
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -34,6 +36,14 @@ from cryo.scanner.health import compute_design_findings, compute_health_score
 from cryo.scanner.signals import enrich_stats_signals, manifest_stats
 
 logger = logging.getLogger(__name__)
+
+# cgroup v1 reports "no limit" as a page-rounded value near 2^63. Anything at or above this
+# is not a container limit, so it must not become a GOMEMLIMIT.
+_NO_CGROUP_LIMIT = 1 << 60
+_CGROUP_MEMORY_FILES = (
+    "/sys/fs/cgroup/memory.max",
+    "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+)
 
 
 def analyze_catalog_table_go(
@@ -120,6 +130,40 @@ def _parse_engine_payload(
     raise RuntimeError(detail)
 
 
+def cgroup_memory_limit_bytes(
+    paths: Sequence[str] = _CGROUP_MEMORY_FILES,
+) -> int | None:
+    """Container memory limit from the cgroup, or None when this process is unlimited."""
+    for path in paths:
+        try:
+            raw = open(path).read().strip()
+        except OSError:
+            continue
+        if not raw or raw == "max":
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        if value <= 0 or value >= _NO_CGROUP_LIMIT:
+            continue
+        return value
+    return None
+
+
+def scan_engine_gomemlimit(settings: Settings) -> str | None:
+    """GOMEMLIMIT for one scan subprocess. None leaves the Go default in place."""
+    explicit = settings.scan_engine_memlimit.strip()
+    if explicit:
+        return explicit
+    if settings.scan_engine_memlimit_ratio <= 0:
+        return None
+    limit = cgroup_memory_limit_bytes()
+    if limit is None:
+        return None
+    return str(int(limit * settings.scan_engine_memlimit_ratio))
+
+
 def run_scan_stats(
     request: Mapping[str, Any],
     *,
@@ -132,14 +176,30 @@ def run_scan_stats(
     if not binary:
         raise RuntimeError("cryo-engine-go binary not found for scan-stats")
 
+    table_ref = str(request.get("table_ref") or "unknown")
+    memlimit = scan_engine_gomemlimit(settings)
+    # Emitted before the subprocess starts. If the kernel still OOM-kills the pod, this is
+    # the line that names the table (#378).
+    logger.warning("scan-stats starting table=%s gomemlimit=%s", table_ref, memlimit or "unset")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    env = os.environ.copy()
+    if memlimit is not None:
+        env["GOMEMLIMIT"] = memlimit
     proc = subprocess.run(
         [binary, "scan-stats"],
         input=json.dumps(request).encode("utf-8"),
         capture_output=True,
         check=False,
+        env=env,
     )
     stdout = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
     stderr = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+    if proc.returncode in {-9, 137}:
+        raise RuntimeError(
+            f"scan-stats was killed (signal 9) while scanning {table_ref}; "
+            "the table exceeded the scanner memory limit"
+        )
     if not stdout:
         raise RuntimeError(
             f"scan-stats produced no JSON (exit={proc.returncode}): {stderr or 'empty stderr'}"
