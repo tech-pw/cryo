@@ -27,6 +27,10 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 - Migration `20261103_1200` gives every foreign key to `tables`, `jobs` and `maintenance_intents` an `ON DELETE` action (NOT NULL columns cascade, nullable ones are set to NULL) and adds four indexes concurrently. Constraints are re-added `NOT VALID` and validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
+### Fixed
+
+- Native `expire_snapshots` now deletes the files only the expired snapshots referenced, as Spark and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests, and shared-location tables (none of which plan `remove_orphan_files`) leaked them (#374).
+
 ### Changed
 
 - Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become skipped with `cancelled: preset paused`). Admitted and running jobs finish, and a run left with nothing active is marked cancelled. Before, queued jobs drained after a pause (#330).
