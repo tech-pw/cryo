@@ -479,13 +479,18 @@ What keeps a bad listing from removing real tables:
 - Any discovery error in the scan skips the reconcile for that scan.
 - Out-of-allowlist schemas are never treated as dropped.
 - Mass guard: if more than `CRYO_SCAN_MISSING_TABLE_MAX_FRACTION` (default 0.2) of a source's
-  registered tables, or more than `CRYO_SCAN_MISSING_TABLE_MAX_COUNT` (default 500), would be
-  removed, nothing is removed. The scan writes a `missing_table_reconcile_aborted` audit row
-  and increments `cryo_missing_table_reconcile_aborted_total`. The fraction is ignored for
+  registered tables would be removed, nothing is removed. The scan writes a
+  `missing_table_reconcile_aborted` audit row and increments
+  `cryo_missing_table_reconcile_aborted_total`. The fraction is ignored for
   `CRYO_SCAN_MISSING_TABLE_GUARD_MIN_COUNT` (default 5) or fewer removals.
+- Per-scan limit: one scan removes at most `CRYO_SCAN_MISSING_TABLE_MAX_COUNT` (default 500)
+  tables per source. The ones Cryo last saw longest ago go first (last successful scan, or
+  registration time if never scanned). The rest are removed by the next scans, and each capped
+  scan writes a `missing_table_reconcile_capped` audit row with the remainder. A backlog of
+  1,200 missing tables drains in three scans.
 
 Turn it off with `CRYO_SCAN_REMOVE_MISSING_TABLES_ENABLED=false`. After a guard abort, check
-the catalog. If the drop was real, raise the limits for one scan.
+the catalog. If the drop was real, raise `CRYO_SCAN_MISSING_TABLE_MAX_FRACTION` for one scan.
 
 ### Unmatched tables (no effective preset)
 
