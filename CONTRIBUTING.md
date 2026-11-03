@@ -95,6 +95,8 @@ cd engine-go && CGO_ENABLED=0 go test -v ./internal/ops -run TestName
 ```
 
 `make test` is not "all tests". CI also runs the Go engine tests (`go test ./...` in `engine-go`) and `make web-test`.
+Every PR also runs two secret scanners, gitleaks and trufflehog, over the PR's commits. See
+[`SECURITY.md`](./SECURITY.md#secret-scanning) for what each one fails on.
 Opt-in stacks: `make test-hms-integration`, `make test-native-e2e-local-go`.
 
 ### 4. Code Quality

@@ -21,6 +21,10 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 - `README.md` opens with a 25-second loop of the real UI on demo data (Tables, a health grade, the run review, the run receipt), with an MP4 copy. `make web-demo-loop` re-records it from `web/e2e/docs-capture/demo-loop.ts` (#279). The homepage film already ends on the ice-cube mark (re-rendered in October), so the 0.2.0 note that it still showed the old mark is out of date; `site/README.md` now describes how the published 720p copy is made.
 
+### Security
+
+- CI runs trufflehog alongside gitleaks: on every PR and push to `main` over the new commits, and weekly over the full history. It fails on verified credentials, and on credentials whose verification errored outside the connection-string detectors (#203).
+
 ## [0.2.0](https://github.com/tech-pw/cryo/compare/v0.1.5...v0.2.0) — 2026-11-03
 
 First tagged release since v0.1.5. GitHub release notes group the 180+ merged pull requests; the highlights are below.

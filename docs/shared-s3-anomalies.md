@@ -4,8 +4,8 @@ Catalog names are pointers. The Iceberg table is the **S3 warehouse prefix**. Tw
 (or a name nested under another table's prefix) share one physical table. `DROP TABLE`,
 snapshot expiry, and orphan-file removal on either name delete the other's files.
 
-This is the detector added after
-[`docs/incidents/rca-cdp-catalog-evolving-shared-s3-drop.md`](./incidents/rca-cdp-catalog-evolving-shared-s3-drop.md).
+This is the detector added after a production incident where dropping one catalog name
+deleted the files of another table that shared its warehouse prefix.
 It is **not** the ML fleet anomaly detector (`GET /api/v1/advanced/anomalies`).
 
 ## What counts as a collision

@@ -117,6 +117,30 @@ def next_cron_tick(
     return probe
 
 
+def next_cron_fire_after(
+    expression: str | None,
+    *,
+    after: datetime,
+    within: timedelta,
+    tz: TzInfo | str | None = None,
+) -> datetime | None:
+    """First fire time strictly after ``after``'s minute, or None if none falls within
+    ``within`` of it (or the expression is invalid). Bounded, unlike next_cron_tick."""
+    if not expression or not validate_cron_expression(expression):
+        return None
+    start = _ensure_aware(after)
+    if tz is not None:
+        start = start.astimezone(_coerce_tz(tz))
+    fields = normalize_cron_expression(expression).split()
+    probe = start.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    end = start + within
+    while probe <= end:
+        if _fields_match_minute(fields, probe):
+            return probe
+        probe += timedelta(minutes=1)
+    return None
+
+
 def validate_cron_expression(expression: str | None, *, raise_error: bool = False) -> bool:
     """Validate the simple 5-field cron subset supported by Cryo."""
     if not expression:

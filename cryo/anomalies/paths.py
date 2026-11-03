@@ -2,7 +2,7 @@
 
 Two catalog names that share a warehouse (exact prefix, or one nested under the
 other) are one physical table. DROP / expire / orphan-remove on either name
-deletes the other's files. See ``docs/incidents/rca-cdp-catalog-evolving-shared-s3-drop.md``.
+deletes the other's files. See ``docs/shared-s3-anomalies.md``.
 """
 
 from __future__ import annotations

@@ -617,6 +617,9 @@ class PresetSimulationResponse(BaseModel):
     sample: list[PresetSampleTable]
 
 
+PresetProvenance = Literal["assignment", "rule", "rule_after_stale_pin", "default", "none"]
+
+
 class EffectivePresetResponse(BaseModel):
     table_id: uuid.UUID
     preset_id: uuid.UUID | None = None
@@ -628,7 +631,7 @@ class EffectivePresetResponse(BaseModel):
     # that provenance value, so any table actually hitting that fallback path (e.g.
     # user_experience.silver_results) 500'd on every /effective-preset call instead of
     # reporting the (correct, safer-than-None) rule match it resolved to.
-    provenance: Literal["assignment", "rule", "rule_after_stale_pin", "default", "none"]
+    provenance: PresetProvenance
     rule_id: uuid.UUID | None = None
 
 
@@ -1012,7 +1015,7 @@ class RunEffectivenessRead(BaseModel):
     """File-count and byte-size reduction reported as separate, independently-signed
     percentages -- not one blended number. S3 request cost scales with file *count*, not
     bytes, so a run that cuts file count 90% while barely moving total bytes (confirmed live,
-    2026-08-10: mview.gold_dbt_drip_marketing_flow, 2,549 -> 268 files, size -4%) is a large
+    2026-08-10: mart.gold_dbt_drip_marketing_flow, 2,549 -> 268 files, size -4%) is a large
     real win that a size-only summary would undersell. See docs/open-items-2026-08-10.md."""
 
     file_count_reduction_pct: float | None = None
