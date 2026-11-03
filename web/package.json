@@ -16,6 +16,8 @@
     "impeccable:detect": "cd .. && npx --yes impeccable detect web/src --json",
     "quality": "npm run typecheck && npm run check:styles-budget && npm run test",
     "check:styles-budget": "node scripts/check-styles-budget.mjs",
+    "capture:docs": "playwright test -c e2e/docs-capture/playwright.config.ts",
+    "capture:demo-loop": "DOCS_CAPTURE_LOOP=1 playwright test -c e2e/docs-capture/playwright.config.ts",
     "gen:api": "openapi-typescript http://localhost:8000/openapi.json -o src/api/openapi.d.ts"
   },
   "dependencies": {
@@ -36,7 +38,7 @@
     "@radix-ui/react-tooltip": "^1.4.1",
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-query": "^5.104.5",
-    "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-table": "^9.3.1",
     "@tanstack/react-virtual": "^3.14.17",
     "@types/d3-force": "^3.0.10",
     "class-variance-authority": "^0.7.1",

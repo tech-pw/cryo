@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ColumnDef, RowSelectionState } from "@tanstack/react-table";
+import type { RowSelectionState } from "@tanstack/react-table";
 import { Archive, Check, CircleAlert, CircleHelp, Copy, RotateCcw, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../../../api/client";
@@ -13,7 +13,7 @@ import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
 import { Card } from "../../ui/card";
 import { Checkbox } from "../../ui/checkbox";
-import { DataTable } from "../../ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../ui/data-table";
 import {
   Dialog,
   DialogContent,
@@ -432,7 +432,7 @@ export const ArchivePanel = ({ tableId }: { tableId: string }) => {
     : "INTELLIGENT_TIERING";
   const readyCount = summary.data ? Math.max(0, summary.data.eligible_count - (summary.data.archived_partitions ?? 0)) : 0;
 
-  const columns = useMemo<ColumnDef<ArchivePartition, unknown>[]>(
+  const columns = useMemo<DataTableColumnDef<ArchivePartition, unknown>[]>(
     () => [
       {
         id: "partition",
