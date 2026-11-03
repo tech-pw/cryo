@@ -158,28 +158,40 @@ describe("FilesTabPanel", () => {
     expect(screen.getByRole("heading", { name: "Layout analysis (WAIR: workload-aware reclustering)" })).toBeInTheDocument();
   });
 
-  it("reads a null null rate as Not measured and sorts it after measured columns", async () => {
-    getTable.mockResolvedValue(
-      tableShell({
-        partition_col: "event_ts",
-        raw: {
-          column_quality: [
-            { column_name: "aaa", column_type: "string", null_rate: null },
-            { column_name: "zzz", column_type: "bigint", null_rate: 0.2 }
-          ]
-        }
-      })
-    );
+  it("reads a null null rate as Not measured, sorts it after measured columns, and tolerates missing scrollIntoView", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: undefined
+    });
 
-    renderPanel("?column=zzz");
+    try {
+      getTable.mockResolvedValue(
+        tableShell({
+          partition_col: "event_ts",
+          raw: {
+            column_quality: [
+              { column_name: "aaa", column_type: "string", null_rate: null },
+              { column_name: "zzz", column_type: "bigint", null_rate: 0.2 }
+            ]
+          }
+        })
+      );
 
-    expect(await screen.findByText("20.0% Null")).toBeInTheDocument();
-    expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
-    expect(screen.queryByText("0.0% Null")).not.toBeInTheDocument();
-    const names = screen.getAllByTestId("schema-column-name").map((node) => node.textContent);
-    expect(names.indexOf("zzz")).toBeGreaterThanOrEqual(0);
-    expect(names.indexOf("zzz")).toBeLessThan(names.indexOf("aaa"));
-    expect(document.getElementById("files-schema-highlight")).toHaveTextContent("zzz");
+      renderPanel("?column=zzz");
+
+      expect(await screen.findByText("20.0% Null")).toBeInTheDocument();
+      expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
+      expect(screen.queryByText("0.0% Null")).not.toBeInTheDocument();
+      const names = screen.getAllByTestId("schema-column-name").map((node) => node.textContent);
+      expect(names.indexOf("zzz")).toBeGreaterThanOrEqual(0);
+      expect(names.indexOf("zzz")).toBeLessThan(names.indexOf("aaa"));
+      expect(document.getElementById("files-schema-highlight")).toHaveTextContent("zzz");
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    } finally {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", descriptor);
+      else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    }
   });
 
   it("lists scan points with gaps; the series is the small-file count", async () => {
