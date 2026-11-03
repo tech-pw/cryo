@@ -13,6 +13,7 @@ from cryo.capabilities.models import (
     MaturityTier,
     OperationCapability,
     OperationDefinition,
+    SchedulingCapability,
     SupportStatus,
 )
 from cryo.domain.enums import EngineType, OperationType
@@ -688,8 +689,51 @@ def _validate_matrix(matrix: tuple[OperationCapability, ...]) -> None:
 
 _validate_matrix(_MATRIX)
 
+_SCHEDULING = (
+    SchedulingCapability(
+        trigger="cron",
+        label="Cron schedule",
+        maturity=MaturityTier.GA,
+        summary=(
+            "Each preset's cron fires one run over its tables, capped per run and drained in "
+            "backlog batches."
+        ),
+        owner="scheduler",
+        evidence=_evidence(
+            "cryo/scheduler/service.py",
+            "_dispatch_due_presets",
+            "tests/test_scheduler_backlog_drain.py",
+            "test_drained_batches_reach_every_candidate_once_per_cron_period",
+        ),
+    ),
+    SchedulingCapability(
+        trigger="continuous",
+        label="Continuous (drift-triggered)",
+        maturity=MaturityTier.EXPERIMENTAL,
+        summary=(
+            "Opt-in per preset. The commit watcher reads new snapshots from the live catalog "
+            "and a table is enqueued once its drift crosses a threshold, after a quiet period. "
+            "Jobs pass every governor gate."
+        ),
+        limitations=(
+            "Requires the `cryo events` process (Helm `events.enabled`).",
+            "Watches at most `events_probe_max_tables_per_poll` tables per poll.",
+            "Not load-tested against a real 1,000-table catalog.",
+            "A commit lost to a concurrent writer is retried once, then re-planned, and the "
+            "job fails after `worker_commit_conflict_max_deferrals` conflicts.",
+        ),
+        owner="scheduler",
+        evidence=_evidence(
+            "cryo/scheduler/continuous_dispatch.py",
+            "class ContinuousDispatcher",
+            "tests/test_continuous_maintenance.py",
+            "test_a_due_table_gets_one_run_through_the_normal_scheduler_path",
+        ),
+    ),
+)
+
 CAPABILITY_MANIFEST = CapabilityManifest(
-    schema_version="1.1.0",
+    schema_version="1.2.0",
     source="cryo.capabilities.manifest",
     maturity_definitions=(
         MaturityDefinition(
@@ -713,6 +757,7 @@ CAPABILITY_MANIFEST = CapabilityManifest(
     engines=_ENGINES,
     catalogs=_CATALOGS,
     matrix=_MATRIX,
+    scheduling=_SCHEDULING,
 )
 
 _CAPABILITY_INDEX = {(cell.engine, cell.operation): cell for cell in CAPABILITY_MANIFEST.matrix}

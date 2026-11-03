@@ -1,0 +1,54 @@
+{{- if .Values.events.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cryo.fullname" . }}-events
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: events
+spec:
+  # The watcher is not leader-elected: a second replica would probe every table twice.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "cryo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: events
+  template:
+    metadata:
+      labels:
+        {{- include "cryo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: events
+      annotations:
+        {{- include "cryo.prometheusAnnotations" . | nindent 8 }}
+    spec:
+      {{- include "cryo.imagePullSecrets" . | nindent 6 }}
+      {{- include "cryo.nodeSelector" . | nindent 6 }}
+      # Catalog reads use the chart ServiceAccount's IRSA role, like the scanner.
+      serviceAccountName: {{ include "cryo.serviceAccountName" . }}
+      {{- include "cryo.podSecurityContext" (list $ (dict)) | nindent 6 }}
+      containers:
+        - name: events
+          image: {{ include "cryo.imageRef" .Values.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "cryo.containerSecurityContext" $ | nindent 10 }}
+          command: ["cryo", "events", "--poll-interval", {{ .Values.events.pollIntervalSeconds | quote }}]
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.observability.metricsPort }}
+              protocol: TCP
+          env:
+            {{- range $k, $v := .Values.global.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            - name: CRYO_HEALTH_PORT
+              value: {{ .Values.observability.metricsPort | quote }}
+            {{- include "cryo.daemonStallEnv" .Values.events.probe | nindent 12 }}
+          envFrom:
+            {{- include "cryo.envFrom" . | nindent 12 }}
+          {{- include "cryo.daemonProbes" (dict "root" $ "probe" .Values.events.probe) | nindent 10 }}
+          resources:
+            {{- toYaml .Values.events.resources | nindent 12 }}
+{{- end }}

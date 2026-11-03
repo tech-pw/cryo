@@ -18,6 +18,7 @@ from cryo.planner.job_coverage import (
 from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.scheduler.adaptive_routing import AdaptiveRoutingContext, resolve_destination_adaptive
+from cryo.scheduler.continuous_dispatch import ContinuousContext, ContinuousDispatcher
 from cryo.scheduler.cron import cron_is_due
 from cryo.scheduler.routing import build_destinations_index, resolve_destination
 from cryo.scheduler.rules import PresetConfig, PresetRule, TableAssignment, TableCandidate
@@ -135,11 +136,13 @@ class SchedulerService:
         *,
         leader_check: Callable[[], bool] | None = None,
         lock_store: LockStore | None = None,
+        continuous: ContinuousDispatcher | None = None,
     ) -> None:
         self._store = store
         self._queue = queue
         self._lock_store = lock_store
         self._leader_check = leader_check or (lambda: True)
+        self._continuous = continuous
         self._last_ml_drift_check: datetime | None = None
         self._last_telemetry_ingest: datetime | None = None
         self._last_query_log_purge: datetime | None = None
@@ -190,13 +193,13 @@ class SchedulerService:
 
         self._dispatch_scheduled_runs(current)
         result = self._dispatch_due_presets(current)
-        drained = self._drain_backlog(current)
-        if drained.runs_created:
-            result = SchedulerTickResult(
-                runs_created=result.runs_created + drained.runs_created,
-                jobs_enqueued=result.jobs_enqueued + drained.jobs_enqueued,
-                preset_ids=result.preset_ids + drained.preset_ids,
-            )
+        for extra in (self._drain_backlog(current), self._dispatch_continuous(current)):
+            if extra.runs_created:
+                result = SchedulerTickResult(
+                    runs_created=result.runs_created + extra.runs_created,
+                    jobs_enqueued=result.jobs_enqueued + extra.jobs_enqueued,
+                    preset_ids=result.preset_ids + extra.preset_ids,
+                )
 
         self._expire_stale_approval_requests()
 
@@ -434,6 +437,68 @@ class SchedulerService:
             runs_created=runs_created,
             jobs_enqueued=jobs_enqueued,
             preset_ids=tuple(fired),
+        )
+
+    def _dispatch_continuous(self, current: datetime) -> SchedulerTickResult:
+        """Enqueue drift-triggered runs for continuous presets (#77).
+
+        Each run targets one table and goes through _submit_run like a cron run, so routing,
+        dedupe and the governor's gates all apply unchanged.
+        """
+        if self._continuous is None:
+            return SchedulerTickResult()
+        destinations_cache: list[Any] = []
+        deadline_policy = self._run_deadline_policy()
+
+        def load_context() -> ContinuousContext:
+            return ContinuousContext(
+                presets=self._store.list_presets(),
+                rules=self._store.list_rules(),
+                assignments=self._store.list_assignments(),
+                coverage=self._load_active_coverage(),
+            )
+
+        def build_run(
+            preset: PresetConfig, table: TableCandidate, trigger: str, context: ContinuousContext
+        ) -> ScheduledRunDraft:
+            return build_scheduled_run(
+                preset,
+                [table],
+                context.presets,
+                context.rules,
+                context.assignments,
+                trigger=trigger,
+                budget_hint=1,
+                now=current,
+                active_coverage=context.coverage,
+                deadline_policy=deadline_policy,
+            )
+
+        def submit(
+            run: ScheduledRunDraft,
+            preset: PresetConfig,
+            tables: list[TableCandidate],
+            context: ContinuousContext,
+        ) -> int:
+            if not destinations_cache:
+                destinations_cache.append(build_destinations_index(self._store.list_destinations()))
+            return self._submit_run(
+                run, preset, tables, destinations_cache[0], context.coverage, current
+            )
+
+        try:
+            outcome = self._continuous.tick(
+                current, load_context=load_context, build_run=build_run, submit=submit
+            )
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Continuous maintenance tick failed: %s", exc)
+            return SchedulerTickResult()
+        return SchedulerTickResult(
+            runs_created=outcome.triggered,
+            jobs_enqueued=outcome.jobs_enqueued,
+            preset_ids=outcome.preset_ids,
         )
 
     def _expire_stale_approval_requests(self) -> None:

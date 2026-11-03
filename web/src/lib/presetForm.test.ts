@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { PresetRead } from "../api/types";
 import {
+  CONTINUOUS_NEEDS_EXPIRE,
+  CONTINUOUS_NEEDS_THRESHOLD,
+  continuousToFormValues,
+  formValuesToContinuous,
   formValuesToPresetWrite,
   formatPresetSummary,
   presetToFormValues,
+  validatePresetFormValues,
   type PresetFormValues
 } from "./presetForm";
 
@@ -205,5 +210,56 @@ describe("formatPresetSummary", () => {
     expect(summary).toContain("expire 5d");
     expect(summary).toContain("12h cooldown");
     expect(summary).toContain("adaptive routing");
+  });
+});
+
+describe("continuous maintenance fields", () => {
+  it("sends no continuous block for a preset that never configured one", () => {
+    const body = formValuesToPresetWrite({ ...baseFormValues(), ...continuousToFormValues(null) });
+    expect(body.continuous).toBeNull();
+  });
+
+  it("round-trips thresholds, minutes and the delete-file percentage", () => {
+    const values = continuousToFormValues({
+      enabled: true,
+      max_commits: 20,
+      max_small_files_added: null,
+      max_delete_file_ratio: 0.15,
+      max_score_drop: null,
+      debounce_seconds: 600,
+      max_delay_seconds: 7200,
+      min_interval_seconds: 3600,
+      max_runs_per_hour: null,
+      max_runs_per_day: 12,
+      max_maintenance_commits_per_day: 30
+    });
+    expect(values.continuous_max_delete_file_pct).toBe(15);
+    expect(values.continuous_debounce_minutes).toBe(10);
+    expect(formValuesToContinuous(values)).toEqual({
+      enabled: true,
+      max_commits: 20,
+      max_small_files_added: null,
+      max_delete_file_ratio: 0.15,
+      max_score_drop: null,
+      debounce_seconds: 600,
+      max_delay_seconds: 7200,
+      min_interval_seconds: 3600,
+      max_runs_per_hour: null,
+      max_runs_per_day: 12,
+      max_maintenance_commits_per_day: 30
+    });
+  });
+
+  it("keeps the thresholds when continuous is switched off", () => {
+    const values = { ...continuousToFormValues(null), continuous_max_commits: 5, continuous_enabled: false };
+    expect(formValuesToContinuous(values)).toMatchObject({ enabled: false, max_commits: 5 });
+  });
+
+  it("rejects an enabled block without a threshold or with a manifest-only mode", () => {
+    const enabled = { ...baseFormValues(), ...continuousToFormValues(null), continuous_enabled: true };
+    expect(validatePresetFormValues(enabled)?.continuous_enabled).toBe(CONTINUOUS_NEEDS_THRESHOLD);
+    const manifestOnly = { ...enabled, continuous_max_commits: 5, mode: "manifest_only" as const };
+    expect(validatePresetFormValues(manifestOnly)?.continuous_enabled).toBe(CONTINUOUS_NEEDS_EXPIRE);
+    expect(validatePresetFormValues({ ...enabled, continuous_max_commits: 5 })).toBeNull();
   });
 });

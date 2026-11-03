@@ -183,6 +183,7 @@ from cryo.planner.guardrails import (
 )
 from cryo.planner.planner import build_plan
 from cryo.scanner.orphans import estimate_orphan_scan_cost
+from cryo.scheduler.continuous import validate_continuous_preset
 from cryo.scheduler.rules import EffectivePreset
 from cryo.scheduler.scheduler import fifo_priority
 from cryo.security.crypto import encrypt_secret
@@ -944,6 +945,11 @@ def create_preset(
     param_errors = validate_params(values.get("params") or {})
     if param_errors:
         raise HTTPException(status_code=400, detail={"params": param_errors})
+    continuous_errors = validate_continuous_preset(
+        values.get("continuous"), mode=values["mode"], params=values.get("params")
+    )
+    if continuous_errors:
+        raise HTTPException(status_code=400, detail={"continuous": continuous_errors})
     if values.get("operations"):
         values["operations"] = sort_operations_canonically(values["operations"])
     previous_default: uuid.UUID | None = None
@@ -1009,6 +1015,14 @@ def patch_preset(
         param_errors = validate_params(values.get("params") or {})
         if param_errors:
             raise HTTPException(status_code=400, detail={"params": param_errors})
+    if {"continuous", "mode", "params"} & values.keys():
+        continuous_errors = validate_continuous_preset(
+            values.get("continuous", preset.continuous),
+            mode=values.get("mode") or preset.mode,
+            params=values.get("params", preset.params),
+        )
+        if continuous_errors:
+            raise HTTPException(status_code=400, detail={"continuous": continuous_errors})
     if values.get("operations"):
         values["operations"] = sort_operations_canonically(values["operations"])
     if "is_default" in values or "schedule_cron" in values:

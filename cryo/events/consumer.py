@@ -66,6 +66,11 @@ class TableCommitConsumer:
             "equality_delete_files_removed": event.equality_delete_files_removed,
             "position_delete_files_removed": event.position_delete_files_removed,
             "snapshots_added": event.snapshots_added,
+            "table_id": event.table_id,
+            "sequence_number": event.sequence_number,
+            "committed_at": event.committed_at.isoformat() if event.committed_at else None,
+            "maintenance_commits": event.maintenance_commits,
+            "complete": event.complete,
         }
         return self._stream.publish(self._stream_name, payload)
 
@@ -120,10 +125,20 @@ class InMemoryEventStream:
         del stream, group, message_id
 
 
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
 def _parse_event(payload: dict[str, Any]) -> TableCommitted:
     from datetime import datetime
 
     observed_at = datetime.fromisoformat(str(payload["observed_at"]).replace("Z", "+00:00"))
+    committed_raw = payload.get("committed_at")
+    committed_at = (
+        datetime.fromisoformat(str(committed_raw).replace("Z", "+00:00")) if committed_raw else None
+    )
     return TableCommitted(
         table_ref=str(payload["table_ref"]),
         snapshot_id=int(payload["snapshot_id"]),
@@ -144,4 +159,9 @@ def _parse_event(payload: dict[str, Any]) -> TableCommitted:
         equality_delete_files_removed=int(payload.get("equality_delete_files_removed") or 0),
         position_delete_files_removed=int(payload.get("position_delete_files_removed") or 0),
         snapshots_added=int(payload.get("snapshots_added") or 0),
+        table_id=str(payload["table_id"]) if payload.get("table_id") else None,
+        sequence_number=_optional_int(payload.get("sequence_number")),
+        committed_at=committed_at,
+        maintenance_commits=int(payload.get("maintenance_commits") or 0),
+        complete=bool(payload.get("complete", True)),
     )

@@ -177,6 +177,11 @@ Expand any group for the details.
   destination with a contextual-bandit policy.
 - **Presets** bind *operations + params + target engine + schedule + selection rules* into a named
   profile, such as `spark-large`: "tables over 100 GB → Spark/EMR, deep maintenance weekly".
+- **Continuous maintenance** (opt-in, experimental): a preset can also run a table as soon as
+  writers push it past a threshold (commits, small files, delete-file share or score drop). The
+  commit watcher reads new snapshots from the live catalog. Debounce, a minimum interval,
+  per-table rate limits and a snapshot-churn cap pace it, and the jobs still pass every
+  governor gate.
 - **Assignment** filters the fleet by schema, size, small-file ratio, grade or drift, selects every
   match across pages (as a filter, not a list of IDs), and assigns a preset in one action. Rule-based
   auto-matching handles the rest, with manual override.
@@ -373,7 +378,8 @@ Catalog and JDBC catalogs are rejected.
   (`Settings.enforce_tenant_isolation`), not the default. Run one instance per customer until
   that changes.
 - **Flink-first streaming shops.** The Flink engine generates config only and does not submit
-  jobs (see the `cryo/engines/flink/engine.py` docstring).
+  jobs (see the `cryo/engines/flink/engine.py` docstring). Continuous presets maintain streaming
+  tables between scans, but they are experimental and have not been load-tested at fleet scale.
 - **Teams that want a zero-config managed product.** You operate this: Kubernetes, Postgres,
   Redis and an Iceberg catalog.
 - **Anyone who needs an unattended native compactor.** The native path (`engine-go/`,
