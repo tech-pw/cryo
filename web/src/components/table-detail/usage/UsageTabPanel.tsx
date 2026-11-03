@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import { Activity, ArrowRight, GitBranch, Layers3, Search } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
@@ -15,7 +14,7 @@ import { tableKeys } from "../../../pages/table-detail/tableKeys";
 import { QueryErrorAlert } from "../../common";
 import { Badge } from "../../ui/badge";
 import { Collapsible } from "../../ui/collapsible";
-import { DataTable } from "../../ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../ui/data-table";
 import { ChartCard } from "../ChartCard";
 import { LineageGraph } from "../LineageGraph";
 import { PartitionAccessChart } from "../PartitionAccessChart";
@@ -31,7 +30,7 @@ const latencyText = (value: number | null | undefined): string =>
 const bytesText = (value: number | null | undefined): string =>
   value == null || !Number.isFinite(value) || value < 0 ? "Not measured" : formatBytesGb(value);
 
-const queryColumns: ColumnDef<QueryRow, unknown>[] = [
+const queryColumns: DataTableColumnDef<QueryRow, unknown>[] = [
   {
     accessorKey: "query_text",
     header: "Query",

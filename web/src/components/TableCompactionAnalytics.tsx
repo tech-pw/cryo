@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -18,7 +17,7 @@ import { Alert } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
-import { DataTable } from "./ui/data-table";
+import { DataTable, type DataTableColumnDef } from "./ui/data-table";
 
 interface Props {
   tableId: UUID;
@@ -63,7 +62,7 @@ function deletePolicyChip(
   return { label: "Healthy", variant: "success" };
 }
 
-const candidateColumns: ColumnDef<AutoCompCandidateItem, unknown>[] = [
+const candidateColumns: DataTableColumnDef<AutoCompCandidateItem, unknown>[] = [
   {
     accessorKey: "partition_value",
     header: "Partition",
@@ -109,7 +108,7 @@ const candidateColumns: ColumnDef<AutoCompCandidateItem, unknown>[] = [
   }
 ];
 
-const signalColumns: ColumnDef<TableSignalRead, unknown>[] = [
+const signalColumns: DataTableColumnDef<TableSignalRead, unknown>[] = [
   { accessorKey: "signal_name", header: "Signal", size: 160 },
   {
     accessorKey: "triggered",
