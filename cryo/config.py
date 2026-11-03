@@ -321,8 +321,12 @@ class Settings(BaseSettings):
     scan_missing_table_max_count: int = Field(
         default=500,
         ge=0,
-        description="Mass-removal guard: never remove more than this many tables per source "
-        "per scan; above it, remove none and record why.",
+        description=(
+            "Per-scan removal limit: remove at most this many missing tables per source per "
+            "scan, the ones last seen longest ago first. The rest are removed by later scans, "
+            "so a large backlog drains over several runs. 0 removes nothing. "
+            "scan_missing_table_max_fraction is the catalog-outage guard."
+        ),
     )
     scan_missing_table_guard_min_count: int = Field(default=5, ge=0)
     dispatch_heartbeat_stall_minutes: int = Field(
