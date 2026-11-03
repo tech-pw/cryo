@@ -56,6 +56,8 @@ def _render_operation(
         sql = _render_convert_deletes(catalog, table_name, operation)
     elif operation.type is OperationType.REWRITE_POSITION_DELETES:
         sql = _render_rewrite_position_deletes(catalog, table_name, operation)
+    elif operation.type is OperationType.MIGRATE_PARTITION_SPEC:
+        sql = _render_migrate_partition_spec(catalog, table_name, operation)
     elif operation.type is OperationType.EXPIRE_DATA:
         sql = render_expire_data_delete(f"{catalog}.{table_name}", operation.params, quote="spark")
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
@@ -264,6 +266,36 @@ def _render_convert_deletes(catalog: str, table_name: str, operation: Operation)
         # older than every live data file in their partition. Iceberg >= 1.7 only: older
         # runtimes reject the option, so callers opt in (the batch path does).
         options.append("'remove-dangling-deletes', 'true'")
+    options.append(f"'rewrite-job-order', '{_rewrite_job_order(params)}'")
+    args.append(f"options => map({', '.join(options)})")
+    return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
+
+
+def _render_migrate_partition_spec(catalog: str, table_name: str, operation: Operation) -> str:
+    """Rewrite every file under the old-spec partition filters into the default spec.
+
+    rewrite_data_files writes to the table's default spec unless output-spec-id says
+    otherwise, so leaving it unset follows a spec that changed again after the scan.
+    rewrite-all is what reaches well-sized old-spec files: the size-based selection skips
+    them. Default-spec files the filter also matches are rewritten too.
+    """
+    params = operation.params
+    target_bytes = int(
+        params.get("target_file_size_bytes") or int(params.get("file_size_mb", 256)) * 1024 * 1024
+    )
+    args = [f"table => '{catalog}.{table_name}'", "strategy => 'binpack'"]
+    if operation.predicates:
+        where = " OR ".join(render_predicate(predicate) for predicate in operation.predicates)
+        args.append(f"where => '{_escape_sql_string(where)}'")
+    options = [
+        f"'target-file-size-bytes', '{target_bytes}'",
+        "'rewrite-all', 'true'",
+    ]
+    if params.get("partial_progress", True):
+        options.append("'partial-progress.enabled', 'true'")
+        options.append(f"'partial-progress.max-commits', '{int(params.get('max_commits', 50))}'")
+    max_concurrent = int(params.get("max_concurrent_file_group_rewrites", 5))
+    options.append(f"'max-concurrent-file-group-rewrites', '{max_concurrent}'")
     options.append(f"'rewrite-job-order', '{_rewrite_job_order(params)}'")
     args.append(f"options => map({', '.join(options)})")
     return f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"

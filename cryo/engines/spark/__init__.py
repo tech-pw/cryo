@@ -23,6 +23,7 @@ SUPPORTED_OPS: frozenset[OperationType] = frozenset(
         # MOR table's position-delete-dominated small-file count).
         OperationType.REWRITE_POSITION_DELETES,
         OperationType.EXPIRE_DATA,
+        OperationType.MIGRATE_PARTITION_SPEC,
     }
 )
 

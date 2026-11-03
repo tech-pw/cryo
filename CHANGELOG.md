@@ -6,6 +6,14 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ## [Unreleased]
 
+### Added
+- Migrate to current partition spec: an on-request, approval-gated `migrate_partition_spec`
+  operation that rewrites partitions still written under an older partition spec, in
+  optimize's budgeted chunks, on Spark (Trino cannot filter old-spec partitions). The Maintain
+  tab shows what is left and the progress. Both scanners now read each file's partition values
+  with its own spec and record the old-spec totals, and Path to grade A no longer implies a
+  layout change migrates existing data on its own (#289).
+
 ### Fixed
 - Native `expire_snapshots` now deletes the files only the expired snapshots referenced, as Spark
   and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests,
