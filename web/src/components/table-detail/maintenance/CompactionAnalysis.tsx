@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import type { ColumnDef } from "@tanstack/react-table";
-import { DataTable } from "../../ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../ui/data-table";
 import "./maintenance-details.css";
 import { toast } from "sonner";
 import {
@@ -63,7 +62,7 @@ const countText = (value: number | null | undefined): string => {
 
 export const STORED_ROWS_PREVIEW = 10;
 
-const storedColumns: ColumnDef<AutoCompCandidateItem, unknown>[] = [
+const storedColumns: DataTableColumnDef<AutoCompCandidateItem, unknown>[] = [
   { accessorKey: "partition_value", header: "Partition", cell: ({ row }) => <span className="td-compaction-partition" title={row.original.partition_value}>{row.original.partition_value || "not reported"}</span> },
   { accessorKey: "benefit_score", header: "Benefit score", cell: ({ row }) => numberText(row.original.benefit_score) },
   { accessorKey: "moop_score", header: "MOOP score", cell: ({ row }) => numberText(row.original.moop_score) },
@@ -71,7 +70,7 @@ const storedColumns: ColumnDef<AutoCompCandidateItem, unknown>[] = [
   { accessorKey: "size_gb", header: "Size", cell: ({ row }) => sizeText(row.original.size_gb) },
   { accessorKey: "eligible", header: "Selection status", cell: ({ row }) => <Badge variant={row.original.eligible ? "success" : "secondary"}>{row.original.eligible ? "Eligible" : row.original.skip_reason || "Skipped"}</Badge> }
 ];
-const horizonColumns: ColumnDef<CompactionCandidateRead, unknown>[] = [
+const horizonColumns: DataTableColumnDef<CompactionCandidateRead, unknown>[] = [
   { accessorKey: "partition_path", header: "Partition", cell: ({ row }) => <span className="td-compaction-partition" title={row.original.partition_path}>{row.original.partition_path || "not reported"}</span> },
   { accessorKey: "score", header: "Score", cell: ({ row }) => numberText(row.original.score) },
   { accessorKey: "priority", header: "Priority", cell: ({ row }) => row.original.priority || "not reported" },

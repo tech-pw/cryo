@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -15,7 +14,7 @@ import { PageHeader, QueryErrorAlert } from "../components/common";
 import { Alert } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { DataTable } from "../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../components/ui/data-table";
 import { MetricGrid, MetricTile } from "../components/ui/metric-grid";
 import { useAuth } from "../lib/auth";
 import { VIEWER_REASON } from "../lib/permissions";
@@ -55,7 +54,7 @@ export const Anomalies = () => {
   const fallbackSources = (report?.sources ?? []).filter((source) => source.mode === "db_fallback" || source.error);
   const pageGroups = groups.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE);
 
-  const columns = useMemo<ColumnDef<SharedS3Group>[]>(
+  const columns = useMemo<DataTableColumnDef<SharedS3Group>[]>(
     () => [
       {
         accessorKey: "shared_path",

@@ -1,5 +1,4 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import { ChevronLeft, ChevronRight, Search as SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -17,7 +16,7 @@ import {
 import { PageHeader } from "../components/common";
 import { AsyncBoundary } from "../components/AsyncBoundary";
 import { Button } from "../components/ui/button";
-import { DataTable } from "../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../components/ui/data-table";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Segmented, type SegmentedOption } from "../components/ui/segmented";
@@ -88,7 +87,7 @@ function SearchPaginationBar({
   );
 }
 
-const columnResultColumns: ColumnDef<SearchHit, unknown>[] = [
+const columnResultColumns: DataTableColumnDef<SearchHit, unknown>[] = [
   {
     id: "column",
     header: "Column",
