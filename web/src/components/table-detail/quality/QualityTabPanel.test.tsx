@@ -49,7 +49,8 @@ vi.mock("../../../api/client", async (importOriginal) => {
           p95_latency_ms: null,
           p95_latency_sla_ms: null,
           p95_latency_breached: false,
-          has_preset: true
+          has_preset: true,
+          preset_provenance: "assignment"
         }
       ],
       total_breached: 0,
@@ -95,7 +96,8 @@ describe("QualityTabPanel", () => {
         table_id: "another-table", table_name: "other", schema_name: "raw", freshness_hours: 4,
         freshness_sla_hours: 24, freshness_breached: false, scan_staleness_hours: 1,
         maintenance_days: null, maintenance_sla_days: null, maintenance_breached: false,
-        p95_latency_ms: null, p95_latency_sla_ms: null, p95_latency_breached: false, has_preset: true
+        p95_latency_ms: null, p95_latency_sla_ms: null, p95_latency_breached: false, has_preset: true,
+        preset_provenance: "assignment"
       }], total_breached: 0, total_monitored: 1
     });
     render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
