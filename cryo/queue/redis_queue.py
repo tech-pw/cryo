@@ -516,6 +516,7 @@ class RedisMaintenanceQueue:
     def complete(self, job_id: str, status: JobStatus | str) -> None:
         entry = self._redis.hgetall(self._job_key(job_id))
         destination_id = _decode(entry.get(b"destination_id") or entry.get("destination_id"))
+        prior_status = _decode(entry.get(b"status") or entry.get("status"))
         replica = _decode(entry.get(b"replica") or entry.get("replica")) or "default"
         self._ack(job_id)
         pipe = self._redis.pipeline()
@@ -523,7 +524,11 @@ class RedisMaintenanceQueue:
         # The one transition after which no further transition can happen, so this is where
         # the long active TTL is traded down for the short terminal one.
         pipe.expire(self._job_key(job_id), _TERMINAL_JOB_TTL_SEC)
-        if destination_id:
+        # Only a job admit() counted still holds a slot. A second completion of the same job
+        # (two recovery paths ending it), or a native K8s job that was never admit()ed, would
+        # otherwise drive the counter below zero, and the clamp in local_in_flight_by_replica
+        # would then hide the next real admission.
+        if destination_id and prior_status in {JobStatus.ADMITTED.value, JobStatus.RUNNING.value}:
             pipe.hincrby(self._in_flight_key(destination_id), replica, -1)
         pipe.execute()
 

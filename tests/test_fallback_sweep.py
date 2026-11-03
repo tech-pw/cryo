@@ -17,12 +17,18 @@ from cryo.db.models import (
     Destination,
     MaintenanceJob,
     MaintenanceRun,
+    NativeDispatch,
     Source,
     Table,
     TableStats,
 )
+from cryo.domain.enums import JobStatus
 from cryo.engines.spark.k8s import JobRunResult, JobRunState
 from cryo.governor.fallback_sweep import sweep_pending_fallback_dispatches
+from cryo.queue.job_release import release_job_claims
+from cryo.queue.locks import InMemoryLockStore
+from cryo.queue.redis_queue import InMemoryMaintenanceQueue, RedisMaintenanceQueue
+from tests.test_queue_bounds_and_inflight import _Redis
 
 
 def _audit_row(*, status: str, engine_ref: str | None, job_id=None) -> AuditLog:
@@ -619,3 +625,164 @@ def test_sweep_records_rewrite_file_counts_on_success(session, monkeypatch) -> N
 
     session.refresh(row)
     assert (row.input_files_count, row.output_files_count) == (1024, 17)
+
+
+def _seed_dispatch(session, *, run_id, destination_id, status: str) -> NativeDispatch:
+    dispatch = NativeDispatch(
+        id=uuid4(),
+        run_id=run_id,
+        destination_id=destination_id,
+        k8s_job_name=f"cryo-native-{uuid4().hex[:8]}",
+        k8s_namespace="cryo",
+        cpu_milli=500,
+        mem_mib=1024,
+        table_job_ids=[],
+        status=status,
+    )
+    session.add(dispatch)
+    session.commit()
+    return dispatch
+
+
+def _claimed_queue(job: MaintenanceJob) -> RedisMaintenanceQueue:
+    """A queue in which ``job`` holds one in-flight slot, as admit() + mark_running leave it."""
+    queue = RedisMaintenanceQueue(_Redis(), consumer="test")
+    destination_id = str(job.destination_id)
+    queue._redis.hset(
+        queue._job_key(str(job.id)),
+        mapping={"destination_id": destination_id, "status": "running", "replica": "default"},
+    )
+    queue._redis.hset(queue._in_flight_key(destination_id), mapping={"default": 1})
+    return queue
+
+
+def _raw_in_flight(queue: RedisMaintenanceQueue, destination_id: str) -> dict[str, int]:
+    values = queue._redis.hgetall(queue._in_flight_key(destination_id))
+    return {key.decode(): int(value) for key, value in values.items()}
+
+
+def _succeeding_client(monkeypatch, engine_ref: str) -> MagicMock:
+    mock_client = MagicMock()
+    mock_client.get_job_run.return_value = JobRunResult(
+        job_run_id=engine_ref, state=JobRunState.SUCCESS
+    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
+    return mock_client
+
+
+class TestJobClaimsRelease:
+    """Issue #382: a job the sweep ends must not keep its table lock or in-flight slot, and a
+    job a live native dispatch still owns must not be ended here at all."""
+
+    def test_finalized_job_leaves_no_lock_and_no_in_flight_slot(self, session, monkeypatch) -> None:
+        destination = _seed_spark_destination(session)
+        job = _seed_running_job(session, destination_id=destination.id)
+        row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-done", job_id=job.id)
+        session.add(row)
+        session.commit()
+        lock_store = InMemoryLockStore()
+        assert lock_store.acquire_table_lock(str(job.table_id), str(job.id), 3600)
+        queue = _claimed_queue(job)
+        _succeeding_client(monkeypatch, "cryo-spark-done")
+
+        sweep_pending_fallback_dispatches(session, queue=queue, lock_store=lock_store)
+
+        session.refresh(job)
+        assert job.status == "succeeded"
+        assert lock_store.table_lock_holder(str(job.table_id)) is None
+        assert queue.local_in_flight(str(destination.id)) == 0
+        assert queue.status(str(job.id)) is JobStatus.SUCCEEDED
+
+    def test_second_completion_of_the_same_job_does_not_go_negative(
+        self, session, monkeypatch
+    ) -> None:
+        destination = _seed_spark_destination(session)
+        job = _seed_running_job(session, destination_id=destination.id)
+        row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-done", job_id=job.id)
+        session.add(row)
+        session.commit()
+        lock_store = InMemoryLockStore()
+        lock_store.acquire_table_lock(str(job.table_id), str(job.id), 3600)
+        queue = _claimed_queue(job)
+        _succeeding_client(monkeypatch, "cryo-spark-done")
+
+        sweep_pending_fallback_dispatches(session, queue=queue, lock_store=lock_store)
+        # Another path (a worker, the stale reaper) ending the same job afterwards.
+        release_job_claims(
+            queue,
+            lock_store,
+            job_id=str(job.id),
+            table_id=str(job.table_id),
+            status=JobStatus.FAILED,
+        )
+
+        assert _raw_in_flight(queue, str(destination.id)) == {"default": 0}
+
+    def test_lock_now_held_by_another_job_is_not_released(self, session, monkeypatch) -> None:
+        destination = _seed_spark_destination(session)
+        job = _seed_running_job(session, destination_id=destination.id)
+        row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-done", job_id=job.id)
+        session.add(row)
+        session.commit()
+        lock_store = InMemoryLockStore()
+        lock_store.acquire_table_lock(str(job.table_id), "other-job", 3600)
+        _succeeding_client(monkeypatch, "cryo-spark-done")
+
+        sweep_pending_fallback_dispatches(
+            session, queue=InMemoryMaintenanceQueue(), lock_store=lock_store
+        )
+
+        assert lock_store.table_lock_holder(str(job.table_id)) == "other-job"
+
+    def test_job_owned_by_an_active_native_dispatch_is_left_to_the_watcher(
+        self, session, monkeypatch
+    ) -> None:
+        """The governor's lock reconcile released these locks as orphaned mid-run: the job
+        read terminal while its native pod still held the table."""
+        destination = _seed_spark_destination(session)
+        job = _seed_running_job(session, destination_id=destination.id)
+        dispatch = _seed_dispatch(
+            session, run_id=job.run_id, destination_id=destination.id, status="running"
+        )
+        job.dispatch_id = dispatch.id
+        row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-done", job_id=job.id)
+        session.add(row)
+        session.commit()
+        lock_store = InMemoryLockStore()
+        lock_store.acquire_table_lock(str(job.table_id), str(job.id), 3600)
+        mock_client = _succeeding_client(monkeypatch, "cryo-spark-done")
+
+        result = sweep_pending_fallback_dispatches(
+            session, queue=InMemoryMaintenanceQueue(), lock_store=lock_store
+        )
+
+        assert result.resolved_ok == 1
+        session.refresh(row)
+        session.refresh(job)
+        assert row.status == "OK"
+        assert job.status == "running"
+        assert job.finished_at is None
+        assert lock_store.table_lock_holder(str(job.table_id)) == str(job.id)
+        mock_client.cleanup_after_run.assert_called_once_with("cryo-spark-done")
+
+    def test_job_whose_native_dispatch_finished_is_finalized(self, session, monkeypatch) -> None:
+        destination = _seed_spark_destination(session)
+        job = _seed_running_job(session, destination_id=destination.id)
+        dispatch = _seed_dispatch(
+            session, run_id=job.run_id, destination_id=destination.id, status="succeeded"
+        )
+        job.dispatch_id = dispatch.id
+        row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-done", job_id=job.id)
+        session.add(row)
+        session.commit()
+        lock_store = InMemoryLockStore()
+        lock_store.acquire_table_lock(str(job.table_id), str(job.id), 3600)
+        _succeeding_client(monkeypatch, "cryo-spark-done")
+
+        sweep_pending_fallback_dispatches(
+            session, queue=InMemoryMaintenanceQueue(), lock_store=lock_store
+        )
+
+        session.refresh(job)
+        assert job.status == "succeeded"
+        assert lock_store.table_lock_holder(str(job.table_id)) is None
