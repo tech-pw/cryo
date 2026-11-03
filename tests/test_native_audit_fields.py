@@ -154,3 +154,54 @@ def test_empty_batch_without_optimize_fails_last_op() -> None:
     assert exec_results[0].ok and exec_results[0].skipped
     assert not exec_results[1].ok
     assert exec_results[1].detail == "remove_orphan_files"
+
+
+def test_batch_failure_of_one_operation_does_not_fail_its_siblings() -> None:
+    """cryo-engine-go sets ok=false when any operation fails but still runs them all (#373)."""
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.DEEP,
+        operations=(
+            Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7}),
+            Operation(OperationType.REMOVE_ORPHAN_FILES, {"orphan_min_age_hours": 72}),
+        ),
+    )
+    orphan_failure = NativeOperationResult(
+        operation="remove_orphan_files",
+        success=False,
+        error="remove_orphan_files: access denied",
+        duration_ms=10,
+    )
+    native_result = NativeExecuteResult(
+        ok=False,
+        table_ref="demo.orders",
+        results=(_expire_result(), orphan_failure),
+        error="remove_orphan_files: access denied",
+    )
+
+    expire, orphan = _exec_results_from_native_batch(plan.operations, native_result, 100)
+
+    assert expire.ok
+    assert expire.error is None
+    assert expire.snapshots_expired == 3
+    assert not orphan.ok
+    assert orphan.error == "remove_orphan_files: access denied"
+
+
+def test_batch_failure_without_a_failed_operation_fails_every_operation() -> None:
+    plan = MaintenancePlan(
+        table_ref="rest.demo.orders",
+        mode=Mode.STANDARD,
+        operations=(Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7}),),
+    )
+    native_result = NativeExecuteResult(
+        ok=False,
+        table_ref="demo.orders",
+        results=(_expire_result(),),
+        error="cryo-engine exited with code 1",
+    )
+
+    (expire,) = _exec_results_from_native_batch(plan.operations, native_result, 100)
+
+    assert not expire.ok
+    assert expire.error == "cryo-engine exited with code 1"

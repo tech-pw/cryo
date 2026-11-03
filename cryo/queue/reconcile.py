@@ -31,6 +31,7 @@ _ACTIVE_QUEUE_STATUSES = {
 # terminal runs, permanently occupying reconcile_deferred_jobs's oldest-first bounded window
 # (see MaintenanceJobRecord.run_status's own docstring for the full incident).
 _TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "skipped", "partial", "cancelled"})
+_RUN_CLOSED_WHILE_DEFERRED = "run_closed_while_deferred"
 
 # Live-verified 2026-09-02: reconcile_deferred_jobs previously called list_deferred_jobs()
 # unbounded on every governor wave (every 30s) -- with 4,227 deferred jobs and growing, each
@@ -126,9 +127,10 @@ def reconcile_deferred_jobs(
 ) -> int:
     """Return deferred jobs to the queue when admission would admit them now.
 
-    Also fails a deferred job outright if its parent run already reached a terminal status --
-    see _TERMINAL_RUN_STATUSES's own docstring for the live incident this fixes: a job whose
-    run is already done can never legitimately un-defer (its deadline is permanently past),
+    Also skips a deferred job outright if its parent run already reached a terminal status,
+    keeping the reason it was deferred -- see _TERMINAL_RUN_STATUSES's own docstring for the
+    live incident this fixes: a job whose run is already done can never legitimately un-defer
+    (its deadline is permanently past),
     but re-deferring it doesn't refresh finished_at, so it stayed the *oldest* deferred job
     forever and, combined with list_deferred_jobs's oldest-first bounded ordering, monopolized
     every wave's entire reconcile budget instead of ever reaching genuinely-reconsiderable
@@ -168,7 +170,7 @@ def reconcile_deferred_jobs(
 
     current = now or datetime.now(UTC)
     requeued = 0
-    failed_orphaned = 0
+    skipped_orphaned = 0
     set_reason = getattr(store, "set_deferred_reason", None)
 
     def note_reason(job: MaintenanceJobRecord, reason: str | None) -> None:
@@ -181,10 +183,14 @@ def reconcile_deferred_jobs(
 
     for job in list_deferred(limit=_MAX_DEFERRED_RECONCILE_PER_WAVE):
         if job.run_status in _TERMINAL_RUN_STATUSES:
+            # Skipped, not failed: the job never ran. Keeping the deferral reason tells the
+            # operator what held it until its run closed (#383).
             store.mark_status(
-                job.id, JobStatus.FAILED, error="orphaned_deferred: parent run already finalized"
+                job.id,
+                JobStatus.SKIPPED,
+                error=f"{_RUN_CLOSED_WHILE_DEFERRED}: {job.error or 'deferred'}",
             )
-            failed_orphaned += 1
+            skipped_orphaned += 1
             continue
         destination = _try_get_destination(store, job.destination_id)
         if destination is None:
@@ -224,9 +230,9 @@ def reconcile_deferred_jobs(
         requeued += 1
         logger.info("Re-queued deferred job %s (was %s)", job.id, job.error)
 
-    if failed_orphaned:
-        logger.warning(
-            "Failed %d deferred job(s) whose parent run already finalized", failed_orphaned
+    if skipped_orphaned:
+        logger.info(
+            "Skipped %d deferred job(s) whose parent run already finalized", skipped_orphaned
         )
     if requeued:
         logger.info("Re-queued %d deferred job(s)", requeued)

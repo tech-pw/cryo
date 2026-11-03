@@ -1683,6 +1683,7 @@ export interface SLAResponse {
     p95_latency_sla_ms: number | null;
     p95_latency_breached: boolean;
     has_preset: boolean;
+    preset_provenance: "assignment" | "rule" | "rule_after_stale_pin" | "default" | "none";
   }>;
   total_breached: number;
   total_monitored: number;

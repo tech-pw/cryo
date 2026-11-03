@@ -81,7 +81,7 @@ def _run_catalog_call_bounded[R](fn: Callable[[], R], *, description: str) -> R:
 
 
 # Real-data cap for fetch_file_stats: a busy table can have 90K+ data files (confirmed live,
-# 2026-08-14: pw_experimentation.gold_unleash_experiments_v1 alone has 93,699), and this whole
+# 2026-08-14: experiments.gold_feature_experiments_v1 alone has 93,699), and this whole
 # analysis only needs enough files to estimate whether column ranges overlap across files, not
 # every file in the table. A few thousand files (spread across the table, not just the first N
 # written) is already a strong statistical sample for _calculate_overlap_ratio's purposes.
