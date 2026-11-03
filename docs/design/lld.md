@@ -490,6 +490,24 @@ vs `Operations › {preset name} › Run …`).
 - `kind IN (adhoc, scheduled)` → "Maintenance"
 - Default operator filter during incidents: `status = failed` (no `kind` filter, per Part 1E)
 
+#### 3.4.2 `MaintenanceRun.status` — maintenance run lifecycle
+
+`scheduled` (future `scheduled_at`) → `queued` → `running` → `succeeded | partial | failed`,
+or `cancelled` from any open status.
+
+- Runs are created `queued` (or `scheduled`). `SQLJobStore.mark_status` moves a `queued` run
+  to `running` the first time one of its jobs is marked `admitted` or `running`, with one
+  conditional `UPDATE ... WHERE status = 'queued'`, so concurrent admissions are idempotent
+  and a `scheduled`, `cancelled` or finished run is never reopened.
+- `finalize_open_runs` closes runs from either `queued` or `running`: a run whose jobs all
+  ended without being admitted (skipped, deferred) never reaches `running`.
+- Batch runs (`cryo/maintenance/coordinator.py`) and smart-maintenance runs are created
+  `running` directly. Scan runs use `accepted | queued | running` and their own terminal
+  statuses (`cryo/db/repositories/scanner.py`).
+- The `stuck_runs` health check treats every non-terminal status (`scheduled`, `accepted`,
+  `queued`, `running`) as open and measures age from `scheduled_at` when set, else
+  `created_at`.
+
 ---
 
 ## 4. Domain enums & DTOs (`cryo/domain`)
