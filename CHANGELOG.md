@@ -6,6 +6,15 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-03
+
+First tagged release since v0.1.5. GitHub release notes group the 180+ merged pull requests;
+the highlights are below.
+
+### Removed
+- The unused Rust engines (`cryo-engine/`, `cryo-native/`) and their CI jobs. The Go engine
+  (`engine-go/`, `cryo-engine-go`) is the native engine (#266).
+
 ### Added
 - Public chart README, NOTES, and a permissive values schema. Issue forms, CodeQL, labeler, and zizmor workflows. Contributor install no longer pulls the notebook `requirements.txt`.
 - Open-source license metadata: `LICENSE` (Apache-2.0) at repo root, README license badge
@@ -18,6 +27,8 @@ All notable changes to Cryo will be documented in this file. The format is based
   new Changelog (rendered from this file) and Contributing pages.
 
 ### Security
+- `cryo-engine-go` uses go-jose 4.1.6, which fixes a JWK-parsing DoS (CVE-2026-116587) and two
+  parser panics flagged by the release image scan (#354).
 - Failed password and Google sign-ins are throttled per account (5 in 15 minutes) and per client
   IP (20), using Redis so the limit holds across replicas. Locked attempts get `429` with
   `Retry-After`, and the sign-in page says how long to wait. Each failure is audited as
@@ -100,5 +111,6 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 Pre-release history predates this changelog. See `git log` for the full commit history.
 
-[Unreleased]: https://github.com/tech-pw/cryo/blob/main/CHANGELOG.md
+[Unreleased]: https://github.com/tech-pw/cryo/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tech-pw/cryo/compare/v0.1.5...v0.2.0
 [0.0.0]: https://github.com/tech-pw/cryo/blob/main/CHANGELOG.md
