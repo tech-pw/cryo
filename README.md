@@ -17,6 +17,11 @@ Free and self-hosted. Runs on the Trino or Spark you already have. **[Try it loc
 
 </div>
 
+<p align="center">
+  <a href="docs/img/demo-loop.mp4"><img src="docs/img/demo-loop.gif" alt="25-second loop of the Cryo web UI on synthetic demo data. The Tables page lists every table with its health grade; analytics.events is graded F, 28 out of 100. Its page lists what pulls the score down: small-file fragmentation and snapshot retention buildup, 20 points each. On the Maintenance tab the four recommended operations go into one run, and the review lists them in run order with the workflow's settings: compact files, rewrite manifests, expire snapshots, remove orphan files. The run receipt shows each step's outcome, 12,410 files to 129 for one compaction chunk and 9.8 GB freed by snapshot expiry, and the table's files before and after." width="100%"></a>
+  <br><sub>Tables → health grade → plan review → run receipt, in the real UI on synthetic demo data. <a href="docs/img/demo-loop.mp4">MP4 version</a>.</sub>
+</p>
+
 > **Measured in [CryoBench V2](https://tech-pw.github.io/cryo/benchmark/)** (Spark 4.1 and Iceberg 1.11 on Kubernetes, three trials per test):
 >
 > - **1.76× faster queries** on a 100 GiB table after one Cryo run (geometric mean of the whole query mix).

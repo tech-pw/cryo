@@ -1,4 +1,4 @@
-import type { ColumnDef, RowSelectionState } from "@tanstack/react-table";
+import type { RowSelectionState } from "@tanstack/react-table";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Info } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -42,7 +42,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { ChartDataTable } from "../../components/ui/chart-data-table";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { MetricGrid } from "../../components/ui/metric-grid";
 import { Select } from "../../components/ui/select";
 import { Skeleton } from "../../components/ui/skeleton";
@@ -116,7 +116,7 @@ const computeCostDelta30d = (trend: CostTrendPoint[] | undefined) => {
   };
 };
 
-const opportunityColumns: ColumnDef<TableRead, unknown>[] = [
+const opportunityColumns: DataTableColumnDef<TableRead, unknown>[] = [
   {
     id: "table",
     header: "Table",
