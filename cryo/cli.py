@@ -815,7 +815,10 @@ class SchedulerRunner(DaemonRunner):
 
             wiring = self._get_wiring()
             self._service = SchedulerService(
-                wiring.scheduler_store, wiring.queue, lock_store=wiring.lock_store
+                wiring.scheduler_store,
+                wiring.queue,
+                lock_store=wiring.lock_store,
+                continuous=_continuous_dispatcher(wiring),
             )
             return self._service
         except Exception as exc:
@@ -838,6 +841,24 @@ class SchedulerRunner(DaemonRunner):
         except Exception as exc:
             self._logger.debug("Cannot initialize scanner scheduler: %s", exc)
             return None
+
+
+def _continuous_dispatcher(wiring: Any) -> Any:
+    settings = wiring.settings
+    if not settings.continuous_maintenance_enabled:
+        return None
+    from cryo.db.repositories.continuous_store import SQLContinuousStore
+    from cryo.db.session import SessionLocal
+    from cryo.scheduler.continuous_dispatch import ContinuousDispatcher
+
+    return ContinuousDispatcher(
+        SQLContinuousStore(SessionLocal),
+        wiring.redis_client,
+        events_per_tick=settings.continuous_events_per_tick,
+        evaluations_per_tick=settings.continuous_evaluations_per_tick,
+        sweep_seconds=settings.continuous_drift_sweep_seconds,
+        rescan_wait_seconds=settings.continuous_rescan_wait_seconds,
+    )
 
 
 class EventsRunner(DaemonRunner):
@@ -873,7 +894,7 @@ class EventsRunner(DaemonRunner):
             self._watcher = build_event_watcher(self._get_wiring())
             return self._watcher
         except Exception as exc:
-            self._logger.debug("Cannot initialize event watcher: %s", exc)
+            self._logger.warning("Cannot initialize event watcher: %s", exc)
             return None
 
 
@@ -1045,7 +1066,7 @@ def run_scheduler(args: argparse.Namespace) -> NoReturn:
 
 def run_events(args: argparse.Namespace) -> NoReturn:
     runner = EventsRunner(interval=args.poll_interval)
-    _run_with_signal(runner)
+    _run_with_signal(runner, service_name="events")
 
 
 def run_scanner(args: argparse.Namespace) -> NoReturn:

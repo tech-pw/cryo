@@ -27,6 +27,7 @@ from cryo.db.models import (
 from cryo.db.repositories.job_dedupe import supersede_covered_jobs
 from cryo.db.repositories.operation_exclusions import excluded_operations
 from cryo.domain.enums import JobStatus, Mode, OperationType
+from cryo.engines.base import COMMIT_CONFLICT_MARKER
 from cryo.observability.correlation import correlation_id_from_summary
 from cryo.worker.worker import (
     AuditRecord,
@@ -177,6 +178,20 @@ class SQLJobStore:
             record_missing_metadata(session, uuid.UUID(table_id), reason=reason)
             session.commit()
 
+    def reset_table_drift(self, table_id: str) -> None:
+        from cryo.events.drift import reset_drift
+        from cryo.observability.metrics import continuous_drift_to_completion_seconds
+
+        now = datetime.now(UTC)
+        with self._session_factory() as session:
+            reset = reset_drift(session, uuid.UUID(table_id), at=now)
+            session.commit()
+        if reset is not None and reset.first_commit_at is not None:
+            first = reset.first_commit_at
+            if first.tzinfo is None:
+                first = first.replace(tzinfo=UTC)
+            continuous_drift_to_completion_seconds.observe(max(0.0, (now - first).total_seconds()))
+
     def update_resource_failure_backoff(
         self, table_id: str, status: JobStatus, error: str | None
     ) -> None:
@@ -218,6 +233,45 @@ class SQLJobStore:
         with self._session_factory() as session:
             job = _load_job(session, uuid.UUID(job_id))
             job.engine_ref = engine_ref
+            session.commit()
+
+    def count_commit_conflicts(self, job_id: str) -> int:
+        with self._session_factory() as session:
+            return int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(AuditLog)
+                    .where(
+                        AuditLog.job_id == uuid.UUID(job_id),
+                        AuditLog.detail.startswith(COMMIT_CONFLICT_MARKER, autoescape=True),
+                    )
+                )
+                or 0
+            )
+
+    def record_job_event(
+        self,
+        *,
+        job_id: str,
+        table_id: str,
+        action: str,
+        status: str,
+        detail: str | None,
+        actor: str | None,
+    ) -> None:
+        """Audit a job-level event that is not one maintenance operation."""
+        with self._session_factory() as session:
+            session.add(
+                AuditLog(
+                    table_id=uuid.UUID(table_id),
+                    job_id=uuid.UUID(job_id),
+                    action=action,
+                    status=status,
+                    engine="worker",
+                    detail=detail,
+                    actor=actor,
+                )
+            )
             session.commit()
 
     def record_audit(self, record: AuditRecord) -> None:
@@ -673,6 +727,7 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         correlation_id=correlation_id_from_summary(summary),
         run_status=job.run.status if job.run else None,
         run_created_at=job.run.created_at if job.run else None,
+        run_trigger=job.run.trigger if job.run else None,
         requested_operations=(tuple(str(op) for op in job.operations) if job.operations else None),
         dedupe_key=job.dedupe_key,
     )

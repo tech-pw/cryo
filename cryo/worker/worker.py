@@ -4,7 +4,8 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from time import perf_counter
+from functools import partial
+from time import perf_counter, sleep
 from typing import Any, Protocol, cast
 from uuid import UUID
 
@@ -18,9 +19,12 @@ from cryo.domain.intents import (
 )
 from cryo.domain.models import MaintenancePlan, Operation
 from cryo.engines.base import (
+    COMMIT_CONFLICT_GIVE_UP_ACTION,
+    COMMIT_CONFLICT_MARKER,
     ExecCtx,
     RenderedStatement,
     is_capacity_refusal,
+    is_commit_conflict,
     is_table_not_found_error,
 )
 from cryo.engines.base import ExecResult as BaseExecResult
@@ -34,7 +38,11 @@ from cryo.intents.validation import (
     validate_execution_intent,
 )
 from cryo.observability.correlation import correlation_scope, set_context
-from cryo.observability.metrics import worker_job_duration_seconds, worker_job_executions_total
+from cryo.observability.metrics import (
+    worker_commit_conflicts_total,
+    worker_job_duration_seconds,
+    worker_job_executions_total,
+)
 from cryo.observability.tracing import trace_operation
 from cryo.planner.execution import build_execution_plan, skip_operations_from_preset
 from cryo.planner.serialization import plan_to_dict
@@ -105,6 +113,8 @@ class MaintenanceJobRecord:
     # need it (most) don't pay for the extra query.
     run_status: str | None = None
     run_created_at: datetime | None = None
+    # The parent run's trigger ("cron", "manual", "continuous:<signal>", ...).
+    run_trigger: str | None = None
     # Explicit operation subset recorded at creation by dedupe (jobs.operations); None means
     # "whatever the run summary / mode plans".
     requested_operations: tuple[str, ...] | None = None
@@ -220,6 +230,7 @@ class InMemoryJobStore:
         self.destinations: dict[str, DestinationConfig] = {}
         self.tables: dict[str, TableMaintenanceData] = {}
         self.audit: list[AuditRecord] = []
+        self.events: list[dict[str, str | None]] = []
         self.deactivated_tables: dict[str, str] = {}
         self.missing_metadata_tables: dict[str, str] = {}
         self.shared_location_tables: set[str] = set()
@@ -295,6 +306,34 @@ class InMemoryJobStore:
 
     def record_audit(self, record: AuditRecord) -> None:
         self.audit.append(record)
+
+    def count_commit_conflicts(self, job_id: str) -> int:
+        return sum(
+            1
+            for record in self.audit
+            if record.job_id == job_id and (record.detail or "").startswith(COMMIT_CONFLICT_MARKER)
+        )
+
+    def record_job_event(
+        self,
+        *,
+        job_id: str,
+        table_id: str,
+        action: str,
+        status: str,
+        detail: str | None,
+        actor: str | None,
+    ) -> None:
+        self.events.append(
+            {
+                "job_id": job_id,
+                "table_id": table_id,
+                "action": action,
+                "status": status,
+                "detail": detail,
+                "actor": actor,
+            }
+        )
 
     def set_force_admit(self, job_id: str, value: bool) -> None:
         self.jobs[job_id].force_admit = value
@@ -920,12 +959,23 @@ class Worker:
                             submission={"operation": statement.action.value},
                         )
                     try:
-                        result = _execute_statement(
-                            engine,
-                            statement,
-                            _to_exec_ctx(exec_ctx, on_engine_ref=_on_engine_ref),
-                            effect_id=receipt_id,
-                            destination_id=job.destination_id,
+                        result = _execute_retrying_conflicts(
+                            partial(
+                                _execute_statement,
+                                engine,
+                                statement,
+                                _to_exec_ctx(exec_ctx, on_engine_ref=_on_engine_ref),
+                                effect_id=receipt_id,
+                                destination_id=job.destination_id,
+                            ),
+                            retries=_conflict_retries(receipt_id),
+                            on_retry=partial(
+                                self._log_conflict_retry,
+                                job,
+                                table_ref,
+                                statement.action,
+                                str(engine.type),
+                            ),
                         )
                     except Exception as exc:
                         duration_ms = int((perf_counter() - started) * 1000)
@@ -953,7 +1003,7 @@ class Worker:
                                 action=statement.action,
                                 status="UNKNOWN" if receipt_id is not None else "FAILED",
                                 engine=engine.type,
-                                detail=str(exc),
+                                detail=_conflict_marked(str(exc)),
                                 duration_ms=duration_ms,
                                 input_files_count=None,
                                 output_files_count=None,
@@ -1073,7 +1123,7 @@ class Worker:
                                     else "FAILED"
                                 ),
                                 engine=engine.type,
-                                detail=detail,
+                                detail=_conflict_marked(detail),
                                 duration_ms=result_duration_ms,
                                 input_files_count=getattr(result, "input_files_count", None),
                                 output_files_count=getattr(result, "output_files_count", None),
@@ -1190,6 +1240,17 @@ class Worker:
                     final_status = JobStatus.DEFERRED
                     error = "capacity_deferred: " + next(iter(failed_actions.values()))
                     failed_actions = {}
+                if (
+                    failed_actions
+                    and active_intent is None
+                    and final_status is JobStatus.SUCCEEDED
+                    and all(is_commit_conflict(detail) for detail in failed_actions.values())
+                ):
+                    final_status, error = self._settle_commit_conflicts(
+                        job, failed_actions, had_success=had_success
+                    )
+                    if final_status is JobStatus.DEFERRED:
+                        failed_actions = {}
                 if failed_actions and final_status is JobStatus.SUCCEEDED:
                     # Some operations landed and some didn't: PARTIAL is the honest answer.
                     # Calling the whole job FAILED would hide real reclaimed space from the
@@ -1253,6 +1314,8 @@ class Worker:
         if final_status is JobStatus.FAILED and is_table_not_found_error(error):
             self._deactivate_dropped_table(job.table_id, error)
         self._update_failure_backoff(job.table_id, final_status, error)
+        if final_status in {JobStatus.SUCCEEDED, JobStatus.SKIPPED}:
+            self._reset_table_drift(job.table_id)
         safe_publish(
             self._run_events,
             job.run_id,
@@ -1301,6 +1364,88 @@ class Worker:
         if self._on_job_finished is not None:
             self._on_job_finished()
         return self._store.get_job(job.id)
+
+    def _log_conflict_retry(
+        self,
+        job: MaintenanceJobRecord,
+        table_ref: str | None,
+        action: OperationType,
+        engine: str,
+        attempt: int,
+        detail: str,
+    ) -> None:
+        safe_publish(
+            self._run_events,
+            job.run_id,
+            build_log_line(
+                run_id=job.run_id,
+                job_id=job.id,
+                table_id=job.table_id,
+                table_ref=table_ref,
+                operation=action.value,
+                engine=engine,
+                level="warning",
+                message=(
+                    f"{action.value} lost its commit to a concurrent writer; "
+                    f"re-running (attempt {attempt + 1}): {detail}"
+                ),
+            ),
+        )
+
+    def _settle_commit_conflicts(
+        self,
+        job: MaintenanceJobRecord,
+        failed_actions: Mapping[OperationType, str],
+        *,
+        had_success: bool,
+    ) -> tuple[JobStatus, str]:
+        """Defer a job whose only failures were lost commits, or give up after enough of them.
+
+        A deferred job is re-queued by the deferred-job reconciler and re-planned from the
+        table's stats on its next run, so the retry targets what the writer left behind.
+        Conflicts are counted from the job's audit rows, which the reconciler never rewrites.
+        """
+        from cryo.config import get_settings
+
+        limit = get_settings().worker_commit_conflict_max_deferrals
+        first = next(iter(failed_actions.values()))
+        count = getattr(self._store, "count_commit_conflicts", None)
+        conflicts = int(count(job.id)) if callable(count) else limit + 1
+        if conflicts <= limit:
+            worker_commit_conflicts_total.labels(outcome="deferred").inc()
+            return JobStatus.DEFERRED, f"commit_conflict: {conflicts} of {limit}: {first}"
+        worker_commit_conflicts_total.labels(outcome="gave_up").inc()
+        detail = f"commit_conflict_give_up: {conflicts} conflicts: " + "; ".join(
+            f"{action.value}: {message}" for action, message in failed_actions.items()
+        )
+        record_event = getattr(self._store, "record_job_event", None)
+        if callable(record_event):
+            try:
+                record_event(
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    action=COMMIT_CONFLICT_GIVE_UP_ACTION,
+                    status="FAILED",
+                    detail=detail[:2000],
+                    actor=job.actor,
+                )
+            except Exception:
+                logger.warning("Could not audit commit-conflict give-up for %s", job.id)
+        return (JobStatus.PARTIAL if had_success else JobStatus.FAILED), detail
+
+    def _reset_table_drift(self, table_id: str) -> None:
+        """Zero the commit-drift accumulator (#77) once maintenance has dealt with the table.
+
+        SKIPPED counts too: the planner looked at the table and found nothing worth doing,
+        so the drift since the last run is not a reason to try again. Best-effort.
+        """
+        reset = getattr(self._store, "reset_table_drift", None)
+        if not callable(reset):
+            return
+        try:
+            reset(table_id)
+        except Exception as exc:
+            logger.warning("Could not reset drift for table %s: %s", table_id, exc)
 
     def _update_failure_backoff(self, table_id: str, status: JobStatus, error: str | None) -> None:
         """Per-table backoff after consecutive deadline/OOM failures (#180), regardless of
@@ -2649,6 +2794,52 @@ def _execute_statement(
         },
     ):
         return engine.execute(statement, context)
+
+
+def _conflict_retries(receipt_id: str | None) -> int:
+    # A durable-intent effect is resolved exactly once per attempt; re-running it in place
+    # would need a second receipt, so intent jobs only get the defer-and-re-plan path.
+    if receipt_id is not None:
+        return 0
+    from cryo.config import get_settings
+
+    return get_settings().worker_commit_conflict_retries
+
+
+def _conflict_marked(detail: str) -> str:
+    """Prefix a conflict's audit detail so the job's conflicts can be counted later."""
+    if is_commit_conflict(detail) and not detail.startswith(COMMIT_CONFLICT_MARKER):
+        return f"{COMMIT_CONFLICT_MARKER} {detail}"
+    return detail
+
+
+def _execute_retrying_conflicts(
+    execute: Callable[[], BaseExecResult],
+    *,
+    retries: int,
+    on_retry: Callable[[int, str], object],
+) -> BaseExecResult:
+    """Run one statement, re-running it while it loses its commit to a concurrent writer."""
+    from cryo.config import get_settings
+
+    backoff = get_settings().worker_commit_conflict_retry_backoff_seconds
+    attempt = 0
+    while True:
+        try:
+            result = execute()
+        except Exception as exc:
+            if attempt >= retries or not is_commit_conflict(str(exc)):
+                raise
+            detail = str(exc)
+        else:
+            detail = result.error or result.detail or ""
+            if getattr(result, "ok", True) or attempt >= retries or not is_commit_conflict(detail):
+                return result
+        worker_commit_conflicts_total.labels(outcome="retried").inc()
+        on_retry(attempt, detail[:300])
+        attempt += 1
+        if backoff > 0:
+            sleep(backoff * attempt)
 
 
 def _execute_native_plan(

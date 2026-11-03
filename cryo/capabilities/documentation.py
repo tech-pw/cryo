@@ -127,6 +127,23 @@ def render_capabilities_markdown(
     lines.extend(
         [
             "",
+            "## Scheduling triggers",
+            "",
+            "| Trigger | Maturity | Contract | Limitations | Owner | Evidence |",
+            "|---|---|---|---|---|---|",
+        ]
+    )
+    lines.extend(
+        f"| {_escape(item.label)} (`{_escape(item.trigger)}`) "
+        f"| **{item.maturity.value.upper()}** | {_escape(item.summary)} "
+        f"| {_join(item.limitations)} | `{_escape(item.owner)}` "
+        f"| {_evidence_links(item.evidence)} |"
+        for item in manifest.scheduling
+    )
+
+    lines.extend(
+        [
+            "",
             "## Drift policy",
             "",
             "- Every `EngineType x OperationType` pair must have exactly one matrix cell.",
