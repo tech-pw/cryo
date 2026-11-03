@@ -10,6 +10,12 @@ All notable changes to Cryo will be documented in this file. The format is based
 - Native `expire_snapshots` now deletes the files only the expired snapshots referenced, as Spark
   and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests,
   and shared-location tables (none of which plan `remove_orphan_files`) leaked them (#374).
+- A fleet scan whose catalog discovery failed no longer finishes `succeeded` with zero tables.
+  The chunk is `failed` when nothing was discovered and `partial_failed` when other sources
+  listed, and the discovery error becomes the run's `last_error`. A run with a `last_error` is
+  never reported `succeeded`. Discovery has its own timeout,
+  `CRYO_SCAN_DISCOVERY_TIMEOUT_SECONDS` (default 1800), instead of the per-table scan timeout,
+  and heartbeats the chunk while it lists (#380).
 
 ### Changed
 - Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become
