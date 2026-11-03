@@ -558,7 +558,7 @@ Tasks:
 | 1 | Scaffold `engine-go/` + pin iceberg-go | ✅ Done | `engine-go/` module; `apache/iceberg-go v0.6.0`; `go.sum` committed |
 | 2 | `internal/protocol/` JSON structs | ✅ Done | Field-for-field mirror of Rust `ExecuteRequest`/`OperationResult` |
 | 3 | `internal/catalog/` REST + gocloud S3 | ✅ Done | Maps `catalog_properties`, MinIO path-style + region |
-| 4 | `internal/ops/expire.go` | ✅ Done | Incremental expire for REST multi-snapshot removal; `WithPostCommit(false)` + paired orphan op |
+| 4 | `internal/ops/expire.go` | ✅ Done | Incremental expire for REST multi-snapshot removal. Each commit uses `WithPostCommit(false)`; after the last commit `expire_cleanup.go` deletes the files only the expired snapshots referenced (manifest lists, manifests, data/delete files, statistics), the same set Spark/Trino delete. It does not rely on a paired orphan op, which standard/light runs and shared-location tables never get (issue #374) |
 | 5 | `internal/ops/orphans.go` | ✅ Done | `DeleteOrphanFiles`; dry-run preview for byte metrics; age/concurrency params |
 | 6 | `internal/progress/` | ✅ Done | `CRYO_PROGRESS:{…}` on stdout; logs on stderr |
 | 7 | CLI exit codes + `ok = all(success)` | ✅ Done | exit 2/1/0 contract; top-level `ok` requires every op success |

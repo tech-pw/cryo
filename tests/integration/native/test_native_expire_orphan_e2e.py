@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import os
 
+import pyarrow as pa
 import pytest
+from pyiceberg.catalog import load_catalog
+from pyiceberg.schema import Schema
+from pyiceberg.types import LongType, NestedField, StringType
 
 from cryo.domain.enums import Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
@@ -16,9 +20,12 @@ from cryo.engines.native.runner import (
     verify_cryo_engine_spawnable,
 )
 from tests.integration.native.rest_env import (
+    FIXTURE_NAMESPACE,
     NativeRestFixture,
+    catalog_properties,
     ensure_rest_fixture,
     list_object_sizes,
+    normalize_uri,
     rest_uri,
     source_config,
 )
@@ -112,3 +119,81 @@ def test_native_expire_and_remove_orphans(fixture: NativeRestFixture) -> None:
     after_sizes = list_object_sizes(fixture.location)
     assert fixture.orphan_uri not in after_sizes
     assert after_sizes, "expected referenced table files to remain after orphan cleanup"
+
+
+def _data_objects(location: str) -> set[str]:
+    return {uri for uri in list_object_sizes(location) if "/data/" in uri}
+
+
+@requires_rest
+@requires_engine
+def test_native_expire_alone_deletes_files_only_expired_snapshots_referenced() -> None:
+    """Standard-mode runs plan expire_snapshots without remove_orphan_files, so expiry itself
+    must delete what the expired snapshots exclusively referenced (issue #374)."""
+    spawn_error = _spawn_error()
+    if spawn_error is not None:
+        pytest.skip(spawn_error)
+
+    catalog = load_catalog("rest", **catalog_properties())
+    if (FIXTURE_NAMESPACE,) not in catalog.list_namespaces():
+        catalog.create_namespace(FIXTURE_NAMESPACE)
+    identifier = (FIXTURE_NAMESPACE, "expire_only_fixture")
+    try:
+        catalog.drop_table(identifier)
+    except Exception:
+        pass
+    table = catalog.create_table(
+        identifier,
+        schema=Schema(
+            NestedField(1, "id", LongType(), required=True),
+            NestedField(2, "label", StringType(), required=True),
+        ),
+    )
+    arrow_schema = pa.schema(
+        [
+            pa.field("id", pa.int64(), nullable=False),
+            pa.field("label", pa.string(), nullable=False),
+        ]
+    )
+
+    def batch(value: int) -> pa.Table:
+        return pa.Table.from_pylist([{"id": value, "label": f"batch-{value}"}], schema=arrow_schema)
+
+    location = normalize_uri(table.location())
+    preexisting = _data_objects(location)
+    table.append(batch(0))
+    table.append(batch(1))
+    overwritten = _data_objects(location) - preexisting
+    assert len(overwritten) == 2
+    table.overwrite(batch(2))
+    table = catalog.load_table(identifier)
+    live = {normalize_uri(path) for path in table.inspect.files()["file_path"].to_pylist()}
+    assert live and not live & overwritten
+
+    plan = MaintenancePlan(
+        table_ref=f"{FIXTURE_NAMESPACE}.expire_only_fixture",
+        mode=Mode.STANDARD,
+        operations=(
+            Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 0, "retain_last": 1}),
+        ),
+    )
+    request = build_execute_request_for_operations(
+        plan=plan,
+        operations=plan.operations,
+        source_config=source_config(),
+        destination_config={"operation_mode": "execute"},
+    )
+    result = execute_request(request, config=_engine_config(), timeout_seconds=180)
+    assert result.ok, result.error or result.stderr
+    expire_result = result.results[0]
+    assert expire_result.snapshots_expired is not None
+    assert expire_result.snapshots_expired >= 2
+    assert expire_result.bytes_removed is not None
+    assert expire_result.bytes_removed > 0
+
+    remaining = _data_objects(location)
+    assert not remaining & overwritten, "data files of expired snapshots were left behind"
+    assert live <= remaining, "expiry deleted a file the current snapshot still reads"
+    reloaded = catalog.load_table(identifier)
+    assert len(reloaded.metadata.snapshots) == 1
+    assert reloaded.scan().to_arrow().column("id").to_pylist() == [2]
