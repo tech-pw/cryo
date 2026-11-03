@@ -32,11 +32,12 @@
 <p>The <code>v0.1.x</code> tags were cut before the changelog had per-release sections, so their changes are still listed under Unreleased. Compare two tags on GitHub, for example <a href="https://github.com/tech-pw/cryo/compare/v0.1.4...v0.1.5">v0.1.4...v0.1.5</a>, to see exactly what shipped between them.</p>
 <p>All notable changes to Cryo will be documented in this file. The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased"><a href="https://github.com/tech-pw/cryo/compare/v0.2.0...HEAD">Unreleased</a><a class="anchor" href="#unreleased" aria-label="Link to Unreleased">#</a></h2>
-<ul>
-  <li><code>README.md</code> opens with a 25-second loop of the real UI on demo data (Tables, a health grade, the run review, the run receipt), with an MP4 copy. <code>make web-demo-loop</code> re-records it from <code>web/e2e/docs-capture/demo-loop.ts</code> (#279). The homepage film already ends on the ice-cube mark (re-rendered in October), so the 0.2.0 note that it still showed the old mark is out of date; <code>site/README.md</code> now describes how the published 720p copy is made.</li>
-</ul>
 <h3 id="unreleased-added">Added<a class="anchor" href="#unreleased-added" aria-label="Link to Added">#</a></h3>
 <ul>
+  <li><code>make demo</code> takes the local stack from an empty UI to graded tables and one finished maintenance run: it seeds the fragmented fixtures, scans <code>local-rest</code>, assigns <code>local-standard</code> and runs <code>optimize</code> + <code>optimize_manifests</code> through the API (<code>scripts/demo.py</code>). The Quickstart now ends there, with a check after each step (#217).</li>
+</ul>
+<ul>
+  <li><code>README.md</code> opens with a 25-second loop of the real UI on demo data (Tables, a health grade, the run review, the run receipt), with an MP4 copy. <code>make web-demo-loop</code> re-records it from <code>web/e2e/docs-capture/demo-loop.ts</code> (#279). The homepage film already ends on the ice-cube mark (re-rendered in October), so the 0.2.0 note that it still showed the old mark is out of date; <code>site/README.md</code> now describes how the published 720p copy is made.</li>
   <li>A <strong>Removed</strong> quick view on the Tables page lists tables the scanner found gone from their catalog, with when and why, read-only. <code>GET /tables</code> takes <code>removed=exclude|include|only</code> (<code>include_removed=true</code> stays as an alias) (#330).</li>
 </ul>
 <ul>
@@ -50,6 +51,9 @@
   <li>Migration <code>20261103_1200</code> gives every foreign key to <code>tables</code>, <code>jobs</code> and <code>maintenance_intents</code> an <code>ON DELETE</code> action (NOT NULL columns cascade, nullable ones are set to NULL) and adds four indexes concurrently. Constraints are re-added <code>NOT VALID</code> and validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).</li>
 </ul>
 <h3 id="unreleased-fixed">Fixed<a class="anchor" href="#unreleased-fixed" aria-label="Link to Fixed">#</a></h3>
+<ul>
+  <li><code>make seed-fragmented</code>, <code>make seed-docker</code> and <code>make smoke-file-counts</code> pointed the Spark container at <code>localhost:8181</code>, which inside the container is not the REST catalog. They now use <code>iceberg-rest:8181</code> (#217).</li>
+</ul>
 <ul>
   <li>Turning off &quot;Active only&quot; on the Tables page now lists tables removed from the catalog. It used to drop only the <code>is_active</code> filter while the server kept hiding them. CSV export and group-by now hide removed tables by default too, so their totals match the list (#330).</li>
   <li>Native <code>expire_snapshots</code> now deletes the files only the expired snapshots referenced, as Spark and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests, and shared-location tables (none of which plan <code>remove_orphan_files</code>) leaked them (#374).</li>

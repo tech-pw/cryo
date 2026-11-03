@@ -144,6 +144,9 @@ services:
       SPARK_EXECUTOR_MEMORY: 4g
     volumes:
       - .:/workspace
+      # spark.jars.packages downloads Iceberg, hadoop-aws and the AWS SDK on every run;
+      # keep them across --rm containers.
+      - spark_ivy_cache:/root/.ivy2
     networks:
       - cryo-dev
     depends_on:
@@ -156,6 +159,7 @@ services:
 volumes:
   minio_data:
   hms_postgres_data:
+  spark_ivy_cache:
 
 networks:
   cryo-dev:
