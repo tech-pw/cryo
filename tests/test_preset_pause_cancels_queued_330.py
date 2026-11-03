@@ -112,6 +112,7 @@ def _seed(api_db: ApiDb) -> _Seed:
                     destination_id=destination_id,
                     mode="standard",
                     status=status,
+                    deferred_since=datetime.now(UTC) if status == "deferred" else None,
                 )
             )
 
@@ -197,6 +198,10 @@ def test_pause_cancels_unadmitted_jobs_and_lets_admitted_and_running_finish(
         waiting = session.get(MaintenanceRun, seed.runs["waiting"])
         assert waiting is not None and waiting.finished_at is not None
         assert (waiting.summary or {}).get("cancelled_reason") == "preset_paused"
+        cancelled_deferred = session.get(MaintenanceJob, seed.jobs["waiting_deferred"])
+        assert cancelled_deferred is not None and cancelled_deferred.deferred_since is None
+        untouched = session.get(MaintenanceJob, seed.jobs["done_deferred"])
+        assert untouched is not None and untouched.deferred_since is not None
 
 
 def test_patch_paused_true_cancels_the_same_jobs(api_db: ApiDb, wiring: _Wiring) -> None:

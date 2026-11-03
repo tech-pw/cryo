@@ -82,6 +82,7 @@ def cancel_unadmitted_jobs(session: Session, preset: Preset) -> PauseCancellatio
         job.status = JobStatus.SKIPPED.value
         job.error = PRESET_PAUSED_JOB_ERROR
         job.finished_at = now
+        job.deferred_since = None
     session.flush()
     still_active = set(
         session.scalars(
