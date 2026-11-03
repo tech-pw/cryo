@@ -168,6 +168,15 @@ _OPERATIONS = (
         description="Run a minor rewrite of position-delete files without full data compaction.",
         destructive=False,
     ),
+    OperationDefinition(
+        operation=OperationType.MIGRATE_PARTITION_SPEC,
+        label="Migrate to current partition spec",
+        description=(
+            "Rewrite partitions still written under an older partition spec into the default "
+            "spec. Runs only on request, after an approval."
+        ),
+        destructive=False,
+    ),
 )
 
 _ENGINES = (
@@ -432,6 +441,25 @@ _TRINO_CELLS = (
             "test_trino_rewrite_position_deletes_raises_unsupported",
         ),
     ),
+    _cell(
+        EngineType.TRINO,
+        OperationType.MIGRATE_PARTITION_SPEC,
+        SupportStatus.UNSUPPORTED,
+        MaturityTier.BLOCKED,
+        ExecutionMode.NONE,
+        limitations=(
+            "Trino enforces an OPTIMIZE filter only when every partition spec in use can enforce "
+            "it; an old-spec partition filter cannot be.",
+        ),
+        fallback_engines=(EngineType.SPARK_EMR,),
+        owner="engines/trino",
+        evidence=_evidence(
+            "cryo/engines/trino/sql.py",
+            "_render_operation",
+            "tests/test_partition_spec_migration.py",
+            "test_trino_renderer_refuses_migration",
+        ),
+    ),
 )
 
 
@@ -481,6 +509,13 @@ def _spark_cell(operation: OperationType) -> OperationCapability:
                 "test_spark_renders_rewrite_position_deletes_operation",
             )
             if operation is OperationType.REWRITE_POSITION_DELETES
+            else _evidence(
+                "cryo/engines/spark/sql.py",
+                "_render_migrate_partition_spec",
+                "tests/test_partition_spec_migration.py",
+                "test_spark_renders_migration_with_rewrite_all_and_filters",
+            )
+            if operation is OperationType.MIGRATE_PARTITION_SPEC
             else _SPARK_EVIDENCE
         ),
     )
@@ -601,6 +636,18 @@ _NATIVE_CELLS = (
         ExecutionMode.SQL_FALLBACK,
         runtime_conditions=("A Spark fallback destination must be configured.",),
         limitations=("Neither cryo-engine-go nor Trino implements the minor delete rewrite.",),
+        fallback_engines=(EngineType.SPARK_EMR,),
+        owner="engines/native",
+        evidence=_NATIVE_EVIDENCE,
+    ),
+    _cell(
+        EngineType.NATIVE,
+        OperationType.MIGRATE_PARTITION_SPEC,
+        SupportStatus.FALLBACK_REQUIRED,
+        MaturityTier.EXPERIMENTAL,
+        ExecutionMode.SQL_FALLBACK,
+        runtime_conditions=("A Spark fallback destination must be configured.",),
+        limitations=("cryo-engine-go has no rewrite-all mode for older-spec files.",),
         fallback_engines=(EngineType.SPARK_EMR,),
         owner="engines/native",
         evidence=_NATIVE_EVIDENCE,

@@ -539,6 +539,7 @@ const ACTION_TITLES: Record<string, string> = {
   compute_statistics: "Compute statistics",
   convert_deletes: "Convert deletes",
   rewrite_position_deletes: "Merge position deletes",
+  migrate_partition_spec: "Migrate to current partition spec",
   "archive.archive": "Archive partitions",
   "archive.restore": "Restore partitions"
 };

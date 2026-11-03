@@ -129,6 +129,36 @@ OPERATIONS: tuple[OperationSpec, ...] = (
         doc_url=f"{_SPARK_PROCEDURES}#rewrite_position_delete_files",
     ),
     OperationSpec(
+        operation=OperationType.MIGRATE_PARTITION_SPEC,
+        label="Migrate to current partition spec",
+        phase="compaction",
+        summary=(
+            "Rewrites every file of the partitions still written under an older partition "
+            "spec, so their data moves into the table's current spec. Chunked like optimize."
+        ),
+        when_planned=(
+            "Only when an operator runs it from the table's Maintain tab and the run is "
+            "approved. Scheduled runs never plan it."
+        ),
+        exclude_consequence=(
+            "Partitions written before the spec change keep the old layout and keep counting "
+            "toward the table's partition count, file count and skew."
+        ),
+        exclude_risk="low",
+        reasons_to_exclude=(
+            "Readers still rely on the old layout and the table owner has not agreed to move.",
+        ),
+        engines=(
+            ("spark", "CALL system.rewrite_data_files with a partition filter and rewrite-all."),
+            (
+                "trino",
+                "Not supported: OPTIMIZE only takes a WHERE it can enforce on every spec the "
+                "table still uses, which old-spec partition filters are not.",
+            ),
+        ),
+        doc_url=f"{_SPARK_PROCEDURES}#rewrite_data_files",
+    ),
+    OperationSpec(
         operation=OperationType.OPTIMIZE,
         label="Compact small files",
         phase="compaction",
@@ -358,6 +388,11 @@ def operation_state(spec: OperationSpec, facts: TableOperationFacts) -> Operatio
             "blocked",
             "Blocked: the table's S3 location overlaps another table's, so deleting "
             "unreferenced files could delete that table's data.",
+        )
+    if op is OperationType.MIGRATE_PARTITION_SPEC:
+        return OperationState(
+            "not_scheduled",
+            "Runs only when requested from the Maintain tab, after an approval.",
         )
     if facts.mode is None:
         return OperationState(

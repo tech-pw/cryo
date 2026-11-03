@@ -108,6 +108,9 @@ class TableSnapshot:
     # The scanner's stats as compute_health_score saw them (total_size_gb, avg_file_size_mb,
     # snapshot_retention_days, commits_per_day, ...), so projections use the same limits.
     stats: Mapping[str, Any] = field(default_factory=dict)
+    # The scanner's raw["spec_migration"]: default_spec_id and the old-spec partition, file and
+    # byte counts. Empty when the scan predates it.
+    spec_migration: Mapping[str, Any] = field(default_factory=dict)
     now: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -352,6 +355,7 @@ def build_path_to_a(snapshot: TableSnapshot) -> PathToA:
     add(_retention_step(snapshot, projection))
     add(_properties_step(snapshot, projection))
     add(_compaction_step(snapshot, projection, parts, target, scale, routine=False))
+    add(_spec_migration_step(snapshot, projection))
     layout = _partition_step(snapshot, projection, parts, target, scale)
     add(layout)
     dropped = list(layout.action.get("dropped", [])) if layout and layout.action else []
@@ -982,10 +986,49 @@ def _layout_text(
             queries = _plural(filters, "recorded query", "recorded queries")
             sentences.append(f"{queries} filter on {column}.")
     sentences.append(
-        "New writes use the new spec at once. Existing data moves over as it is rewritten; "
-        "until then its old partitions still count, so the projection assumes a full rewrite."
+        "New writes use the new spec at once. Routine compaction leaves existing data in the "
+        "old layout, so this projection holds only after the old partitions are migrated: "
+        "Migrate to current spec on the Maintain tab rewrites them, on a Spark destination "
+        "and after an approval."
     )
     return title, " ".join(sentences)
+
+
+def _spec_migration_step(snapshot: TableSnapshot, projection: _Projection) -> Step | None:
+    """Old-spec partitions left over from a partition spec change that already happened.
+
+    No score change is projected: the scorer reads table totals, and how many partitions and
+    files the old data folds into depends on the new spec's layout of it.
+    """
+    partitions = int(snapshot.spec_migration.get("old_spec_partitions") or 0)
+    if partitions <= 0:
+        return None
+    files = int(snapshot.spec_migration.get("old_spec_files") or 0)
+    size_gb = int(snapshot.spec_migration.get("old_spec_bytes") or 0) / GIB
+    default_spec_id = snapshot.spec_migration.get("default_spec_id")
+    return Step(
+        id="migrate_partition_spec",
+        kind="approval",
+        title=(
+            f"Migrate {_plural(partitions, 'partition')} still written under an older "
+            "partition spec"
+        ),
+        detail=(
+            f"{_plural(files, 'data file')} ({size_gb:,.1f} GB) keep the layout they were "
+            f"written with, not spec {default_spec_id}. Routine compaction picks partitions by "
+            "small files and leaves well-sized old-spec files where they are. Migrate to "
+            "current spec on the Maintain tab rewrites them in chunks, on a Spark destination "
+            "and after an approval."
+        ),
+        fixes=[],
+        projected_score=projection.score(),
+        projected_grade=grade_for_score(projection.score()),
+        confidence="measured",
+        evidence=[
+            f"Last scan: {_plural(partitions, 'partition')}, {_plural(files, 'data file')}, "
+            f"{size_gb:,.1f} GB under an older spec."
+        ],
+    )
 
 
 def _sort_columns(snapshot: TableSnapshot, dropped: Sequence[str]) -> list[str]:
