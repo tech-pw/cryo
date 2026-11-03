@@ -23,6 +23,10 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 - Tables registry: an **Effective preset** column (preset, where it comes from, paused) and a **Coverage** filter with *On default* and *Unmaintained*. `GET /tables` rows carry `effective_preset`, and `GET /tables`, `/tables/group-by` and `/tables/export.csv` take `effective_provenance` (#330).
 
+### Changed
+
+- Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become skipped with `cancelled: preset paused`). Admitted and running jobs finish, and a run left with nothing active is marked cancelled. Before, queued jobs drained after a pause (#330).
+
 ### Security
 
 - CI runs trufflehog alongside gitleaks: on every PR and push to `main` over the new commits, and weekly over the full history. It fails on verified credentials, and on credentials whose verification errored outside the connection-string detectors (#203).

@@ -1031,6 +1031,11 @@ def patch_preset(
             keep_preset_id=preset.id,
         )
     _apply_patch(preset, values)
+    cancellation = (
+        preset_lifecycle.cancel_unadmitted_jobs(session, preset)
+        if preset.paused and not before["paused"]
+        else None
+    )
     if switches_change:
         preset_lifecycle.audit_lifecycle_change(
             session,
@@ -1039,8 +1044,11 @@ def patch_preset(
             covered_before=covered_before,
             actor=principal.subject,
             previous_default=previous_default,
+            cancellation=cancellation,
         )
     session.commit()
+    if cancellation is not None:
+        preset_lifecycle.drop_cancelled_from_queue(cancellation, preset.id)
     session.refresh(preset)
     return preset
 
