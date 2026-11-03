@@ -533,6 +533,19 @@ class Settings(BaseSettings):
             "timeout directly, so we patch the requests Session it uses."
         ),
     )
+    scan_discovery_timeout_seconds: float = Field(
+        default=1800.0,
+        gt=0,
+        le=7200.0,
+        description=(
+            "Hard wall-clock bound for listing one source's tables at the start of a scan "
+            "chunk. Listing a large Hive Metastore can take far longer than scanning one "
+            "table, so this is separate from scan_table_timeout_seconds. The chunk keeps "
+            "heartbeating while it lists, so stale-chunk recovery does not re-queue it. Past "
+            "this limit the source counts as a discovery failure and the chunk is reported "
+            "failed (nothing discovered) or partial_failed (other sources listed)."
+        ),
+    )
     scan_table_timeout_seconds: float = Field(
         default=180.0,
         gt=0,

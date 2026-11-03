@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from cryo.config import get_settings
 from cryo.domain.enums import JobStatus
+from cryo.queue.job_release import release_job_claims
 from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.scheduler.scheduler import fifo_priority
@@ -299,8 +300,9 @@ def reconcile_stale_running_jobs(
             logger.debug("Skipping stale reap for job %s: engine still active", job.id)
             continue
         store.mark_status(job.id, JobStatus.FAILED, error="stale_running_reaped")
-        queue.complete(job.id, JobStatus.FAILED)
-        lock_store.release_table_lock(job.table_id, job.id)
+        release_job_claims(
+            queue, lock_store, job_id=job.id, table_id=job.table_id, status=JobStatus.FAILED
+        )
         reaped += 1
         logger.warning(
             "Reaped stale RUNNING job %s (table %s): running since %s with no owning worker",
