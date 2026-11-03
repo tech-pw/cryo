@@ -42,6 +42,7 @@
 <h3 id="unreleased-fixed">Fixed<a class="anchor" href="#unreleased-fixed" aria-label="Link to Fixed">#</a></h3>
 <ul>
   <li>Native <code>expire_snapshots</code> now deletes the files only the expired snapshots referenced, as Spark and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests, and shared-location tables (none of which plan <code>remove_orphan_files</code>) leaked them (#374).</li>
+  <li>The Spark fallback sweep no longer finalizes a job whose native dispatch is still running. It used to mark such a job terminal mid-run, so the governor's lock reconcile released its table lock as orphaned. When the sweep does end a job, it now releases the job's table lock and in-flight slot, and a second completion of the same job no longer drives the in-flight counter negative (#382).</li>
   <li>A fleet scan whose catalog discovery failed no longer finishes <code>succeeded</code> with zero tables. The chunk is <code>failed</code> when nothing was discovered and <code>partial_failed</code> when other sources listed, and the discovery error becomes the run's <code>last_error</code>. A run with a <code>last_error</code> is never reported <code>succeeded</code>. Discovery has its own timeout, <code>CRYO_SCAN_DISCOVERY_TIMEOUT_SECONDS</code> (default 1800), instead of the per-table scan timeout, and heartbeats the chunk while it lists (#380).</li>
 </ul>
 <h3 id="unreleased-changed">Changed<a class="anchor" href="#unreleased-changed" aria-label="Link to Changed">#</a></h3>
