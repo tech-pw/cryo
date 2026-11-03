@@ -22,6 +22,7 @@ from cryo.engines.trino.query_status import (
     find_maintenance_query_state,
     get_query_state,
 )
+from cryo.queue.job_release import release_job_claims
 from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.scheduler.scheduler import fifo_priority
@@ -316,8 +317,13 @@ def recover_orphaned_jobs(
                     detail=started.detail,
                 )
                 store.mark_status(job.id, JobStatus.FAILED, error=error)
-                queue.complete(job.id, JobStatus.FAILED)
-                lock_store.release_table_lock(job.table_id, job.id)
+                release_job_claims(
+                    queue,
+                    lock_store,
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    status=JobStatus.FAILED,
+                )
                 lock_store.release_job_owner(job.id, holder)
                 _LOGGED_WAITING.discard(job.id)
                 resolved += 1
@@ -382,8 +388,9 @@ def recover_orphaned_jobs(
             detail=started.detail,
         )
         store.mark_status(job.id, JobStatus.FAILED, error="engine_step_failed_on_recover")
-        queue.complete(job.id, JobStatus.FAILED)
-        lock_store.release_table_lock(job.table_id, job.id)
+        release_job_claims(
+            queue, lock_store, job_id=job.id, table_id=job.table_id, status=JobStatus.FAILED
+        )
         lock_store.release_job_owner(job.id, holder)
         resolved += 1
 
