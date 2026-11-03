@@ -18,6 +18,11 @@ All notable changes to Cryo will be documented in this file. The format is based
   set to NULL) and adds four indexes concurrently. Constraints are re-added `NOT VALID` and
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
+- Tables registry: an **Effective preset** column (preset, where it comes from, paused) and a
+  **Coverage** filter with *On default* and *Unmaintained*. `GET /tables` rows carry
+  `effective_preset`, and `GET /tables`, `/tables/group-by` and `/tables/export.csv` take
+  `effective_provenance` (#330).
+
 ### Fixed
 - Native `expire_snapshots` now deletes the files only the expired snapshots referenced, as Spark
   and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests,
@@ -37,6 +42,11 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 First tagged release since v0.1.5. GitHub release notes group the 180+ merged pull requests;
 the highlights are below.
+
+### Upgrade notes
+- A default preset that never had a schedule gets `0 2 * * *` from the migration, so after the
+  upgrade it fires nightly at 02:00 in the scheduler time zone (`CRYO_DISPLAY_TIMEZONE`, UTC by
+  default). Pause it first if you don't want that (#119, #330).
 
 ### Removed
 - The unused Rust engines (`cryo-engine/`, `cryo-native/`) and their CI jobs. The Go engine

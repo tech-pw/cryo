@@ -40,3 +40,10 @@ describe("filterScopeLabel", () => {
     );
   });
 });
+
+describe("coverage chip (#330)", () => {
+  it("labels each coverage key", () => {
+    const chips = buildFilterChips({ coverage: ["default", "unmaintained"] }, [], () => undefined);
+    expect(chips.map((chip) => chip.label)).toContain("Coverage: On default, Unmaintained");
+  });
+});
