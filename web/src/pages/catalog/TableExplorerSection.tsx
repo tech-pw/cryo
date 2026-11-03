@@ -1,4 +1,4 @@
-import type { ColumnDef, RowSelectionState, VisibilityState } from "@tanstack/react-table";
+import type { ColumnVisibilityState, RowSelectionState } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, Download, RefreshCw, ScanLine, Sparkles, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -42,7 +42,7 @@ import { CompactionTag, GradePill, PriorityTag } from "../../components/status";
 import { QueryErrorAlert } from "../../components/common";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
-import { ColumnVisibilityMenu, DataTable, type ColumnVisibilityOption } from "../../components/ui/data-table";
+import { ColumnVisibilityMenu, DataTable, type ColumnVisibilityOption, type DataTableColumnDef } from "../../components/ui/data-table";
 import { Input } from "../../components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { TruncationTooltip } from "../../components/ui/tooltip";
@@ -631,8 +631,8 @@ export const TableExplorerSection = () => {
   const [nlOpen, setNlOpen] = useState(false);
   const [exportingCsv, setExportingCsv] = useState(false);
 
-  const [storedVisibility, setStoredVisibility] = useState<VisibilityState | null>(() =>
-    readJson<VisibilityState | null>(CATALOG_COLUMNS_STORAGE_KEY, null)
+  const [storedVisibility, setStoredVisibility] = useState<ColumnVisibilityState | null>(() =>
+    readJson<ColumnVisibilityState | null>(CATALOG_COLUMNS_STORAGE_KEY, null)
   );
   const columnVisibility = query.cols
     ? visibilityFromCols(query.cols)
@@ -642,7 +642,7 @@ export const TableExplorerSection = () => {
     writeJson(CATALOG_COLUMNS_STORAGE_KEY, columnVisibility);
   }, [columnVisibility]);
 
-  const setColumnVisibility = (next: VisibilityState) => {
+  const setColumnVisibility = (next: ColumnVisibilityState) => {
     setStoredVisibility(next);
     updateParams({ cols: colsFromVisibility(next) });
   };
@@ -1061,7 +1061,7 @@ export const TableExplorerSection = () => {
     }
   };
 
-  const groupColumns = useMemo<ColumnDef<GroupRow, unknown>[]>(
+  const groupColumns = useMemo<DataTableColumnDef<GroupRow, unknown>[]>(
     () =>
       groupByField
         ? [
@@ -1095,7 +1095,7 @@ export const TableExplorerSection = () => {
     [groupByField]
   );
 
-  const tableColumns = useMemo<ColumnDef<TableRead, unknown>[]>(
+  const tableColumns = useMemo<DataTableColumnDef<TableRead, unknown>[]>(
     () => [
       {
         id: "table",

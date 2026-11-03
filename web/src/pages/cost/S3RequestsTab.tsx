@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../lib/auth";
@@ -15,7 +14,7 @@ import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { RankedBars } from "../../components/charts";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { MetricGrid } from "../../components/ui/metric-grid";
 import { Skeleton } from "../../components/ui/skeleton";
 import { MetricTile } from "../../components/ui/stat";
@@ -44,7 +43,7 @@ const loggingBadgeVariant = (status: string): "success" | "secondary" | "warning
   return "warning";
 };
 
-const bucketColumns: ColumnDef<BucketRow, unknown>[] = [
+const bucketColumns: DataTableColumnDef<BucketRow, unknown>[] = [
   {
     id: "source",
     header: "Source",

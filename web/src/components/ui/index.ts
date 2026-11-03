@@ -20,6 +20,7 @@ export { ChartFrame, ChartPanel, type ChartFrameProps, type ChartPanelProps, typ
 export { PageHeader, type PageHeaderProps } from "./page-header";
 export {
   DataTable,
+  type DataTableColumnDef,
   type DataTableProps,
   type DataTablePagination,
   type TableDensity
