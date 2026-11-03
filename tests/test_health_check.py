@@ -197,6 +197,46 @@ class TestStuckRuns:
         assert check.evidence["count"] == 1
         assert str(quiet_run.id) in check.evidence["examples"][0]
 
+    @pytest.mark.parametrize("status", ["queued", "accepted", "scheduled"])
+    def test_flags_old_open_run_in_any_non_terminal_status(self, session, status: str) -> None:
+        """#384: a run whose jobs were never admitted stays "queued"; checking only "running"
+        let a run sit open for weeks without this check firing."""
+        run = _seed_run(session, status=status, created_at=NOW - timedelta(days=5))
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "stuck_runs")
+        assert check.passed is False
+        assert check.evidence["count"] == 1
+        assert str(run.id) in check.evidence["examples"][0]
+
+    @pytest.mark.parametrize("status", ["succeeded", "partial", "failed", "cancelled"])
+    def test_ignores_terminal_runs(self, session, status: str) -> None:
+        _seed_run(session, status=status, created_at=NOW - timedelta(days=5))
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "stuck_runs")
+        assert check.passed is True
+
+    def test_scheduled_run_ages_from_scheduled_at(self, session) -> None:
+        not_due = _seed_run(session, status="scheduled", created_at=NOW - timedelta(days=5))
+        not_due.scheduled_at = NOW + timedelta(hours=1)
+        recently_dispatched = _seed_run(
+            session, status="queued", created_at=NOW - timedelta(days=5)
+        )
+        recently_dispatched.scheduled_at = NOW - timedelta(hours=1)
+        overdue = _seed_run(session, status="scheduled", created_at=NOW - timedelta(days=5))
+        overdue.scheduled_at = NOW - timedelta(days=1)
+        session.commit()
+
+        report = run_production_health_checks(session, now=NOW)
+        check = next(c for c in report.checks if c.name == "stuck_runs")
+        assert check.passed is False
+        assert check.evidence["count"] == 1
+        assert str(overdue.id) in check.evidence["examples"][0]
+        assert "24h open" in check.evidence["examples"][0]
+
 
 class TestStaleJobs:
     def test_passes_when_no_stale_jobs(self, session) -> None:
