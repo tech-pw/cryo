@@ -587,7 +587,13 @@ class PresetPatch(BaseModel):
     enabled: bool | None = None
     guardrails: JsonDict | None = None
     is_default: bool | None = None
-    paused: bool | None = None
+    paused: bool | None = Field(
+        default=None,
+        description=(
+            "Setting true cancels the preset's queued and deferred jobs (they become skipped "
+            "with error 'cancelled: preset paused'); admitted and running jobs finish."
+        ),
+    )
 
 
 class PresetRuleCreate(BaseModel):
