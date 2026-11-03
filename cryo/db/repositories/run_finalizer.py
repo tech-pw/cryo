@@ -91,9 +91,11 @@ def finalize_open_runs(
         # datetime.now(UTC)` assignment below and silently overwrite an already-recorded
         # completion time with the current tick's timestamp, corrupting run duration history.
         # Restrict the query to open statuses so a terminal run is never reconsidered at all.
-        # Maintenance runs are created "queued" (run_service, scheduler_store, routes_archive)
-        # and nothing moves them to "running", so selecting only "running" finalized nothing:
-        # live 2026-10-21, 115 runs stuck "queued" since 2026-09-30 with every job terminal.
+        # Maintenance runs are created "queued" (run_service, scheduler_store) and only move to
+        # "running" once a job is admitted (job_store._mark_run_started), so a run whose jobs
+        # all ended without ever being admitted is still "queued" here: live 2026-10-21, 115
+        # runs stuck "queued" since 2026-09-30 with every job terminal when only "running" was
+        # selected.
         # Scan runs share this table but track their own lifecycle (repositories/scanner.py).
         #
         # Review finding F09, 2026-09-20: restricting to open statuses and null-guarding

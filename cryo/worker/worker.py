@@ -2004,15 +2004,6 @@ class Worker:
                             message=f"{operation.type.value} failed: {detail}",
                         ),
                     )
-                    if not chunk_checkpointing and not outcome_unknown:
-                        return (
-                            JobStatus.FAILED,
-                            detail,
-                            engine_ref,
-                            had_success,
-                            had_skip,
-                            False,
-                        )
                     continue
                 had_success = True
                 if native_receipt_id is not None:

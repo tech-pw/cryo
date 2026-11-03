@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
+import pytest
+
 from cryo.domain.enums import EngineType, JobStatus, Mode
 from cryo.governor.admission import AdmissionConfig
 from cryo.governor.governor import Governor
@@ -646,7 +648,42 @@ class TestReconcileDeferredJobsOrphanedRunCleanup:
     belonged to already-terminal runs; 5+ consecutive governor waves admitted/deferred=0
     because the same dead jobs were re-picked every time."""
 
-    def test_deferred_job_with_terminal_run_status_is_failed_not_reconsidered(self) -> None:
+    @pytest.mark.parametrize("run_status", ["partial", "succeeded", "failed", "cancelled"])
+    def test_deferred_job_with_terminal_run_status_is_skipped_with_its_reason(
+        self, run_status: str
+    ) -> None:
+        """#383: the job never ran, so it is skipped (not failed) and keeps the reason it was
+        held; failing it made every late run close a burst of false failures."""
+        queue = InMemoryMaintenanceQueue()
+        store = InMemoryJobStore()
+        store.add_destination(
+            DestinationConfig("dest", config={"replicas": ["r1"], "adaptive_budget": False})
+        )
+        store.add_job(
+            MaintenanceJobRecord(
+                id="job-orphaned",
+                run_id="run-1",
+                table_id="table-1",
+                destination_id="dest",
+                mode=Mode.STANDARD,
+                status=JobStatus.DEFERRED,
+                error="Destructive operation requires approval",
+                run_status=run_status,
+            )
+        )
+
+        requeued = reconcile_deferred_jobs(
+            store, queue, now=datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+        )
+
+        assert requeued == 0
+        assert store.get_job("job-orphaned").status is JobStatus.SKIPPED
+        assert store.get_job("job-orphaned").error == (
+            "run_closed_while_deferred: Destructive operation requires approval"
+        )
+        assert queue.pending("dest") == []
+
+    def test_deferred_job_without_a_recorded_reason_still_gets_one(self) -> None:
         queue = InMemoryMaintenanceQueue()
         store = InMemoryJobStore()
         store.add_destination(
@@ -664,15 +701,10 @@ class TestReconcileDeferredJobsOrphanedRunCleanup:
             )
         )
 
-        requeued = reconcile_deferred_jobs(
-            store, queue, now=datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
-        )
+        reconcile_deferred_jobs(store, queue, now=datetime(2026, 9, 3, 12, 0, tzinfo=UTC))
 
-        assert requeued == 0
-        assert store.get_job("job-orphaned").status is JobStatus.FAILED
-        assert (
-            store.get_job("job-orphaned").error == "orphaned_deferred: parent run already finalized"
-        )
+        assert store.get_job("job-orphaned").status is JobStatus.SKIPPED
+        assert store.get_job("job-orphaned").error == "run_closed_while_deferred: deferred"
 
     def test_deferred_job_with_running_run_status_is_still_reconsidered(self) -> None:
         """The safety boundary: a job whose run is genuinely still in flight (status=
@@ -741,7 +773,7 @@ class TestReconcileDeferredJobsOrphanedRunCleanup:
         # InMemoryJobStore.list_deferred_jobs preserves insertion order (no finished_at
         # ordering in the fake store) -- the 3 dead jobs are seeded first, so with the bound at
         # 3, a naive implementation would exhaust the whole budget on them and never reach
-        # job-alive in this same wave. With the orphaned-run fix, dead jobs resolve to FAILED
+        # job-alive in this same wave. With the orphaned-run fix, dead jobs resolve to SKIPPED
         # immediately (not "still using up admission-decision budget slowly"), so real per-wave
         # capacity is still spent, but this test's real point is that dead jobs are correctly
         # identified and removed rather than silently re-deferred.
@@ -750,9 +782,9 @@ class TestReconcileDeferredJobsOrphanedRunCleanup:
         )
 
         for i in range(3):
-            assert store.get_job(f"job-dead-{i}").status is JobStatus.FAILED
+            assert store.get_job(f"job-dead-{i}").status is JobStatus.SKIPPED
         # job-alive is outside this wave's bound (3 dead jobs already consumed it) -- still
-        # deferred, correctly left for the next wave rather than incorrectly failed.
+        # deferred, correctly left for the next wave rather than incorrectly skipped.
         assert store.get_job("job-alive").status is JobStatus.DEFERRED
         assert requeued == 0
 

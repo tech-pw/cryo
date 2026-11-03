@@ -303,6 +303,55 @@ class TestChunkCheckpointing:
         assert result.status is JobStatus.FAILED
 
 
+def test_worker_audits_every_operation_of_a_bundled_native_batch_after_one_fails() -> None:
+    """cryo-engine-go runs the whole batch even when an operation fails. Returning FAILED on
+    the first failure dropped the audit of every later operation and hid committed work (#373)."""
+    from cryo.domain.enums import EngineType
+    from cryo.engines.base import ExecCtx, ExecResult, RenderedStatement
+
+    class BundledNativeEngine:
+        type = EngineType.NATIVE
+
+        def with_source_config(self, config):
+            return self
+
+        def with_table_stats(self, stats):
+            return self
+
+        def render(self, plan):
+            return [
+                RenderedStatement(action=op.type, sql=f"FAKE {op.type.value}", engine=self.type)
+                for op in plan.operations
+            ]
+
+        def session_setup(self):
+            return []
+
+        def execute_plan(self, plan, ctx: ExecCtx | None = None):
+            assert ctx is not None and not ctx.chunk_checkpointing
+            assert [op.type for op in plan.operations] == [
+                OperationType.OPTIMIZE,
+                OperationType.EXPIRE_SNAPSHOTS,
+            ]
+            return [
+                ExecResult(ok=False, error="rewrite failed", duration_ms=50),
+                ExecResult(ok=True, detail="expired", duration_ms=10, snapshots_expired=2),
+            ]
+
+    queue, locks, store = _worker_fixture(engine_impl="go")
+
+    result = Worker(queue, store, lambda destination: BundledNativeEngine(), locks).process_next()
+
+    assert result is not None
+    assert result.status is JobStatus.PARTIAL
+    assert result.error == "rewrite failed"
+    assert [(record.action, record.status) for record in store.audit] == [
+        (OperationType.OPTIMIZE, "FAILED"),
+        (OperationType.EXPIRE_SNAPSHOTS, "OK"),
+    ]
+    assert not locks.is_table_locked("table-1")
+
+
 def test_worker_uses_destination_catalog_in_plan_table_ref() -> None:
     queue = InMemoryMaintenanceQueue()
     locks = InMemoryLockStore()

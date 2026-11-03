@@ -503,6 +503,27 @@ class Settings(BaseSettings):
         ge=60,
         description="Minimum time between backlog batches of one preset.",
     )
+    scheduled_run_deadline_max_hours: float = Field(
+        default=168.0,
+        ge=0,
+        description=(
+            "Default deadline for scheduled runs (cron and backlog batches) whose preset sets no "
+            "guardrails.deadline_minutes: the run's deadline is the preset's next cron fire, "
+            "capped at this many hours (and used as-is when no fire falls within it). Past the "
+            "deadline the governor stops admitting the run's jobs, so a run with jobs left "
+            "deferred (cooldown, approval) closes instead of staying open for weeks. 0 turns "
+            "the default off."
+        ),
+    )
+    scheduled_run_deadline_min_minutes: int = Field(
+        default=60,
+        gt=0,
+        description=(
+            "Floor for the default scheduled-run deadline, so a preset whose cron fires every "
+            "few minutes still gives its run time to be admitted. Ignored when a preset sets "
+            "guardrails.deadline_minutes."
+        ),
+    )
     stuck_admitted_after_seconds: int = Field(
         default=900,
         gt=0,

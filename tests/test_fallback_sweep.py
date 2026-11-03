@@ -179,7 +179,7 @@ def test_sweep_resubmits_an_oomkilled_expire_once(session, monkeypatch) -> None:
     destination = _seed_spark_destination(session)
     job = _seed_running_job(session, destination_id=destination.id)
     job.plan = {
-        "table_ref": "cdp.unified_bq.gold_dbt_pw_bq",
+        "table_ref": "analytics.events.gold_dbt_events_wide",
         "mode": "deep",
         "operations": [
             {
@@ -238,7 +238,7 @@ def test_sweep_does_not_resubmit_an_expire_already_at_the_heap_ceiling(
     destination = _seed_spark_destination(session)
     job = _seed_running_job(session, destination_id=destination.id)
     job.plan = {
-        "table_ref": "cdp.unified_bq.gold_dbt_pw_bq",
+        "table_ref": "analytics.events.gold_dbt_events_wide",
         "mode": "deep",
         "operations": [{"type": "expire_snapshots", "params": {"retain_last": 1}}],
     }
@@ -280,7 +280,7 @@ def test_sweep_does_not_resubmit_a_second_oom_or_a_sql_error(session, monkeypatc
     destination = _seed_spark_destination(session)
     job = _seed_running_job(session, destination_id=destination.id)
     job.plan = {
-        "table_ref": "cdp.unified_bq.gold_dbt_pw_bq",
+        "table_ref": "analytics.events.gold_dbt_events_wide",
         "mode": "deep",
         "operations": [{"type": "expire_snapshots", "params": {"retain_last": 1}}],
     }
