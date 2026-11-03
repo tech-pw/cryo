@@ -21,6 +21,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Version
+         * @description Which build is running (#263). Needs a viewer token: the exact build and schema
+         *     revision tell an attacker which advisories apply. schema_revision is the Alembic
+         *     revision in the database, null when the database can't be reached.
+         */
+        get: operations["version_api_v1_version_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/readyz": {
         parameters: {
             query?: never;
@@ -1088,7 +1110,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Pause Preset */
+        /**
+         * Pause Preset
+         * @description Pausing cancels the preset's jobs that are not yet admitted (status queued or deferred): they become skipped with error 'cancelled: preset paused' and leave the queue. Admitted and running jobs finish. A run left with no active job is marked cancelled. The counts are recorded on the preset_paused audit row.
+         */
         post: operations["pause_preset_api_v1_presets__preset_id__pause_post"];
         delete?: never;
         options?: never;
@@ -1510,6 +1535,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tables/{table_id}/path-to-a": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Path To A */
+        get: operations["get_path_to_a_api_v1_tables__table_id__path_to_a_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/path-to-a/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Path Step
+         * @description Apply one step. The server rebuilds the step from the latest scan; the client only
+         *     names it, so what runs is always what the panel showed for the current scan.
+         */
+        post: operations["apply_path_step_api_v1_tables__table_id__path_to_a_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/{table_id}/config": {
         parameters: {
             query?: never;
@@ -1878,8 +1941,8 @@ export interface paths {
          * Issue Dev Token
          * @description Issue a signed JWT for dev/test UI and integration tests.
          *
-         *     Disabled in production unless allow_dev_token_in_prod is explicitly set -- use your
-         *     identity provider instead.
+         *     Only on in dev/test with no OIDC issuer, unless allow_dev_token_in_prod is explicitly
+         *     set -- use your identity provider instead.
          */
         post: operations["issue_dev_token_api_v1_auth_token_post"];
         delete?: never;
@@ -1922,6 +1985,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Auth Audit
+         * @description Recent sign-in audit rows (failed sign-ins), newest first. Admin only: the rows hold
+         *     the usernames people tried, so they are kept out of the viewer-readable fleet audit.
+         */
+        get: operations["list_auth_audit_api_v1_auth_audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/settings/google/test": {
         parameters: {
             query?: never;
@@ -1954,6 +2038,27 @@ export interface paths {
         };
         /** List Roles */
         get: operations["list_roles_api_v1_auth_roles_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Me
+         * @description Who the current token resolves to now. For Cryo-managed accounts the role is read
+         *     from the database on every request, so the UI polls this to pick up role changes.
+         */
+        get: operations["read_me_api_v1_auth_me_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4312,7 +4417,8 @@ export interface paths {
          * @description Expose Prometheus metrics for scraping.
          *
          *     This endpoint returns all registered Prometheus metrics in the
-         *     standard exposition format.
+         *     standard exposition format. When ``CRYO_METRICS_BEARER_TOKEN`` is set it requires
+         *     ``Authorization: Bearer <token>``.
          */
         get: operations["metrics_metrics_get"];
         put?: never;
@@ -5540,6 +5646,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tables/{table_id}/spec-migration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Table Spec Migration
+         * @description Old-spec partitions left to migrate, the approval state, and the last migration run.
+         */
+        get: operations["get_table_spec_migration_api_v1_tables__table_id__spec_migration_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tables/{table_id}/spec-migration/approval-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Spec Migration Approval
+         * @description Ask for approval to migrate this table; returns the live request if one exists.
+         */
+        post: operations["request_spec_migration_approval_api_v1_tables__table_id__spec_migration_approval_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -6455,6 +6601,26 @@ export interface components {
              */
             effect_status: "failed" | "files_reported" | "bytes_reported" | "unverified";
         };
+        /** AuthAuditItem */
+        AuthAuditItem: {
+            /** Id */
+            id: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /** Action */
+            action: string;
+            /** Status */
+            status: string;
+            /** Actor */
+            actor?: string | null;
+            /** Origin */
+            origin?: string | null;
+            /** Detail */
+            detail?: string | null;
+        };
         /** AuthConfigResponse */
         AuthConfigResponse: {
             /**
@@ -6499,6 +6665,11 @@ export interface components {
             google_hosted_domain: string | null;
             /** Google Auto Provision */
             google_auto_provision: boolean;
+            /**
+             * Google Admin Emails
+             * @description Enabled admins who can sign in with Google under the current settings.
+             */
+            google_admin_emails?: string[];
         };
         /** AuthorizeBody */
         AuthorizeBody: {
@@ -8761,6 +8932,12 @@ export interface components {
             client_id: string;
             /** Hosted Domain */
             hosted_domain?: string | null;
+            /**
+             * Auto Provision
+             * @description New accounts on hosted_domain are let in as viewers on first sign-in.
+             * @default false
+             */
+            auto_provision: boolean;
         };
         /** GradeDistributionItem */
         GradeDistributionItem: {
@@ -9547,6 +9724,18 @@ export interface components {
             /** Result */
             result: unknown;
         };
+        /** MeResponse */
+        MeResponse: {
+            /** Subject */
+            subject: string;
+            /** Role */
+            role: string;
+            /**
+             * Managed
+             * @description Signed in with a Cryo password or Google account.
+             */
+            managed: boolean;
+        };
         /** MessageCreate */
         MessageCreate: {
             /** Text */
@@ -9808,7 +9997,7 @@ export interface components {
          * OperationType
          * @enum {string}
          */
-        OperationType: "expire_snapshots" | "remove_orphan_files" | "convert_equality_deletes" | "convert_deletes" | "optimize" | "optimize_manifests" | "compute_statistics" | "rewrite_position_deletes" | "expire_data";
+        OperationType: "expire_snapshots" | "remove_orphan_files" | "convert_equality_deletes" | "convert_deletes" | "optimize" | "optimize_manifests" | "compute_statistics" | "rewrite_position_deletes" | "expire_data" | "migrate_partition_spec";
         /** OrphanScanCostRead */
         OrphanScanCostRead: {
             /** Estimated List Requests */
@@ -9974,6 +10163,98 @@ export interface components {
             /** Unsupported Reason */
             unsupported_reason?: string | null;
         };
+        /** PathStepRead */
+        PathStepRead: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "automatic" | "approval" | "design" | "external";
+            /** Title */
+            title: string;
+            /** Detail */
+            detail: string;
+            /** Fixes */
+            fixes: string[];
+            /** Projected Score */
+            projected_score: number;
+            /** Projected Grade */
+            projected_grade: string;
+            /**
+             * Confidence
+             * @enum {string}
+             */
+            confidence: "measured" | "estimated" | "assumed";
+            /** Evidence */
+            evidence?: string[];
+            /** Action */
+            action?: {
+                [key: string]: unknown;
+            } | null;
+            /** Required Role */
+            required_role?: string | null;
+            /** Confirm Text */
+            confirm_text?: string | null;
+            /**
+             * In Schedule
+             * @default false
+             */
+            in_schedule: boolean;
+        };
+        /** PathToAApplyRequest */
+        PathToAApplyRequest: {
+            /** Step Id */
+            step_id: string;
+            /** Confirm */
+            confirm?: string | null;
+        };
+        /** PathToAApplyResponse */
+        PathToAApplyResponse: {
+            /** Step Id */
+            step_id: string;
+            /** Status */
+            status: string;
+            /** Message */
+            message: string;
+            /** Run Id */
+            run_id?: string | null;
+            /** Audit Log Id */
+            audit_log_id?: number | null;
+        };
+        /** PathToARead */
+        PathToARead: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Score */
+            score: number;
+            /** Grade */
+            grade: string;
+            /** Deductions */
+            deductions: {
+                [key: string]: unknown;
+            }[];
+            /** Steps */
+            steps: components["schemas"]["PathStepRead"][];
+            /** Cryo Score */
+            cryo_score: number;
+            /** Cryo Grade */
+            cryo_grade: string;
+            /** Reachable Score */
+            reachable_score: number;
+            /** Reachable Grade */
+            reachable_grade: string;
+            /** Notes */
+            notes: string[];
+            /** Design Findings */
+            design_findings?: {
+                [key: string]: unknown;
+            }[];
+        };
         /** PermissionRead */
         PermissionRead: {
             /** Action */
@@ -10126,7 +10407,10 @@ export interface components {
             } | null;
             /** Is Default */
             is_default?: boolean | null;
-            /** Paused */
+            /**
+             * Paused
+             * @description Setting true cancels the preset's queued and deferred jobs (they become skipped with error 'cancelled: preset paused'); admitted and running jobs finish.
+             */
             paused?: boolean | null;
         };
         /** PresetRead */
@@ -11217,6 +11501,11 @@ export interface components {
             maintenance_writes_enabled: boolean;
             /** Native Engine Fallback */
             native_engine_fallback: string;
+            /**
+             * Display Timezone
+             * @default UTC
+             */
+            display_timezone: string;
         };
         /** RuntimeRewriteIntervalEvaluateResponse */
         RuntimeRewriteIntervalEvaluateResponse: {
@@ -12889,6 +13178,74 @@ export interface components {
             /** K8S Job Name */
             k8s_job_name?: string | null;
         };
+        /** SpecMigrationApprovalRead */
+        SpecMigrationApprovalRead: {
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Status */
+            status: string;
+            /** Requested By */
+            requested_by: string;
+            /** Approved By */
+            approved_by?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+        };
+        /** SpecMigrationApprovalRequest */
+        SpecMigrationApprovalRequest: {
+            /** Reason */
+            reason?: string | null;
+        };
+        /** SpecMigrationLastRunRead */
+        SpecMigrationLastRunRead: {
+            /** Status */
+            status: string;
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Job Id */
+            job_id?: string | null;
+            /** Detail */
+            detail?: string | null;
+        };
+        /**
+         * SpecMigrationRead
+         * @description What is still written under an older partition spec, from the last scan.
+         */
+        SpecMigrationRead: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Scanned At */
+            scanned_at: string | null;
+            /** Recorded */
+            recorded: boolean;
+            /** Default Spec Id */
+            default_spec_id: number | null;
+            /** Old Spec Partitions */
+            old_spec_partitions: number;
+            /** Old Spec Files */
+            old_spec_files: number;
+            /** Old Spec Bytes */
+            old_spec_bytes: number;
+            /** Baseline Old Spec Partitions */
+            baseline_old_spec_partitions: number | null;
+            /** Destination Engine */
+            destination_engine: string | null;
+            /** Engine Supported */
+            engine_supported: boolean;
+            /** Engine Note */
+            engine_note: string | null;
+            approval: components["schemas"]["SpecMigrationApprovalRead"] | null;
+            last_run: components["schemas"]["SpecMigrationLastRunRead"] | null;
+        };
         /**
          * SupportStatus
          * @enum {string}
@@ -14081,13 +14438,24 @@ export interface components {
             disabled: boolean;
             /** Has Password */
             has_password: boolean;
+            /** Created At */
+            created_at?: string | null;
+            /** Created Via */
+            created_via?: string | null;
+            /** Last Login At */
+            last_login_at?: string | null;
+            /** Last Login Method */
+            last_login_method?: string | null;
         };
         /** UserWrite */
         UserWrite: {
             /** Username */
             username: string;
-            /** Password */
-            password: string;
+            /**
+             * Password
+             * @description Omit for a Google-only account; the username must then be its email.
+             */
+            password?: string | null;
             /**
              * Role
              * @default viewer
@@ -14235,6 +14603,28 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: string;
+                    };
+                };
+            };
+        };
+    };
+    version_api_v1_version_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string | null;
                     };
                 };
             };
@@ -17321,6 +17711,72 @@ export interface operations {
             };
         };
     };
+    get_path_to_a_api_v1_tables__table_id__path_to_a_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PathToARead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_path_step_api_v1_tables__table_id__path_to_a_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PathToAApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PathToAApplyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_table_config_api_v1_tables__table_id__config_get: {
         parameters: {
             query?: {
@@ -18087,6 +18543,37 @@ export interface operations {
             };
         };
     };
+    list_auth_audit_api_v1_auth_audit_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthAuditItem"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     test_google_config_api_v1_auth_settings_google_test_post: {
         parameters: {
             query?: never;
@@ -18140,6 +18627,26 @@ export interface operations {
                             [key: string]: string;
                         }[];
                     };
+                };
+            };
+        };
+    };
+    read_me_api_v1_auth_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeResponse"];
                 };
             };
         };
@@ -22118,7 +22625,9 @@ export interface operations {
     metrics_metrics_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                authorization?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -22131,6 +22640,15 @@ export interface operations {
                 };
                 content: {
                     "text/plain": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -24409,6 +24927,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MaintenanceRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_table_spec_migration_api_v1_tables__table_id__spec_migration_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpecMigrationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    request_spec_migration_approval_api_v1_tables__table_id__spec_migration_approval_request_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpecMigrationApprovalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpecMigrationApprovalRead"];
                 };
             };
             /** @description Validation Error */

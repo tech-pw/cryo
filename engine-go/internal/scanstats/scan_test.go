@@ -523,3 +523,98 @@ func TestNoteManifestErrorDedupes(t *testing.T) {
 		t.Fatalf("manifestErrors=%v", acc.manifestErrors)
 	}
 }
+
+func TestOlderSpecFilesAreBucketedByTheirOwnSpec(t *testing.T) {
+	const mb = 1024 * 1024
+	monthFields := []protocol.ScanStatsPartitionField{
+		{BaseColumn: "ts", PartitionField: "ts_month", Transform: "month", ColType: "timestamp"},
+	}
+	dayFields := []protocol.ScanStatsPartitionField{
+		{BaseColumn: "ts", PartitionField: "ts_day", Transform: "day", ColType: "timestamp"},
+	}
+	acc := newAccumulator(monthFields, Options{}.withDefaults())
+	current := int32(1)
+	acc.defaultSpecID = &current
+	acc.olderSpecFields = map[int32][]protocol.ScanStatsPartitionField{0: dayFields}
+	for _, rec := range []FileRecord{
+		{SizeBytes: 200 * mb, Content: "DATA", SpecID: 0, Partition: map[string]any{"ts_day": 20000}},
+		{SizeBytes: 220 * mb, Content: "DATA", SpecID: 0, Partition: map[string]any{"ts_day": 20001}},
+		{SizeBytes: 1 * mb, Content: "POSITION_DELETES", SpecID: 0, Partition: map[string]any{"ts_day": 20002}},
+		{SizeBytes: 10 * mb, Content: "DATA", SpecID: 1, Partition: map[string]any{"ts_month": 657}},
+	} {
+		acc.addRecord(rec)
+	}
+
+	resp := acc.finish("s", "t", nil)
+
+	if resp.DefaultSpecID == nil || *resp.DefaultSpecID != 1 {
+		t.Fatalf("default_spec_id = %v", resp.DefaultSpecID)
+	}
+	if resp.OldSpecPartitions != 2 || resp.OldSpecFiles != 2 || resp.OldSpecBytes != 420*mb {
+		t.Fatalf("old spec totals = %d/%d/%d", resp.OldSpecPartitions, resp.OldSpecFiles, resp.OldSpecBytes)
+	}
+	byKey := map[string]protocol.ScanStatsPartitionAccum{}
+	for _, p := range resp.Partitions {
+		byKey[p.PartitionKey] = p
+	}
+	old, ok := byKey["spec=0/ts_day=20000"]
+	if !ok || *old.PartitionSpecID != 0 || old.PartitionValue != "20000" {
+		t.Fatalf("older-spec row = %+v (keys %v)", old, byKey)
+	}
+	if len(old.PartitionFields) != 1 || old.PartitionFields[0].PartitionField != "ts_day" {
+		t.Fatalf("older-spec row must carry its own fields: %+v", old.PartitionFields)
+	}
+	cur := byKey["ts_month=657"]
+	if cur.PartitionFields != nil || *cur.PartitionSpecID != 1 {
+		t.Fatalf("default-spec row = %+v", cur)
+	}
+}
+
+func TestWithoutDefaultSpecEveryFileUsesTableFields(t *testing.T) {
+	fields := []protocol.ScanStatsPartitionField{{BaseColumn: "d", PartitionField: "d", Transform: "identity"}}
+	resp := AggregateFromRecords([]FileRecord{
+		{SizeBytes: 1, Content: "DATA", SpecID: 0, Partition: map[string]any{"d": "a"}},
+		{SizeBytes: 1, Content: "DATA", SpecID: 3, Partition: map[string]any{"d": "a"}},
+	}, fields, Options{})
+	if len(resp.Partitions) != 1 || resp.DefaultSpecID != nil || resp.OldSpecPartitions != 0 {
+		t.Fatalf("fixture path must not split by spec: %+v", resp.Partitions)
+	}
+}
+
+func TestOlderSpecFieldsSkipsTheDefaultSpec(t *testing.T) {
+	schema := iceberg.NewSchema(0, iceberg.NestedField{ID: 1, Name: "ts", Type: iceberg.PrimitiveTypes.Timestamp, Required: true})
+	daySpec := iceberg.NewPartitionSpecID(0, iceberg.PartitionField{SourceIDs: []int{1}, FieldID: 1000, Name: "ts_day", Transform: iceberg.DayTransform{}})
+	meta, err := table.NewMetadata(schema, &daySpec, table.UnsortedSortOrder, "s3://bucket/t", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder, err := table.MetadataBuilderFromBase(meta, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	monthSpec := iceberg.NewPartitionSpecID(1, iceberg.PartitionField{SourceIDs: []int{1}, FieldID: 1001, Name: "ts_month", Transform: iceberg.MonthTransform{}})
+	if err := builder.AddPartitionSpec(&monthSpec, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := builder.SetDefaultSpecID(-1); err != nil {
+		t.Fatal(err)
+	}
+	evolved, err := builder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tbl := table.New(table.Identifier{"s", "t"}, evolved, "", nil, nil)
+
+	older := olderSpecFields(tbl)
+
+	current := tbl.Spec()
+	if current.ID() != 1 {
+		t.Fatalf("default spec = %d", current.ID())
+	}
+	if len(older) != 1 || len(older[0]) != 1 {
+		t.Fatalf("older = %+v", older)
+	}
+	if got := older[0][0]; got.PartitionField != "ts_day" || got.BaseColumn != "ts" || got.FieldID != 1000 || got.Transform != "day" {
+		t.Fatalf("older spec field = %+v", got)
+	}
+}

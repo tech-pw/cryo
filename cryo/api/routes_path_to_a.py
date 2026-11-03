@@ -215,6 +215,7 @@ def load_snapshot(session: Session, table: Table) -> TableSnapshot | None:
             "commits_per_day": raw.get("commits_per_day"),
             "is_streaming": bool(raw.get("is_streaming")),
         },
+        spec_migration=dict(raw.get("spec_migration") or {}),
     )
 
 

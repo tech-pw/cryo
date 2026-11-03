@@ -17,6 +17,7 @@ export const CORRECT_ORDER = [
   "convert_equality_deletes",
   "convert_deletes",
   "rewrite_position_deletes",
+  "migrate_partition_spec",
   "optimize",
   "compute_statistics",
   "optimize_manifests",
