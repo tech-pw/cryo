@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -25,7 +24,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Segmented } from "../../components/ui/segmented";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { EmptyState } from "../../components/ui/empty-state";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
@@ -377,7 +376,7 @@ export function DecisionsPage() {
     onError: (error: Error) => toast.error(error.message)
   });
 
-  const queueColumns: ColumnDef<SmartLayoutRecommendationRead, unknown>[] = [
+  const queueColumns: DataTableColumnDef<SmartLayoutRecommendationRead, unknown>[] = [
     {
       id: "table",
       header: "Table",
@@ -438,7 +437,7 @@ export function DecisionsPage() {
     }
   ];
 
-  const approvalColumns: ColumnDef<PendingApprovalRead, unknown>[] = [
+  const approvalColumns: DataTableColumnDef<PendingApprovalRead, unknown>[] = [
     {
       id: "table",
       header: "Table",

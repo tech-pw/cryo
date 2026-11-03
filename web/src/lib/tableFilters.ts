@@ -1,4 +1,4 @@
-import type { VisibilityState } from "@tanstack/react-table";
+import type { ColumnVisibilityState } from "@tanstack/react-table";
 import {
   BROKEN_TABLE_FAILURE_THRESHOLD,
   isFreshnessBucketKey
@@ -64,14 +64,14 @@ export const SAVINGS_COLUMN_IDS = [
   "health"
 ] as const;
 
-export const savingsColumnVisibility = (): VisibilityState => {
+export const savingsColumnVisibility = (): ColumnVisibilityState => {
   const visible = new Set<string>(SAVINGS_COLUMN_IDS);
   return Object.fromEntries(HIDEABLE_COLUMN_IDS.map((id) => [id, visible.has(id)]));
 };
 
-export const operatorColumnVisibility = (): VisibilityState => {
+export const operatorColumnVisibility = (): ColumnVisibilityState => {
   const visible = new Set<string>(OPERATOR_COLUMN_IDS);
-  const state: VisibilityState = {};
+  const state: ColumnVisibilityState = {};
   for (const id of HIDEABLE_COLUMN_IDS) {
     if (!visible.has(id)) state[id] = false;
   }
@@ -79,7 +79,7 @@ export const operatorColumnVisibility = (): VisibilityState => {
 };
 
 /** Every hideable column on. `colsFromVisibility` encodes this as "no cols param." */
-export const allColumnVisibility = (): VisibilityState =>
+export const allColumnVisibility = (): ColumnVisibilityState =>
   Object.fromEntries(HIDEABLE_COLUMN_IDS.map((id) => [id, true]));
 
 const CANONICAL_FILTER_KEYS = [
@@ -430,7 +430,7 @@ export const searchParamsForSavedView = (view: SavedViewUrlInput): URLSearchPara
   return params;
 };
 
-export const visibilityFromCols = (value: string | null): VisibilityState => {
+export const visibilityFromCols = (value: string | null): ColumnVisibilityState => {
   if (!value) return {};
   const visible = new Set(
     value
@@ -439,14 +439,14 @@ export const visibilityFromCols = (value: string | null): VisibilityState => {
       .filter(Boolean)
   );
   if (!visible.size) return {};
-  const state: VisibilityState = {};
+  const state: ColumnVisibilityState = {};
   for (const id of HIDEABLE_COLUMN_IDS) {
     if (!visible.has(id)) state[id] = false;
   }
   return state;
 };
 
-export const colsFromVisibility = (visibility: VisibilityState): string | null => {
+export const colsFromVisibility = (visibility: ColumnVisibilityState): string | null => {
   const hidden = HIDEABLE_COLUMN_IDS.filter((id) => visibility[id] === false);
   if (!hidden.length) return null;
   return HIDEABLE_COLUMN_IDS.filter((id) => visibility[id] !== false).join(",");

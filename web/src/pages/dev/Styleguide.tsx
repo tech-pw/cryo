@@ -1,4 +1,4 @@
-import { type ColumnDef } from "@tanstack/react-table";
+import type { RowSelectionState } from "@tanstack/react-table";
 import { Moon, Sun } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
@@ -19,7 +19,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { ChartPanel } from "../../components/ui/chart-panel";
 import { Checkbox } from "../../components/ui/checkbox";
-import { DataTable, type TableDensity } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef, type TableDensity } from "../../components/ui/data-table";
 import {
   Dialog,
   DialogContent,
@@ -94,9 +94,9 @@ export function Styleguide() {
   const [checked, setChecked] = useState(true);
   const [tableDensity, setTableDensity] = useState<TableDensity>("default");
   const [tablePage, setTablePage] = useState(0);
-  const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const tableColumns = useMemo<ColumnDef<DemoTableRow, unknown>[]>(
+  const tableColumns = useMemo<DataTableColumnDef<DemoTableRow, unknown>[]>(
     () => [
       {
         accessorKey: "table",

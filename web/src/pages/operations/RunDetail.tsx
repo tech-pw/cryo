@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Clock3, Info, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -34,7 +33,7 @@ import {
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { Input } from "../../components/ui/input";
 import { MetricGrid, MetricTile } from "../../components/ui/metric-grid";
 import { RunLanes } from "../../components/charts";
@@ -324,14 +323,14 @@ const RunOutcomeSummary = ({
   );
 };
 
-const laneColumns: ColumnDef<LaneRow, unknown>[] = [
+const laneColumns: DataTableColumnDef<LaneRow, unknown>[] = [
   { id: "lane", header: "Lane", cell: ({ row }) => row.original.lane },
   { id: "vcpu", header: "vCPU", cell: ({ row }) => row.original.vcpu },
   { id: "memory", header: "Memory", cell: ({ row }) => row.original.memory },
   { id: "tables", header: "Tables", cell: ({ row }) => row.original.tables }
 ];
 
-const failureColumns: ColumnDef<FailureRow, unknown>[] = [
+const failureColumns: DataTableColumnDef<FailureRow, unknown>[] = [
   {
     id: "table",
     header: "Table",
@@ -637,7 +636,7 @@ export const RunDetail = () => {
     }
   }, [scan, scanPercent]);
 
-  const jobColumns = useMemo<ColumnDef<JobRead, unknown>[]>(
+  const jobColumns = useMemo<DataTableColumnDef<JobRead, unknown>[]>(
     () => [
       {
         id: "table",

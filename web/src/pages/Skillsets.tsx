@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo, useState } from "react";
 import { z } from "zod";
 import { toast } from "sonner";
@@ -17,7 +16,7 @@ import { ConfirmAction } from "../components/confirm";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { DataTable } from "../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../components/ui/data-table";
 import {
   Dialog,
   DialogContent,
@@ -420,7 +419,7 @@ export const Skillsets = () => {
   const createFormActivate = createForm.watch("activate");
   const activeForCreateName = activeVersionByName.get(createFormName.trim());
 
-  const columns: ColumnDef<SkillsetRead, unknown>[] = [
+  const columns: DataTableColumnDef<SkillsetRead, unknown>[] = [
     {
       id: "name",
       header: "Name",
