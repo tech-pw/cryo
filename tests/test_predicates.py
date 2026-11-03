@@ -11,7 +11,7 @@ from cryo.scheduler.rules import evaluate_predicate as scheduler_evaluate_predic
 
 BASE_ROW: dict[str, Any] = {
     "source_id": "11111111-1111-1111-1111-111111111111",
-    "schema_name": "mview",
+    "schema_name": "mart",
     "table_name": "orders_daily",
     "is_active": True,
     "consecutive_scan_failures": 3,
@@ -53,7 +53,7 @@ def _compile_sql(predicate: Mapping[str, Any]) -> str:
             {"field": "source_id", "op": "=", "value": "11111111-1111-1111-1111-111111111111"},
             {"source_id": "22222222-2222-2222-2222-222222222222"},
         ),
-        ({"field": "schema_name", "op": "=", "value": "mview"}, {"schema_name": "raw"}),
+        ({"field": "schema_name", "op": "=", "value": "mart"}, {"schema_name": "raw"}),
         ({"field": "table_name", "op": "!=", "value": "tmp"}, {"table_name": "tmp"}),
         (
             {"field": "consecutive_scan_failures", "op": ">=", "value": 2},
@@ -89,7 +89,7 @@ def _compile_sql(predicate: Mapping[str, Any]) -> str:
             {"cost_precision": "heuristic"},
         ),
         ({"field": "table_name", "op": "like", "value": "orders%"}, {"table_name": "events"}),
-        ({"field": "schema_name", "op": "glob", "value": "mv?ew*"}, {"schema_name": "raw"}),
+        ({"field": "schema_name", "op": "glob", "value": "m?rt*"}, {"schema_name": "raw"}),
     ],
 )
 def test_leaf_predicates_compile_and_evaluate(

@@ -591,7 +591,7 @@ class SourceCatalog(Protocol):
 A single JSON predicate grammar powers UI filters, preset rules, and bulk selection:
 ```json
 { "all": [
-    {"field": "schema_name", "op": "in", "value": ["mview"]},
+    {"field": "schema_name", "op": "in", "value": ["mart"]},
     {"field": "total_size_gb", "op": ">", "value": 100},
     {"field": "small_files_count", "op": ">=", "value": 1000},
     {"field": "grade", "op": "in", "value": ["D","F"]}
