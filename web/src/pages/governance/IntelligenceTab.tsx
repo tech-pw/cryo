@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -13,7 +12,7 @@ import { EmptyState, QueryErrorAlert, TelemetryRequiredNotice } from "../../comp
 import { StatusTag } from "../../components/status";
 import { Badge } from "../../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { useAuth } from "../../lib/auth";
 import { formatCurrency } from "../../lib/format";
 import { TableSearchSelect } from "./TableSearchSelect";
@@ -65,7 +64,7 @@ export const IntelligenceTab = () => {
     (signalPage + 1) * SIGNAL_PAGE_SIZE
   );
 
-  const signalColumns = useMemo<ColumnDef<(typeof signalsData)[number], unknown>[]>(
+  const signalColumns = useMemo<DataTableColumnDef<(typeof signalsData)[number], unknown>[]>(
     () => [
       {
         id: "table",
@@ -106,7 +105,7 @@ export const IntelligenceTab = () => {
     []
   );
 
-  const lineageColumns = useMemo<ColumnDef<{ table_id: string; table_name: string; node_type: string }, unknown>[]>(
+  const lineageColumns = useMemo<DataTableColumnDef<{ table_id: string; table_name: string; node_type: string }, unknown>[]>(
     () => [
       { accessorKey: "table_name", header: "Table" },
       { accessorKey: "node_type", header: "Edge", size: 100 }

@@ -1,7 +1,8 @@
-import type { ColumnDef } from "@tanstack/react-table";
+import type { RowSelectionState } from "@tanstack/react-table";
 import { fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { ColumnVisibilityMenu, DataTable, useDebouncedValue } from "./data-table";
+import { ColumnVisibilityMenu, DataTable, useDebouncedValue, type DataTableColumnDef } from "./data-table";
 
 interface Row {
   id: string;
@@ -14,7 +15,7 @@ const ROWS: Row[] = [
   { id: "b", name: "Beta", amount: 20 }
 ];
 
-const COLUMNS: ColumnDef<Row, unknown>[] = [
+const COLUMNS: DataTableColumnDef<Row, unknown>[] = [
   { id: "name", accessorKey: "name", header: "Name" },
   { id: "amount", accessorKey: "amount", header: "Amount" }
 ];
@@ -80,7 +81,7 @@ describe("ColumnVisibilityMenu", () => {
 
 describe("DataTable footer", () => {
   it("renders a <tfoot> only when a column defines a footer, using real footer content", () => {
-    const columnsWithFooter: ColumnDef<Row, unknown>[] = [
+    const columnsWithFooter: DataTableColumnDef<Row, unknown>[] = [
       { id: "name", accessorKey: "name", header: "Name", footer: () => "TOTAL" },
       {
         id: "amount",
@@ -179,6 +180,31 @@ describe("DataTable column resizing", () => {
     expect(headers[1]).toHaveStyle({ width: "80px", minWidth: "80px", maxWidth: "80px" });
   });
 
+  it("resizes a column by dragging its handle and clamps to the default max size", () => {
+    const { container } = render(
+      <DataTable
+        columns={[{ id: "name", accessorKey: "name", header: "Name", size: 160 }]}
+        data={ROWS}
+        enableColumnResizing
+      />
+    );
+    const header = screen.getByRole("columnheader", { name: "Name" });
+    const handle = container.querySelector('[data-column-resize="name"]') as HTMLElement;
+    const scroller = container.querySelector(".cryo-hscroll");
+
+    fireEvent.mouseDown(handle, { clientX: 100 });
+    fireEvent.mouseMove(document, { clientX: 140 });
+    expect(scroller).toHaveClass("select-none");
+    fireEvent.mouseUp(document, { clientX: 140 });
+    expect(header).toHaveStyle({ width: "200px" });
+    expect(scroller).not.toHaveClass("select-none");
+
+    fireEvent.mouseDown(handle, { clientX: 200 });
+    fireEvent.mouseMove(document, { clientX: 2000 });
+    fireEvent.mouseUp(document, { clientX: 2000 });
+    expect(header).toHaveStyle({ width: "720px" });
+  });
+
   it("resets a column to its default size on double-click and persists when a storage key is set", () => {
     window.localStorage.clear();
     window.localStorage.setItem("cryo.test.columnSizing", JSON.stringify({ name: 280 }));
@@ -197,6 +223,61 @@ describe("DataTable column resizing", () => {
     expect(header).toHaveStyle({ width: "160px" });
     const stored = JSON.parse(window.localStorage.getItem("cryo.test.columnSizing") ?? "{}") as Record<string, number>;
     expect(stored.name === undefined || stored.name === 160).toBe(true);
+  });
+});
+
+describe("DataTable row selection", () => {
+  const SelectableTable = ({ initial = {} }: { initial?: RowSelectionState }) => {
+    const [selection, setSelection] = useState<RowSelectionState>(initial);
+    return (
+      <DataTable
+        columns={COLUMNS}
+        data={ROWS}
+        getRowId={(row) => row.id}
+        rowSelection={selection}
+        onRowSelectionChange={setSelection}
+        enableRowSelection={(row) => row.original.id !== "c"}
+      />
+    );
+  };
+  const selectAll = () => screen.getByRole("checkbox", { name: "Select all rows on this page" });
+  const rowBoxes = () => screen.getAllByRole("checkbox", { name: "Select row" });
+
+  it("shows the header checkbox as unchecked, indeterminate, then checked as rows are selected", () => {
+    render(<SelectableTable />);
+    expect(selectAll()).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(rowBoxes()[0]);
+    expect(selectAll()).toHaveAttribute("aria-checked", "mixed");
+
+    fireEvent.click(rowBoxes()[1]);
+    expect(selectAll()).toHaveAttribute("aria-checked", "true");
+    expect(document.querySelectorAll('tr[data-state="selected"]')).toHaveLength(2);
+  });
+
+  it("toggles every selectable row on the page from the header checkbox", () => {
+    render(<SelectableTable initial={{ a: true }} />);
+
+    fireEvent.click(selectAll());
+    expect(rowBoxes().map((box) => box.getAttribute("aria-checked"))).toEqual(["true", "true"]);
+
+    fireEvent.click(selectAll());
+    expect(rowBoxes().map((box) => box.getAttribute("aria-checked"))).toEqual(["false", "false"]);
+    expect(document.querySelectorAll('tr[data-state="selected"]')).toHaveLength(0);
+  });
+
+  it("disables the checkbox for rows the predicate rejects", () => {
+    render(
+      <DataTable
+        columns={COLUMNS}
+        data={[...ROWS, { id: "c", name: "Gamma", amount: 30 }]}
+        getRowId={(row) => row.id}
+        rowSelection={{}}
+        onRowSelectionChange={vi.fn()}
+        enableRowSelection={(row) => row.original.id !== "c"}
+      />
+    );
+    expect(rowBoxes().map((box) => box.hasAttribute("disabled"))).toEqual([false, false, true]);
   });
 });
 
