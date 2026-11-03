@@ -782,6 +782,16 @@ on cron tick:
          create_job(run, table, preset.destination, preset.mode, plan=None)  # plan built by worker
          enqueue(job)
 ```
+**Run deadline** (`scheduler.py::_deadline_at`): `guardrails.deadline_minutes` when the preset sets
+it; otherwise the preset's next cron fire after the run is built, held between
+`CRYO_SCHEDULED_RUN_DEADLINE_MIN_MINUTES` (60) and `CRYO_SCHEDULED_RUN_DEADLINE_MAX_HOURS` (168),
+and the cap alone when no fire falls inside it. Backlog batches get the same deadline, so no batch
+outlives its cron period. Past the deadline the Governor defers the run's remaining jobs
+(`deadline_near`); once the deferral grace is over the finalizer closes the run, and
+`reconcile_deferred_jobs` marks each job still deferred under a closed run `skipped` with
+`run_closed_while_deferred: <deferral reason>`, never `failed` — those jobs never ran (#383).
+`CRYO_SCHEDULED_RUN_DEADLINE_MAX_HOURS=0` restores the old "no deadline unless the preset sets one".
+
 `rules.py` provides `effective_preset(table)` and `tables_for_preset(preset)`. Budgeting is a *hint*;
 the **Governor** enforces real limits at admission time. Leader-elected (Redis lock) so only one
 scheduler is active.
