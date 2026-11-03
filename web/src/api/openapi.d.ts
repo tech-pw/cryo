@@ -597,8 +597,8 @@ export interface paths {
         /**
          * Group Tables
          * @description Collective counts/totals per distinct value of ``field`` -- the Tables page's "group by"
-         *     view. Reuses the same filter predicate as ``GET /tables`` so a group-by respects whatever
-         *     the user has already filtered down to.
+         *     view. Reuses the same filter predicate and ``removed`` handling as ``GET /tables`` so the
+         *     group totals add up to the list's total.
          */
         get: operations["group_tables_api_v1_tables_group_by_get"];
         put?: never;
@@ -11196,6 +11196,11 @@ export interface components {
             /** Retained Forever */
             retained_forever: boolean;
         };
+        /**
+         * RemovedTables
+         * @enum {string}
+         */
+        RemovedTables: "exclude" | "include" | "only";
         /** RenderedStatementRead */
         RenderedStatementRead: {
             /** Action */
@@ -15714,6 +15719,12 @@ export interface operations {
                 maintenance_overdue?: boolean;
                 p95_breach?: boolean;
                 no_reads_days?: number | null;
+                /** @description Tables the catalog no longer lists (#120) are kept as tombstones. `exclude` (default) hides them, `include` lists them with everything else, `only` lists just them. */
+                removed?: components["schemas"]["RemovedTables"] | null;
+                /**
+                 * @deprecated
+                 * @description Alias for `removed=include`. Ignored when `removed` is set.
+                 */
                 include_removed?: boolean;
                 /** @description Only tables whose effective preset comes from one of these: a pin (assignment), a rule, a rule after a stale pin, the default preset, or none (unmaintained). Repeat the parameter to combine. */
                 effective_provenance?: ("assignment" | "rule" | "rule_after_stale_pin" | "default" | "none")[] | null;
@@ -15753,6 +15764,8 @@ export interface operations {
                 maintenance_overdue?: boolean;
                 p95_breach?: boolean;
                 no_reads_days?: number | null;
+                /** @description Tables the catalog no longer lists (#120) are kept as tombstones. `exclude` (default) hides them, `include` lists them with everything else, `only` lists just them. */
+                removed?: components["schemas"]["RemovedTables"] | null;
                 effective_provenance?: ("assignment" | "rule" | "rule_after_stale_pin" | "default" | "none")[] | null;
             };
             header?: never;
@@ -15804,6 +15817,8 @@ export interface operations {
             query: {
                 field: string;
                 filter?: string | null;
+                /** @description Tables the catalog no longer lists (#120) are kept as tombstones. `exclude` (default) hides them, `include` lists them with everything else, `only` lists just them. */
+                removed?: components["schemas"]["RemovedTables"] | null;
                 effective_provenance?: ("assignment" | "rule" | "rule_after_stale_pin" | "default" | "none")[] | null;
             };
             header?: never;

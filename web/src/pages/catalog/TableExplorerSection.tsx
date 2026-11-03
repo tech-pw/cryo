@@ -61,6 +61,8 @@ import {
   SAVINGS_COLUMN_IDS,
   TRIAGE_VIEW_IDS,
   isTriageView,
+  REMOVED_VIEW,
+  removedTablesMode,
   type HideableColumnId,
   clearFilterParams,
   allColumnVisibility,
@@ -82,7 +84,7 @@ import { useTableExplorerSelection } from "../useTableExplorerSelection";
 import { formatRelative } from "../operations/runState";
 import { isManualTrigger } from "../../components/table-detail/runs/runModel";
 import { useExplorerViewParam } from "./CatalogDashboard";
-import { TRIAGE_VIEWS, useTriageCounts } from "./tablesTriage";
+import { TRIAGE_VIEWS, useRemovedTablesCount, useTriageCounts } from "./tablesTriage";
 
 const pageSize = 50;
 
@@ -230,19 +232,21 @@ const ExplorerTableMeta = ({
   filters,
   matchingTotal,
   sort,
-  note
+  note,
+  removedOnly = false
 }: {
   filters: TableFilterState;
   matchingTotal: number;
   sort?: string;
   note?: string | null;
+  removedOnly?: boolean;
 }) => {
   const cue = sort ? sortCue(sort) : null;
   return (
     <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-1 pb-1.5 pt-1">
       <p className="text-xs tabular-nums text-muted-foreground">
         <span className="font-medium text-foreground">{matchingTotal.toLocaleString()}</span>{" "}
-        {filters.activeOnly === false ? "" : "active "}
+        {removedOnly ? "removed " : filters.activeOnly === false ? "" : "active "}
         {matchingTotal === 1 ? "table" : "tables"}
         {note ? <span> · {note}</span> : null}
       </p>
@@ -544,8 +548,9 @@ export const EffectivePresetCell = ({ effective }: { effective?: TableEffectiveP
 
 const QuickViews = ({ active, onChange }: { active: string | null; onChange: (view: string | null) => void }) => {
   const { counts } = useTriageCounts();
+  const removedCount = useRemovedTablesCount().data;
   const item = (id: string | null, label: string, count?: number) => {
-    const selected = id === null ? !isTriageView(active) : active === id;
+    const selected = id === null ? !isTriageView(active) && active !== REMOVED_VIEW : active === id;
     return (
       <button
         key={id ?? "all"}
@@ -572,6 +577,7 @@ const QuickViews = ({ active, onChange }: { active: string | null; onChange: (vi
     <nav aria-label="Quick views" className="-mx-1 flex max-w-full items-center gap-0.5 overflow-x-auto px-1">
       {item(null, "All tables")}
       {TRIAGE_VIEW_IDS.map((id) => item(id, TRIAGE_VIEWS[id].label, counts[id]))}
+      {removedCount || active === REMOVED_VIEW ? item(REMOVED_VIEW, "Removed", removedCount) : null}
     </nav>
   );
 };
@@ -613,6 +619,8 @@ export const TableExplorerSection = () => {
   const view = query.view;
   const viewSpec = useMemo(() => viewFilterSpec(view, searchParams), [view, searchParams]);
   const savingsView = view === "savings";
+  const removedView = view === REMOVED_VIEW;
+  const removed = removedTablesMode(view, filters);
   const groupByParam = query.groupBy;
   const groupByField = (groupByParam && groupByParam in GROUP_BY_LABELS ? (groupByParam as TableGroupByField) : null);
 
@@ -778,7 +786,7 @@ export const TableExplorerSection = () => {
   );
   const effectiveProvenance = useMemo(() => coverageProvenances(filters.coverage), [filters.coverage]);
   const tables = useQuery({
-    queryKey: ["tables", token, predicate, sort, page, viewSpec, effectiveProvenance],
+    queryKey: ["tables", token, predicate, sort, page, viewSpec, removed, effectiveProvenance],
     queryFn: () =>
       listTables(api, {
         predicate,
@@ -789,16 +797,18 @@ export const TableExplorerSection = () => {
         maintenance_overdue: viewSpec?.maintenance_overdue,
         p95_breach: viewSpec?.p95_breach,
         no_reads_days: viewSpec?.no_reads_days,
+        removed,
         effective_provenance: effectiveProvenance
       }),
     enabled: !groupByField
   });
   const grouped = useQuery({
-    queryKey: ["tables-group-by", token, groupByField, predicate, effectiveProvenance],
+    queryKey: ["tables-group-by", token, groupByField, predicate, removed, effectiveProvenance],
     queryFn: () =>
       groupTables(api, {
         field: groupByField as TableGroupByField,
         predicate,
+        removed,
         effective_provenance: effectiveProvenance
       }),
     enabled: Boolean(groupByField)
@@ -844,6 +854,7 @@ export const TableExplorerSection = () => {
     api,
     predicate,
     sort,
+    removed,
     matchingTotal,
     pageItems
   });
@@ -1044,11 +1055,12 @@ export const TableExplorerSection = () => {
         maintenance_overdue: viewSpec?.maintenance_overdue,
         p95_breach: viewSpec?.p95_breach,
         no_reads_days: viewSpec?.no_reads_days,
+        removed,
         effective_provenance: effectiveProvenance
       });
       const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
       const anchor = document.createElement("a");
-      const suffix = filters.freshnessBucket ?? "filtered";
+      const suffix = removedView ? "removed" : (filters.freshnessBucket ?? "filtered");
       anchor.href = href;
       anchor.download = `cryo-tables-${suffix}.csv`;
       anchor.click();
@@ -1369,6 +1381,37 @@ export const TableExplorerSection = () => {
           <span className="table-date-cell block whitespace-nowrap text-right">{formatTime(getValue() as string)}</span>
         )
       },
+      ...(removed
+        ? [
+            {
+              id: "removed_from_catalog_at",
+              header: () => (
+                <HintLabel
+                  label="Removed"
+                  tooltip="When the scanner last found this table missing from its catalog. Cryo keeps the row and stops maintaining it; the next scan that finds it again restores it."
+                />
+              ),
+              size: 200,
+              cell: ({ row }: { row: { original: TableRead } }) =>
+                row.original.removed_from_catalog_at ? (
+                  <TruncationTooltip content={row.original.removed_reason}>
+                    <span className="block min-w-0">
+                      <span className="table-date-cell block whitespace-nowrap">
+                        {formatTime(row.original.removed_from_catalog_at)}
+                      </span>
+                      {row.original.removed_reason ? (
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {row.original.removed_reason}
+                        </span>
+                      ) : null}
+                    </span>
+                  </TruncationTooltip>
+                ) : (
+                  <span className="text-muted-foreground">-</span>
+                )
+            }
+          ]
+        : []),
       ...(SLA_VIEWS.has(view ?? "")
         ? [
             {
@@ -1391,10 +1434,15 @@ export const TableExplorerSection = () => {
         : [])
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sort, view]
+    [sort, view, removed]
   );
 
   const orderedColumns = useMemo(() => {
+    if (removedView) {
+      const removedColumn = tableColumns.find((column) => column.id === "removed_from_catalog_at");
+      const rest = tableColumns.filter((column) => column.id !== "removed_from_catalog_at");
+      return removedColumn ? [rest[0], removedColumn, ...rest.slice(1)] : tableColumns;
+    }
     if (!savingsView) return tableColumns;
     const rank = (id: string | undefined) => {
       if (id === "table") return -1;
@@ -1402,7 +1450,7 @@ export const TableExplorerSection = () => {
       return index === -1 ? SAVINGS_COLUMN_IDS.length : index;
     };
     return [...tableColumns].sort((a, b) => rank(a.id) - rank(b.id));
-  }, [savingsView, tableColumns]);
+  }, [removedView, savingsView, tableColumns]);
 
   const savedViewsMenu = (
     <Popover>
@@ -1482,6 +1530,7 @@ export const TableExplorerSection = () => {
         matchingTotal={matchingTotal}
         hideSummary
         hideNeedsToggle
+        hideActiveToggle={removedView}
         showCoverageFacet
         onReset={clearFilters}
         actions={
@@ -1613,6 +1662,14 @@ export const TableExplorerSection = () => {
           description="Tables with repeated scan failures. Filtered on the server."
         />
       ) : null}
+      {removedView ? (
+        <Alert
+          className="mb-3 mt-2"
+          variant="warning"
+          title="Removed from catalog"
+          description="Tables the last scan didn't find in their catalog. Cryo keeps their history and doesn't maintain them, so they can't be selected. A table that comes back is restored by the next scan. Export uses the same filter."
+        />
+      ) : null}
       {view === "unused" ? (
         <Alert
           className="mb-3 mt-2"
@@ -1644,14 +1701,14 @@ export const TableExplorerSection = () => {
         </div>
       ) : null}
       <BulkAssignBar
-        selection={selection}
+        selection={removedView ? null : selection}
         presets={assignablePresets}
         destinations={destinations.data ?? []}
         assigning={assign.isPending || unassign.isPending}
         running={run.isPending || manifestRewrite.isPending}
         scanning={scan.isPending}
         matchingTotal={matchingTotal}
-        onSelectAllMatching={viewSpec || effectiveProvenance ? undefined : selectAllMatching}
+        onSelectAllMatching={viewSpec || removedView || effectiveProvenance ? undefined : selectAllMatching}
         likelySkipped={likelySkipped}
         onClear={clearSelection}
         onAssign={(presetId) => assign.mutate(presetId)}
@@ -1689,6 +1746,7 @@ export const TableExplorerSection = () => {
             matchingTotal={matchingTotal}
             sort={sort}
             note={isTriageView(view) ? TRIAGE_VIEWS[view].hint : null}
+            removedOnly={removedView}
           />
           <DataTable
             className="datalake-table"
@@ -1700,7 +1758,7 @@ export const TableExplorerSection = () => {
             loading={tables.isLoading || isDemotingSelection}
             stickyFirstColumn
             getRowId={(row) => row.id}
-            enableRowSelection
+            enableRowSelection={!removedView}
             rowSelection={rowSelectionState}
             onRowSelectionChange={(updater) => {
               const next = typeof updater === "function" ? updater(rowSelectionState) : updater;

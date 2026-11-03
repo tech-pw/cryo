@@ -2,7 +2,7 @@ import { toast } from "sonner";
 import type { Key } from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { fetchAllMatchingTableIds, type ApiOptions } from "../api/client";
-import type { TableRead, UUID } from "../api/types";
+import type { RemovedTablesMode, TableRead, UUID } from "../api/types";
 import type { BulkSelection } from "../components/BulkAssignBar";
 import {
   computeRemovedPageIds,
@@ -17,6 +17,7 @@ interface UseTableExplorerSelectionArgs {
   api: ApiOptions;
   predicate: Predicate | null;
   sort?: string;
+  removed?: RemovedTablesMode;
   matchingTotal: number;
   pageItems: TableRead[];
 }
@@ -25,6 +26,7 @@ export const useTableExplorerSelection = ({
   api,
   predicate,
   sort,
+  removed,
   matchingTotal,
   pageItems
 }: UseTableExplorerSelectionArgs) => {
@@ -86,6 +88,7 @@ export const useTableExplorerSelection = ({
           const allIds = await fetchAllMatchingTableIds(api, {
             predicate,
             sort,
+            removed,
             total: matchingTotal,
             signal: controller.signal
           });
@@ -109,7 +112,7 @@ export const useTableExplorerSelection = ({
 
       setSelectedRowKeys(nextKeys);
     },
-    [allMatching, api, matchingTotal, pageIds, predicate, sort]
+    [allMatching, api, matchingTotal, pageIds, predicate, removed, sort]
   );
 
   return {
