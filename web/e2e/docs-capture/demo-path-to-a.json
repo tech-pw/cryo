@@ -1,0 +1,176 @@
+{
+  "score": 28,
+  "grade": "F",
+  "deductions": [
+    {
+      "label": "Small-file fragmentation",
+      "deduction": 20,
+      "severity": "critical",
+      "reason": "87% of data files are under the 128 MiB write target."
+    },
+    {
+      "label": "Snapshot retention buildup",
+      "deduction": 20,
+      "severity": "critical",
+      "reason": "1,284 snapshots retained; the table policy keeps 7 days."
+    },
+    {
+      "label": "Delete files",
+      "deduction": 8,
+      "severity": "warning",
+      "reason": "640 position-delete files are merged on every read."
+    },
+    {
+      "label": "Partition skew",
+      "deduction": 8,
+      "severity": "warning",
+      "reason": "The largest partition holds 11.8\u00d7 the average file count."
+    },
+    {
+      "label": "Metadata overhead",
+      "deduction": 8,
+      "severity": "warning",
+      "reason": "96 manifests; several cover a single day."
+    },
+    {
+      "label": "Orphan files",
+      "deduction": 8,
+      "severity": "warning",
+      "reason": "6.2 GB under the table location is not referenced by any snapshot."
+    }
+  ],
+  "steps": [
+    {
+      "id": "expire_snapshots",
+      "kind": "automatic",
+      "title": "Expire old snapshots",
+      "detail": "Keeps the last 1 day of history. At 43 commits/day that leaves about 44 snapshots (now 1,284). In this table's workflow, so it runs on schedule.",
+      "fixes": [
+        "Snapshot retention buildup"
+      ],
+      "projected_score": 48,
+      "projected_grade": "D",
+      "confidence": "estimated",
+      "evidence": [
+        "1,284 snapshots",
+        "43 commits/day"
+      ],
+      "action": {
+        "type": "run_operations",
+        "operations": [
+          "expire_snapshots"
+        ]
+      },
+      "required_role": "operator",
+      "confirm_text": null,
+      "in_schedule": true
+    },
+    {
+      "id": "optimize",
+      "kind": "automatic",
+      "title": "Compact small files",
+      "detail": "Rewrites partitions with 20+ files under 128 MB into 128 MB files. Partitions still taking writes are skipped. In this table's workflow, so it runs on schedule.",
+      "fixes": [],
+      "projected_score": 48,
+      "projected_grade": "D",
+      "confidence": "estimated",
+      "evidence": [
+        "11 of 12 scanned partitions rewritten",
+        "about 15,006 files afterwards (now 48,210)",
+        "skew about 13x afterwards"
+      ],
+      "action": {
+        "type": "run_operations",
+        "operations": [
+          "optimize"
+        ]
+      },
+      "required_role": "operator",
+      "confirm_text": null,
+      "in_schedule": true
+    },
+    {
+      "id": "other_0",
+      "kind": "external",
+      "title": "Delete files",
+      "detail": "No automated fix is known for this deduction.",
+      "fixes": [
+        "Delete files"
+      ],
+      "projected_score": 56,
+      "projected_grade": "D",
+      "confidence": "measured",
+      "evidence": [],
+      "action": null,
+      "required_role": null,
+      "confirm_text": null,
+      "in_schedule": false
+    },
+    {
+      "id": "other_1",
+      "kind": "external",
+      "title": "Metadata overhead",
+      "detail": "No automated fix is known for this deduction.",
+      "fixes": [
+        "Metadata overhead"
+      ],
+      "projected_score": 64,
+      "projected_grade": "C",
+      "confidence": "measured",
+      "evidence": [],
+      "action": null,
+      "required_role": null,
+      "confirm_text": null,
+      "in_schedule": false
+    },
+    {
+      "id": "other_2",
+      "kind": "external",
+      "title": "Orphan files",
+      "detail": "No automated fix is known for this deduction.",
+      "fixes": [
+        "Orphan files"
+      ],
+      "projected_score": 72,
+      "projected_grade": "C",
+      "confidence": "measured",
+      "evidence": [],
+      "action": null,
+      "required_role": null,
+      "confirm_text": null,
+      "in_schedule": false
+    },
+    {
+      "id": "other_3",
+      "kind": "external",
+      "title": "Partition skew",
+      "detail": "No automated fix is known for this deduction.",
+      "fixes": [
+        "Partition skew"
+      ],
+      "projected_score": 80,
+      "projected_grade": "B",
+      "confidence": "measured",
+      "evidence": [],
+      "action": null,
+      "required_role": null,
+      "confirm_text": null,
+      "in_schedule": false
+    }
+  ],
+  "cryo_score": 48,
+  "cryo_grade": "D",
+  "reachable_score": 80,
+  "reachable_grade": "B",
+  "notes": [
+    "Estimates use the 12 partitions recorded by the last scan, scaled to the table's 412 partitions."
+  ],
+  "design_findings": [
+    {
+      "label": "Partition volume skew",
+      "severity": "warning",
+      "reason": "Skew ratio of 11.8x (above 10x)",
+      "recommendation": "Data is unevenly spread across partition values. Choose a partition column with a more even distribution, or add a bucket transform. Compaction can't rebalance partitions."
+    }
+  ]
+}

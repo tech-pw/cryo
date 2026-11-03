@@ -6,6 +6,12 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ## [Unreleased]
 
+- `README.md` opens with a 25-second loop of the real UI on demo data (Tables, a health grade,
+  the run review, the run receipt), with an MP4 copy. `make web-demo-loop` re-records it from
+  `web/e2e/docs-capture/demo-loop.ts` (#279). The homepage film already ends on the ice-cube mark
+  (re-rendered in October), so the 0.2.0 note that it still showed the old mark is out of date;
+  `site/README.md` now describes how the published 720p copy is made.
+
 ### Added
 - Opt-in hard purge of tables removed from the catalog. Set
   `CRYO_REMOVED_TABLE_PURGE_AFTER_DAYS` (default off, minimum 7) and the scheduler deletes
