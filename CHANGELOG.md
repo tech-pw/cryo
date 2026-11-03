@@ -49,6 +49,11 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- The Go scan subprocess now gets `GOMEMLIMIT` at 75% of the container memory limit (or
+  `CRYO_SCAN_ENGINE_MEMLIMIT` when set), so one large table is collected inside the scanner
+  pod instead of OOM-killing it. The table name is logged before the subprocess starts, and a
+  kill (signal 9) is recorded as that table's scan failure, which the existing retry ladder
+  backs off (#378).
 - `make seed-fragmented`, `make seed-docker` and `make smoke-file-counts` pointed the Spark
   container at `localhost:8181`, which inside the container is not the REST catalog. They now
   use `iceberg-rest:8181` (#217).

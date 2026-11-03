@@ -247,6 +247,9 @@ scannerWorker:
       # reverting to 2Gi: this fleet's partition-count distribution is extremely long-tailed
       # (p50=4, p99=2.7k, max=397k partitions on one table), so even a leaner engine benefits
       # from headroom against that outlier rather than the median table.
+      # The Go scan subprocess sets GOMEMLIMIT to scan_engine_memlimit_ratio (default 0.75)
+      # of this limit, read from the cgroup, so one table is collected inside the pod
+      # instead of OOM-killing it (#378).
       memory: 3Gi
   # Scanner engine is set via global.env.CRYO_SCAN_ENGINE (default: go).
   autoscaling:
@@ -313,6 +316,7 @@ scanner:
     limits:
       cpu: "2"
       memory: 4Gi
+      # Same GOMEMLIMIT rule as scannerWorker: the Go subprocess stays under this limit.
   jobDispatch:
     # When true (requires native.enabled too -- reuses its image/ServiceAccount/RBAC):
     # Governor claims ad-hoc scan chunks from the Redis scan queue (DB-stranded
