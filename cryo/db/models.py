@@ -213,7 +213,8 @@ class Table(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     # #120: set when a complete catalog listing no longer contains the table. The row is a
     # tombstone (inactive, hidden from /tables by default); a later listing that has the
-    # table again clears it. Nothing is hard-deleted.
+    # table again clears it. With CRYO_REMOVED_TABLE_PURGE_AFTER_DAYS set, the scheduler
+    # hard-deletes tombstones older than that (#330); otherwise nothing is hard-deleted.
     removed_from_catalog_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), index=True
     )
@@ -939,7 +940,7 @@ class MaintenanceJob(Base):
         UUID(as_uuid=True), ForeignKey("cryo.runs.id", ondelete="CASCADE"), nullable=False
     )
     table_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("cryo.tables.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
     )
     destination_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("cryo.destinations.id"), nullable=False
@@ -976,7 +977,7 @@ class MaintenanceJob(Base):
     plan_hash: Mapped[str | None] = mapped_column(Text)
     current_intent_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("cryo.maintenance_intents.id", use_alter=True),
+        ForeignKey("cryo.maintenance_intents.id", use_alter=True, ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -1224,7 +1225,7 @@ class MaintenanceIntent(TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("cryo.sources.id"), nullable=False
     )
     table_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("cryo.tables.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
     )
     table_ref: Mapped[str] = mapped_column(Text, nullable=False)
     destination_id: Mapped[uuid.UUID] = mapped_column(
@@ -1600,9 +1601,11 @@ class AuditLog(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
     table_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("cryo.tables.id")
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="SET NULL")
     )
-    job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.jobs.id"))
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.jobs.id", ondelete="SET NULL"), index=True
+    )
     action: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     engine: Mapped[str | None] = mapped_column(Text)
@@ -1646,7 +1649,7 @@ class QueryLog(Base):
         UUID(as_uuid=True), ForeignKey("cryo.sources.id"), nullable=False
     )
     table_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("cryo.tables.id")
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="SET NULL")
     )
     query_id: Mapped[str] = mapped_column(Text, nullable=False)  # Engine's query ID
     engine: Mapped[str] = mapped_column(Text, nullable=False)  # trino, spark, etc.
@@ -1684,7 +1687,7 @@ class QueryPattern(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     table_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("cryo.tables.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
     )
     column_name: Mapped[str] = mapped_column(Text, nullable=False)
     filter_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
@@ -1727,7 +1730,7 @@ class TableQueryActivity(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     table_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("cryo.tables.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="CASCADE"), nullable=False
     )
     day: Mapped[date] = mapped_column(Date, nullable=False)
     query_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
@@ -1747,7 +1750,10 @@ class LayoutRecommendation(TimestampMixin, Base):
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
     table_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("cryo.tables.id"), nullable=False, unique=True
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
     )
     current_sort_order: Mapped[JsonList | None] = mapped_column(JSONB)  # Current table sort order
     recommended_strategy: Mapped[str] = mapped_column(Text, nullable=False)  # none, sort, zorder
@@ -2545,7 +2551,7 @@ class SkillsetOutcome(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
     table_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("cryo.tables.id")
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="SET NULL"), index=True
     )
     prompt_name: Mapped[str] = mapped_column(Text, nullable=False)
     recommendation: Mapped[str] = mapped_column(Text, nullable=False)
@@ -2584,7 +2590,7 @@ class LLMObservation(Base):
     skillset_version: Mapped[str | None] = mapped_column(Text)
     run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.runs.id"))
     table_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("cryo.tables.id")
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="SET NULL"), index=True
     )
     outcome_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("cryo.skillset_outcomes.id")
@@ -2619,9 +2625,11 @@ class RunFailureDiagnosis(Base):
     run_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("cryo.runs.id", ondelete="CASCADE"), nullable=False
     )
-    job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cryo.jobs.id"))
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cryo.jobs.id", ondelete="SET NULL")
+    )
     table_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("cryo.tables.id")
+        UUID(as_uuid=True), ForeignKey("cryo.tables.id", ondelete="SET NULL"), index=True
     )
     skillset_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("cryo.skillsets.id")

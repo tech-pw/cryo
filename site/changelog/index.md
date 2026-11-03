@@ -19,6 +19,14 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ## [Unreleased](https://github.com/tech-pw/cryo/compare/v0.2.0...HEAD)
 
+### Added
+
+- Opt-in hard purge of tables removed from the catalog. Set `CRYO_REMOVED_TABLE_PURGE_AFTER_DAYS` (default off, minimum 7) and the scheduler deletes older tombstones daily, writing a `table_purged` audit row each. `cryo purge-removed-tables` previews or runs it by hand (#330).
+
+### Upgrade notes
+
+- Migration `20261103_1200` gives every foreign key to `tables`, `jobs` and `maintenance_intents` an `ON DELETE` action (NOT NULL columns cascade, nullable ones are set to NULL) and adds four indexes concurrently. Constraints are re-added `NOT VALID` and validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
+
 ## [0.2.0](https://github.com/tech-pw/cryo/compare/v0.1.5...v0.2.0) — 2026-11-03
 
 First tagged release since v0.1.5. GitHub release notes group the 180+ merged pull requests; the highlights are below.

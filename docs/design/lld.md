@@ -186,6 +186,15 @@ CREATE TABLE cryo.tables (
 );
 ```
 
+Hard purge of tombstones is opt-in (#330, `removed_table_purge_after_days`, default off;
+`cryo/db/repositories/removed_table_purge.py`). It deletes the `tables` row and relies on
+foreign keys: every FK that a delete reaches from `cryo.tables` (directly or through a
+cascade) has an `ON DELETE` action. A NOT NULL reference cascades (stats, jobs, intents,
+query patterns, lineage). A nullable one is `SET NULL` (`audit_log.table_id`/`job_id`,
+`query_logs`, AI and failure diagnostics), so the audit trail outlives the table. A new FK
+to `tables`, `jobs` or a cascaded child must declare `ondelete`;
+`tests/test_removed_table_purge_330.py` fails otherwise.
+
 `TableRead` (API) exposes derived catalog fields without denormalizing them into `cryo.tables`:
 
 - `catalog_name` — engine/catalog display name from the parent source config
@@ -785,6 +794,12 @@ on cron tick:
 `rules.py` provides `effective_preset(table)` and `tables_for_preset(preset)`. Budgeting is a *hint*;
 the **Governor** enforces real limits at admission time. Leader-elected (Redis lock) so only one
 scheduler is active.
+
+Daily housekeeping after dispatch includes the retention prunes and, when
+`removed_table_purge_after_days` is set, `_maybe_purge_removed_tables`: at most
+`removed_table_purge_max_tables_per_tick` tombstones older than the window, oldest first,
+one transaction and one `table_purged` audit row each, skipping tables with active jobs or
+open intents. `cryo purge-removed-tables` runs the same purge by hand (dry run unless `--apply`).
 
 ---
 

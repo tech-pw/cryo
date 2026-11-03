@@ -41,7 +41,7 @@ class ApprovalRequest(TimestampMixin, Base):
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     table_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("tables.id"), nullable=False
+        PGUUID(as_uuid=True), ForeignKey("tables.id", ondelete="CASCADE"), nullable=False
     )
     operation_type: Mapped[str] = mapped_column(Text, nullable=False)
     requested_by: Mapped[str] = mapped_column(Text, nullable=False)  # User who requested

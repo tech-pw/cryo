@@ -470,7 +470,34 @@ stays. It gets `removed_from_catalog_at` and `removed_reason`, is set `is_active
 hidden from `GET /tables` unless you pass `include_removed=true`. Its queued and deferred jobs
 are skipped, and running jobs finish. Each removal writes a `table_removed_from_catalog` audit
 row. If the table is listed again, the next scan restores it (`table_restored_to_catalog`).
-Nothing is ever hard-deleted.
+By default nothing is ever hard-deleted.
+
+**Purging old tombstones (opt-in).** Set `CRYO_REMOVED_TABLE_PURGE_AFTER_DAYS` (minimum 7,
+unset by default) and the leader scheduler hard-deletes, once a day, tables removed longer
+ago than that. At most `CRYO_REMOVED_TABLE_PURGE_MAX_TABLES_PER_TICK` (default 500) are
+deleted per day, oldest first. A purge deletes the `tables` row, and the database removes
+its stats, partitions, columns, cost, jobs (with their steps and intents), query patterns
+and activity, layout recommendations, lineage edges and other per-table rows. Audit, query
+log and diagnostic rows are kept with `table_id` (and `job_id`) cleared. Each purge commits
+on its own and writes a `table_purged` audit row naming the table, its old id, when it was
+removed and the retention used. A table with a queued, admitted, running or deferred job,
+or an open maintenance intent, is skipped until that work is done. A table restored by a
+rescan is never purged. A later scan that finds the table again registers it as new.
+
+To preview or run a purge by hand:
+
+```bash
+cryo purge-removed-tables --older-than-days 90           # dry run: lists what would go
+cryo purge-removed-tables --older-than-days 90 --apply   # delete (audited as actor "cli")
+```
+
+Upgrading to the release with this setting runs migration `20261103_1200`. It changes
+foreign keys that point at `tables`, `jobs` and `maintenance_intents` and had no `ON DELETE`
+action, so a purge is possible at all. NOT NULL columns become `CASCADE` and nullable ones
+`SET NULL`. The constraints are re-added `NOT VALID` and then validated outside the
+migration transaction, so writes keep flowing during the validation scan. The brief
+catalog locks are bounded by the migration's `lock_timeout` (10s); if it times out under
+load, rerun the upgrade. The migration does not delete anything.
 
 What keeps a bad listing from removing real tables:
 - Every suspect schema is listed again before anything is removed. A schema whose listing
