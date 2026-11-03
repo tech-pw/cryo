@@ -11529,6 +11529,11 @@ export interface components {
             p95_latency_breached: boolean;
             /** Has Preset */
             has_preset: boolean;
+            /**
+             * Preset Provenance
+             * @enum {string}
+             */
+            preset_provenance: "assignment" | "rule" | "rule_after_stale_pin" | "default" | "none";
         };
         /** SavingsProjectionRead */
         SavingsProjectionRead: {

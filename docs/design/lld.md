@@ -355,7 +355,9 @@ CREATE TABLE cryo.table_assignments (
 Ephemeral tables (`temp`/`tmp`/`scratch` schemas, `__dbt_tmp`, `_tmp` suffixes...) are never
 rule-matched or defaulted; pins still win. Default routing is implicit: no `table_assignments`
 row is written, so pinning or a matching rule moves a table off the default and unpinning moves
-it back.
+it back. `GET /api/v1/sla-status` reports the same value per row as `preset_provenance`;
+its `has_preset` is `preset_provenance != "none"`, so a default-routed table counts as covered
+and the SLA page labels it "Default preset" rather than "Assigned".
 
 **Paused vs disabled (#119).** `presets.paused = true` holds the preset: it still wins
 resolution (its tables keep showing it and are *not* re-routed), but the scheduler never lists
