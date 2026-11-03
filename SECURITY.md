@@ -48,6 +48,28 @@ issues (after triage, not before):
 - Theoretical concerns without a reproducible attack path — open an Issue for discussion.
 - Reports about scan noise, false positives, or alert spam.
 
+## Secret scanning
+
+Two independent scanners check the git history for committed credentials:
+
+| Scanner | Workflow | When | Scope | Fails on |
+|---|---|---|---|---|
+| [gitleaks][gitleaks] 8.30.1 | `ci.yml`, job `Secret scan (gitleaks)` | Every PR, push to `main` that changes code, manual run | PR: `base..HEAD`. Otherwise the full history of the checked-out ref | Any match of a `.gitleaks.toml` rule that is not allowlisted |
+| [trufflehog][trufflehog] 3.99.8 | `secret-scan.yml`, job `Secret scan (trufflehog, changed commits)` | Every PR and push to `main` | The commits the PR or push adds | A verified (live) credential, or one whose verification failed (`--results=verified,unknown`) |
+| trufflehog 3.99.8 | `secret-scan.yml`, job `Secret scan (trufflehog, full history)` | Weekly, and manual `workflow_dispatch` | Every fetched commit | Same as above |
+
+gitleaks matches the shape of a secret; trufflehog asks the provider whether the credential
+works. Unverified trufflehog matches are not reported, because gitleaks already covers those
+shapes with an allowlist in `.gitleaks.toml`. Add a gitleaks allowlist entry only for a value
+you have confirmed is not a credential, and say why in the entry.
+
+The weekly full-history job also re-checks history after a rewrite and catches an old
+credential that a provider only starts verifying later. Run it by hand after any history
+rewrite: **Actions → Secret scan (trufflehog) → Run workflow**.
+
+If a scanner flags a real credential, revoke and rotate it first. Removing it from the history
+does not make it safe again.
+
 ## Dev token and the platform key
 
 `POST /api/v1/auth/token` self-issues `viewer`, `operator`, or `admin` with no identity check
@@ -93,3 +115,5 @@ If you find a flaw in our use of these primitives, treat it as a critical-severi
 
 [gh-sa]: https://github.com/tech-pw/cryo/security/advisories/new
 [fernet]: https://cryptography.io/en/latest/fernet/
+[gitleaks]: https://github.com/gitleaks/gitleaks
+[trufflehog]: https://github.com/trufflesecurity/trufflehog
