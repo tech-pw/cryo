@@ -1,18 +1,31 @@
 ---
 title: Quickstart
-lede: Start the local control plane. The UI comes up empty. Screenshots on this site are synthetic demo data, not the result of these commands.
-description: Clone Cryo and start the local stack. Migrations run. The UI does not show a graded lake until you add a source and scan.
-updated: 2026-10-26
+lede: Start the local control plane, seed fragmented tables, and finish with graded tables and one completed maintenance run. Plan on about 15 minutes the first time, most of it image downloads.
+description: Clone Cryo, start the local stack, seed fragmented Iceberg tables, scan them, assign a preset and run maintenance. make demo does all of it in one command.
+updated: 2026-11-03
 ---
 <callout type="note" title="Before you start">
-  <p>You need Docker, Python 3.12 or newer, Node 22 or newer, and curl. This is a local control plane, not the production topology.</p>
+  <p>You need Docker, Python 3.12 or newer, Node 22 or newer, and curl. Give Docker at least 8 GB of memory: the seeding Spark container asks for a 4 GB driver on top of Trino, the Hive Metastore and MinIO. This is a local control plane, not the production topology.</p>
+  <p>The fragmented seed used here runs Spark inside a container, so you don't need Spark on the host. The older <code>make seed</code> (five unfragmented tables in <code>rest.demo</code>) is different: it runs PySpark on the host, which needs <code>pip install -r requirements.txt</code> and a Java runtime. <code>make install</code> installs neither.</p>
 </callout>
 
 <callout type="caution" title="Development only">
   <p>The local stack runs with <code>CRYO_ENVIRONMENT=dev</code> and the published default <code>CRYO_SECRET_KEY</code>. Its dev sign-in hands an admin token to anyone who can reach the API. Don't expose it. For a real install, follow <a href="@/install/">Install on Kubernetes</a> and <a href="@/security/">Security</a>.</p>
 </callout>
 
+<h2 id="fast-path">Fast path: make demo</h2>
+<p>One command takes an empty clone to graded tables and a finished maintenance run. It runs the same four steps as the walkthrough below, through the same API the UI uses.</p>
+<codeblock lang="bash" title="terminal">
+$ git clone https://github.com/tech-pw/cryo.git
+$ cd cryo
+$ make demo
+</codeblock>
+<p><code>make demo</code> starts the stack with <code>./start-local.sh start</code> (Grafana and Prometheus are skipped unless you set <code>START_OBSERVABILITY=1</code>), recreates the fragmented tables with <code>make seed-fragmented</code>, then runs <code>scripts/demo.py</code>. That script scans the <code>local-rest</code> source, prints each table's grade, assigns the <code>local-standard</code> preset, runs <code>optimize</code> and <code>optimize_manifests</code>, waits for the run to finish, and rescans.</p>
+<p class="expect">Done when it prints <code>Done in N min</code> and a <code>This run</code> link. Open the link: the run shows succeeded, with one job per table. Open <a href="http://localhost:5173/tables">Tables</a>: the eight <code>fixtures</code> tables each carry a grade.</p>
+<p>It is safe to rerun. A scan or run that is already in flight is waited on rather than duplicated. Each rerun recreates the fixture tables, so there is fresh work every time; <code>make demo DEMO_SEED=0</code> keeps the tables you have.</p>
+
 <h2 id="install">Install and start</h2>
+<p>The walkthrough does the same thing one step at a time, with a check after each.</p>
 
 <steps>
   <step title="Clone the repository">
@@ -23,35 +36,64 @@ $ cd cryo
     </codeblock>
   </step>
   <step title="Start the local stack">
-    <p><code>./start-local.sh start</code> creates the venv, starts Postgres, Redis, and the local datalake, runs Alembic, and starts the API and UI on the host. <code>make up</code> only starts containers. It does not migrate. <code>/healthz</code> does not touch Postgres.</p>
+    <p><code>./start-local.sh start</code> creates the venv, starts Postgres, Redis, and the local datalake, runs Alembic, and starts the API, the UI and <code>cryo serve</code> (scanner, governor, worker, scheduler) on the host. <code>make up</code> only starts containers. It does not migrate. <code>/healthz</code> does not touch Postgres.</p>
     <codeblock lang="bash" title="terminal">
 $ ./start-local.sh start
     </codeblock>
-    <p class="expect">Done when the script prints a dev sign-in role. The UI is empty. No preset is marked default, so a later scan does not schedule maintenance until you assign one.</p>
-  </step>
-  <step title="Seed demo tables">
-    <p>Optional. This writes five small tables (<code>rest.demo.customers</code>, <code>products</code>, <code>orders</code>, <code>order_items</code>, <code>shipments</code>). It does not create small files, stale manifests, or expirable snapshots, and it does not register a Cryo source or scan. It needs host PySpark, which <code>make install</code> does not install.</p>
-    <codeblock lang="bash" title="terminal">
-$ make seed
-    </codeblock>
-    <p class="expect">Done when the log prints those five table names. The dashboard still does not show them until a source exists and a scan runs.</p>
+    <p class="expect">Done when the script prints <code>Cryo local stack is running.</code> and the URLs below it.</p>
   </step>
   <step title="Open the UI">
     <p>Open <a href="http://localhost:5173">http://localhost:5173</a>. On macOS, <code>open http://localhost:5173</code> does the same thing.</p>
-    <p class="expect">Done when the login screen loads. Dev sign-in is a role (<code>viewer</code>, <code>operator</code>, or <code>admin</code>), not an arbitrary username.</p>
+    <p class="expect">Done when the login screen loads. Dev sign-in is a role (<code>viewer</code>, <code>operator</code>, or <code>admin</code>), not an arbitrary username. Pick <code>operator</code> or <code>admin</code> to follow the checks below. The dashboard is empty until step 2 below.</p>
   </step>
 </steps>
 
+<h2 id="first-run">From empty to a maintained table</h2>
+<p>Each <code>scripts/demo.py</code> step looks things up by name and can be rerun.</p>
+
+<steps>
+  <step title="1. Check the demo catalog is registered">
+    <p><code>./start-local.sh start</code> already registered the local REST catalog as the source <code>local-rest</code>, the local Trino as the destination <code>local-trino</code>, and the presets. None is marked default, so nothing runs until you assign one. If you started with <code>SEED_CONFIG=0</code>, run <code>make seed-config</code> now.</p>
+    <p class="expect">Done when <a href="http://localhost:5173/settings/connections">Settings, Connections</a> lists <code>local-rest</code> under Lakehouses and <code>local-trino</code> under Engines.</p>
+  </step>
+  <step title="2. Seed fragmented tables and scan them">
+    <p><code>make seed-fragmented</code> writes eight small tables to <code>rest.fixtures</code>, one per partition layout (unpartitioned, day, month, year, bucket, multi-column, timestamp, nested), each appended in many small batches so there are small files to compact. The first run pulls the Spark image and its Iceberg packages. The scan then reads the catalog and grades every table.</p>
+    <codeblock lang="bash" title="terminal">
+$ make seed-fragmented
+$ python3 scripts/demo.py scan
+    </codeblock>
+    <p class="expect">Done when the seed log prints eight <code>rest.fixtures.fixture_*</code> lines with file counts, the scan prints a grade for each table, and <a href="http://localhost:5173/tables">Tables</a> lists them with the same grades.</p>
+  </step>
+  <step title="3. Assign a preset">
+    <p>A preset says which operations to run and on which engine. This assigns <code>local-standard</code> (Trino) to every table in <code>fixtures</code>, selected by a filter rather than a list of IDs.</p>
+    <codeblock lang="bash" title="terminal">
+$ python3 scripts/demo.py assign
+    </codeblock>
+    <p class="expect">Done when it prints <code>8 tables now use local-standard</code>, and a fixture table's detail page names <code>local-standard</code> as its preset.</p>
+  </step>
+  <step title="4. Run maintenance and open the receipt">
+    <p>This starts one run of <code>optimize</code> and <code>optimize_manifests</code> on those tables, waits for the governor to admit the jobs and the worker to finish them, then rescans so the grades reflect the result. It leaves out <code>expire_snapshots</code> and <code>remove_orphan_files</code>, which wait for an approval by default.</p>
+    <codeblock lang="bash" title="terminal">
+$ python3 scripts/demo.py run
+    </codeblock>
+    <p class="expect">Done when the run reaches <code>succeeded</code> and the script prints its link. On that page each table has a job with its operations, engine, status and duration. Compare the small-file counts the rescan prints with the ones from step 2.</p>
+  </step>
+</steps>
+
+<callout type="tip" title="If a step stalls">
+  <p>The script stops after its timeout and names the run it was waiting on. <code>./start-local.sh status</code> shows which processes are up, and <code>./start-local.sh logs</code> tails the API and <code>cryo serve</code>. <a href="@/troubleshooting/">Troubleshooting</a> covers the common causes.</p>
+</callout>
+
 <h2 id="what-runs-locally">What runs locally</h2>
-<p>You use the web UI, which talks only to the API. The scanner reads the demo catalog. Nothing here needs a cloud account.</p>
+<p>You use the web UI, which talks only to the API. The scanner reads the demo catalog, and the worker runs maintenance on the local Trino. Nothing here needs a cloud account.</p>
 <diagram name="local" caption="The local stack reads a demo catalog. Production keeps the same split with your own catalogs and engines." />
 
-<h2 id="next">What to try first</h2>
+<h2 id="next">What to look at</h2>
+<p>The screenshots below are synthetic demo data from a lake with history, not the result of these commands. Your local lake has eight small tables and one run.</p>
 <ul>
-  <li><strong>Home</strong> is empty until a scan has stored grades. The screenshots below are synthetic demo data, not this quickstart.</li>
-  <li>Open <strong>Tables</strong> after you add a source and run a scan. <code>make seed</code> alone does not put rows here.</li>
-  <li>Open <strong>Runs</strong> after a preset is assigned. Nothing in this quickstart enqueues maintenance.</li>
-  <li>Open any run to see its jobs and receipts: operation, engine, status and duration.</li>
+  <li><strong>Home</strong> summarizes the lake's grades and the last run.</li>
+  <li><strong>Tables</strong> lists every table the scanner has seen, with the grade next to the counts that produced it.</li>
+  <li><strong>Runs</strong> lists scans and maintenance runs. Open one to see its jobs and receipts: operation, engine, status and duration.</li>
 </ul>
 
 <tabs group="ui">

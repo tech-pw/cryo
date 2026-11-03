@@ -6,13 +6,17 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ## [Unreleased]
 
+### Added
+- `make demo` takes the local stack from an empty UI to graded tables and one finished
+  maintenance run: it seeds the fragmented fixtures, scans `local-rest`, assigns
+  `local-standard` and runs `optimize` + `optimize_manifests` through the API
+  (`scripts/demo.py`). The Quickstart now ends there, with a check after each step (#217).
+
 - `README.md` opens with a 25-second loop of the real UI on demo data (Tables, a health grade,
   the run review, the run receipt), with an MP4 copy. `make web-demo-loop` re-records it from
   `web/e2e/docs-capture/demo-loop.ts` (#279). The homepage film already ends on the ice-cube mark
   (re-rendered in October), so the 0.2.0 note that it still showed the old mark is out of date;
   `site/README.md` now describes how the published 720p copy is made.
-
-### Added
 - A **Removed** quick view on the Tables page lists tables the scanner found gone from their
   catalog, with when and why, read-only. `GET /tables` takes `removed=exclude|include|only`
   (`include_removed=true` stays as an alias) (#330).
@@ -45,6 +49,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- `make seed-fragmented`, `make seed-docker` and `make smoke-file-counts` pointed the Spark
+  container at `localhost:8181`, which inside the container is not the REST catalog. They now
+  use `iceberg-rest:8181` (#217).
+
 - Turning off "Active only" on the Tables page now lists tables removed from the catalog. It
   used to drop only the `is_active` filter while the server kept hiding them. CSV export and
   group-by now hide removed tables by default too, so their totals match the list (#330).
