@@ -27,6 +27,10 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 - Turning off "Active only" on the Tables page now lists tables removed from the catalog. It used to drop only the `is_active` filter while the server kept hiding them. CSV export and group-by now hide removed tables by default too, so their totals match the list (#330).
 
+### Security
+
+- CI runs trufflehog alongside gitleaks: on every PR and push to `main` over the new commits, and weekly over the full history. It fails on verified credentials, and on credentials whose verification errored outside the connection-string detectors (#203).
+
 ## [0.2.0](https://github.com/tech-pw/cryo/compare/v0.1.5...v0.2.0) — 2026-11-03
 
 First tagged release since v0.1.5. GitHub release notes group the 180+ merged pull requests; the highlights are below.

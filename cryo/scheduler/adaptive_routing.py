@@ -72,7 +72,7 @@ def rank_destinations(
     A destination that has failed this specific table `max_consecutive_failures_before_
     exclusion` times in a row (default 2) is excluded -- scored -inf, so it never wins while
     any non-excluded destination exists in the pool. Regression context, 2026-08-10:
-    unified_bq.gold_dbt_pw_bq failed on the native engine 4 times running (8 days, 4 different
+    events.gold_dbt_events_wide failed on the native engine 4 times running (8 days, 4 different
     error messages) with nothing in this scoring function aware of that history -- it scored
     an already-4x-failed table identically to one that had never been tried. The failure
     signal itself (table.row["engine_consecutive_failures"]) is computed once per scheduler

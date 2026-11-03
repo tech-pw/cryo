@@ -16,7 +16,7 @@ from cryo.scheduler.rules import (
 
 def test_evaluate_predicate_supports_shared_filter_grammar() -> None:
     row = {
-        "schema_name": "mview_sales",
+        "schema_name": "mart_sales",
         "table_name": "orders_daily",
         "total_size_gb": 250,
         "small_files_count": 1_200,
@@ -26,7 +26,7 @@ def test_evaluate_predicate_supports_shared_filter_grammar() -> None:
     assert evaluate_predicate(
         {
             "all": [
-                {"field": "schema_name", "op": "glob", "value": "mview_*"},
+                {"field": "schema_name", "op": "glob", "value": "mart_*"},
                 {"field": "total_size_gb", "op": ">", "value": 100},
                 {"field": "grade", "op": "in", "value": ["D", "F"]},
                 {"not": {"field": "table_name", "op": "like", "value": "%tmp%"}},
@@ -89,7 +89,7 @@ def test_effective_preset_prefers_rule_over_unassigned() -> None:
     )
     table = TableCandidate(
         "table-1",
-        "mview",
+        "mart",
         "events",
         {"total_size_gb": 300, "small_files_count": 1_000},
     )
@@ -130,7 +130,7 @@ def test_effective_preset_falls_through_to_rules_when_pinned_preset_is_disabled(
     # short-circuited before the rule loop ever ran.
     stale_preset = PresetConfig("stale", "retired-preset", "spark", priority=999, enabled=False)
     large = PresetConfig("large", "large", "spark", priority=200)
-    table = TableCandidate("table-1", "mview", "events", {"total_size_gb": 300})
+    table = TableCandidate("table-1", "mart", "events", {"total_size_gb": 300})
     rules = [
         PresetRule("large-table", "large", {"field": "total_size_gb", "op": ">", "value": 100}),
     ]
@@ -150,7 +150,7 @@ def test_effective_preset_falls_through_to_rules_when_pinned_preset_does_not_exi
     # Same fallback behavior when the pinned preset id references a preset that was
     # deleted outright, not just disabled.
     large = PresetConfig("large", "large", "spark", priority=200)
-    table = TableCandidate("table-1", "mview", "events", {"total_size_gb": 300})
+    table = TableCandidate("table-1", "mart", "events", {"total_size_gb": 300})
     rules = [
         PresetRule("large-table", "large", {"field": "total_size_gb", "op": ">", "value": 100}),
     ]
@@ -171,7 +171,7 @@ def test_effective_preset_still_none_when_stale_pin_and_no_rule_matches() -> Non
     # matching rule still resolves to None, same as the no-assignment-no-rule case.
     stale_preset = PresetConfig("stale", "retired-preset", "spark", priority=999, enabled=False)
     large = PresetConfig("large", "large", "spark", priority=200)
-    table = TableCandidate("table-1", "mview", "events", {"total_size_gb": 5})
+    table = TableCandidate("table-1", "mart", "events", {"total_size_gb": 5})
     rules = [
         PresetRule("large-table", "large", {"field": "total_size_gb", "op": ">", "value": 100}),
     ]
@@ -189,7 +189,7 @@ def test_tables_for_preset_uses_effective_preset_and_skips_inactive_tables() -> 
     standard = PresetConfig("standard", "standard", "trino", priority=100)
     large = PresetConfig("large", "large", "spark", priority=200)
     tables = [
-        TableCandidate("table-1", "mview", "events", {"total_size_gb": 300}),
+        TableCandidate("table-1", "mart", "events", {"total_size_gb": 300}),
         TableCandidate("table-2", "raw", "clicks", {"total_size_gb": 20}),
         TableCandidate("table-3", "raw", "old", {"total_size_gb": 500}, is_active=False),
     ]
@@ -268,7 +268,7 @@ def test_ephemeral_temp_tables_are_not_rule_matched_but_pins_still_win() -> None
     schema_temp = TableCandidate(
         "t-schema", "temp", "signup_login_funnel_2026", {"total_size_gb": 1}
     )
-    live = TableCandidate("t-live", "mview", "events", {"total_size_gb": 10})
+    live = TableCandidate("t-live", "mart", "events", {"total_size_gb": 10})
 
     assert effective_preset(temp_table, [standard], [catch_all]) is None
     assert effective_preset(schema_temp, [standard], [catch_all]) is None

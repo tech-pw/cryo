@@ -80,7 +80,7 @@ Example source payload:
     "uri": "http://localhost:8181",
     "warehouse": "s3://warehouse/"
   },
-  "maintenance_schema_names": ["analytics", "cdp"],
+  "maintenance_schema_names": ["analytics", "marts"],
   "enabled": true
 }
 ```
@@ -308,7 +308,8 @@ if present it is still validated as a positive number for back-compat). Extra ke
 accepted for forward compatibility.
 
 Supported `guardrails` keys include admission and SLA settings (`cooldown_hours`,
-`deadline_minutes`, `sla_*`), adaptive routing (`adaptive_routing`, `engine_pool`,
+`deadline_minutes` — scheduled runs without it close at the preset's next cron fire, see
+`CRYO_SCHEDULED_RUN_DEADLINE_MAX_HOURS`; `sla_*`), adaptive routing (`adaptive_routing`, `engine_pool`,
 `engine_preferences`), and `routing_rules` predicates. Extra keys are accepted for forward
 compatibility.
 

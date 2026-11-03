@@ -4,14 +4,16 @@ import logging
 import os
 import socket
 from collections import defaultdict, deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 from cryo.domain.enums import JobStatus
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 # Consumer group that every worker pod joins to claim admitted jobs.
 _ADMITTED_GROUP = "workers"
@@ -386,8 +388,10 @@ class RedisMaintenanceQueue:
         return self._read_new()
 
     def _read_new(self) -> str | None:
-        response = self._redis.xreadgroup(
-            _ADMITTED_GROUP, self._consumer, {self._stream_key(): ">"}, count=1
+        response = self._on_group(
+            lambda: self._redis.xreadgroup(
+                _ADMITTED_GROUP, self._consumer, {self._stream_key(): ">"}, count=1
+            )
         )
         for _, entries in response or []:
             for _, fields in entries:
@@ -396,13 +400,15 @@ class RedisMaintenanceQueue:
 
     def _reclaim_stalled(self) -> tuple[str, str] | None:
         """Take over one entry whose owner has gone quiet. Returns (entry_id, job_id)."""
-        response = self._redis.xautoclaim(
-            self._stream_key(),
-            _ADMITTED_GROUP,
-            self._consumer,
-            min_idle_time=_CLAIM_HANDOFF_IDLE_MS,
-            start_id="0-0",
-            count=1,
+        response = self._on_group(
+            lambda: self._redis.xautoclaim(
+                self._stream_key(),
+                _ADMITTED_GROUP,
+                self._consumer,
+                min_idle_time=_CLAIM_HANDOFF_IDLE_MS,
+                start_id="0-0",
+                count=1,
+            )
         )
         # XAUTOCLAIM answers (next_cursor, claimed_entries, deleted_ids).
         entries = response[1] if response and len(response) > 1 else []
@@ -463,10 +469,19 @@ class RedisMaintenanceQueue:
         Releases the in-flight slot the admission took, drops any stale stream entry, and
         restores QUEUED so the next governor wave can admit it again. Used instead of failing
         a job outright when its dispatch was lost rather than attempted.
+
+        The slot is only released if this Redis still records the admission. After a restart
+        the counter starts from zero and the job hash is gone or was rewritten as queued by
+        orphan recovery, so decrementing would drive the counter negative and let the
+        governor over-admit until the next in-flight rebuild.
         """
+        entry = self._redis.hgetall(self._job_key(job_id))
+        prior_status = _decode(entry.get(b"status") or entry.get("status"))
+        replica = _decode(entry.get(b"replica") or entry.get("replica")) or "default"
         self._ack(job_id)
         pipe = self._redis.pipeline()
-        pipe.hincrby(self._in_flight_key(destination_id), self._replica_of(job_id), -1)
+        if prior_status in {JobStatus.ADMITTED.value, JobStatus.RUNNING.value}:
+            pipe.hincrby(self._in_flight_key(destination_id), replica, -1)
         pipe.hset(
             self._job_key(job_id),
             mapping={"destination_id": destination_id, "status": "queued"},
@@ -475,10 +490,6 @@ class RedisMaintenanceQueue:
         pipe.zadd(self._pending_key(destination_id), {job_id: priority})
         pipe.sadd(self._destinations_key(), destination_id)
         pipe.execute()
-
-    def _replica_of(self, job_id: str) -> str:
-        entry = self._redis.hgetall(self._job_key(job_id))
-        return _decode(entry.get(b"replica") or entry.get("replica")) or "default"
 
     def active_worker_count(self, stale_after_seconds: int = 60) -> int:
         """Workers currently attached to the consumer group.
@@ -489,9 +500,10 @@ class RedisMaintenanceQueue:
         alone reported zero exactly when the fleet was busiest -- which made the governor's
         drain-rate cap silently inert under the load it exists to handle.
         """
-        self._ensure_group()
         try:
-            consumers = self._redis.xinfo_consumers(self._stream_key(), _ADMITTED_GROUP)
+            consumers = self._on_group(
+                lambda: self._redis.xinfo_consumers(self._stream_key(), _ADMITTED_GROUP)
+            )
         except Exception:  # noqa: BLE001 - missing stream/group means no workers yet
             return 0
         stale_after_ms = stale_after_seconds * 1000
@@ -634,6 +646,29 @@ class RedisMaintenanceQueue:
                 raise
         self._group_ready = True
 
+    def _on_group(self, command: Callable[[], _T]) -> _T:
+        """Run one consumer-group command, recreating the group once if Redis lost it.
+
+        The group exists only in Redis, and the chart's Redis runs without persistence, so a
+        restart drops the stream and its group together. _group_ready would otherwise stay
+        True for the life of the process: every XAUTOCLAIM/XREADGROUP failed with NOGROUP, every
+        worker tick failed, and the liveness probe restarted the whole fleet at once.
+        """
+        self._ensure_group()
+        try:
+            return command()
+        except Exception as exc:
+            if not is_missing_group_error(exc):
+                raise
+        logger.warning(
+            "Consumer group %s on %s is gone (Redis restarted or was flushed); recreating it",
+            _ADMITTED_GROUP,
+            self._stream_key(),
+        )
+        self._group_ready = False
+        self._ensure_group()
+        return command()
+
     def _group_pending(self) -> int:
         self._ensure_group()
         try:
@@ -682,6 +717,11 @@ def get_redis_client(*, force: bool = False) -> Any:
         except Exception:  # noqa: BLE001
             return None
     return _cached_redis_client
+
+
+def is_missing_group_error(exc: BaseException) -> bool:
+    """True for Redis's NOGROUP reply: the stream or its consumer group does not exist."""
+    return str(exc).startswith("NOGROUP")
 
 
 def _decode(value: Any) -> str:
