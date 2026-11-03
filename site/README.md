@@ -63,15 +63,17 @@ $ make up
 The "life of one table" section lives in `site/_src/includes/table-journey.html`, its styles in the `.tj-*` block of `site.css`, and its controller in `site.js`. Each chapter carries its numbers in prose, so without JavaScript the chapters read as one column and the pinned stage stays hidden. With JavaScript, the chapter crossing the middle of the viewport sets the stage: Cryo's narration line, the core sample (the brand's ice core from `docs/brand/CRYO_BRAND_GUIDE.md` section 7.2, with loose grains for small files, solid blocks for compacted files, layer lines for snapshots, a manifest drawer, a statistics tag and one survey-orange marker), the bill, its stacked bar and the meters. The day 1 to 30 chapter is scrubbed by scroll position rather than switched. Mood (0 = day-1 bill, 1 = day-30 bill) drives the face, the mascot's mouth, the card glow and the colour of the total. Each meter is coloured against a healthy reference (`tjHealthy`). The before-and-after scorecards (`.tj-ba`) and rail colours (`tj-m-*`) are static classes in the include, so keep them in step with the numbers. The stage numbers are computed from the per-stage byte and file counts in `site.js` and the prices at the top of that block. Change the prose, the receipt table and those counts together. Each "cost that isn't on the bill" note links its source (AWS S3 performance guide, Trino cost-based optimizer, Iceberg maintenance). The markdown export drops every `<aside class="tj-…">` (the stage, the legend key and the calculator).
 
 The homepage closer is a native `<video>` in `site/_src/pages/index.html`, not a component. It plays
-`assets/video/homepage-intro-video.mp4`, a byte copy of `videos/cryo-showreel-30s/renders/16x9.mp4` (1080p, 60 fps,
-H.264 High, faststart already set), from a poster, with `preload="none"`. Do not re-encode it. A second
-pass, even at CRF 18, drops the frame rate and softens the type. Copy when the film changes:
+`assets/video/homepage-intro-video.mp4` from a poster, with `preload="none"`. The film is a designed
+showreel (`videos/cryo-showreel-30s/`, kept out of git) and already ends on the ice-cube mark. The
+published copy is a 720p30 H.264 re-encode of the 1080p60 master, made to fit the 2 MB per-asset
+budget (#244). When the film changes, re-encode the new master the same way and check the size:
 
 ```bash
-cp videos/cryo-showreel-30s/renders/16x9.mp4 site/assets/video/homepage-intro-video.mp4
+ffmpeg -i videos/cryo-showreel-30s/renders/16x9.mp4 -vf scale=1280:-2 -r 30 -c:v libx264 -preset veryslow \
+  -crf 26 -profile:v high -pix_fmt yuv420p -c:a aac -b:a 64k -movflags +faststart site/assets/video/homepage-intro-video.mp4
+node site/scripts/build.mjs --check   # fails over 2 MB per asset
 # Poster is a designed title card (page fonts + cryo-mark), not a film frame.
 # The native control bar covers the bottom fifth, so keep type in the upper half.
-# Source lives with the film; re-screenshot at 1280×720 if the line changes.
 ```
 
 Rules: no invented numbers in prose or fake dashboards (screenshots are the real UI on synthetic demo data, and every frame is badged "Demo data"), sentence-case headings, no uppercase eyebrows.
@@ -117,6 +119,19 @@ cd web && node ../scripts/readme_images.mjs
 
 Product screenshots in the README point straight at `assets/img/screens/`, so regenerating those
 (above) updates both.
+
+The README demo loop (`docs/img/demo-loop.gif`, `demo-loop.mp4` and `demo-loop-poster.png`) is
+recorded by `web/e2e/docs-capture/demo-loop.ts` against the same demo data: Tables, the
+`analytics.events` grade, the run review on the Maintenance tab, then the run receipt. It records
+frame by frame on a fixed 15 fps timeline, so the pacing doesn't depend on how fast the machine
+renders, and draws its own pointer and "Demo data" badge. It needs `ffmpeg` on `PATH` (or
+`FFMPEG=/path/to/ffmpeg`) and fails if any output is over 2 MB:
+
+```bash
+make web-demo-loop   # or: cd web && npm run capture:demo-loop
+```
+
+Change the steps or holds in the test to retime it. Set `DOCS_CAPTURE_PORT` if :5173 is taken.
 
 ## Adding a diagram
 

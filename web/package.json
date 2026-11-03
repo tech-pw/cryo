@@ -16,6 +16,8 @@
     "impeccable:detect": "cd .. && npx --yes impeccable detect web/src --json",
     "quality": "npm run typecheck && npm run check:styles-budget && npm run test",
     "check:styles-budget": "node scripts/check-styles-budget.mjs",
+    "capture:docs": "playwright test -c e2e/docs-capture/playwright.config.ts",
+    "capture:demo-loop": "DOCS_CAPTURE_LOOP=1 playwright test -c e2e/docs-capture/playwright.config.ts",
     "gen:api": "openapi-typescript http://localhost:8000/openapi.json -o src/api/openapi.d.ts"
   },
   "dependencies": {
