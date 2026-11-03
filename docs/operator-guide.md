@@ -457,6 +457,7 @@ Log exploration (Loki via Grafana Explore):
 | Cause | Action |
 |-------|--------|
 | Catalog timeout | Retry scan; increase scanner memory; reduce `num_chunks` temporarily |
+| Discovery timeout (`discover tables(<source>) exceeded …` in the run's `last_error`) | Listing the catalog took longer than `CRYO_SCAN_DISCOVERY_TIMEOUT_SECONDS` (default 1800). Raise it. It is separate from `CRYO_SCAN_TABLE_TIMEOUT_SECONDS`, which bounds one table. A chunk that discovered nothing because listing failed is `failed`. If other sources listed, it is `partial_failed`. Neither is reported `succeeded`. |
 | Auth failure | Rotate credentials in secret store; verify IRSA/SA role |
 | Single table error | Scanner isolates per-table failures; inspect `audit_logs` / table detail |
 | Scheduler disabled | PATCH `/api/v1/scanner/config` → `enabled: true` |

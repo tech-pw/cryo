@@ -364,6 +364,9 @@ def scan_progress_message(event: JsonDict, *, chunk_id: int, num_chunks: int) ->
             f"Assigned {assigned} of {discovered} discovered tables to chunk "
             f"{chunk_id + 1}/{num_chunks}"
         )
+    if event_type == "discovering":
+        elapsed = int(event.get("elapsed_seconds") or 0)
+        return f"Still listing tables in {event.get('source') or 'source'} ({elapsed}s)"
     if event_type == "start_table" and table_ref:
         return f"Scanning {table_ref}"
     if event_type == "table_result" and table_ref:
