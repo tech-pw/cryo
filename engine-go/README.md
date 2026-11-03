@@ -31,7 +31,7 @@ With `CRYO_ENGINE_IMPL=go` (or `destination.config.engine_impl=go`) — **the de
 
 | Operation | Analyze | Execute | Notes |
 |-----------|---------|---------|-------|
-| `expire_snapshots` | ✅ | ✅ | Atomic metadata commit |
+| `expire_snapshots` | ✅ | ✅ | Atomic metadata commit, then deletes the files only the expired snapshots referenced |
 | `remove_orphan_files` | ✅ | ✅ | Object-store delete |
 | `rewrite_data_files` (OPTIMIZE) **COW** | ✅ | ✅ | `Transaction.RewriteDataFiles` + atomic `Replace` |
 | `rewrite_data_files` (OPTIMIZE) **MOR** | ✅ | ✅ | Deletes applied on read; consumed delete files dropped on commit (#851) |

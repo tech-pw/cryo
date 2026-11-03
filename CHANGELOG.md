@@ -6,6 +6,11 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ## [Unreleased]
 
+### Fixed
+- Native `expire_snapshots` now deletes the files only the expired snapshots referenced, as Spark
+  and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests,
+  and shared-location tables (none of which plan `remove_orphan_files`) leaked them (#374).
+
 ## [0.2.0] — 2026-11-03
 
 First tagged release since v0.1.5. GitHub release notes group the 180+ merged pull requests;
