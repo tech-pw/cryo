@@ -13,6 +13,7 @@ from sqlalchemy import case, desc, func, select
 from sqlalchemy.orm import Session, contains_eager, selectinload
 
 from cryo.api.deps import SessionDep, require_viewer
+from cryo.api.schemas import PresetProvenance
 from cryo.api.sla import sla_from_guardrails
 from cryo.config import get_settings
 from cryo.db.model_utils import qualified_table_name
@@ -280,10 +281,12 @@ class SLAStatusRead(BaseModel):
     p95_latency_ms: float | None
     p95_latency_sla_ms: int | None
     p95_latency_breached: bool
-    # False when no preset assignment/rule matches this table (see effective_preset()) --
-    # its SLA guardrails are only ever the hardcoded defaults, and its maintenance SLA can
-    # never actually be met since nothing will ever run against it automatically.
+    # False only when effective_preset() resolves nothing: no assignment, no matching rule,
+    # and no is_default preset (or an ephemeral table). Its SLA guardrails are then the
+    # hardcoded defaults and its maintenance SLA can never be met. preset_provenance tells
+    # an explicitly covered table apart from one only caught by the default fallback.
     has_preset: bool
+    preset_provenance: PresetProvenance
 
 
 class SLAResponse(BaseModel):
@@ -991,6 +994,9 @@ def get_sla_status(
                 p95_latency_sla_ms=p95_latency_sla_ms,
                 p95_latency_breached=p95_breached,
                 has_preset=effective is not None,
+                preset_provenance=(
+                    cast(PresetProvenance, effective.provenance) if effective else "none"
+                ),
             )
         )
 

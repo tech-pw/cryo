@@ -80,7 +80,7 @@ Example source payload:
     "uri": "http://localhost:8181",
     "warehouse": "s3://warehouse/"
   },
-  "maintenance_schema_names": ["analytics", "cdp"],
+  "maintenance_schema_names": ["analytics", "marts"],
   "enabled": true
 }
 ```
@@ -253,9 +253,20 @@ POST   /api/v1/presets
 PATCH  /api/v1/presets/{preset_id}
 DELETE /api/v1/presets/{preset_id}
 POST   /api/v1/presets/{preset_id}/simulate
+POST   /api/v1/presets/{preset_id}/pause
+POST   /api/v1/presets/{preset_id}/resume
+POST   /api/v1/presets/{preset_id}/set-default
+POST   /api/v1/presets/{preset_id}/unset-default
 ```
 
 `DELETE` currently disables the preset by setting `enabled=false`.
+
+Pausing (`POST .../pause`, or `PATCH` with `"paused": true` on a preset that was not paused)
+cancels the preset's jobs that are not yet admitted. In its open runs, `queued` and `deferred`
+jobs become `skipped` with `error: "cancelled: preset paused"` and are removed from the queue.
+`admitted` and `running` jobs finish. A run left with no active job becomes `cancelled`. The
+`preset_paused` audit row records `cancelled_jobs` and `cancelled_runs`. Resuming does not
+restore cancelled jobs.
 
 Example preset:
 
@@ -300,7 +311,8 @@ if present it is still validated as a positive number for back-compat). Extra ke
 accepted for forward compatibility.
 
 Supported `guardrails` keys include admission and SLA settings (`cooldown_hours`,
-`deadline_minutes`, `sla_*`), adaptive routing (`adaptive_routing`, `engine_pool`,
+`deadline_minutes` — scheduled runs without it close at the preset's next cron fire, see
+`CRYO_SCHEDULED_RUN_DEADLINE_MAX_HOURS`; `sla_*`), adaptive routing (`adaptive_routing`, `engine_pool`,
 `engine_preferences`), and `routing_rules` predicates. Extra keys are accepted for forward
 compatibility.
 

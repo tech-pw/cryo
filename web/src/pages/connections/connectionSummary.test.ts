@@ -4,7 +4,7 @@ import { destinationDetails, offpeakLabel, redactUri, sourceDetails } from "./co
 
 const source = (config: SourceRead["config"]): SourceRead => ({
   id: "src-1",
-  name: "cdp",
+  name: "analytics",
   type: "hive",
   config,
   enabled: true,
@@ -59,11 +59,11 @@ describe("connection summaries", () => {
     expect(destinationDetails(destination("trino", {})).map((d) => d.label)).toEqual(["Off-peak"]);
     expect(
       destinationDetails(
-        destination("trino", { coordinators: [{ host: "a", port: 8080 }, { host: "b", port: 8443 }], catalog: "cdp" })
+        destination("trino", { coordinators: [{ host: "a", port: 8080 }, { host: "b", port: 8443 }], catalog: "analytics" })
       ).slice(0, 2)
     ).toEqual([
       { label: "Coordinator", value: "a:8080 +1", mono: true },
-      { label: "Catalog", value: "cdp", mono: true }
+      { label: "Catalog", value: "analytics", mono: true }
     ]);
   });
 

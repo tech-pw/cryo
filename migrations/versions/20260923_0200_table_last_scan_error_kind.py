@@ -1,8 +1,8 @@
 """Add cryo.tables.last_scan_error_kind.
 
 Separates "this table's metadata is gone from object storage" from an ordinary scan failure.
-A 387-table scan of cdp.central on 2026-09-23 reported 201 failures, all of them the former:
-the Iceberg manifest list named by the table's own metadata returns NoSuchKey from S3, and
+A 387-table scan of one production schema on 2026-09-23 reported 201 failures, all of them the
+former: the Iceberg manifest list named by the table's own metadata returns NoSuchKey from S3, and
 Trino fails identically on the same tables. Retrying those forever inflates the failure rate
 with a number that cannot improve, so they are recorded distinctly and can be listed.
 
