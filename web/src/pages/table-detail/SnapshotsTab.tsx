@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Copy, Crosshair, GitBranch, History, Tag } from "lucide-react";
 import { useMemo } from "react";
@@ -24,7 +23,7 @@ import { SnapshotSelection, writerLabel } from "../../components/table-detail/Sn
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { useAuth } from "../../lib/auth";
 import { useWriteControl } from "../../lib/useWriteControl";
 import { formatBytesGb, formatDuration, formatNumber, formatTime } from "../../lib/format";
@@ -274,7 +273,7 @@ export const SnapshotsTab = () => {
     [data?.snapshots]
   );
   const currentSnapshotId = data?.current_snapshot_id ?? null;
-  const columns = useMemo<ColumnDef<TableSnapshot, unknown>[]>(
+  const columns = useMemo<DataTableColumnDef<TableSnapshot, unknown>[]>(
     () => [
       {
         id: "snapshot_id",

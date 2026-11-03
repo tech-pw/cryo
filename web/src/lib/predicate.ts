@@ -1,4 +1,4 @@
-import type { FreshnessBucketKey } from "../api/types";
+import type { EffectiveProvenance, FreshnessBucketKey } from "../api/types";
 import {
   BROKEN_TABLE_FAILURE_THRESHOLD,
   FRESHNESS_LABELS,
@@ -24,6 +24,28 @@ export type CostPrecision = "heuristic" | "metadata" | "storage_truth";
 /** Sentinel for the Catalogs preset filter: tables with no table_assignments row. */
 export const NO_PRESET_FILTER = "__none__";
 
+/** Coverage facet keys and the effective-preset provenances each one stands for. */
+export const COVERAGE_PROVENANCES = {
+  pinned: ["assignment"],
+  rule: ["rule", "rule_after_stale_pin"],
+  default: ["default"],
+  unmaintained: ["none"]
+} as const satisfies Record<string, readonly EffectiveProvenance[]>;
+
+export type CoverageKey = keyof typeof COVERAGE_PROVENANCES;
+
+export const COVERAGE_LABELS: Record<CoverageKey, string> = {
+  pinned: "Pinned",
+  rule: "By rule",
+  default: "On default",
+  unmaintained: "Unmaintained"
+};
+
+export const isCoverageKey = (value: string): value is CoverageKey => value in COVERAGE_PROVENANCES;
+
+export const coverageProvenances = (coverage: CoverageKey[] | undefined): EffectiveProvenance[] | undefined =>
+  coverage?.length ? coverage.flatMap((key) => COVERAGE_PROVENANCES[key]) : undefined;
+
 export interface TableFilterState {
   grades?: string[];
   priorities?: string[];
@@ -32,6 +54,11 @@ export interface TableFilterState {
   sourceIds?: string[];
   /** `__none__` and/or assigned preset UUIDs (assignment-only, not effective preset). */
   presetFilter?: string[];
+  /**
+   * Where the effective preset comes from. Sent as `effective_provenance`, never in the
+   * predicate: rule matching runs server-side, so a filter-mode selection can't carry it.
+   */
+  coverage?: CoverageKey[];
   minSizeGb?: number | null;
   minSmallFiles?: number | null;
   minMonthlySavings?: number | null;
