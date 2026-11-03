@@ -30,10 +30,10 @@ class LineageEdge(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     source_table_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("tables.id"), nullable=False
+        PGUUID(as_uuid=True), ForeignKey("tables.id", ondelete="CASCADE"), nullable=False
     )
     target_table_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("tables.id"), nullable=False
+        PGUUID(as_uuid=True), ForeignKey("tables.id", ondelete="CASCADE"), nullable=False
     )
     edge_type: Mapped[str] = mapped_column(Text, nullable=False)  # "read", "write", "transform"
     job_name: Mapped[str | None] = mapped_column(Text)  # Spark job, Airflow DAG, etc.

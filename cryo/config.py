@@ -830,6 +830,24 @@ class Settings(BaseSettings):
         le=1_000_000,
         description="Maximum job rows deleted by one daily retention tick.",
     )
+    removed_table_purge_after_days: int | None = Field(
+        default=None,
+        ge=7,
+        le=3650,
+        description=(
+            "Hard-delete a table this many days after the scanner tombstoned it as removed "
+            "from the catalog (#120), with its stats, cost, jobs and other per-table rows. "
+            "Audit entries are kept with table_id cleared, plus a table_purged entry naming "
+            "the table. Unset (the default) keeps tombstones forever. A table with an active "
+            "job or an open maintenance intent is skipped until it has none."
+        ),
+    )
+    removed_table_purge_max_tables_per_tick: int = Field(
+        default=500,
+        ge=1,
+        le=10_000,
+        description="Maximum removed tables hard-deleted by one daily purge tick.",
+    )
     query_log_iceberg_window_hours: int = Field(
         default=1,
         gt=0,

@@ -17,6 +17,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   catalog, with when and why, read-only. `GET /tables` takes `removed=exclude|include|only`
   (`include_removed=true` stays as an alias) (#330).
 
+- Opt-in hard purge of tables removed from the catalog. Set
+  `CRYO_REMOVED_TABLE_PURGE_AFTER_DAYS` (default off, minimum 7) and the scheduler deletes
+  older tombstones daily, writing a `table_purged` audit row each. `cryo
+  purge-removed-tables` previews or runs it by hand (#330).
 - Opt-in continuous maintenance (#77). A preset's `continuous` block stays off unless enabled.
   While it is on, Cryo probes the live catalog, records per-table writer drift, and the scheduler
   enqueues that preset's maintenance through the normal governor, so cooldown, off-peak windows,
@@ -33,6 +37,12 @@ All notable changes to Cryo will be documented in this file. The format is based
   **Coverage** filter with *On default* and *Unmaintained*. `GET /tables` rows carry
   `effective_preset`, and `GET /tables`, `/tables/group-by` and `/tables/export.csv` take
   `effective_provenance` (#330).
+
+### Upgrade notes
+- Migration `20261103_1200` gives every foreign key to `tables`, `jobs` and
+  `maintenance_intents` an `ON DELETE` action (NOT NULL columns cascade, nullable ones are
+  set to NULL) and adds four indexes concurrently. Constraints are re-added `NOT VALID` and
+  validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
 - Turning off "Active only" on the Tables page now lists tables removed from the catalog. It

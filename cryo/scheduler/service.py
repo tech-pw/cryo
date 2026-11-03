@@ -149,6 +149,7 @@ class SchedulerService:
         self._last_audit_log_prune: datetime | None = None
         self._last_table_stats_history_prune: datetime | None = None
         self._last_job_prune: datetime | None = None
+        self._last_removed_table_purge: datetime | None = None
         self._last_rollout_safety_check: datetime | None = None
         self._last_silent_loss_sweep: datetime | None = None
         self._silent_loss_cursor: Any | None = None
@@ -209,6 +210,7 @@ class SchedulerService:
         self._maybe_prune_audit_logs(current)
         self._maybe_prune_table_stats_history(current)
         self._maybe_prune_jobs(current)
+        self._maybe_purge_removed_tables(current)
         self._maybe_check_rollout_safety(current)
         self._maybe_silent_data_loss_sweep(current)
         self._maybe_check_unmatched_tables(current)
@@ -1123,6 +1125,43 @@ class SchedulerService:
             import logging
 
             logging.getLogger(__name__).warning("Job retention tick failed: %s", exc)
+
+    def _maybe_purge_removed_tables(self, current: datetime) -> None:
+        import logging
+        from datetime import timedelta
+
+        from cryo.config import get_settings
+
+        logger = logging.getLogger(__name__)
+        settings = get_settings()
+        retention_days = settings.removed_table_purge_after_days
+        if retention_days is None:
+            return
+        if self._last_removed_table_purge is not None:
+            if current - self._last_removed_table_purge < timedelta(days=1):
+                return
+
+        try:
+            from cryo.db.repositories.removed_table_purge import purge_removed_tables
+
+            with SessionLocal() as session:
+                result = purge_removed_tables(
+                    session,
+                    retention_days,
+                    now=current,
+                    max_tables=settings.removed_table_purge_max_tables_per_tick,
+                )
+            logger.info(
+                "Removed-table purge tick: %s purged, %s failed, %s held by active work, "
+                "%s left for later ticks",
+                result.purged,
+                result.failed,
+                result.held,
+                result.remaining,
+            )
+            self._last_removed_table_purge = current
+        except Exception as exc:
+            logger.warning("Removed-table purge tick failed: %s", exc)
 
     def _maybe_detect_dark_tables(self, current: datetime) -> None:
         """Once a day, advance every active table's consecutive-zero-query-window counter.
