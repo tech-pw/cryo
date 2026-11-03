@@ -38,6 +38,7 @@ from cryo.observability.metrics import worker_job_duration_seconds, worker_job_e
 from cryo.observability.tracing import trace_operation
 from cryo.planner.execution import build_execution_plan, skip_operations_from_preset
 from cryo.planner.serialization import plan_to_dict
+from cryo.queue.job_release import release_job_claims
 from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.queue.run_events import (
@@ -1268,8 +1269,13 @@ class Worker:
                 message=error,
             ),
         )
-        self._queue.complete(job.id, final_status)
-        self._release_table_lock(job)
+        release_job_claims(
+            self._queue,
+            self._lock_store,
+            job_id=job.id,
+            table_id=job.table_id,
+            status=final_status,
+        )
         if final_status is JobStatus.SUCCEEDED:
             self._supersede_covered_jobs(job)
         from cryo.governor.bandit_feedback import finalize_admission
@@ -1510,10 +1516,6 @@ class Worker:
                 self._queue.cancel_pending(superseded_id, destination_id)
             except Exception:
                 logger.warning("Could not drop queue entry for %s", superseded_id, exc_info=True)
-
-    def _release_table_lock(self, job: MaintenanceJobRecord) -> None:
-        if self._lock_store is not None:
-            self._lock_store.release_table_lock(job.table_id, job.id)
 
     def _run_native_plan(
         self,

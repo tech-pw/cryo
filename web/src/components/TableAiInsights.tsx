@@ -1,5 +1,4 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -22,7 +21,7 @@ import { Alert } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
-import { DataTable } from "./ui/data-table";
+import { DataTable, type DataTableColumnDef } from "./ui/data-table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 interface TableAiInsightsProps {
@@ -33,7 +32,7 @@ interface TableAiInsightsProps {
   hideTabsWhenSingle?: boolean;
 }
 
-const similarColumns: ColumnDef<SimilarTableRead, unknown>[] = [
+const similarColumns: DataTableColumnDef<SimilarTableRead, unknown>[] = [
   {
     id: "name",
     header: "Table",

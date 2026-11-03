@@ -6,10 +6,27 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ## [Unreleased]
 
+- `README.md` opens with a 25-second loop of the real UI on demo data (Tables, a health grade,
+  the run review, the run receipt), with an MP4 copy. `make web-demo-loop` re-records it from
+  `web/e2e/docs-capture/demo-loop.ts` (#279). The homepage film already ends on the ice-cube mark
+  (re-rendered in October), so the 0.2.0 note that it still showed the old mark is out of date;
+  `site/README.md` now describes how the published 720p copy is made.
+
+### Added
+- Tables registry: an **Effective preset** column (preset, where it comes from, paused) and a
+  **Coverage** filter with *On default* and *Unmaintained*. `GET /tables` rows carry
+  `effective_preset`, and `GET /tables`, `/tables/group-by` and `/tables/export.csv` take
+  `effective_provenance` (#330).
+
 ### Fixed
 - Native `expire_snapshots` now deletes the files only the expired snapshots referenced, as Spark
   and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests,
   and shared-location tables (none of which plan `remove_orphan_files`) leaked them (#374).
+- The Spark fallback sweep no longer finalizes a job whose native dispatch is still running.
+  It used to mark such a job terminal mid-run, so the governor's lock reconcile released its
+  table lock as orphaned. When the sweep does end a job, it now releases the job's table lock
+  and in-flight slot, and a second completion of the same job no longer drives the in-flight
+  counter negative (#382).
 
 ### Changed
 - Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become
@@ -25,6 +42,11 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 First tagged release since v0.1.5. GitHub release notes group the 180+ merged pull requests;
 the highlights are below.
+
+### Upgrade notes
+- A default preset that never had a schedule gets `0 2 * * *` from the migration, so after the
+  upgrade it fires nightly at 02:00 in the scheduler time zone (`CRYO_DISPLAY_TIMEZONE`, UTC by
+  default). Pause it first if you don't want that (#119, #330).
 
 ### Removed
 - The unused Rust engines (`cryo-engine/`, `cryo-native/`) and their CI jobs. The Go engine

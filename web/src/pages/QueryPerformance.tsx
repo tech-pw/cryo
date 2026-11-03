@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import { CheckCircle2, Clock, Copy, Database, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -9,7 +8,7 @@ import { PageHeader, TelemetryRequiredNotice } from "../components/common";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { DataTable } from "../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../components/ui/data-table";
 import { Label } from "../components/ui/label";
 import { Select } from "../components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/ui/sheet";
@@ -109,7 +108,7 @@ export const QueryPerformance = () => {
     window.setTimeout(() => setCopyStatus("idle"), 2000);
   };
 
-  const columns: ColumnDef<QueryRow, unknown>[] = [
+  const columns: DataTableColumnDef<QueryRow, unknown>[] = [
     {
       id: "query_text",
       header: "Query",

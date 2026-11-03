@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import type { ColumnDef } from "@tanstack/react-table";
 import {
   assistantErrorMessage,
   createAssistantApiKey,
@@ -23,7 +22,7 @@ import { formatTime } from "../../lib/format";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Select } from "../../components/ui/select";
@@ -83,7 +82,7 @@ export const AiModelsSettings = () => {
   });
 
   const rows = useMemo(() => usageRows(usage.data), [usage.data]);
-  const usageColumns = useMemo<ColumnDef<AssistantUsageRow, unknown>[]>(
+  const usageColumns = useMemo<DataTableColumnDef<AssistantUsageRow, unknown>[]>(
     () => [
       {
         id: "key",

@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import { Database, Users } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getCostAttributionDashboard, type CostAttributionResponse } from "../api/client";
@@ -8,7 +7,7 @@ import { Alert } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
-import { DataTable } from "../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../components/ui/data-table";
 import { MetricGrid } from "../components/ui/metric-grid";
 import { Skeleton } from "../components/ui/skeleton";
 import { MetricTile } from "../components/ui/stat";
@@ -81,7 +80,7 @@ export const CostAttribution = () => {
 
   const totals = data?.attributions ?? [];
 
-  const columns: ColumnDef<CostAttributionRow, unknown>[] = [
+  const columns: DataTableColumnDef<CostAttributionRow, unknown>[] = [
     {
       id: "team",
       header: "Team/Department",
