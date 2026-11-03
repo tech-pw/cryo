@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -9,7 +8,7 @@ import { getImpactHistory } from "../api/impact";
 import { RankedBars } from "../components/charts";
 import { PageHeader, QueryErrorAlert } from "../components/common";
 import { Button } from "../components/ui/button";
-import { DataTable } from "../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../components/ui/data-table";
 import { MetricGrid, MetricTile } from "../components/ui/metric-grid";
 import { useAuth } from "../lib/auth";
 import { formatCurrency } from "../lib/format";
@@ -58,7 +57,7 @@ export const Impact = ({ embedded = false }: { embedded?: boolean }) => {
     label: impactBytesLabel(row)
   }));
 
-  const columns = useMemo<ColumnDef<ImpactDay, unknown>[]>(
+  const columns = useMemo<DataTableColumnDef<ImpactDay, unknown>[]>(
     () => [
       { id: "day", header: "Day", accessorKey: "report_date" },
       { id: "state", header: "Reclaim", cell: ({ row }) => impactBytesLabel(row.original) },

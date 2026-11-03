@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { AlertTriangle, ArrowRight, Check, FlaskConical, ShieldX } from "lucide-react";
 import { useMemo, useState } from "react";
 import type {
@@ -8,7 +7,7 @@ import type {
   OperationCapability
 } from "../../api/types";
 import { Badge, type BadgeProps } from "../../components/ui/badge";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { cn } from "../../lib/cn";
 import { useConnectionsContext } from "./ConnectionsContext";
 
@@ -118,7 +117,7 @@ export const CapabilityLedger = ({ manifest }: { manifest: CapabilityManifest })
     [engineFilter, manifest.matrix, supportFilter]
   );
 
-  const columns = useMemo<ColumnDef<OperationCapability, unknown>[]>(
+  const columns = useMemo<DataTableColumnDef<OperationCapability, unknown>[]>(
     () => [
       {
         accessorKey: "engine",

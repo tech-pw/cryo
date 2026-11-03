@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -21,7 +20,7 @@ import { tableKeys } from "../../../pages/table-detail/tableKeys";
 import { Badge } from "../../ui/badge";
 import { Input } from "../../ui/input";
 import { SectionNav } from "../SectionNav";
-import { DataTable } from "../../ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../ui/data-table";
 import "./files.css";
 import { WairRecluster } from "../WairRecluster";
 import { DELETE_THRESHOLDS, deleteDebt, deleteSeries } from "./deleteDebt";
@@ -148,7 +147,7 @@ const SchemaTable = ({
     return () => window.clearTimeout(timer);
   }, [highlight, page, rows]);
 
-  const columns = useMemo<ColumnDef<SchemaColumnRow, unknown>[]>(() => [
+  const columns = useMemo<DataTableColumnDef<SchemaColumnRow, unknown>[]>(() => [
     { id: "name", header: "Name", cell: ({ row }) => <span id={row.original.name.toLowerCase() === highlight ? "files-schema-highlight" : undefined} data-testid="schema-column-name" className="font-mono text-xs">{row.original.name}</span> },
     { id: "type", header: "Type", cell: ({ row }) => row.original.type },
     { id: "badges", header: "Signals", cell: ({ row }) => <SchemaBadges row={row.original} /> },
