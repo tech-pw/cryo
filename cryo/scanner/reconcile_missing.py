@@ -10,9 +10,12 @@ rules, in order:
 * A registry row only counts as missing after its schema is listed again, explicitly, and the
   table is still absent. If that confirmation call fails, the schema is skipped. If it lists
   zero tables, the schema is skipped unless the namespace itself is confirmed gone.
-* Mass-removal guard per source: above ``scan_missing_table_max_count`` removals, or above
-  ``scan_missing_table_max_fraction`` of the source's registered tables, nothing is removed
-  and the abort is audited.
+* Mass-removal guard per source: above ``scan_missing_table_max_fraction`` of the source's
+  registered tables, nothing is removed and the abort is audited. That is the "the listing
+  is wrong" signal.
+* Per-run removal limit: at most ``scan_missing_table_max_count`` tables are removed per
+  source per scan, the ones last seen longest ago first. The rest stay registered until a
+  later scan, so a backlog drains over several runs instead of blocking forever (#381).
 
 Removal is a tombstone: ``removed_from_catalog_at`` / ``removed_reason`` set, ``is_active``
 false, queued and deferred jobs cancelled (running jobs finish), one audit row per table.
@@ -26,7 +29,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 
@@ -34,7 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.config import Settings, get_settings
-from cryo.db.models import AuditLog, MaintenanceJob, Source, Table
+from cryo.db.models import AuditLog, MaintenanceJob, Source, Table, TableStats
 from cryo.db.repositories.sources import source_allowed_schemas
 from cryo.domain.enums import JobStatus
 
@@ -173,17 +176,15 @@ def _reconcile_source(
 
     registered = len(live)
     count = len(confirmed)
-    over_count = count > settings.scan_missing_table_max_count
     over_fraction = (
         count > settings.scan_missing_table_guard_min_count
         and registered > 0
         and count / registered > settings.scan_missing_table_max_fraction
     )
-    if over_count or over_fraction:
+    if over_fraction:
         reason = (
             f"guard: {count} of {registered} registered tables missing "
-            f"(max {settings.scan_missing_table_max_count} or "
-            f"{settings.scan_missing_table_max_fraction:.0%})"
+            f"(max {settings.scan_missing_table_max_fraction:.0%})"
         )
         logger.error("Not removing missing tables for source %s: %s", source.name, reason)
         result.skipped.append(f"{source.name}: {reason}")
@@ -198,6 +199,26 @@ def _reconcile_source(
         )
         _count_abort(source.name, "guard")
         return
+
+    limit = settings.scan_missing_table_max_count
+    if count > limit:
+        confirmed = sorted(confirmed, key=_removal_order(session, confirmed))
+        deferred = count - limit
+        confirmed = confirmed[:limit]
+        detail = (
+            f"source={source.name} removing {limit} of {count} missing tables this scan "
+            f"(max {limit} per scan); {deferred} left for later scans"
+        )
+        logger.warning("Missing-table reconcile capped: %s", detail)
+        session.add(
+            AuditLog(
+                action="missing_table_reconcile_capped",
+                status="OK",
+                engine="cryo",
+                actor="scanner",
+                detail=detail,
+            )
+        )
 
     removed_ids = [row.id for row, _ in confirmed]
     for row, schema in confirmed:
@@ -219,6 +240,41 @@ def _reconcile_source(
         result.removed.append(f"{source.name}.{row.schema_name}.{row.table_name}")
     _cancel_pending_jobs(session, removed_ids)
     _count_removed(source.name, len(confirmed))
+
+
+_ID_BATCH = 1000
+
+
+def _removal_order(
+    session: Session, confirmed: list[tuple[Table, str]]
+) -> Callable[[tuple[Table, str]], tuple[datetime, str, str, str]]:
+    """Sort key: the table Cryo last saw longest ago goes first.
+
+    A dropped table stops scanning successfully, so its last stats ``scan_at`` is when it was
+    last seen; a table never scanned was last seen when it was registered. Ties break on
+    name and id so every run picks the same batch.
+    """
+    ids = [row.id for row, _ in confirmed]
+    last_scanned: dict[uuid.UUID, datetime] = {}
+    for start in range(0, len(ids), _ID_BATCH):
+        batch = ids[start : start + _ID_BATCH]
+        for table_id, scan_at in session.execute(
+            select(TableStats.table_id, TableStats.scan_at).where(TableStats.table_id.in_(batch))
+        ):
+            last_scanned[table_id] = scan_at
+
+    def key(item: tuple[Table, str]) -> tuple[datetime, str, str, str]:
+        row = item[0]
+        seen = last_scanned.get(row.id) or row.first_seen_at
+        return (_aware(seen), _norm(row.schema_name), _norm(row.table_name), str(row.id))
+
+    return key
+
+
+def _aware(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.min.replace(tzinfo=UTC)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _restore(session: Session, source: Source, row: Table, result: ReconcileResult) -> None:
