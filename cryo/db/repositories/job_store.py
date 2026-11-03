@@ -173,6 +173,20 @@ class SQLJobStore:
             record_missing_metadata(session, uuid.UUID(table_id), reason=reason)
             session.commit()
 
+    def reset_table_drift(self, table_id: str) -> None:
+        from cryo.events.drift import reset_drift
+        from cryo.observability.metrics import continuous_drift_to_completion_seconds
+
+        now = datetime.now(UTC)
+        with self._session_factory() as session:
+            reset = reset_drift(session, uuid.UUID(table_id), at=now)
+            session.commit()
+        if reset is not None and reset.first_commit_at is not None:
+            first = reset.first_commit_at
+            if first.tzinfo is None:
+                first = first.replace(tzinfo=UTC)
+            continuous_drift_to_completion_seconds.observe(max(0.0, (now - first).total_seconds()))
+
     def update_resource_failure_backoff(
         self, table_id: str, status: JobStatus, error: str | None
     ) -> None:

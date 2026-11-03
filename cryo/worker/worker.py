@@ -1252,6 +1252,8 @@ class Worker:
         if final_status is JobStatus.FAILED and is_table_not_found_error(error):
             self._deactivate_dropped_table(job.table_id, error)
         self._update_failure_backoff(job.table_id, final_status, error)
+        if final_status in {JobStatus.SUCCEEDED, JobStatus.SKIPPED}:
+            self._reset_table_drift(job.table_id)
         safe_publish(
             self._run_events,
             job.run_id,
@@ -1295,6 +1297,20 @@ class Worker:
         if self._on_job_finished is not None:
             self._on_job_finished()
         return self._store.get_job(job.id)
+
+    def _reset_table_drift(self, table_id: str) -> None:
+        """Zero the commit-drift accumulator (#77) once maintenance has dealt with the table.
+
+        SKIPPED counts too: the planner looked at the table and found nothing worth doing,
+        so the drift since the last run is not a reason to try again. Best-effort.
+        """
+        reset = getattr(self._store, "reset_table_drift", None)
+        if not callable(reset):
+            return
+        try:
+            reset(table_id)
+        except Exception as exc:
+            logger.warning("Could not reset drift for table %s: %s", table_id, exc)
 
     def _update_failure_backoff(self, table_id: str, status: JobStatus, error: str | None) -> None:
         """Per-table backoff after consecutive deadline/OOM failures (#180), regardless of
