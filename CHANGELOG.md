@@ -27,6 +27,12 @@ All notable changes to Cryo will be documented in this file. The format is based
   table lock as orphaned. When the sweep does end a job, it now releases the job's table lock
   and in-flight slot, and a second completion of the same job no longer drives the in-flight
   counter negative (#382).
+- A fleet scan whose catalog discovery failed no longer finishes `succeeded` with zero tables.
+  The chunk is `failed` when nothing was discovered and `partial_failed` when other sources
+  listed, and the discovery error becomes the run's `last_error`. A run with a `last_error` is
+  never reported `succeeded`. Discovery has its own timeout,
+  `CRYO_SCAN_DISCOVERY_TIMEOUT_SECONDS` (default 1800), instead of the per-table scan timeout,
+  and heartbeats the chunk while it lists (#380).
 
 ### Changed
 - Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become
