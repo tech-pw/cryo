@@ -16,6 +16,7 @@ import time
 
 import fakeredis
 import pytest
+from redis.exceptions import ResponseError
 
 from cryo.domain.enums import JobStatus
 from cryo.queue import redis_queue as rq
@@ -300,3 +301,120 @@ def test_nothing_is_lost_when_many_workers_claim_concurrently(redis):
 
     assert sorted(claimed) == sorted(f"job-{i}" for i in range(25))
     assert queue.admitted_depth() == 0
+
+
+def test_a_worker_keeps_claiming_after_redis_loses_the_stream_and_its_group(redis):
+    """Regression for #376: the chart's Redis has no persistence, so a restart drops the
+    admitted stream and the `workers` group. The worker had already cached that its group
+    existed, so every XAUTOCLAIM failed with NOGROUP until the pod itself was restarted."""
+    worker = _queue(redis, "worker-1")
+    _admit(worker, "job-1")
+    assert worker.claim_admitted() == "job-1"
+    worker.mark_running("job-1")
+
+    redis.flushall()
+    assert worker.claim_admitted() is None
+
+    # The governor admits again after the restart; XADD recreates the stream with no group.
+    redis.flushall()
+    _admit(_queue(redis, "governor"), "job-2")
+    assert worker.claim_admitted() == "job-2"
+
+
+def test_a_worker_recovers_when_only_the_stream_key_is_deleted(redis):
+    worker = _queue(redis, "worker-1")
+    assert worker.claim_admitted() is None
+
+    redis.delete(worker._stream_key())
+    _admit(_queue(redis, "governor"), "job-1")
+
+    assert worker.claim_admitted() == "job-1"
+
+
+def test_a_group_lost_while_the_stream_survives_redelivers_every_unstarted_entry(redis):
+    """Recreated from id 0: acknowledged entries are deleted at mark_running, so whatever is
+    still in the stream is admitted work nobody has started, and all of it must come back."""
+    worker = _queue(redis, "worker-1")
+    for job_id in ("job-1", "job-2"):
+        _admit(worker, job_id)
+    assert worker.claim_admitted() == "job-1"
+    worker.mark_running("job-1")
+
+    redis.xgroup_destroy(worker._stream_key(), rq._ADMITTED_GROUP)
+
+    assert worker.claim_admitted() == "job-2"
+
+
+def test_a_recreated_group_is_retried_only_once(redis, monkeypatch):
+    worker = _queue(redis, "worker-1")
+    calls = []
+
+    def always_missing(*_args, **_kwargs):
+        calls.append(1)
+        raise ResponseError("NOGROUP No such key or consumer group")
+
+    monkeypatch.setattr(redis, "xreadgroup", always_missing)
+
+    with pytest.raises(ResponseError, match="NOGROUP"):
+        worker.claim_admitted()
+    assert len(calls) == 2
+
+
+def test_other_redis_errors_are_not_mistaken_for_a_lost_group(redis, monkeypatch):
+    worker = _queue(redis, "worker-1")
+    recreated = []
+    real_create = redis.xgroup_create
+
+    def counting_create(*args, **kwargs):
+        recreated.append(1)
+        return real_create(*args, **kwargs)
+
+    def wrong_type(*_args, **_kwargs):
+        raise ResponseError("WRONGTYPE Operation against a key")
+
+    monkeypatch.setattr(redis, "xgroup_create", counting_create)
+    monkeypatch.setattr(redis, "xreadgroup", wrong_type)
+
+    with pytest.raises(ResponseError, match="WRONGTYPE"):
+        worker.claim_admitted()
+    assert len(recreated) == 1
+
+
+def test_worker_presence_is_visible_again_once_a_worker_polls_after_a_restart(redis):
+    governor = _queue(redis, "governor")
+    worker = _queue(redis, "worker-1")
+    worker.claim_admitted()
+    assert governor.active_worker_count(stale_after_seconds=60) == 1
+
+    redis.flushall()
+    assert governor.active_worker_count(stale_after_seconds=60) == 0
+    worker.claim_admitted()
+
+    assert governor.active_worker_count(stale_after_seconds=60) == 1
+
+
+def test_returning_a_job_redis_forgot_does_not_drive_in_flight_negative(redis):
+    """After a restart the in-flight counter starts at zero. Releasing a slot this Redis never
+    recorded would leave it at -1, and every later admission would read one short."""
+    queue = _queue(redis, "governor")
+    _admit(queue, "job-1")
+
+    redis.flushall()
+    # What orphan recovery writes for a DB-ADMITTED job whose hash is gone.
+    queue.enqueue("job-1", DEST)
+    queue.return_to_pending("job-1", DEST)
+    _admit(queue, "job-2")
+
+    assert queue.pending(DEST) == ["job-1"]
+    assert redis.hgetall(queue._in_flight_key(DEST)) == {b"default": b"1"}
+
+
+def test_returning_an_admitted_job_still_releases_its_slot(redis):
+    queue = _queue(redis, "governor")
+    queue.enqueue("job-1", DEST)
+    queue.admit("job-1", DEST, replica="r1")
+    assert queue.local_in_flight_by_replica(DEST) == {"r1": 1}
+
+    queue.return_to_pending("job-1", DEST)
+
+    assert queue.local_in_flight_by_replica(DEST) == {"r1": 0}

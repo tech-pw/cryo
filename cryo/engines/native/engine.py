@@ -520,8 +520,15 @@ def _operation_result_to_exec_result(
             actual_bytes_freed=op_result.bytes_removed,
             actual_bytes_written=op_result.bytes_written,
         )
-    if not result.ok or op_result is None or not op_result.success:
-        error_detail = result.error or (op_result.error if op_result else None) or detail
+    # cryo-engine-go runs every operation and sets the top-level ok to all(success), so a
+    # sibling's failure must not fail an operation that reported success. Batch-level failure
+    # only counts when no operation explains it.
+    batch_failed_unexplained = not result.ok and all(item.success for item in result.results)
+    if op_result is None or not op_result.success or batch_failed_unexplained:
+        if op_result is not None and not op_result.success:
+            error_detail = op_result.error or result.error or detail
+        else:
+            error_detail = result.error or detail
         return ExecResult(
             ok=False,
             detail=error_detail,

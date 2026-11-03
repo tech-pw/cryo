@@ -17,10 +17,10 @@ def _make_catalog() -> tuple[PyIcebergSourceCatalog, MagicMock]:
 def test_list_all_namespaces_returns_top_level_only_when_no_nesting() -> None:
     catalog, fake = _make_catalog()
     fake.list_namespaces.side_effect = lambda parent=(): (
-        [("admin",), ("mview",)] if not parent else []
+        [("admin",), ("mart",)] if not parent else []
     )
 
-    assert catalog.list_all_namespaces() == ["admin", "mview"]
+    assert catalog.list_all_namespaces() == ["admin", "mart"]
 
 
 def test_list_all_namespaces_walks_nested_namespaces() -> None:
@@ -107,11 +107,11 @@ def test_list_all_namespaces_skips_empty_children() -> None:
     catalog, fake = _make_catalog()
     fake.list_namespaces.side_effect = lambda parent=(): [
         ("admin",),
-        ("mview",),
+        ("mart",),
         ("",),
     ]
 
     result = catalog.list_all_namespaces()
     assert "admin" in result
-    assert "mview" in result
+    assert "mart" in result
     assert "" not in result

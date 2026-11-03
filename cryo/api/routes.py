@@ -67,7 +67,6 @@ from cryo.api.schemas import (
     DiscoveredBucket,
     EffectiveParamsResponse,
     EffectivePresetResponse,
-    EffectiveProvenance,
     JobRead,
     MaintenancePreviewRequest,
     MaintenancePreviewResponse,
@@ -78,6 +77,7 @@ from cryo.api.schemas import (
     PaginatedTables,
     PresetCreate,
     PresetPatch,
+    PresetProvenance,
     PresetRead,
     PresetRuleCreate,
     PresetRuleRead,
@@ -1147,7 +1147,7 @@ def list_tables(
     no_reads_days: Annotated[int | None, Query(ge=1, le=3660)] = None,
     include_removed: Annotated[bool, Query()] = False,
     effective_provenance: Annotated[
-        list[EffectiveProvenance] | None,
+        list[PresetProvenance] | None,
         Query(
             description=(
                 "Only tables whose effective preset comes from one of these: a pin "
@@ -1295,7 +1295,7 @@ def _effective_preset_read(effective: EffectivePreset | None) -> TableEffectiveP
     return TableEffectivePresetRead(
         preset_id=uuid.UUID(effective.preset.id),
         preset_name=effective.preset.name,
-        provenance=cast(EffectiveProvenance, effective.provenance),
+        provenance=cast(PresetProvenance, effective.provenance),
         rule_id=uuid.UUID(effective.rule_id) if effective.rule_id else None,
         paused=effective.preset.paused,
     )
@@ -1314,7 +1314,7 @@ def export_tables_csv(
     maintenance_overdue: Annotated[bool, Query()] = False,
     p95_breach: Annotated[bool, Query()] = False,
     no_reads_days: Annotated[int | None, Query(ge=1, le=3660)] = None,
-    effective_provenance: Annotated[list[EffectiveProvenance] | None, Query()] = None,
+    effective_provenance: Annotated[list[PresetProvenance] | None, Query()] = None,
 ) -> Response:
     predicate = _parse_filter(filter)
     tenant_id = require_tenant(session)
@@ -1467,7 +1467,7 @@ def group_tables(
     session: SessionDep,
     field: Annotated[str, Query()],
     filter: Annotated[str | None, Query()] = None,
-    effective_provenance: Annotated[list[EffectiveProvenance] | None, Query()] = None,
+    effective_provenance: Annotated[list[PresetProvenance] | None, Query()] = None,
 ) -> TableGroupByResponse:
     """Collective counts/totals per distinct value of ``field`` -- the Tables page's "group by"
     view. Reuses the same filter predicate as ``GET /tables`` so a group-by respects whatever
@@ -1764,7 +1764,7 @@ def get_effective_preset(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
     effective = presets.resolve_effective_preset(session, table)
     if effective is None:
         return EffectivePresetResponse(table_id=table_id, provenance="none")
-    provenance = cast(EffectiveProvenance, effective.provenance)
+    provenance = cast(PresetProvenance, effective.provenance)
     return EffectivePresetResponse(
         table_id=table_id,
         preset_id=uuid.UUID(effective.preset.id),
@@ -1996,7 +1996,7 @@ def _adaptive_routing_destinations_for_run(
     including consecutive-failure exclusion -- instead of forcing every job in this run onto
     the caller's single `payload.destination_id`.
 
-    Regression, confirmed live 2026-08-11: `unified_bq.gold_dbt_pw_bq` failed on
+    Regression, confirmed live 2026-08-11: `events.gold_dbt_events_wide` failed on
     native-datafusion 4 times in a row. `consecutive_engine_failures()` correctly computed
     that streak and `default-native-deep`'s *cron*-triggered runs correctly routed around it --
     but every retry that actually hit this table went through this ad-hoc API path instead
@@ -2868,8 +2868,8 @@ def _build_plan_for_table(
     if table is None:
         return None
     # Include catalog so the plan verifier can disambiguate schema.table pairs that exist in
-    # more than one source (cdp vs cdp_dev, etc.). Bare schema.table makes _resolve_table
-    # hit MultipleResultsFound and 500 the enqueue path.
+    # more than one source (analytics vs analytics_dev, etc.). Bare schema.table makes
+    # _resolve_table hit MultipleResultsFound and 500 the enqueue path.
     from cryo.db.model_utils import qualified_table_name
 
     try:

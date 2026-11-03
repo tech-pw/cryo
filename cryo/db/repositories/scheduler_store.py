@@ -161,7 +161,7 @@ class SQLSchedulerStore:
         stopping at the first non-failed status -- so adaptive routing can stop repeatedly
         retrying a destination that keeps failing a specific table.
 
-        Regression context, 2026-08-10: unified_bq.gold_dbt_pw_bq failed on the native engine
+        Regression context, 2026-08-10: events.gold_dbt_events_wide failed on the native engine
         4 times in a row across 8 days, 4 different error messages each time, and nothing in
         routing had any memory of that history -- adaptive_routing's own scoring (size/
         capacity/latency/cost) treats a table that's failed repeatedly identically to one

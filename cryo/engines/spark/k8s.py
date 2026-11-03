@@ -67,7 +67,8 @@ class JobRunState(StrEnum):
     # unresolved from 2026-08-11's incident window; by the time the sweep could reach
     # them, ~8,348 had already TTL-expired -- this state lets that be recorded honestly
     # instead of either a bare lookup error (looks like a bug) or a false FAILED (implies
-    # a known outcome that was never actually observed).
+    # a known outcome that was never actually observed). Also returned when the wrapper Job
+    # succeeded, the driver pod is gone, and the wrapper log holds no final driver status.
     UNKNOWN = "UNKNOWN"
 
 
@@ -625,8 +626,10 @@ class SparkK8sClient:
         )
 
     def _get_wrapper_job_run(self, job_id: str) -> JobRunResult:
-        """Fallback for the window before the driver pod exists -- e.g. submission itself
-        failed (bad image, RBAC on the wrapper pod) and spark-submit never got to create it.
+        """Fallback when the driver pod is not there: before it exists (submission itself
+        failed -- bad image, RBAC on the wrapper pod -- and spark-submit never created it),
+        or after it was deleted (node garbage collection, an operator) while the wrapper Job
+        is still within its TTL.
 
         A 404 here means both the driver pod (checked by the caller before this) and the
         wrapper Job itself are gone -- normal once ttlSecondsAfterFinished passes, but if
@@ -663,13 +666,37 @@ class SparkK8sClient:
             detail = _prefix_oomkilled(detail)
             return JobRunResult(job_run_id=job_id, state=JobRunState.FAILED, state_details=detail)
         if status is not None and status.succeeded and status.succeeded >= 1:
-            # Wrapper finished but we never saw a driver pod -- don't trust that as success.
+            return self._wrapper_succeeded_outcome(job_id)
+        return JobRunResult(job_run_id=job_id, state=JobRunState.RUNNING)
+
+    def _wrapper_succeeded_outcome(self, job_id: str) -> JobRunResult:
+        """Wrapper Job succeeded but the driver pod is gone: read the driver's final status
+        from the wrapper's own log.
+
+        The wrapper's exit code alone is not the answer (see get_job_run). spark-submit's
+        LoggingPodStatusWatcherImpl prints the driver's last phase and container exit code
+        before it exits, so the outcome is still on record after the driver pod was deleted.
+        """
+        detail = _read_pod_log_tail(
+            job_id, self._config.namespace, label_selector=f"job-name={job_id}"
+        )
+        phase, exit_codes = wrapper_watcher_final_status(detail)
+        if phase == "Failed" or any(code != 0 for code in exit_codes):
             return JobRunResult(
                 job_run_id=job_id,
                 state=JobRunState.FAILED,
-                state_details="Dispatch Job finished but its Spark driver pod was never observed",
+                state_details=_prefix_oomkilled(detail),
             )
-        return JobRunResult(job_run_id=job_id, state=JobRunState.RUNNING)
+        if phase == "Succeeded":
+            return JobRunResult(job_run_id=job_id, state=JobRunState.SUCCESS)
+        return JobRunResult(
+            job_run_id=job_id,
+            state=JobRunState.UNKNOWN,
+            state_details=(
+                "Dispatch Job succeeded but its Spark driver pod is gone and the wrapper log "
+                f"has no final driver status (last phase: {phase or 'none'})"
+            ),
+        )
 
     def wait_for_completion(
         self, job_id: str, *, deadline_seconds: int | None = None
@@ -861,6 +888,17 @@ def _capped_submit_config(
 
 
 _DRIVER_POD_LABEL_SELECTOR = "spark-role=driver"
+_DRIVER_POD_SUFFIX = "-driver"
+_WRAPPER_JOB_LABEL_SELECTOR = "app.kubernetes.io/component=spark-fallback"
+
+
+def _live_wrapper_job_names(batch_api: client.BatchV1Api, namespace: str) -> frozenset[str]:
+    jobs = batch_api.list_namespaced_job(
+        namespace=namespace, label_selector=_WRAPPER_JOB_LABEL_SELECTOR
+    )
+    return frozenset(
+        job.metadata.name for job in jobs.items or [] if job.metadata and job.metadata.name
+    )
 
 
 def cleanup_stale_driver_pods(
@@ -868,6 +906,7 @@ def cleanup_stale_driver_pods(
     namespace: str,
     older_than_seconds: int = _DEFAULT_TTL_SECONDS,
     core_api: client.CoreV1Api | None = None,
+    batch_api: client.BatchV1Api | None = None,
 ) -> int:
     """Delete completed Spark driver pods older than ``older_than_seconds``.
 
@@ -888,8 +927,23 @@ def cleanup_stale_driver_pods(
     on an ownership cascade that doesn't exist for cluster-mode driver pods.
     Best-effort: a failure listing or deleting one pod is logged and skipped,
     never raised -- this must not be able to break the governor tick it runs in.
+
+    A driver whose wrapper Job still exists is never deleted, whatever its age. The
+    driver pod is where get_job_run reads the outcome, and the age is measured from the
+    driver's start while the Job lives until ``ttlSecondsAfterFinished`` after it ends.
+    Deleting on age alone removed drivers of runs nobody had resolved yet (an async
+    fallback dispatch waits for the scheduler's sweep), and the run was then recorded
+    FAILED from the wrapper Job alone (issue #377). When the Job list cannot be read,
+    nothing is deleted this pass.
     """
     api = core_api or _new_k8s_core_client()
+    try:
+        live_wrappers = _live_wrapper_job_names(batch_api or _new_k8s_batch_client(), namespace)
+    except Exception:  # noqa: BLE001 - best-effort cleanup only
+        logger.warning(
+            "Failed to list Spark dispatch Jobs; skipping driver pod cleanup", exc_info=True
+        )
+        return 0
     deleted = 0
     now = time.time()
     for phase in ("Succeeded", "Failed"):
@@ -911,6 +965,8 @@ def cleanup_stale_driver_pods(
                 continue
             pod_name = pod.metadata.name if pod.metadata else None
             if not pod_name:
+                continue
+            if pod_name.removesuffix(_DRIVER_POD_SUFFIX) in live_wrappers:
                 continue
             try:
                 api.delete_namespaced_pod(name=pod_name, namespace=namespace)
@@ -1179,6 +1235,37 @@ def _container_exit_summary(pod: Any) -> str | None:
         suffix = f" exit {exit_code}" if exit_code is not None else ""
         return f"driver container terminated: {reason}{suffix}"
     return None
+
+
+# spark-submit's LoggingPodStatusWatcherImpl, in the wrapper pod log:
+#   Application status for spark-<id> (phase: Succeeded)
+#   Container final statuses:
+#        container name: spark-kubernetes-driver
+#        container state: terminated
+#        exit code: 0
+_WATCHER_PHASE_RE = re.compile(r"\(phase: (\w+)\)|^\s*phase: (\w+)\s*$", re.MULTILINE)
+_WATCHER_FINAL_STATUSES = "Container final statuses:"
+_WATCHER_EXIT_CODE_RE = re.compile(r"^\s*exit code: (-?\d+)\s*$", re.MULTILINE)
+
+
+def wrapper_watcher_final_status(log: str | None) -> tuple[str | None, tuple[int, ...]]:
+    """The driver's last reported pod phase and container exit codes from the wrapper log.
+
+    Exit codes come from the watcher's final-statuses block when it printed one, otherwise
+    from the last ``exit code:`` line. ``(None, ())`` when the log is missing or Spark never
+    reported a status.
+    """
+    if not log:
+        return None, ()
+    phases = _WATCHER_PHASE_RE.findall(log)
+    phase = (phases[-1][0] or phases[-1][1]) if phases else None
+    final_at = log.rfind(_WATCHER_FINAL_STATUSES)
+    if final_at >= 0:
+        codes = tuple(int(c) for c in _WATCHER_EXIT_CODE_RE.findall(log, final_at))
+    else:
+        last = _WATCHER_EXIT_CODE_RE.findall(log)[-1:]
+        codes = tuple(int(c) for c in last)
+    return phase, codes
 
 
 def _prefix_oomkilled(detail: str | None) -> str | None:
