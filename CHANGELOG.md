@@ -17,9 +17,6 @@ All notable changes to Cryo will be documented in this file. The format is based
   `web/e2e/docs-capture/demo-loop.ts` (#279). The homepage film already ends on the ice-cube mark
   (re-rendered in October), so the 0.2.0 note that it still showed the old mark is out of date;
   `site/README.md` now describes how the published 720p copy is made.
-
-
-### Added
 - A **Removed** quick view on the Tables page lists tables the scanner found gone from their
   catalog, with when and why, read-only. `GET /tables` takes `removed=exclude|include|only`
   (`include_removed=true` stays as an alias) (#330).

@@ -23,9 +23,6 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 - `make demo` takes the local stack from an empty UI to graded tables and one finished maintenance run: it seeds the fragmented fixtures, scans `local-rest`, assigns `local-standard` and runs `optimize` + `optimize_manifests` through the API (`scripts/demo.py`). The Quickstart now ends there, with a check after each step (#217).
 - `README.md` opens with a 25-second loop of the real UI on demo data (Tables, a health grade, the run review, the run receipt), with an MP4 copy. `make web-demo-loop` re-records it from `web/e2e/docs-capture/demo-loop.ts` (#279). The homepage film already ends on the ice-cube mark (re-rendered in October), so the 0.2.0 note that it still showed the old mark is out of date; `site/README.md` now describes how the published 720p copy is made.
-
-### Added
-
 - A **Removed** quick view on the Tables page lists tables the scanner found gone from their catalog, with when and why, read-only. `GET /tables` takes `removed=exclude|include|only` (`include_removed=true` stays as an alias) (#330).
 - Opt-in hard purge of tables removed from the catalog. Set `CRYO_REMOVED_TABLE_PURGE_AFTER_DAYS` (default off, minimum 7) and the scheduler deletes older tombstones daily, writing a `table_purged` audit row each. `cryo purge-removed-tables` previews or runs it by hand (#330).
 - Opt-in continuous maintenance (#77). A preset's `continuous` block stays off unless enabled. While it is on, Cryo probes the live catalog, records per-table writer drift, and the scheduler enqueues that preset's maintenance through the normal governor, so cooldown, off-peak windows, deadlines and budget still apply. A commit lost to a concurrent writer is re-run in place, then the job is deferred and re-planned from current stats. After `CRYO_WORKER_COMMIT_CONFLICT_MAX_DEFERRALS` (default 3) it fails instead of retrying forever.
