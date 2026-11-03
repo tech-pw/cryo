@@ -579,18 +579,6 @@ def test_get_job_run_falls_back_to_wrapper_job_when_driver_pod_missing() -> None
     assert result.state is JobRunState.FAILED
     assert result.state_details == "image pull error"
 
-    # Wrapper Job "succeeded" but we never observed a driver pod -- don't trust that.
-    batch_api.read_namespaced_job.return_value = SimpleNamespace(
-        status=SimpleNamespace(succeeded=1, failed=None)
-    )
-    with (
-        patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api),
-        patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api),
-    ):
-        result = client.get_job_run("cryo-spark-abc123")
-    assert result.state is JobRunState.FAILED
-    assert "never observed" in (result.state_details or "")
-
     # Still starting -- neither succeeded nor failed yet.
     batch_api.read_namespaced_job.return_value = SimpleNamespace(
         status=SimpleNamespace(succeeded=None, failed=None)
@@ -601,6 +589,136 @@ def test_get_job_run_falls_back_to_wrapper_job_when_driver_pod_missing() -> None
     ):
         result = client.get_job_run("cryo-spark-abc123")
     assert result.state is JobRunState.RUNNING
+
+
+def _watcher_log(*, phase: str, exit_code: int, reason: str) -> str:
+    return (
+        "26/10/20 10:00:00 INFO LoggingPodStatusWatcherImpl: Application status for "
+        "spark-0123 (phase: Running)\n"
+        "26/10/20 10:05:00 INFO LoggingPodStatusWatcherImpl: State changed, new state:\n"
+        "\t pod name: cryo-spark-abc123-driver\n"
+        f"\t phase: {phase}\n"
+        "\t container status:\n"
+        "\t\t container name: spark-kubernetes-driver\n"
+        "\t\t container state: terminated\n"
+        f"\t\t exit code: {exit_code}\n"
+        f"\t\t termination reason: {reason}\n"
+        "26/10/20 10:05:01 INFO LoggingPodStatusWatcherImpl: Application status for "
+        f"spark-0123 (phase: {phase})\n"
+        "26/10/20 10:05:01 INFO LoggingPodStatusWatcherImpl: Container final statuses:\n"
+        "\n"
+        "\n"
+        "\t container name: spark-kubernetes-driver\n"
+        "\t container image: cryo-spark:latest\n"
+        "\t container state: terminated\n"
+        f"\t exit code: {exit_code}\n"
+        f"\t termination reason: {reason}\n"
+        "26/10/20 10:05:01 INFO LoggingPodStatusWatcherImpl: Application cryo-expire with "
+        "application ID spark-0123 and submission ID cryo:cryo-spark-abc123-driver finished\n"
+    )
+
+
+def _get_run_with_driver_gone_and_wrapper_succeeded(wrapper_log: str | None):
+    """Driver pod 404, wrapper Job succeeded=1, wrapper pod log as given (None = no pod)."""
+    from kubernetes.client.exceptions import ApiException
+
+    client = SparkK8sClient(SparkK8sConfig(namespace="cryo"))
+    core_api = MagicMock()
+    core_api.read_namespaced_pod.side_effect = ApiException(status=404)
+    wrapper_pods = (
+        []
+        if wrapper_log is None
+        else [SimpleNamespace(metadata=SimpleNamespace(name="cryo-spark-abc123-x7k2p"))]
+    )
+    core_api.list_namespaced_pod.return_value = SimpleNamespace(items=wrapper_pods)
+    core_api.read_namespaced_pod_log.return_value = wrapper_log or ""
+    batch_api = MagicMock()
+    batch_api.read_namespaced_job.return_value = SimpleNamespace(
+        status=SimpleNamespace(succeeded=1, failed=None)
+    )
+    with (
+        patch("cryo.engines.spark.k8s._new_k8s_core_client", return_value=core_api),
+        patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api),
+    ):
+        result = client.get_job_run("cryo-spark-abc123")
+    if wrapper_log is not None:
+        core_api.list_namespaced_pod.assert_called_once_with(
+            namespace="cryo", label_selector="job-name=cryo-spark-abc123"
+        )
+    return result
+
+
+def test_wrapper_succeeded_driver_gone_reads_succeeded_from_wrapper_log() -> None:
+    """Issue #377: the driver ran and finished but was deleted before anyone looked. The
+    wrapper's watcher log still records phase Succeeded / exit 0, which is the outcome."""
+    result = _get_run_with_driver_gone_and_wrapper_succeeded(
+        _watcher_log(phase="Succeeded", exit_code=0, reason="Completed")
+    )
+    assert result.state is JobRunState.SUCCESS
+    assert result.state_details is None
+
+
+def test_wrapper_succeeded_driver_gone_failed_driver_in_log_is_failed() -> None:
+    """The wrapper can exit 0 for a driver whose SQL failed (see get_job_run), so its log,
+    not its exit code, decides."""
+    result = _get_run_with_driver_gone_and_wrapper_succeeded(
+        _watcher_log(phase="Failed", exit_code=1, reason="Error")
+    )
+    assert result.state is JobRunState.FAILED
+    assert "exit code: 1" in (result.state_details or "")
+
+
+def test_wrapper_succeeded_driver_gone_oomkilled_driver_keeps_oom_prefix() -> None:
+    result = _get_run_with_driver_gone_and_wrapper_succeeded(
+        _watcher_log(phase="Failed", exit_code=137, reason="OOMKilled")
+    )
+    assert result.state is JobRunState.FAILED
+    assert (result.state_details or "").startswith("OOMKilled exit 137\n")
+
+
+def test_wrapper_succeeded_driver_gone_nonzero_exit_overrides_phase() -> None:
+    log = _watcher_log(phase="Succeeded", exit_code=0, reason="Completed").replace(
+        "\t exit code: 0\n\t termination reason: Completed\n26/10/20 10:05:01 INFO "
+        "LoggingPodStatusWatcherImpl: Application cryo",
+        "\t exit code: 2\n\t termination reason: Error\n26/10/20 10:05:01 INFO "
+        "LoggingPodStatusWatcherImpl: Application cryo",
+    )
+    result = _get_run_with_driver_gone_and_wrapper_succeeded(log)
+    assert result.state is JobRunState.FAILED
+
+
+@pytest.mark.parametrize(
+    "wrapper_log",
+    [
+        None,
+        "26/10/20 10:00:00 INFO SparkKubernetesClientFactory: Auto-configuring K8S client\n",
+        "26/10/20 10:00:00 INFO LoggingPodStatusWatcherImpl: Application status for "
+        "spark-0123 (phase: Running)\n",
+    ],
+    ids=["no-wrapper-pod", "no-watcher-status", "last-phase-running"],
+)
+def test_wrapper_succeeded_driver_gone_without_final_status_is_unknown(
+    wrapper_log: str | None,
+) -> None:
+    """No recorded final driver status: the outcome is not known either way."""
+    result = _get_run_with_driver_gone_and_wrapper_succeeded(wrapper_log)
+    assert result.state is JobRunState.UNKNOWN
+    assert "no final driver status" in (result.state_details or "")
+    assert "never observed" not in (result.state_details or "")
+
+
+def test_wrapper_watcher_final_status_parses_phase_and_final_exit_codes() -> None:
+    from cryo.engines.spark.k8s import wrapper_watcher_final_status
+
+    assert wrapper_watcher_final_status(
+        _watcher_log(phase="Succeeded", exit_code=0, reason="Completed")
+    ) == ("Succeeded", (0,))
+    assert wrapper_watcher_final_status(
+        _watcher_log(phase="Failed", exit_code=137, reason="OOMKilled")
+    ) == ("Failed", (137,))
+    assert wrapper_watcher_final_status("\t phase: Failed\n\t exit code: 3\n") == ("Failed", (3,))
+    assert wrapper_watcher_final_status(None) == (None, ())
+    assert wrapper_watcher_final_status("") == (None, ())
 
 
 def test_get_job_run_returns_unknown_when_job_and_driver_both_ttl_expired() -> None:
@@ -668,6 +786,65 @@ def _pod(name: str, *, phase: str, start_time, has_start_time: bool = True) -> S
     )
 
 
+def _jobs(*names: str) -> MagicMock:
+    batch_api = MagicMock()
+    batch_api.list_namespaced_job.return_value = SimpleNamespace(
+        items=[SimpleNamespace(metadata=SimpleNamespace(name=n)) for n in names]
+    )
+    return batch_api
+
+
+def test_cleanup_keeps_driver_of_a_wrapper_job_that_still_exists() -> None:
+    """Issue #377: age counts from the driver's start, but the wrapper Job lives until its
+    TTL after the run ends. Deleting the driver in between left the outcome to the
+    wrapper Job alone, and an unresolved async dispatch was then recorded FAILED."""
+    from datetime import UTC, datetime, timedelta
+
+    old_start = datetime.now(UTC) - timedelta(hours=2)
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.side_effect = [
+        SimpleNamespace(
+            items=[
+                _pod("cryo-spark-live-driver", phase="Succeeded", start_time=old_start),
+                _pod("cryo-spark-gone-driver", phase="Succeeded", start_time=old_start),
+            ]
+        ),
+        SimpleNamespace(items=[]),
+    ]
+    batch_api = _jobs("cryo-spark-live")
+
+    deleted = cleanup_stale_driver_pods(
+        namespace="cryo", older_than_seconds=3600, core_api=core_api, batch_api=batch_api
+    )
+
+    assert deleted == 1
+    core_api.delete_namespaced_pod.assert_called_once_with(
+        name="cryo-spark-gone-driver", namespace="cryo"
+    )
+    batch_api.list_namespaced_job.assert_called_once_with(
+        namespace="cryo", label_selector="app.kubernetes.io/component=spark-fallback"
+    )
+
+
+def test_cleanup_deletes_nothing_when_wrapper_jobs_cannot_be_listed() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    old_start = datetime.now(UTC) - timedelta(hours=2)
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.return_value = SimpleNamespace(
+        items=[_pod("cryo-spark-old-driver", phase="Succeeded", start_time=old_start)]
+    )
+    batch_api = MagicMock()
+    batch_api.list_namespaced_job.side_effect = RuntimeError("forbidden")
+
+    deleted = cleanup_stale_driver_pods(
+        namespace="cryo", older_than_seconds=3600, core_api=core_api, batch_api=batch_api
+    )
+
+    assert deleted == 0
+    core_api.delete_namespaced_pod.assert_not_called()
+
+
 def test_cleanup_deletes_old_completed_driver_pods() -> None:
     from datetime import UTC, datetime, timedelta
 
@@ -681,7 +858,7 @@ def test_cleanup_deletes_old_completed_driver_pods() -> None:
     ]
 
     deleted = cleanup_stale_driver_pods(
-        namespace="cryo", older_than_seconds=3600, core_api=core_api
+        namespace="cryo", older_than_seconds=3600, core_api=core_api, batch_api=_jobs()
     )
 
     assert deleted == 1
@@ -703,7 +880,7 @@ def test_cleanup_skips_pods_younger_than_ttl() -> None:
     ]
 
     deleted = cleanup_stale_driver_pods(
-        namespace="cryo", older_than_seconds=3600, core_api=core_api
+        namespace="cryo", older_than_seconds=3600, core_api=core_api, batch_api=_jobs()
     )
 
     assert deleted == 0
@@ -727,7 +904,7 @@ def test_cleanup_skips_pods_with_no_start_time() -> None:
     ]
 
     deleted = cleanup_stale_driver_pods(
-        namespace="cryo", older_than_seconds=3600, core_api=core_api
+        namespace="cryo", older_than_seconds=3600, core_api=core_api, batch_api=_jobs()
     )
 
     assert deleted == 0
@@ -741,7 +918,9 @@ def test_cleanup_checks_both_succeeded_and_failed_phases() -> None:
         SimpleNamespace(items=[]),
     ]
 
-    cleanup_stale_driver_pods(namespace="cryo", older_than_seconds=3600, core_api=core_api)
+    cleanup_stale_driver_pods(
+        namespace="cryo", older_than_seconds=3600, core_api=core_api, batch_api=_jobs()
+    )
 
     calls = core_api.list_namespaced_pod.call_args_list
     assert len(calls) == 2
@@ -757,7 +936,7 @@ def test_cleanup_never_raises_on_list_failure() -> None:
     core_api.list_namespaced_pod.side_effect = RuntimeError("api down")
 
     deleted = cleanup_stale_driver_pods(
-        namespace="cryo", older_than_seconds=3600, core_api=core_api
+        namespace="cryo", older_than_seconds=3600, core_api=core_api, batch_api=_jobs()
     )  # must not raise
     assert deleted == 0
 
@@ -779,7 +958,7 @@ def test_cleanup_never_raises_on_delete_failure_and_continues() -> None:
     core_api.delete_namespaced_pod.side_effect = [RuntimeError("conflict"), None]
 
     deleted = cleanup_stale_driver_pods(
-        namespace="cryo", older_than_seconds=3600, core_api=core_api
+        namespace="cryo", older_than_seconds=3600, core_api=core_api, batch_api=_jobs()
     )  # must not raise despite the first delete failing
 
     assert deleted == 1  # only the second delete succeeded
