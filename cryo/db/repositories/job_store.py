@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Float, desc, func, select, update
+from sqlalchemy import Float, desc, func, literal_column, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.anomalies.report import shared_location_table_ids
@@ -545,21 +545,26 @@ class SQLJobStore:
         ADMITTED and RUNNING jobs without a dispatch_id are the ones admit() counted in
         Redis. Native K8s dispatches carry a dispatch_id and are measured from live
         Kubernetes state instead, so they are excluded here.
+
+        The coalesce is one expression, reused in GROUP BY. Building it twice makes SQLAlchemy
+        emit two bind parameters, and Postgres rejects that as a GroupingError. SQLite accepts
+        it, which is why the unit tests never saw the failure (#375).
         """
+        replica = func.coalesce(MaintenanceJob.replica, literal_column("'default'")).label(
+            "replica"
+        )
         with self._session_factory() as session:
             rows = session.execute(
                 select(
                     MaintenanceJob.destination_id,
-                    func.coalesce(MaintenanceJob.replica, "default"),
+                    replica,
                     func.count(MaintenanceJob.id),
                 )
                 .where(
                     MaintenanceJob.status.in_((JobStatus.ADMITTED.value, JobStatus.RUNNING.value)),
                     MaintenanceJob.dispatch_id.is_(None),
                 )
-                .group_by(
-                    MaintenanceJob.destination_id, func.coalesce(MaintenanceJob.replica, "default")
-                )
+                .group_by(MaintenanceJob.destination_id, replica)
             ).all()
         counts: dict[str, dict[str, int]] = {}
         for destination_id, replica, count in rows:

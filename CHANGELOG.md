@@ -49,6 +49,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- The governor's in-flight rebuild no longer fails on Postgres. `in_flight_counts` grouped by
+  a second copy of `coalesce(replica, 'default')`, which Postgres rejects, so the correction
+  never ran and capacity could drift toward zero. The query now groups by the same expression
+  (#375).
 - `make seed-fragmented`, `make seed-docker` and `make smoke-file-counts` pointed the Spark
   container at `localhost:8181`, which inside the container is not the REST catalog. They now
   use `iceberg-rest:8181` (#217).

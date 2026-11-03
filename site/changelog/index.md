@@ -35,6 +35,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Fixed
 
+- The governor's in-flight rebuild no longer fails on Postgres. `in_flight_counts` grouped by a second copy of `coalesce(replica, 'default')`, which Postgres rejects, so the correction never ran and capacity could drift toward zero. The query now groups by the same expression (#375).
 - `make seed-fragmented`, `make seed-docker` and `make smoke-file-counts` pointed the Spark container at `localhost:8181`, which inside the container is not the REST catalog. They now use `iceberg-rest:8181` (#217).
 - Turning off "Active only" on the Tables page now lists tables removed from the catalog. It used to drop only the `is_active` filter while the server kept hiding them. CSV export and group-by now hide removed tables by default too, so their totals match the list (#330).
 - Native `expire_snapshots` now deletes the files only the expired snapshots referenced, as Spark and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests, and shared-location tables (none of which plan `remove_orphan_files`) leaked them (#374).
