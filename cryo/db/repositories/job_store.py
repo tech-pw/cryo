@@ -681,6 +681,7 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         correlation_id=correlation_id_from_summary(summary),
         run_status=job.run.status if job.run else None,
         run_created_at=job.run.created_at if job.run else None,
+        run_trigger=job.run.trigger if job.run else None,
         requested_operations=(tuple(str(op) for op in job.operations) if job.operations else None),
         dedupe_key=job.dedupe_key,
     )

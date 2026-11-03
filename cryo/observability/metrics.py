@@ -118,6 +118,34 @@ continuous_drift_to_completion_seconds = Histogram(
     buckets=[60.0, 300.0, 900.0, 1800.0, 3600.0, 7200.0, 14400.0, 43200.0, 86400.0],
 )
 
+continuous_events_consumed_total = Counter(
+    "cryo_continuous_events_consumed_total",
+    "cryo:maintenance-eval entries the scheduler read, by outcome.",
+    ["outcome"],  # outcome: new, duplicate, invalid
+)
+
+continuous_triggers_total = Counter(
+    "cryo_continuous_triggers_total",
+    "Drift-triggered maintenance runs enqueued, by the threshold that fired.",
+    ["signal"],  # signal: commits, small_files, delete_ratio, score_drop
+)
+
+continuous_coalesced_total = Counter(
+    "cryo_continuous_coalesced_total",
+    "Due tables not enqueued because an active job already covers them.",
+)
+
+continuous_deferrals_total = Counter(
+    "cryo_continuous_deferrals_total",
+    "Due tables held back, by reason.",
+    ["reason"],  # reason: min_interval, rate_limit_hour, rate_limit_day, churn_cap, ...
+)
+
+continuous_pending_tables = Gauge(
+    "cryo_continuous_pending_tables",
+    "Tables waiting for a continuous-maintenance evaluation.",
+)
+
 # ==================== Worker Metrics ====================
 
 worker_job_duration_seconds = Histogram(

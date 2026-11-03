@@ -7128,6 +7128,60 @@ export interface components {
             results: components["schemas"]["ConstraintResultRead"][];
         };
         /**
+         * ContinuousSettings
+         * @description Drift-triggered maintenance for a preset's tables (#77). Off unless ``enabled``.
+         *
+         *     A table becomes due when any set threshold is reached, then waits for ``debounce_seconds``
+         *     of writer quiet (at most ``max_delay_seconds`` after the first unmaintained commit). The
+         *     job still passes every governor gate. Rate limits and the churn cap are per table; null
+         *     disables that limit.
+         */
+        ContinuousSettings: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /** Max Commits */
+            max_commits?: number | null;
+            /** Max Small Files Added */
+            max_small_files_added?: number | null;
+            /** Max Delete File Ratio */
+            max_delete_file_ratio?: number | null;
+            /** Max Score Drop */
+            max_score_drop?: number | null;
+            /**
+             * Debounce Seconds
+             * @default 300
+             */
+            debounce_seconds: number;
+            /**
+             * Max Delay Seconds
+             * @default 3600
+             */
+            max_delay_seconds: number;
+            /**
+             * Min Interval Seconds
+             * @default 1800
+             */
+            min_interval_seconds: number;
+            /**
+             * Max Runs Per Hour
+             * @default 2
+             */
+            max_runs_per_hour: number | null;
+            /**
+             * Max Runs Per Day
+             * @default 24
+             */
+            max_runs_per_day: number | null;
+            /**
+             * Max Maintenance Commits Per Day
+             * @default 48
+             */
+            max_maintenance_commits_per_day: number | null;
+        };
+        /**
          * ControlScope
          * @enum {string}
          */
@@ -10098,6 +10152,7 @@ export interface components {
              * @default false
              */
             paused: boolean;
+            continuous?: components["schemas"]["ContinuousSettings"] | null;
         };
         /** PresetPatch */
         PresetPatch: {
@@ -10128,6 +10183,7 @@ export interface components {
             is_default?: boolean | null;
             /** Paused */
             paused?: boolean | null;
+            continuous?: components["schemas"]["ContinuousSettings"] | null;
         };
         /** PresetRead */
         PresetRead: {
@@ -10174,6 +10230,7 @@ export interface components {
              * @default false
              */
             paused: boolean;
+            continuous?: components["schemas"]["ContinuousSettings"] | null;
             /**
              * Id
              * Format: uuid

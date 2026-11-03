@@ -11,13 +11,17 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.db.models import Source, Table, TableStats
 from cryo.db.session import SessionLocal
 from cryo.events.consumer import TableCommitConsumer
-from cryo.events.drift import accumulate_drift, small_file_bytes_from_settings
+from cryo.events.drift import (
+    accumulate_drift,
+    small_file_bytes_from_settings,
+    writer_commit_count,
+)
 from cryo.events.redis_stream import RedisEventStream
 from cryo.events.snapshots import (
     DEFAULT_MAX_COMMITS_PER_OBSERVATION,
@@ -243,20 +247,21 @@ def poll_events_once(wiring: RuntimeWiring | None = None) -> dict[str, int]:
 
 
 def load_watch_targets(session_factory: Callable[[], Session]) -> list[WatchTarget]:
-    """Active streaming tables -- the ones whose health moves between nightly scans."""
+    """Tables whose health moves between nightly scans: active streaming tables, plus every
+    table whose effective preset has continuous maintenance enabled."""
     from cryo.db.model_utils import qualified_table_name
     from cryo.db.repositories.exclusions import table_is_excluded
 
+    continuous_ids = continuous_table_ids(session_factory)
     with session_factory() as session:
+        watched = TableStats.raw["is_streaming"].as_boolean().is_(True)
+        if continuous_ids:
+            watched = or_(watched, Table.id.in_(continuous_ids))
         rows = session.execute(
             select(Table, TableStats.snapshot_watermark, TableStats.raw)
             .join(TableStats, TableStats.table_id == Table.id)
             .options(selectinload(Table.source))
-            .where(
-                Table.is_active.is_(True),
-                ~table_is_excluded(),
-                TableStats.raw["is_streaming"].as_boolean().is_(True),
-            )
+            .where(Table.is_active.is_(True), ~table_is_excluded(), watched)
         ).all()
         targets: list[WatchTarget] = []
         for table, watermark, raw in rows:
@@ -276,6 +281,44 @@ def load_watch_targets(session_factory: Callable[[], Session]) -> list[WatchTarg
                 )
             )
     return targets
+
+
+def continuous_table_ids(session_factory: Callable[[], Session]) -> list[uuid.UUID]:
+    """Tables resolved to an enabled, unpaused preset whose continuous block is on.
+
+    Resolution needs the whole fleet's candidates, so it only runs when at least one such
+    preset exists; until then the watcher costs what it did before continuous mode.
+    """
+    from cryo.db.models import Preset
+    from cryo.db.repositories.scheduler_store import SQLSchedulerStore
+    from cryo.scheduler.continuous import parse_continuous
+    from cryo.scheduler.rules import effective_preset
+
+    with session_factory() as session:
+        presets = session.scalars(
+            select(Preset).where(
+                Preset.enabled.is_(True),
+                Preset.paused.is_(False),
+                Preset.continuous.is_not(None),
+            )
+        ).all()
+        continuous_preset_ids = set()
+        for preset in presets:
+            config, errors = parse_continuous(preset.continuous)
+            if config is not None and config.enabled and not errors:
+                continuous_preset_ids.add(str(preset.id))
+    if not continuous_preset_ids:
+        return []
+    store = SQLSchedulerStore(session_factory, None)
+    all_presets = store.list_presets()
+    rules = store.list_rules()
+    assignments = store.list_assignments()
+    ids: list[uuid.UUID] = []
+    for table in store.list_tables():
+        resolved = effective_preset(table, all_presets, rules, assignments)
+        if resolved is not None and resolved.preset.id in continuous_preset_ids:
+            ids.append(uuid.UUID(table.id))
+    return ids
 
 
 def _resolve_table(session: Session, event: TableCommitted) -> Table | None:
@@ -355,7 +398,7 @@ def _on_table_committed(
         trigger="commit_event",
         snapshot_id=event.snapshot_id,
         reconcile_due=reconcile_due,
-        writer_commits=max(0, event.snapshots_added - event.maintenance_commits),
+        writer_commits=writer_commit_count(event),
         redis_client=redis_client,
     )
 

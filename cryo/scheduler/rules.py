@@ -35,6 +35,7 @@ class PresetConfig:
     # #119: paused holds the preset's tables (no fallthrough, no scheduled runs); enabled=False
     # retires it so pinned tables fall through to rules or the default.
     paused: bool = False
+    continuous: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)

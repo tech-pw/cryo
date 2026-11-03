@@ -32,6 +32,7 @@ from cryo.db.repositories import presets as preset_repo
 from cryo.db.tenant_scope import get_scoped_resource, require_tenant, scope_by_tenant, scoped_select
 from cryo.reporting.maintenance_coverage import coverage_to_payload, measure_cohort_coverage
 from cryo.reporting.vitals import compute_cryo_vitals, cryo_vitals_to_payload
+from cryo.scheduler.continuous import AUDIT_ACTIONS as CONTINUOUS_AUDIT_ACTIONS
 from cryo.scheduler.rules import effective_preset
 from cryo.tiering.s3_analyzer import analyze_table_for_tiering, get_all_tiering_recommendations
 
@@ -652,7 +653,7 @@ def get_table_health_trends(
     )
 
 
-_NON_OPERATION_AUDIT_ACTIONS = frozenset({"force_admit"})
+_NON_OPERATION_AUDIT_ACTIONS = frozenset({"force_admit"}) | CONTINUOUS_AUDIT_ACTIONS
 _STATEMENT_PREFIXES = ("select ", "alter ", "execute ", "call ", "optimize ", "with ", "native:")
 
 

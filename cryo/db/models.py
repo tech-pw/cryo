@@ -818,6 +818,8 @@ class Preset(TimestampMixin, Base):
     paused: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    # #77: drift-triggered maintenance settings; NULL means cron-only.
+    continuous: Mapped[JsonDict | None] = mapped_column(JSONB, nullable=True)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("cryo.tenants.id", ondelete="SET NULL"),
