@@ -7,6 +7,7 @@ Usage:
     cryo scheduler [--check-interval SECS]
     cryo scanner [--poll-interval SECS]
     cryo serve  # runs governor, worker, scheduler, and scanner queue consumer
+    cryo purge-removed-tables [--older-than-days N] [--limit N] [--apply]
 """
 
 from __future__ import annotations
@@ -105,6 +106,23 @@ def create_parser() -> argparse.ArgumentParser:
     )
     rotate_parser.add_argument(
         "--apply", action="store_true", help="Write changes. Without it, only count them."
+    )
+
+    purge_parser = subparsers.add_parser(
+        "purge-removed-tables",
+        help="Hard-delete tables removed from the catalog longer ago than the retention window",
+    )
+    purge_parser.add_argument(
+        "--older-than-days",
+        type=int,
+        default=None,
+        help="Retention window in days (default: CRYO_REMOVED_TABLE_PURGE_AFTER_DAYS)",
+    )
+    purge_parser.add_argument(
+        "--limit", type=int, default=500, help="Maximum tables to delete (default: 500)"
+    )
+    purge_parser.add_argument(
+        "--apply", action="store_true", help="Delete. Without it, only list what would go."
     )
 
     analysis_parser = subparsers.add_parser(
@@ -1294,6 +1312,44 @@ def run_rotate_secret_key(args: argparse.Namespace) -> NoReturn:
     sys.exit(0)
 
 
+def run_purge_removed_tables(args: argparse.Namespace) -> NoReturn:
+    from cryo.db.repositories.removed_table_purge import purge_candidates, purge_removed_tables
+    from cryo.db.session import SessionLocal
+
+    days = args.older_than_days or get_settings().removed_table_purge_after_days
+    if days is None:
+        print("Purge is off: pass --older-than-days or set CRYO_REMOVED_TABLE_PURGE_AFTER_DAYS.")
+        sys.exit(2)
+    if days < 7 or args.limit < 1:
+        print("--older-than-days must be at least 7 and --limit at least 1.")
+        sys.exit(2)
+    with SessionLocal() as session:
+        result = purge_removed_tables(
+            session,
+            days,
+            max_tables=args.limit,
+            dry_run=not args.apply,
+            actor="cli",
+        )
+        if not args.apply:
+            for candidate in purge_candidates(session, result.cutoff, args.limit):
+                print(
+                    f"{candidate.source_name}.{candidate.schema_name}.{candidate.table_name} "
+                    f"removed {candidate.removed_at.isoformat()}"
+                )
+    if args.apply:
+        print(
+            f"Purged {result.purged} table(s); {result.failed} failed, {result.held} held by "
+            f"an active job or intent, {result.remaining} left (raise --limit)."
+        )
+    else:
+        print(
+            f"Would purge {result.remaining} table(s) removed before {result.cutoff.isoformat()} "
+            f"({result.held} held by an active job or intent). Dry run; pass --apply."
+        )
+    sys.exit(1 if result.failed else 0)
+
+
 def main() -> NoReturn:
     parser = create_parser()
     args = parser.parse_args()
@@ -1307,6 +1363,7 @@ def main() -> NoReturn:
         "serve": run_serve,
         "analysis": run_analysis,
         "rotate-secret-key": run_rotate_secret_key,
+        "purge-removed-tables": run_purge_removed_tables,
     }
 
     handler = commands.get(args.command)
