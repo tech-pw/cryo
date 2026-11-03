@@ -147,7 +147,48 @@ def test_export_keeps_existing_column_positions(seeded) -> None:
         "total_files",
         "owner",
     ]
-    assert {"removed_from_catalog_at", "removed_reason"} <= set(header[16:])
+    assert header[16:] == [
+        "effective_preset",
+        "effective_provenance",
+        "removed_from_catalog_at",
+        "removed_reason",
+    ]
+
+
+def _provenance_of(client, table_name: str) -> str:
+    body = client.get("/api/v1/tables?removed=include", headers=VIEWER_HEADERS).json()
+    row = next(row for row in body["items"] if row["table_name"] == table_name)
+    return str(row["effective_preset"]["provenance"])
+
+
+def test_provenance_filter_applies_on_top_of_the_removed_mode(seeded) -> None:
+    provenance = _provenance_of(seeded.client, "gone")
+    query = f"&removed=only&effective_provenance={provenance}"
+    assert _names(seeded.client, query) == ["gone"]
+    (gone,) = _csv_rows(seeded.client, "?" + query.lstrip("&"))
+    assert gone["effective_provenance"] == provenance
+    assert gone["removed_reason"] == "not_found_in_catalog: removed-view/s"
+    assert _group_total(seeded.client, query) == 1
+    other = next(p for p in ("assignment", "rule") if p != provenance)
+    assert _names(seeded.client, f"&removed=only&effective_provenance={other}") == []
+
+
+def test_cursor_is_bound_to_both_removed_mode_and_provenance(seeded) -> None:
+    provenance = _provenance_of(seeded.client, "live")
+    base = (
+        f"/api/v1/tables?limit=1&sort=table_name&removed=include&effective_provenance={provenance}"
+    )
+    first = seeded.client.get(base, headers=VIEWER_HEADERS).json()
+    assert first["cursor"]
+    cursor = first["cursor"]
+    assert seeded.client.get(f"{base}&cursor={cursor}", headers=VIEWER_HEADERS).status_code == 200
+    without_provenance = f"/api/v1/tables?limit=1&sort=table_name&removed=include&cursor={cursor}"
+    assert seeded.client.get(without_provenance, headers=VIEWER_HEADERS).status_code == 409
+    other_mode = (
+        "/api/v1/tables?limit=1&sort=table_name&removed=exclude"
+        f"&effective_provenance={provenance}&cursor={cursor}"
+    )
+    assert seeded.client.get(other_mode, headers=VIEWER_HEADERS).status_code == 409
 
 
 def _group_total(client, query: str = "") -> int:

@@ -30,25 +30,69 @@ func ExpireSnapshots(ctx context.Context, req *protocol.ExecuteRequest, op *prot
 	}
 	retainLast := intParam(op.Params, "retain_last", 0)
 
-	var expired uint64
-	if isExecuteMode(req.Mode) {
-		updated, count, err := commitExpireSnapshots(ctx, req, tbl, retentionHours, retainLast)
-		if err != nil {
-			progress.Failed(operation, err.Error())
-			return failResult(operation, fmt.Errorf("failed to commit expire_snapshots: %w", err))
+	if !isExecuteMode(req.Mode) {
+		expired := estimateExpiredSnapshots(tbl, retentionHours, retainLast)
+		progress.Progress(operation, 100, expired, 0)
+		progress.Completed(operation, expired, 0)
+		return protocol.OperationResult{
+			Operation:        operation,
+			Success:          true,
+			SnapshotsExpired: &expired,
+			DurationMS:       0,
 		}
-		expired = count
-		_ = updated
-	} else {
-		expired = estimateExpiredSnapshots(tbl, retentionHours, retainLast)
 	}
 
-	progress.Progress(operation, 100, expired, 0)
-	progress.Completed(operation, expired, 0)
+	updated, expired, commitErr := commitExpireSnapshots(ctx, req, tbl, retentionHours, retainLast)
+	if commitErr != nil && expired == 0 {
+		progress.Failed(operation, commitErr.Error())
+		return failResult(operation, fmt.Errorf("failed to commit expire_snapshots: %w", commitErr))
+	}
+	progress.Progress(operation, 50, expired, 0)
+
+	var cleanup expiredFileCleanup
+	var cleanupErr error
+	if expired > 0 {
+		// Reloading picks up snapshots committed since our last expire commit; any file they
+		// reference stays protected.
+		after := updated
+		if reloaded, reloadErr := reloadTable(ctx, req); reloadErr == nil {
+			after = reloaded
+		}
+		cleanup, cleanupErr = deleteExpiredSnapshotFiles(ctx, tbl, after, intParam(op.Params, "max_concurrency", 0))
+	}
+	bytesRemoved := cleanup.bytes
+	if commitErr != nil || cleanupErr != nil {
+		var msg string
+		if commitErr != nil {
+			msg = fmt.Sprintf("failed to commit expire_snapshots after expiring %d snapshot(s): %v; ", expired, commitErr)
+		}
+		if cleanupErr != nil {
+			msg += fmt.Sprintf(
+				"deleted only %d of %d files the expired snapshots exclusively referenced "+
+					"(remove_orphan_files reclaims the rest): %v",
+				cleanup.deleted, cleanup.candidates, cleanupErr,
+			)
+		} else {
+			msg += fmt.Sprintf("deleted the %d files the expired snapshots exclusively referenced", cleanup.deleted)
+		}
+		progress.Failed(operation, msg)
+		return protocol.OperationResult{
+			Operation:        operation,
+			Success:          false,
+			Error:            &msg,
+			SnapshotsExpired: &expired,
+			BytesRemoved:     &bytesRemoved,
+			DurationMS:       0,
+		}
+	}
+
+	progress.Progress(operation, 100, expired, bytesRemoved)
+	progress.Completed(operation, expired, bytesRemoved)
 	return protocol.OperationResult{
 		Operation:        operation,
 		Success:          true,
 		SnapshotsExpired: &expired,
+		BytesRemoved:     &bytesRemoved,
 		DurationMS:       0,
 	}
 }

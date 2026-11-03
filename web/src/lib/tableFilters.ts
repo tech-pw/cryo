@@ -7,8 +7,10 @@ import {
 import {
   all,
   any,
+  isCoverageKey,
   leaf,
   tableFiltersToPredicate,
+  type CoverageKey,
   type Predicate,
   type TableFilterState
 } from "./predicate";
@@ -94,6 +96,7 @@ const CANONICAL_FILTER_KEYS = [
   "activeOnly",
   "priorities",
   "preset",
+  "coverage",
   "minMonthlySavings",
   "precision",
   "freshnessAsOf"
@@ -145,6 +148,11 @@ const firstParam = (params: URLSearchParams, ...keys: string[]): string | null =
   return null;
 };
 
+const coverageParam = (value: string | null): CoverageKey[] | undefined => {
+  const keys = csvParam(value)?.filter(isCoverageKey);
+  return keys?.length ? keys : undefined;
+};
+
 export const needsFromSearchParams = (params: URLSearchParams): boolean | undefined => {
   const canonical = params.get("needs");
   if (canonical !== null && canonical !== "") {
@@ -167,6 +175,7 @@ export const filtersFromSearchParams = (params: URLSearchParams): TableFilterSta
     schemaSearch: params.get("q") ?? undefined,
     sourceIds: csvParam(firstParam(params, "catalog", "source")),
     presetFilter: csvParam(params.get("preset")),
+    coverage: coverageParam(params.get("coverage")),
     minSizeGb: numberParam(firstParam(params, "size", "minSizeGb")) ?? null,
     minSmallFiles: numberParam(firstParam(params, "small", "minSmallFiles")) ?? null,
     minMonthlySavings: numberParam(params.get("minMonthlySavings")) ?? null,
@@ -221,6 +230,7 @@ export const filtersToSearchParamEntries = (
   if (filters.sourceIds?.length) entries.push(["catalog", filters.sourceIds.join(",")]);
   if (extras.schema?.trim()) entries.push(["schema", extras.schema.trim()]);
   if (filters.presetFilter?.length) entries.push(["preset", filters.presetFilter.join(",")]);
+  if (filters.coverage?.length) entries.push(["coverage", filters.coverage.join(",")]);
   if (typeof filters.minSizeGb === "number") entries.push(["size", String(filters.minSizeGb)]);
   if (typeof filters.minSmallFiles === "number") entries.push(["small", String(filters.minSmallFiles)]);
   if (typeof filters.minMonthlySavings === "number") {

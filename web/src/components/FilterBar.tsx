@@ -1,7 +1,13 @@
 import { Search, SlidersHorizontal, X } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { buildFilterChips, filterScopeLabel, type CatalogFilterOption } from "../lib/filterChips";
-import { NO_PRESET_FILTER, type TableFilterState } from "../lib/predicate";
+import {
+  COVERAGE_LABELS,
+  NO_PRESET_FILTER,
+  isCoverageKey,
+  type CoverageKey,
+  type TableFilterState
+} from "../lib/predicate";
 import { FacetFilter } from "./FacetFilter";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -36,10 +42,17 @@ interface Props {
   hideNeedsToggle?: boolean;
   /** Hide the active-only toggle when the page already decides which tables are listed. */
   hideActiveToggle?: boolean;
+  /** Offer the effective-preset coverage facet. Only the table registry can send it. */
+  showCoverageFacet?: boolean;
 }
 
 /** Chips for values the bar can't show on its own triggers (search, numeric thresholds, ...). */
-const FACET_CHIP_KEYS = new Set(["catalog", "preset", "grade", "priority", "active-only"]);
+const FACET_CHIP_KEYS = new Set(["catalog", "preset", "coverage", "grade", "priority", "active-only"]);
+
+const COVERAGE_OPTIONS = (Object.keys(COVERAGE_LABELS) as CoverageKey[]).map((key) => ({
+  label: COVERAGE_LABELS[key],
+  value: key
+}));
 
 const ADVANCED_KEYS = [
   "minSizeGb",
@@ -126,7 +139,8 @@ export const FilterBar = ({
   actions,
   hideSummary = false,
   hideNeedsToggle = false,
-  hideActiveToggle = false
+  hideActiveToggle = false,
+  showCoverageFacet = false
 }: Props) => {
   const patch = (next: Partial<TableFilterState>) => onChange({ ...value, ...next });
   const chips = useMemo(
@@ -173,6 +187,18 @@ export const FilterBar = ({
             value={value.presetFilter ?? []}
             onChange={(presetFilter) => patch({ presetFilter: presetFilter.length ? presetFilter : undefined })}
           />
+          {showCoverageFacet ? (
+            <FacetFilter
+              label="Coverage"
+              ariaLabel="Filter by where the effective preset comes from"
+              options={COVERAGE_OPTIONS}
+              value={value.coverage ?? []}
+              onChange={(next) => {
+                const coverage = next.filter(isCoverageKey);
+                patch({ coverage: coverage.length ? coverage : undefined });
+              }}
+            />
+          ) : null}
           <FacetFilter
             label="Grade"
             ariaLabel="Filter by health grade"

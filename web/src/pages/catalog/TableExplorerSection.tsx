@@ -23,10 +23,12 @@ import {
   unassignTables
 } from "../../api/client";
 import type {
+  EffectiveProvenance,
   ExplorerViewRead,
   JsonObject,
   Mode,
   TableGroupByField,
+  TableEffectivePreset,
   TableMaintenanceState,
   TableRead,
   UUID
@@ -51,7 +53,7 @@ import { filterPresetsForSources } from "../../lib/catalogBindings";
 import { isOrphanScanStale } from "../../lib/costStaleness";
 import { FRESHNESS_LABELS } from "../../lib/freshness";
 import { formatBytesGb, formatCurrency, formatGb, formatNumber, formatSavings, formatTime } from "../../lib/format";
-import { type TableFilterState } from "../../lib/predicate";
+import { coverageProvenances, type TableFilterState } from "../../lib/predicate";
 import {
   EMPTY_TABLES_TITLE,
   EXPLICIT_QUERY_KEYS,
@@ -267,7 +269,7 @@ const COLUMN_META: Record<HideableColumnId, { label: string; group: string }> = 
   scan_failures: { label: "Scan failures", group: "Health" },
   maintenance: { label: "Maintenance status", group: "Maintenance" },
   last_run: { label: "Last run", group: "Maintenance" },
-  workflow: { label: "Workflow", group: "Maintenance" },
+  workflow: { label: "Effective preset", group: "Maintenance" },
   small_files: { label: "Small files", group: "Storage & cost" },
   total_files: { label: "Total files", group: "Storage & cost" },
   total_size_gb: { label: "Size", group: "Storage & cost" },
@@ -494,6 +496,53 @@ const SortHeader = ({
       {label}
       {desc ? " ↓" : asc ? " ↑" : null}
     </button>
+  );
+};
+
+const PROVENANCE_LABELS: Record<EffectiveProvenance, string> = {
+  assignment: "Pinned",
+  rule: "Rule",
+  rule_after_stale_pin: "Rule, stale pin",
+  default: "Default",
+  none: "Unmaintained"
+};
+
+const PROVENANCE_HINTS: Record<EffectiveProvenance, string> = {
+  assignment: "Pinned to this preset.",
+  rule: "A preset rule matches this table.",
+  rule_after_stale_pin: "Pinned to a disabled or deleted preset, so a preset rule picks it up instead.",
+  default: "No pin and no matching rule, so the default preset maintains it.",
+  none: "No pin, no matching rule, and no default preset. Nothing schedules this table."
+};
+
+export const EffectivePresetCell = ({ effective }: { effective?: TableEffectivePreset | null }) => {
+  if (!effective) return <span className="text-sm text-muted-foreground">—</span>;
+  if (effective.provenance === "none" || !effective.preset_name) {
+    return (
+      <span className="text-sm text-muted-foreground" title={PROVENANCE_HINTS.none}>
+        {PROVENANCE_LABELS.none}
+      </span>
+    );
+  }
+  const source = PROVENANCE_LABELS[effective.provenance];
+  const detail = effective.paused ? `${source}, paused` : source;
+  const hint = effective.paused
+    ? `${PROVENANCE_HINTS[effective.provenance]} The preset is paused, so nothing is scheduled until it resumes.`
+    : PROVENANCE_HINTS[effective.provenance];
+  return (
+    <span className="flex min-w-0 items-baseline gap-1.5" title={hint}>
+      <TruncationTooltip content={effective.preset_name}>
+        <span className="block min-w-0 truncate text-sm">{effective.preset_name}</span>
+      </TruncationTooltip>
+      <span
+        className={cn(
+          "shrink-0 text-xs",
+          effective.paused ? "text-[var(--color-status-warning)]" : "text-muted-foreground"
+        )}
+      >
+        {detail}
+      </span>
+    </span>
   );
 };
 
@@ -735,8 +784,9 @@ export const TableExplorerSection = () => {
     () => explorerPredicate(filters, { schema, view }),
     [filters, schema, view]
   );
+  const effectiveProvenance = useMemo(() => coverageProvenances(filters.coverage), [filters.coverage]);
   const tables = useQuery({
-    queryKey: ["tables", token, predicate, sort, page, viewSpec, removed],
+    queryKey: ["tables", token, predicate, sort, page, viewSpec, removed, effectiveProvenance],
     queryFn: () =>
       listTables(api, {
         predicate,
@@ -747,13 +797,20 @@ export const TableExplorerSection = () => {
         maintenance_overdue: viewSpec?.maintenance_overdue,
         p95_breach: viewSpec?.p95_breach,
         no_reads_days: viewSpec?.no_reads_days,
-        removed
+        removed,
+        effective_provenance: effectiveProvenance
       }),
     enabled: !groupByField
   });
   const grouped = useQuery({
-    queryKey: ["tables-group-by", token, groupByField, predicate, removed],
-    queryFn: () => groupTables(api, { field: groupByField as TableGroupByField, predicate, removed }),
+    queryKey: ["tables-group-by", token, groupByField, predicate, removed, effectiveProvenance],
+    queryFn: () =>
+      groupTables(api, {
+        field: groupByField as TableGroupByField,
+        predicate,
+        removed,
+        effective_provenance: effectiveProvenance
+      }),
     enabled: Boolean(groupByField)
   });
   const presets = useQuery({
@@ -998,7 +1055,8 @@ export const TableExplorerSection = () => {
         maintenance_overdue: viewSpec?.maintenance_overdue,
         p95_breach: viewSpec?.p95_breach,
         no_reads_days: viewSpec?.no_reads_days,
-        removed
+        removed,
+        effective_provenance: effectiveProvenance
       });
       const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
       const anchor = document.createElement("a");
@@ -1109,25 +1167,12 @@ export const TableExplorerSection = () => {
         cell: ({ row }) => <LastRunCell table={row.original} />
       },
       {
+        // The id stays "workflow" so saved views and `cols` links keep this column.
         id: "workflow",
-        header: "Workflow",
-        size: 150,
-        minSize: 96,
-        cell: ({ row }) => {
-          const maintenance = row.original.maintenance;
-          if (!maintenance?.workflow_name) {
-            return (
-              <span className="text-sm text-muted-foreground" title="No pin. Preset rules pick the workflow at run time.">
-                By rule
-              </span>
-            );
-          }
-          return (
-            <TruncationTooltip content={maintenance.workflow_name}>
-              <span className="block min-w-0 truncate text-sm">{maintenance.workflow_name}</span>
-            </TruncationTooltip>
-          );
-        }
+        header: "Effective preset",
+        size: 180,
+        minSize: 110,
+        cell: ({ row }) => <EffectivePresetCell effective={row.original.effective_preset} />
       },
       {
         id: "catalog",
@@ -1486,6 +1531,7 @@ export const TableExplorerSection = () => {
         hideSummary
         hideNeedsToggle
         hideActiveToggle={removedView}
+        showCoverageFacet
         onReset={clearFilters}
         actions={
           <>
@@ -1662,7 +1708,7 @@ export const TableExplorerSection = () => {
         running={run.isPending || manifestRewrite.isPending}
         scanning={scan.isPending}
         matchingTotal={matchingTotal}
-        onSelectAllMatching={viewSpec || removedView ? undefined : selectAllMatching}
+        onSelectAllMatching={viewSpec || removedView || effectiveProvenance ? undefined : selectAllMatching}
         likelySkipped={likelySkipped}
         onClear={clearSelection}
         onAssign={(presetId) => assign.mutate(presetId)}

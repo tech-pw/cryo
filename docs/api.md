@@ -150,6 +150,16 @@ outcome, and `score_delta_7d`. The explorer filter grammar also accepts the comp
 (ISO timestamp). These are explorer-only and are not valid in preset rules. Sort also accepts
 `query_count_30d`, `scan_at` and `score_delta_7d`.
 
+Each row also carries `effective_preset`: the preset that maintains the table (`preset_id`,
+`preset_name`, `rule_id`, `paused`) and its `provenance`: `assignment` (pinned), `rule`,
+`rule_after_stale_pin`, `default`, or `none` (unmaintained). It is resolved by the scheduler's
+own resolver, so a paused preset still owns its tables. `GET /tables/{id}` leaves it null; use
+`GET /tables/{id}/effective-preset` there. Filter on it with `effective_provenance`, repeated
+to combine (`?effective_provenance=default&effective_provenance=none`). `GET /tables/group-by`
+and `GET /tables/export.csv` accept the same parameter, and the CSV ends with
+`effective_preset` and `effective_provenance` columns. Rule matching runs in Python, so this
+filter is not part of the `filter` predicate and can't drive a filter-mode bulk selection.
+
 `GET /tables/maintenance-funnel` returns the latest nightly batch as Sankey `nodes` and `links`:
 active, then scanned / scan failing / not scanned, then needs work / no work, then the skip
 reasons or selected, then succeeded / failed / in progress. It counts tables, not operations.
@@ -261,9 +271,20 @@ POST   /api/v1/presets
 PATCH  /api/v1/presets/{preset_id}
 DELETE /api/v1/presets/{preset_id}
 POST   /api/v1/presets/{preset_id}/simulate
+POST   /api/v1/presets/{preset_id}/pause
+POST   /api/v1/presets/{preset_id}/resume
+POST   /api/v1/presets/{preset_id}/set-default
+POST   /api/v1/presets/{preset_id}/unset-default
 ```
 
 `DELETE` currently disables the preset by setting `enabled=false`.
+
+Pausing (`POST .../pause`, or `PATCH` with `"paused": true` on a preset that was not paused)
+cancels the preset's jobs that are not yet admitted. In its open runs, `queued` and `deferred`
+jobs become `skipped` with `error: "cancelled: preset paused"` and are removed from the queue.
+`admitted` and `running` jobs finish. A run left with no active job becomes `cancelled`. The
+`preset_paused` audit row records `cancelled_jobs` and `cancelled_runs`. Resuming does not
+restore cancelled jobs.
 
 Example preset:
 

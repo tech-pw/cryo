@@ -13066,6 +13066,28 @@ export interface components {
             /** Deactivated Ids */
             deactivated_ids: string[];
         };
+        /**
+         * TableEffectivePresetRead
+         * @description The preset that maintains a table, and why. ``provenance="none"``: unmaintained.
+         */
+        TableEffectivePresetRead: {
+            /** Preset Id */
+            preset_id?: string | null;
+            /** Preset Name */
+            preset_name?: string | null;
+            /**
+             * Provenance
+             * @enum {string}
+             */
+            provenance: "assignment" | "rule" | "rule_after_stale_pin" | "default" | "none";
+            /** Rule Id */
+            rule_id?: string | null;
+            /**
+             * Paused
+             * @default false
+             */
+            paused: boolean;
+        };
         /** TableFilterTranslationRequest */
         TableFilterTranslationRequest: {
             /** Query */
@@ -13498,6 +13520,7 @@ export interface components {
             owner_email?: string | null;
             stats?: components["schemas"]["TableStatsRead"] | null;
             maintenance?: components["schemas"]["TableMaintenanceRead"] | null;
+            effective_preset?: components["schemas"]["TableEffectivePresetRead"] | null;
         };
         /** TableRunRead */
         TableRunRead: {
@@ -15256,6 +15279,8 @@ export interface operations {
                  * @description Alias for `removed=include`. Ignored when `removed` is set.
                  */
                 include_removed?: boolean;
+                /** @description Only tables whose effective preset comes from one of these: a pin (assignment), a rule, a rule after a stale pin, the default preset, or none (unmaintained). Repeat the parameter to combine. */
+                effective_provenance?: ("assignment" | "rule" | "rule_after_stale_pin" | "default" | "none")[] | null;
             };
             header?: never;
             path?: never;
@@ -15294,6 +15319,7 @@ export interface operations {
                 no_reads_days?: number | null;
                 /** @description Tables the catalog no longer lists (#120) are kept as tombstones. `exclude` (default) hides them, `include` lists them with everything else, `only` lists just them. */
                 removed?: components["schemas"]["RemovedTables"] | null;
+                effective_provenance?: ("assignment" | "rule" | "rule_after_stale_pin" | "default" | "none")[] | null;
             };
             header?: never;
             path?: never;
@@ -15346,6 +15372,7 @@ export interface operations {
                 filter?: string | null;
                 /** @description Tables the catalog no longer lists (#120) are kept as tombstones. `exclude` (default) hides them, `include` lists them with everything else, `only` lists just them. */
                 removed?: components["schemas"]["RemovedTables"] | null;
+                effective_provenance?: ("assignment" | "rule" | "rule_after_stale_pin" | "default" | "none")[] | null;
             };
             header?: never;
             path?: never;
