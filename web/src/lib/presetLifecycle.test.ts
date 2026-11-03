@@ -12,7 +12,8 @@ describe("presetLifecycleWarning", () => {
 
   it("warns how many tables stop being maintained when the default is paused", () => {
     expect(presetLifecycleWarning(live, { ...live, paused: true }, 12)).toBe(
-      "Pausing holds this preset. 12 tables will stop being maintained until you resume it."
+      "Pausing holds this preset. 12 tables will stop being maintained until you resume it. " +
+        "Its queued jobs are cancelled; jobs already admitted or running finish."
     );
   });
 

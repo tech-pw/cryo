@@ -1521,6 +1521,7 @@ class SchedulerService:
         from sqlalchemy import select
 
         from cryo.db.models import MaintenanceJob, MaintenanceRun
+        from cryo.domain.enums import JobStatus
 
         try:
             with SessionLocal() as session:
@@ -1534,8 +1535,12 @@ class SchedulerService:
                 if not due:
                     return
                 for run in due:
+                    # A job skipped while the run waited (e.g. its preset was paused) stays out.
                     jobs = session.scalars(
-                        select(MaintenanceJob).where(MaintenanceJob.run_id == run.id)
+                        select(MaintenanceJob).where(
+                            MaintenanceJob.run_id == run.id,
+                            MaintenanceJob.status == JobStatus.QUEUED.value,
+                        )
                     ).all()
                     run.status = "queued"
                     session.flush()

@@ -552,14 +552,21 @@ left a large table unmatched until someone looked by hand.
   `POST /api/v1/presets/{id}/set-default`; only one preset can be the default.
 - **Pause** (`paused`) holds a preset: its tables keep it as their effective preset and wait.
   Nothing is scheduled and nothing is re-routed. Manual runs need `override_pause: true`.
-  Jobs already queued when you pause are left to drain.
+  Pausing cancels the preset's jobs that the governor has not admitted yet: `queued` and
+  `deferred` jobs become `skipped` with error `cancelled: preset paused` and leave the queue,
+  including jobs of one-off runs still waiting for their `scheduled_at`. Jobs already
+  `admitted` or `running` finish. A run with no job left active is marked `cancelled`
+  (summary `cancelled_reason: preset_paused`). Resuming does not bring cancelled jobs back;
+  the next scheduled run plans the tables again. A job the governor admits in the same instant
+  as the pause can still run.
 - **Disable** (`enabled: false`) retires a preset: tables pinned to it fall through to rules,
   then the default.
 - **Unset default** with no replacement leaves unassigned tables unmaintained (provenance
   `none`). The preset form shows how many tables are affected before saving.
 - Every pause, resume, default switch and enable/disable writes an `audit_log` row
   (`preset_paused`, `preset_resumed`, `preset_default_set`, `preset_default_unset`,
-  `preset_enabled`, `preset_disabled`) with the actor and affected-table count.
+  `preset_enabled`, `preset_disabled`) with the actor and affected-table count. The
+  `preset_paused` row also carries `cancelled_jobs=` and `cancelled_runs=`.
 
 ### API memory / OOM (cryo-api)
 
