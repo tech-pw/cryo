@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from cryo.events.watcher import TableCommitted
+from cryo.queue.redis_queue import is_missing_group_error
 
 
 class RedisEventStream:
@@ -28,13 +29,14 @@ class RedisEventStream:
         count: int = 10,
     ) -> list[tuple[str, dict[str, Any]]]:
         self._ensure_group(stream, group)
-        rows = self._redis.xreadgroup(
-            group,
-            consumer,
-            {stream: ">"},
-            count=count,
-            block=1,
-        )
+        try:
+            rows = self._read(stream, group, consumer, count)
+        except Exception as exc:
+            if not is_missing_group_error(exc):
+                raise
+            # Redis lost the stream between the create above and the read.
+            self._ensure_group(stream, group)
+            rows = self._read(stream, group, consumer, count)
         messages: list[tuple[str, dict[str, Any]]] = []
         for _, entries in rows or []:
             for message_id, fields in entries:
@@ -45,6 +47,9 @@ class RedisEventStream:
                 )
                 messages.append((message_key, json.loads(text)))
         return messages
+
+    def _read(self, stream: str, group: str, consumer: str, count: int) -> Any:
+        return self._redis.xreadgroup(group, consumer, {stream: ">"}, count=count, block=1)
 
     def ack(self, stream: str, group: str, message_id: str) -> None:
         self._redis.xack(stream, group, message_id)

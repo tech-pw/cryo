@@ -928,7 +928,7 @@ def test_convert_deletes_scopes_to_delete_skew_when_data_files_already_compacted
 
 
 def test_planner_routes_sub_pathological_but_unreachable_delete_skew_to_minor_rewrite() -> None:
-    """Regression, confirmed live 2026-08-11: mview.gold_dbt_test_results (483 queries/30d --
+    """Regression, confirmed live 2026-08-11: mart.gold_dbt_test_results (483 queries/30d --
     a genuinely hot table) has delete_file_pct=100% (271 data files, 1,797 position-delete
     files, current live snapshot) and has had a "succeeded" job whose own plan notes read
     "Skipped convert_deletes: planned optimize already rewrites data files for this table" --
@@ -954,7 +954,7 @@ def test_planner_routes_sub_pathological_but_unreachable_delete_skew_to_minor_re
     ]
     plan = build_plan(
         {
-            "schema_name": "mview",
+            "schema_name": "mart",
             "table_name": "gold_dbt_test_results",
             "small_files_count": 29,
             "total_delete_files": 1797,
@@ -992,7 +992,7 @@ def test_delete_files_reads_the_real_scanner_key_not_just_the_test_fixture_key()
     `_has_pathological_delete_skew` and `_has_unreachable_delete_skew` silently dead code
     despite every test above passing -- because every fixture here uses the same wrong key
     the function was reading, not the real one the scanners actually emit. Confirmed against
-    a live pull of `mview.gold_dbt_test_results`'s real partition rows (the exact table
+    a live pull of `mart.gold_dbt_test_results`'s real partition rows (the exact table
     the test above is modeled on): before this fix, `_has_unreachable_delete_skew` returned
     False against that table's real data (every partition's `delete_files` present and
     non-zero, up to 798 in a single partition) purely because of the key mismatch.
@@ -1013,7 +1013,7 @@ def test_delete_files_reads_the_real_scanner_key_not_just_the_test_fixture_key()
     ]
     plan = build_plan(
         {
-            "schema_name": "mview",
+            "schema_name": "mart",
             "table_name": "gold_dbt_test_results",
             "small_files_count": 29,
             "total_delete_files": 1797,
@@ -1139,7 +1139,7 @@ def test_planner_routes_delete_skew_to_minor_rewrite_even_when_data_also_fragmen
     on the theory that optimize would incidentally help with deletes too. Confirmed false via
     Trino's own docs (OPTIMIZE does not remove position-delete files as a designed side effect,
     github.com/trinodb/trino/discussions/25211) and via this exact ratio on
-    revenue.gold_batches_pw's real Sep 11 run, where convert_deletes made delete_files
+    revenue.gold_batches's real Sep 11 run, where convert_deletes made delete_files
     WORSE. rewrite_position_deletes now runs whenever the ratio itself is pathological,
     regardless of small-file fragmentation -- optimize_ops still runs alongside it either way."""
     partitions = [
@@ -1182,7 +1182,7 @@ def test_planner_routes_delete_skew_to_minor_rewrite_even_when_data_also_fragmen
 
 
 def test_planner_routes_small_table_with_extreme_deletes_to_minor_rewrite_not_convert() -> None:
-    """Live incident, confirmed 2026-09-14: revenue.gold_batches_pw is a tiny table (40
+    """Live incident, confirmed 2026-09-14: revenue.gold_batches is a tiny table (40
     files, 105MB total) with 692 position-delete files (delete_file_pct=100%, ratio 692/40=17.3
     -- above the unreachable_ratio default of 7.0). Every one of its 40 files individually
     counts as "small" (small_files_in_partition_count=40), so the pre-fix guard deferred to
@@ -1202,7 +1202,7 @@ def test_planner_routes_small_table_with_extreme_deletes_to_minor_rewrite_not_co
     plan = build_plan(
         {
             "schema_name": "revenue",
-            "table_name": "gold_batches_pw",
+            "table_name": "gold_batches",
             "small_files_count": 40,
             "total_files": 40,
             "total_delete_files": 692,

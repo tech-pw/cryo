@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from cryo import display_time
+from cryo.config import get_settings
 from cryo.governor.admission import IST, is_offpeak
 from cryo.planner.benefit_score import _scan_cost_multiplier, compute_benefit_score
 from cryo.scheduler.cron import cron_is_due
@@ -19,7 +20,8 @@ BERLIN = ZoneInfo("Europe/Berlin")
 
 
 def _use_zone(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
-    monkeypatch.setattr("cryo.config.get_settings", lambda: SimpleNamespace(display_timezone=name))
+    settings = get_settings().model_copy(update={"display_timezone": name})
+    monkeypatch.setattr("cryo.config.get_settings", lambda: settings)
 
 
 def test_offpeak_hours_are_read_in_the_install_zone(monkeypatch: pytest.MonkeyPatch) -> None:

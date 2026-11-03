@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Float, desc, func, select
+from sqlalchemy import Float, desc, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from cryo.anomalies.report import shared_location_table_ids
@@ -109,6 +109,10 @@ class SQLJobStore:
     ) -> None:
         with self._session_factory() as session:
             job = _load_job(session, uuid.UUID(job_id))
+            if status in {JobStatus.ADMITTED, JobStatus.RUNNING}:
+                # Before touching the job row: cancel_run locks the run and then its jobs, so
+                # taking the job lock first here could deadlock against it.
+                _mark_run_started(session, job.run_id)
             job.status = JobStatus(status).value
             now = datetime.now(UTC)
             if status is JobStatus.QUEUED:
@@ -559,6 +563,19 @@ def _track_deferral(job: MaintenanceJob, status: JobStatus, now: datetime) -> No
             job.deferred_since = now
     elif status in _DEFERRAL_ENDING_STATUSES:
         job.deferred_since = None
+
+
+def _mark_run_started(session: Session, run_id: uuid.UUID) -> None:
+    """Move a run from queued to running once one of its jobs is admitted or starts.
+
+    A single conditional UPDATE, so concurrent admissions and the finalizer can't race it:
+    only a still-queued run moves, and a scheduled, cancelled or finished run is left alone.
+    """
+    session.execute(
+        update(MaintenanceRun)
+        .where(MaintenanceRun.id == run_id, MaintenanceRun.status == "queued")
+        .values(status="running")
+    )
 
 
 def _load_job(session: Session, job_id: uuid.UUID) -> MaintenanceJob:
