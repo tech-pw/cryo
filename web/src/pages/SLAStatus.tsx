@@ -121,6 +121,39 @@ export const SlaHeadroom = ({
 const isRowBreached = (row: SLAStatusRow) =>
   row.freshness_breached || row.maintenance_breached || row.p95_latency_breached;
 
+export const CoverageBadge = ({ provenance }: { provenance: SLAStatusRow["preset_provenance"] }) => {
+  switch (provenance) {
+    case "assignment":
+      return <Badge variant="secondary">Assigned</Badge>;
+    case "rule":
+    case "rule_after_stale_pin":
+      return <Badge variant="secondary">Rule</Badge>;
+    case "default":
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge variant="outline">Default preset</Badge>
+          </TooltipTrigger>
+          <TooltipContent>
+            Only the platform default preset covers this table — nothing is assigned to it directly.
+          </TooltipContent>
+        </Tooltip>
+      );
+    default:
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge variant="warning">No preset</Badge>
+          </TooltipTrigger>
+          <TooltipContent>
+            No preset assignment, matching rule, or default preset — maintenance SLA can never be met until one is
+            configured.
+          </TooltipContent>
+        </Tooltip>
+      );
+  }
+};
+
 interface SchemaMatrixRow {
   schema_name: string;
   tables: number;
@@ -354,19 +387,7 @@ export const SLAStatus = () => {
     {
       id: "coverage",
       header: "Coverage",
-      cell: ({ row }) =>
-        row.original.has_preset ? (
-          <Badge variant="secondary">Assigned</Badge>
-        ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Badge variant="warning">No preset</Badge>
-            </TooltipTrigger>
-            <TooltipContent>
-              No preset assignment or matching rule — maintenance SLA can never be met until one is configured.
-            </TooltipContent>
-          </Tooltip>
-        )
+      cell: ({ row }) => <CoverageBadge provenance={row.original.preset_provenance} />
     },
     {
       id: "status",

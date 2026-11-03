@@ -626,7 +626,8 @@ const sla = (): S["SLAResponse"] => ({
       p95_latency_ms: 18_900,
       p95_latency_sla_ms: 15_000,
       p95_latency_breached: true,
-      has_preset: true
+      has_preset: true,
+      preset_provenance: "assignment"
     }
   ],
   total_breached: 1,
