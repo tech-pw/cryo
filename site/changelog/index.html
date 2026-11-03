@@ -35,6 +35,7 @@
 <h3 id="unreleased-fixed">Fixed<a class="anchor" href="#unreleased-fixed" aria-label="Link to Fixed">#</a></h3>
 <ul>
   <li>Native <code>expire_snapshots</code> now deletes the files only the expired snapshots referenced, as Spark and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests, and shared-location tables (none of which plan <code>remove_orphan_files</code>) leaked them (#374).</li>
+  <li>The missing-table reconcile no longer removes nothing once more than <code>CRYO_SCAN_MISSING_TABLE_MAX_COUNT</code> (default 500) tables are missing. That count is now a per-scan removal limit, applied to the tables last seen longest ago first, so a backlog drains over several scans. <code>CRYO_SCAN_MISSING_TABLE_MAX_FRACTION</code> stays the catalog-outage guard that removes nothing (#381).</li>
 </ul>
 <h3 id="unreleased-changed">Changed<a class="anchor" href="#unreleased-changed" aria-label="Link to Changed">#</a></h3>
 <ul>
