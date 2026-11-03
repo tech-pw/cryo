@@ -6,7 +6,7 @@ from collections.abc import Iterator
 
 import pytest
 from sqlalchemy import create_engine, event, inspect, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
@@ -109,6 +109,16 @@ _next_autoincrement_id = itertools.count(1)
 @compiles(JSONB, "sqlite")
 def _compile_jsonb_sqlite(type_: JSONB, compiler: object, **kwargs: object) -> str:
     return "JSON"
+
+
+@compiles(UUID, "sqlite")
+def _compile_uuid_sqlite(type_: UUID, compiler: object, **kwargs: object) -> str:
+    """Postgres UUID columns render as ``UUID`` on sqlite by default. That declared type has
+    NUMERIC affinity, so sqlite turns a random 32-hex UUID that happens to read as a number
+    (all digits apart from one ``e``, such as ``1234...e12``) into a REAL, and SQLAlchemy then
+    fails to read it back (``'float' object has no attribute 'replace'``). That made tests
+    flake at random. CHAR(32) has TEXT affinity, so the hex is stored as given."""
+    return "CHAR(32)"
 
 
 @event.listens_for(Engine, "connect")
