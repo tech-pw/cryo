@@ -139,8 +139,11 @@ const SchemaTable = ({
 
   useEffect(() => {
     if (!highlight) return;
+    const target = document.getElementById("files-schema-highlight");
+    if (!target) return;
     const timer = window.setTimeout(() => {
-      document.getElementById("files-schema-highlight")?.scrollIntoView({ block: "center" });
+      if (document.getElementById("files-schema-highlight") !== target) return;
+      target.scrollIntoView?.({ block: "center" });
     }, 50);
     return () => window.clearTimeout(timer);
   }, [highlight, page, rows]);
