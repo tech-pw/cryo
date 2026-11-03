@@ -282,11 +282,19 @@ export const PresetConfigFields = ({ destinations }: { destinations: Destination
             />
           )}
         </FormField>
-        <FormField name="deadline_minutes" label={<HintLabel label="Run deadline (minutes)" />}>
+        <FormField
+          name="deadline_minutes"
+          label={
+            <HintLabel
+              label="Run deadline (minutes)"
+              tooltip="Left empty, a scheduled run closes at the preset's next cron fire (at most 7 days by default). Jobs not admitted by then are skipped."
+            />
+          }
+        >
           {(field) => (
             <InputNumber
               min={1}
-              placeholder="No deadline"
+              placeholder="Next cron fire"
               className="w-44"
               value={field.value as number | null | undefined}
               onChange={field.onChange}

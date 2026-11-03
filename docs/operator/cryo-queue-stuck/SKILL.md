@@ -17,6 +17,7 @@ Read the Governor and queue code (`cryo/governor/`, [cryo/queue/redis_queue.py](
 - A worker runs one job at a time. Admitting against engine slots alone queues work no worker can reach. Worker presence comes from the consumer group, not from a replica count.
 - A waiting healthy backlog is not a failed dispatch. `stuck_admitted_no_dispatch` is not raised anymore. It names a 2026-09-21 bug.
 - An unacknowledged entry can be taken over after `_CLAIM_HANDOFF_IDLE_MS` (120 seconds). That window only covers claim to `mark_running`. Past `RUNNING`, recovery is `reconcile_stale_running_jobs`. Do not look for a log line that says the previous worker never finished. That sentence is not what the code logs.
+- The chart's Redis keeps no persistence. A restart drops the stream, the `workers` group, job hashes, pending zsets, in-flight counters, and table locks. The next consumer-group command gets `NOGROUP`, so the queue recreates the group (`MKSTREAM`, from id `0`), logs `Consumer group workers on ... is gone`, and retries once. A worker does not need a restart. Postgres-`ADMITTED` jobs come back two ways. On its next tick, worker orphan recovery re-enqueues any job whose hash is gone, and the following governor wave admits it again. If no worker is running, `reconcile_stuck_admitted_jobs` returns it to `QUEUED` after `stuck_admitted_after_seconds` (900 by default). In-flight counters re-derive from Postgres every 5 minutes.
 
 ## Nine gates, in this order
 

@@ -115,8 +115,8 @@ def test_candidate_generation_no_pair_for_unrelated_single_table() -> None:
 
 
 def test_candidate_generation_versioned_naming_pattern() -> None:
-    a = _fp("t1", "mview", "gold_dbt_video_stats", size_gb=187.0)
-    b = _fp("t2", "mview", "gold_dbt_video_stats_v3", size_gb=406.0)
+    a = _fp("t1", "mart", "gold_dbt_video_stats", size_gb=187.0)
+    b = _fp("t2", "mart", "gold_dbt_video_stats_v3", size_gb=406.0)
     result = generate_candidate_pairs([a, b])
 
     assert len(result.candidates) == 1

@@ -8,7 +8,7 @@ run one SQL statement against it.
 
 Usage:
     spark-submit cryo_spark_runner.py --sql "CALL catalog.system.rewrite_data_files(...)" \
-        --catalog cdp --catalog-impl rest --catalog-uri http://iceberg-rest:8181 \
+        --catalog analytics --catalog-impl rest --catalog-uri http://iceberg-rest:8181 \
         --catalog-warehouse s3://warehouse/
 
 Catalog auth/S3 credentials are read from the environment (AWS_ACCESS_KEY_ID,

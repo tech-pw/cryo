@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from uuid import uuid4
 
 from cryo.domain.enums import JobStatus, Mode
@@ -14,6 +14,7 @@ from cryo.planner.job_coverage import (
     uncovered,
 )
 from cryo.queue.redis_queue import MaintenanceQueue
+from cryo.scheduler.cron import next_cron_fire_after
 from cryo.scheduler.rules import (
     PresetConfig,
     PresetRule,
@@ -40,6 +41,20 @@ BACKLOG_TRIGGER = "schedule_backlog"
 
 
 @dataclass(frozen=True)
+class RunDeadlinePolicy:
+    """Default deadline for a scheduled run whose preset sets no guardrails.deadline_minutes.
+
+    The run closes at the preset's next cron fire, held between min_duration and max_duration;
+    max_duration alone applies when the next fire is unknown or further away. Without a
+    deadline, a run with one job left deferred (cooldown, approval) never closes (#383).
+    """
+
+    max_duration: timedelta | None
+    min_duration: timedelta = timedelta(hours=1)
+    tz: tzinfo | None = None
+
+
+@dataclass(frozen=True)
 class ScheduledRunDraft:
     id: str
     preset_id: str
@@ -62,6 +77,7 @@ def build_scheduled_run(
     now: datetime | None = None,
     active_coverage: Mapping[str, Sequence[ActiveJob]] | None = None,
     exclude_table_ids: Collection[str] = (),
+    deadline_policy: RunDeadlinePolicy | None = None,
 ) -> ScheduledRunDraft:
     current = now or datetime.now(UTC)
     mode = Mode(preset.mode)
@@ -70,7 +86,7 @@ def build_scheduled_run(
             id=str(uuid4()),
             preset_id=preset.id,
             trigger=trigger,
-            deadline_at=_deadline_at(preset, current),
+            deadline_at=_deadline_at(preset, current, deadline_policy),
         )
     candidates = tables_for_preset(preset, tables, presets, rules, assignments, now=current)
     candidates = drop_recently_maintained(candidates, preset)
@@ -100,7 +116,7 @@ def build_scheduled_run(
         candidates = candidates[:budget_hint]
 
     run_id = str(uuid4())
-    deadline = _deadline_at(preset, current)
+    deadline = _deadline_at(preset, current, deadline_policy)
     jobs = tuple(
         ScheduledJobDraft(
             id=str(uuid4()),
@@ -275,11 +291,22 @@ def apply_priority_order(tables: Iterable[TableCandidate]) -> list[TableCandidat
     )
 
 
-def _deadline_at(preset: PresetConfig, now: datetime) -> datetime | None:
+def _deadline_at(
+    preset: PresetConfig, now: datetime, policy: RunDeadlinePolicy | None = None
+) -> datetime | None:
+    current = _ensure_aware(now)
     value = preset.guardrails.get("deadline_minutes")
-    if value is None:
+    if value is not None:
+        return current + timedelta(minutes=int(value))
+    if policy is None or policy.max_duration is None:
         return None
-    return _ensure_aware(now) + timedelta(minutes=int(value))
+    duration = policy.max_duration
+    next_fire = next_cron_fire_after(
+        preset.schedule_cron, after=current, within=policy.max_duration, tz=policy.tz
+    )
+    if next_fire is not None:
+        duration = min(max(next_fire - current, policy.min_duration), policy.max_duration)
+    return current + duration
 
 
 def _ensure_aware(value: datetime) -> datetime:

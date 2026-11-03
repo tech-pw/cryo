@@ -31,7 +31,7 @@ describe("NoSourcesBanner", () => {
   });
 
   it("stays hidden once a source exists", async () => {
-    vi.mocked(listSources).mockResolvedValue([{ id: "s1", name: "cdp" } as never]);
+    vi.mocked(listSources).mockResolvedValue([{ id: "s1", name: "analytics" } as never]);
     renderBanner(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
     await waitFor(() => expect(listSources).toHaveBeenCalled());
@@ -48,7 +48,7 @@ describe("NoSourcesBanner", () => {
     renderBanner(client);
     expect(await screen.findByText("No sources connected yet")).toBeInTheDocument();
 
-    vi.mocked(listSources).mockResolvedValue([{ id: "s1", name: "cdp" } as never]);
+    vi.mocked(listSources).mockResolvedValue([{ id: "s1", name: "analytics" } as never]);
     await client.invalidateQueries({ queryKey: ["sources"] });
 
     await waitFor(() =>

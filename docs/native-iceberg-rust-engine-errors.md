@@ -1,5 +1,28 @@
 # Native Iceberg Rust Engine Review
 
+> **Historical, 2026-11.** This review covers the Rust `cryo-engine/` crate, which was removed in
+> `acbcfc97` (2026-10-26, "chore: remove the unused Rust engines"). The native engine is now the Go
+> binary in `engine-go/` (`cryo-engine-go`); `engine_impl` accepts only `go`. File references to
+> `cryo-engine/src/*.rs` below no longer exist. Read the findings as history, not as current bugs.
+> What the two findings most often cited still mean on the Go engine:
+>
+> - **#20 (expiry leaks files):** `engine-go/internal/ops/expire.go` commits the expiry, then
+>   `expire_cleanup.go` deletes the files only the expired snapshots referenced: manifest lists,
+>   manifests, data/delete files, and statistics files. Spark and Trino delete the same set. It no
+>   longer depends on a paired `remove_orphan_files`, which standard/light runs, expire-only requests,
+>   and shared-location tables never plan (issue #374).
+> - **#19 (default deep run fails on the second op):** `remove_orphan_files` is implemented in
+>   `engine-go/internal/ops/orphans.go` (iceberg-go `DeleteOrphanFiles`, 72h minimum age by default,
+>   protects every file reachable from table metadata). `optimize_manifests` is never sent to the Go
+>   binary. `cryo/engines/native/routing.py` routes it to `sql_fallback_destination_id`, or records it
+>   SKIPPED when no fallback is set. The Go engine runs every operation in a batch even after one
+>   fails. Issue #373 covers how the worker reports a failed operation inside such a batch. No preset is the
+>   default any more (`20260707_0020`, then `20260929_1100`), and a preset's `operations` list no
+>   longer limits what the planner runs (`cryo/planner/execution.py::skip_operations_from_preset`).
+>
+> For the Go engine's design and status, see
+> [`native-iceberg-go-compaction-plan.md`](./native-iceberg-go-compaction-plan.md).
+
 Reviewed areas:
 
 - `cryo-engine/` Rust subprocess implementation
