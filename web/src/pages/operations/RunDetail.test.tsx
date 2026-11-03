@@ -436,10 +436,10 @@ describe("RunDetail", () => {
         failed: 6,
         unreadable: 1330,
         failed_tables: [
-          { table: "cdp.xylem_bq.bronze_logout", error: "duplicate key value violates unique constraint", ts: "2026-10-15T03:50:48Z" }
+          { table: "analytics.app.bronze_logout", error: "duplicate key value violates unique constraint", ts: "2026-10-15T03:50:48Z" }
         ],
         unreadable_tables: [
-          { table: "cdp.ux.city_entity_leaderboard_evolving", error: "S3: GetObject 403", ts: "2026-10-15T04:29:45Z" }
+          { table: "analytics.ux.city_entity_leaderboard_evolving", error: "S3: GetObject 403", ts: "2026-10-15T04:29:45Z" }
         ]
       }
     };
@@ -463,7 +463,7 @@ describe("RunDetail", () => {
       await openTab(/Failures/);
       // eslint-disable-next-line no-console
 
-      expect(await screen.findByText("cdp.xylem_bq.bronze_logout")).toBeInTheDocument();
+      expect(await screen.findByText("analytics.app.bronze_logout")).toBeInTheDocument();
       expect(
         screen.getByText(/duplicate key value violates unique constraint/)
       ).toBeInTheDocument();

@@ -11,6 +11,11 @@ All notable changes to Cryo will be documented in this file. The format is based
   skipped with `cancelled: preset paused`). Admitted and running jobs finish, and a run left
   with nothing active is marked cancelled. Before, queued jobs drained after a pause (#330).
 
+### Security
+- CI runs trufflehog alongside gitleaks: on every PR and push to `main` over the new commits,
+  and weekly over the full history. It fails on verified credentials, and on credentials whose
+  verification errored outside the connection-string detectors (#203).
+
 ## [0.2.0] — 2026-11-03
 
 First tagged release since v0.1.5. GitHub release notes group the 180+ merged pull requests;
