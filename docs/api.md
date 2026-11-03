@@ -253,9 +253,20 @@ POST   /api/v1/presets
 PATCH  /api/v1/presets/{preset_id}
 DELETE /api/v1/presets/{preset_id}
 POST   /api/v1/presets/{preset_id}/simulate
+POST   /api/v1/presets/{preset_id}/pause
+POST   /api/v1/presets/{preset_id}/resume
+POST   /api/v1/presets/{preset_id}/set-default
+POST   /api/v1/presets/{preset_id}/unset-default
 ```
 
 `DELETE` currently disables the preset by setting `enabled=false`.
+
+Pausing (`POST .../pause`, or `PATCH` with `"paused": true` on a preset that was not paused)
+cancels the preset's jobs that are not yet admitted. In its open runs, `queued` and `deferred`
+jobs become `skipped` with `error: "cancelled: preset paused"` and are removed from the queue.
+`admitted` and `running` jobs finish. A run left with no active job becomes `cancelled`. The
+`preset_paused` audit row records `cancelled_jobs` and `cancelled_runs`. Resuming does not
+restore cancelled jobs.
 
 Example preset:
 
