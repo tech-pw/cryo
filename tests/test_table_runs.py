@@ -250,7 +250,7 @@ def test_effectiveness_omitted_when_before_or_after_missing(session) -> None:
 
 
 def test_effectiveness_reports_large_file_count_win_even_when_bytes_barely_move() -> None:
-    """Regression, 2026-08-10: mview.gold_dbt_drip_marketing_flow's real compaction cut file
+    """Regression, 2026-08-10: mart.gold_dbt_drip_marketing_flow's real compaction cut file
     count 2,549 -> 268 (89%) while total size only moved -4% -- a genuinely large S3 request-
     cost win that a size-only summary would make look unremarkable. Both numbers must be
     independently visible, not blended into one."""

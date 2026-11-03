@@ -1158,7 +1158,7 @@ def _run_effectiveness_payload(
 ) -> dict[str, object] | None:
     """File-count and byte-size reduction as separate, independently-signed percentages.
 
-    Confirmed live, 2026-08-10: mview.gold_dbt_drip_marketing_flow's compaction cut file
+    Confirmed live, 2026-08-10: mart.gold_dbt_drip_marketing_flow's compaction cut file
     count 2,549 -> 268 (-89%) while total size only moved -4% -- a genuinely large S3
     request-cost win (S3 bills per request, not per byte) that a size-only "before/after"
     summary would make look unremarkable. Reporting both separately, rather than one blended

@@ -264,7 +264,7 @@ def _metric_int(metrics: Mapping[str, Any], key: str) -> int:
 
 # Mirrors cryo.engines.native.watcher's _WORK_COUNTER_FIELDS_BY_OPERATION: an OPTIMIZE/
 # CONVERT_DELETES statement can return ok=True (the Iceberg CALL procedure didn't throw) while
-# rewriting zero files -- confirmed live 2026-09-30 on pw_bq.silver_dbt_test_explore_click,
+# rewriting zero files -- confirmed live 2026-09-30 on app.silver_dbt_test_explore_click,
 # whose rewrite_data_files CALL committed a manifest-only replace snapshot with
 # entries-processed=0 and total-data-files unchanged, and was still recorded as SUCCEEDED for
 # 8 consecutive runs because this function only checked whether the statement threw. The

@@ -1931,7 +1931,7 @@ def _adaptive_routing_destinations_for_run(
     including consecutive-failure exclusion -- instead of forcing every job in this run onto
     the caller's single `payload.destination_id`.
 
-    Regression, confirmed live 2026-08-11: `unified_bq.gold_dbt_pw_bq` failed on
+    Regression, confirmed live 2026-08-11: `events.gold_dbt_events_wide` failed on
     native-datafusion 4 times in a row. `consecutive_engine_failures()` correctly computed
     that streak and `default-native-deep`'s *cron*-triggered runs correctly routed around it --
     but every retry that actually hit this table went through this ad-hoc API path instead
@@ -2803,8 +2803,8 @@ def _build_plan_for_table(
     if table is None:
         return None
     # Include catalog so the plan verifier can disambiguate schema.table pairs that exist in
-    # more than one source (cdp vs cdp_dev, etc.). Bare schema.table makes _resolve_table
-    # hit MultipleResultsFound and 500 the enqueue path.
+    # more than one source (analytics vs analytics_dev, etc.). Bare schema.table makes
+    # _resolve_table hit MultipleResultsFound and 500 the enqueue path.
     from cryo.db.model_utils import qualified_table_name
 
     try:
