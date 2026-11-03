@@ -14,6 +14,10 @@ from cryo.db.models import MaintenanceJob, NativeDispatch
 from cryo.engines.native.packing import DispatchSpec
 from cryo.engines.native.resources import MAX_POD_MEM_MIB
 
+# A dispatch in one of these states still owns its member jobs: NativeJobWatcher will set
+# their final status and release their table locks.
+ACTIVE_DISPATCH_STATUSES = ("pending", "running", "cancel_requested", "cancelling")
+
 
 def create_dispatch_record(
     session: Session,
@@ -88,7 +92,7 @@ def list_active_dispatches(session: Session, *, limit: int | None = None) -> lis
     """
     stmt = (
         select(NativeDispatch)
-        .where(NativeDispatch.status.in_(("pending", "running", "cancel_requested", "cancelling")))
+        .where(NativeDispatch.status.in_(ACTIVE_DISPATCH_STATUSES))
         .order_by(NativeDispatch.created_at.asc())
     )
     if limit is not None:

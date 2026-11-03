@@ -22,6 +22,11 @@ All notable changes to Cryo will be documented in this file. The format is based
 - Native `expire_snapshots` now deletes the files only the expired snapshots referenced, as Spark
   and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests,
   and shared-location tables (none of which plan `remove_orphan_files`) leaked them (#374).
+- The Spark fallback sweep no longer finalizes a job whose native dispatch is still running.
+  It used to mark such a job terminal mid-run, so the governor's lock reconcile released its
+  table lock as orphaned. When the sweep does end a job, it now releases the job's table lock
+  and in-flight slot, and a second completion of the same job no longer drives the in-flight
+  counter negative (#382).
 
 ### Changed
 - Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become
