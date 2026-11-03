@@ -11,6 +11,11 @@ All notable changes to Cryo will be documented in this file. The format is based
   and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests,
   and shared-location tables (none of which plan `remove_orphan_files`) leaked them (#374).
 
+### Changed
+- Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become
+  skipped with `cancelled: preset paused`). Admitted and running jobs finish, and a run left
+  with nothing active is marked cancelled. Before, queued jobs drained after a pause (#330).
+
 ### Security
 - CI runs trufflehog alongside gitleaks: on every PR and push to `main` over the new commits,
   and weekly over the full history. It fails on verified credentials, and on credentials whose

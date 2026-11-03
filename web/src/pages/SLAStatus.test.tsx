@@ -54,6 +54,7 @@ const row = (overrides: Partial<SLAResponse["slas"][number]>): SLAResponse["slas
   p95_latency_sla_ms: 5000,
   p95_latency_breached: false,
   has_preset: true,
+  preset_provenance: "assignment",
   ...overrides
 });
 
@@ -158,11 +159,11 @@ describe("SLAStatus page", () => {
   it("shows the missing-coverage banner only for breached tables without a preset", async () => {
     vi.mocked(getSlaStatusDashboard).mockResolvedValue({
       slas: [
-        row({ table_id: "t-1", freshness_breached: true, has_preset: false }),
+        row({ table_id: "t-1", freshness_breached: true, has_preset: false, preset_provenance: "none" }),
         // Breached but has a preset -- should not count toward the missing-coverage banner.
         row({ table_id: "t-2", maintenance_breached: true, has_preset: true }),
         // No preset but not breached -- should not count either.
-        row({ table_id: "t-3", has_preset: false })
+        row({ table_id: "t-3", has_preset: false, preset_provenance: "none" })
       ],
       total_breached: 2,
       total_monitored: 3
@@ -171,6 +172,27 @@ describe("SLAStatus page", () => {
 
     expect(await screen.findByText(/Missing maintenance coverage/i)).toBeInTheDocument();
     expect(screen.getByText(/1 breached table\(s\) have no preset assigned/i)).toBeInTheDocument();
+  });
+
+  it("labels default-fallback coverage apart from explicit coverage", async () => {
+    vi.mocked(getSlaStatusDashboard).mockResolvedValue({
+      slas: [
+        row({ table_id: "t-1", table_name: "demo.assigned", preset_provenance: "assignment" }),
+        row({ table_id: "t-2", table_name: "demo.ruled", preset_provenance: "rule" }),
+        // Caught only by the default fallback: covered, so it stays out of the banner.
+        row({ table_id: "t-3", table_name: "demo.defaulted", maintenance_breached: true, preset_provenance: "default" }),
+        row({ table_id: "t-4", table_name: "demo.uncovered", has_preset: false, preset_provenance: "none" })
+      ],
+      total_breached: 1,
+      total_monitored: 4
+    } satisfies SLAResponse);
+    renderPage();
+
+    expect(await screen.findByText("Default preset")).toBeInTheDocument();
+    expect(screen.getByText("Assigned")).toBeInTheDocument();
+    expect(screen.getByText("Rule")).toBeInTheDocument();
+    expect(screen.getByText("No preset")).toBeInTheDocument();
+    expect(screen.queryByText(/Missing maintenance coverage/i)).not.toBeInTheDocument();
   });
 
   it("does not show the missing-coverage banner when every breached table has a preset", async () => {

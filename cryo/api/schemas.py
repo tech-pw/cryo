@@ -587,7 +587,13 @@ class PresetPatch(BaseModel):
     enabled: bool | None = None
     guardrails: JsonDict | None = None
     is_default: bool | None = None
-    paused: bool | None = None
+    paused: bool | None = Field(
+        default=None,
+        description=(
+            "Setting true cancels the preset's queued and deferred jobs (they become skipped "
+            "with error 'cancelled: preset paused'); admitted and running jobs finish."
+        ),
+    )
 
 
 class PresetRuleCreate(BaseModel):
@@ -617,6 +623,9 @@ class PresetSimulationResponse(BaseModel):
     sample: list[PresetSampleTable]
 
 
+PresetProvenance = Literal["assignment", "rule", "rule_after_stale_pin", "default", "none"]
+
+
 class EffectivePresetResponse(BaseModel):
     table_id: uuid.UUID
     preset_id: uuid.UUID | None = None
@@ -628,7 +637,7 @@ class EffectivePresetResponse(BaseModel):
     # that provenance value, so any table actually hitting that fallback path (e.g.
     # user_experience.silver_results) 500'd on every /effective-preset call instead of
     # reporting the (correct, safer-than-None) rule match it resolved to.
-    provenance: Literal["assignment", "rule", "rule_after_stale_pin", "default", "none"]
+    provenance: PresetProvenance
     rule_id: uuid.UUID | None = None
 
 

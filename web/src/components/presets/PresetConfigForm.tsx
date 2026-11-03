@@ -257,7 +257,8 @@ export const PresetConfigForm = ({
             </div>
           </div>
           <p className="-mt-2 text-xs text-muted-foreground">
-            Paused holds this preset&apos;s tables: they keep it and wait, nothing runs. Turning
+            Paused holds this preset&apos;s tables: they keep it and wait, nothing new runs, and its
+            queued jobs are cancelled (admitted and running jobs finish). Turning
             Enabled off retires the preset, and its pinned tables fall through to rules or the default.
           </p>
 

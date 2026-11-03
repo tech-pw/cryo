@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, cast
 
 import boto3
 from fastapi import (
@@ -76,6 +76,7 @@ from cryo.api.schemas import (
     PaginatedTables,
     PresetCreate,
     PresetPatch,
+    PresetProvenance,
     PresetRead,
     PresetRuleCreate,
     PresetRuleRead,
@@ -1027,6 +1028,11 @@ def patch_preset(
             keep_preset_id=preset.id,
         )
     _apply_patch(preset, values)
+    cancellation = (
+        preset_lifecycle.cancel_unadmitted_jobs(session, preset)
+        if preset.paused and not before["paused"]
+        else None
+    )
     if switches_change:
         preset_lifecycle.audit_lifecycle_change(
             session,
@@ -1035,8 +1041,11 @@ def patch_preset(
             covered_before=covered_before,
             actor=principal.subject,
             previous_default=previous_default,
+            cancellation=cancellation,
         )
     session.commit()
+    if cancellation is not None:
+        preset_lifecycle.drop_cancelled_from_queue(cancellation, preset.id)
     session.refresh(preset)
     return preset
 
@@ -1696,10 +1705,7 @@ def get_effective_preset(table_id: uuid.UUID, session: SessionDep) -> EffectiveP
     effective = presets.resolve_effective_preset(session, table)
     if effective is None:
         return EffectivePresetResponse(table_id=table_id, provenance="none")
-    provenance = cast(
-        Literal["assignment", "rule", "rule_after_stale_pin", "default", "none"],
-        effective.provenance,
-    )
+    provenance = cast(PresetProvenance, effective.provenance)
     return EffectivePresetResponse(
         table_id=table_id,
         preset_id=uuid.UUID(effective.preset.id),
