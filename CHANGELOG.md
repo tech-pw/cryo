@@ -13,6 +13,12 @@ All notable changes to Cryo will be documented in this file. The format is based
   `site/README.md` now describes how the published 720p copy is made.
 
 ### Added
+- Opt-in continuous maintenance (#77). A preset's `continuous` block stays off unless enabled.
+  While it is on, Cryo probes the live catalog, records per-table writer drift, and the scheduler
+  enqueues that preset's maintenance through the normal governor, so cooldown, off-peak windows,
+  deadlines and budget still apply. A commit lost to a concurrent writer is re-run in place, then
+  the job is deferred and re-planned from current stats. After
+  `CRYO_WORKER_COMMIT_CONFLICT_MAX_DEFERRALS` (default 3) it fails instead of retrying forever.
 - Migrate to current partition spec: an on-request, approval-gated `migrate_partition_spec`
   operation that rewrites partitions still written under an older partition spec, in
   optimize's budgeted chunks, on Spark (Trino cannot filter old-spec partitions). The Maintain

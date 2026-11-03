@@ -23,6 +23,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Added
 
+- Opt-in continuous maintenance (#77). A preset's `continuous` block stays off unless enabled. While it is on, Cryo probes the live catalog, records per-table writer drift, and the scheduler enqueues that preset's maintenance through the normal governor, so cooldown, off-peak windows, deadlines and budget still apply. A commit lost to a concurrent writer is re-run in place, then the job is deferred and re-planned from current stats. After `CRYO_WORKER_COMMIT_CONFLICT_MAX_DEFERRALS` (default 3) it fails instead of retrying forever.
 - Migrate to current partition spec: an on-request, approval-gated `migrate_partition_spec` operation that rewrites partitions still written under an older partition spec, in optimize's budgeted chunks, on Spark (Trino cannot filter old-spec partitions). The Maintain tab shows what is left and the progress. Both scanners now read each file's partition values with its own spec and record the old-spec totals, and Path to grade A no longer implies a layout change migrates existing data on its own (#289).
 - Tables registry: an **Effective preset** column (preset, where it comes from, paused) and a **Coverage** filter with *On default* and *Unmaintained*. `GET /tables` rows carry `effective_preset`, and `GET /tables`, `/tables/group-by` and `/tables/export.csv` take `effective_provenance` (#330).
 
