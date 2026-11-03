@@ -1,5 +1,4 @@
 import { MoreHorizontal, RefreshCw, Sparkles } from "lucide-react";
-import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -10,7 +9,7 @@ import { describeCronSchedule } from "../../components/operations/scheduleSummar
 import { StatusTag, RunKindTag } from "../../components/status";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { useAuth } from "../../lib/auth";
@@ -374,7 +373,7 @@ export const OperationsHome = () => {
     return { label: targetLabel(run), to: null };
   };
 
-  const runColumns = useMemo<ColumnDef<RunRead, unknown>[]>(
+  const runColumns = useMemo<DataTableColumnDef<RunRead, unknown>[]>(
     () => [
       {
         id: "status",
@@ -442,7 +441,7 @@ export const OperationsHome = () => {
     [longestOnPage, presetNameById]
   );
 
-  const workflowColumns = useMemo<ColumnDef<WorkflowRow, unknown>[]>(
+  const workflowColumns = useMemo<DataTableColumnDef<WorkflowRow, unknown>[]>(
     () => [
       {
         id: "workflow",

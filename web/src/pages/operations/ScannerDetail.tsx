@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -25,7 +24,7 @@ import { StatusTag } from "../../components/status";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Switch } from "../../components/ui/switch";
@@ -311,7 +310,7 @@ const ScannerRunsTab = () => {
     queryFn: () => listRuns(api, { kind: "scan", limit: 100 })
   });
 
-  const columns = useMemo<ColumnDef<RunRead, unknown>[]>(
+  const columns = useMemo<DataTableColumnDef<RunRead, unknown>[]>(
     () => [
       {
         id: "run",
@@ -644,12 +643,12 @@ const ScannerGridTab = () => {
   });
   const shards = ["Discover", "Assign", "Scan", "Finalize"];
 
-  const columns = useMemo<ColumnDef<{ key: string; shard: string }, unknown>[]>(() => {
-    const base: ColumnDef<{ key: string; shard: string }, unknown>[] = [
+  const columns = useMemo<DataTableColumnDef<{ key: string; shard: string }, unknown>[]>(() => {
+    const base: DataTableColumnDef<{ key: string; shard: string }, unknown>[] = [
       { id: "phase", header: "Phase", cell: ({ row }) => row.original.shard }
     ];
     const runCols = (runs.data ?? []).map(
-      (run): ColumnDef<{ key: string; shard: string }, unknown> => ({
+      (run): DataTableColumnDef<{ key: string; shard: string }, unknown> => ({
         id: run.id,
         header: shortRunId(run.id),
         size: 90,

@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
@@ -10,7 +9,7 @@ import { describeCronSchedule, nextCronRun } from "../../components/operations/s
 import { StatusTag } from "../../components/status";
 import { Alert } from "../../components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useAuth } from "../../lib/auth";
 import { formatGb, formatNumber, formatTime } from "../../lib/format";
@@ -29,7 +28,7 @@ const PresetRunsTab = ({ presetId }: { presetId: string }) => {
     queryFn: () => listRuns(api, { limit: 100, preset_id: presetId })
   });
 
-  const columns = useMemo<ColumnDef<RunRead, unknown>[]>(
+  const columns = useMemo<DataTableColumnDef<RunRead, unknown>[]>(
     () => [
       {
         id: "run",
@@ -205,12 +204,12 @@ const PresetGridTab = ({ presetId }: { presetId: string }) => {
   });
   const ops = preset?.operations ?? [];
 
-  const columns = useMemo<ColumnDef<{ key: string; operation: string }, unknown>[]>(() => {
-    const base: ColumnDef<{ key: string; operation: string }, unknown>[] = [
+  const columns = useMemo<DataTableColumnDef<{ key: string; operation: string }, unknown>[]>(() => {
+    const base: DataTableColumnDef<{ key: string; operation: string }, unknown>[] = [
       { id: "operation", header: "Operation", cell: ({ row }) => row.original.operation }
     ];
     const runCols = (runs.data ?? []).map(
-      (run): ColumnDef<{ key: string; operation: string }, unknown> => ({
+      (run): DataTableColumnDef<{ key: string; operation: string }, unknown> => ({
         id: run.id,
         header: shortRunId(run.id),
         size: 90,

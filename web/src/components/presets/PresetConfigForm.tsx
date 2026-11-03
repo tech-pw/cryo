@@ -1,5 +1,4 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -36,7 +35,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from "../ui/alert-dialog";
-import { DataTable } from "../ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../ui/data-table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { useAuth } from "../../lib/auth";
 import {
@@ -422,7 +421,7 @@ const PresetRulesSection = ({ presetId }: { presetId: UUID }) => {
   });
 
   type PresetRuleRow = { id: UUID; enabled: boolean; predicate: unknown };
-  const columns: ColumnDef<PresetRuleRow, unknown>[] = [
+  const columns: DataTableColumnDef<PresetRuleRow, unknown>[] = [
     { id: "enabled", header: "Enabled", cell: ({ row }) => String(row.original.enabled) },
     {
       id: "predicate",
@@ -441,7 +440,7 @@ const PresetRulesSection = ({ presetId }: { presetId: UUID }) => {
                 </Button>
               </ConfirmAction>
             )
-          } as ColumnDef<PresetRuleRow, unknown>
+          } as DataTableColumnDef<PresetRuleRow, unknown>
         ]
       : [])
   ];

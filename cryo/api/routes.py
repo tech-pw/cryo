@@ -28,6 +28,7 @@ from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.selectable import Select
 
 from cryo.api import routes_preset_lifecycle as preset_lifecycle
 from cryo.api.deps import (
@@ -108,6 +109,7 @@ from cryo.api.schemas import (
     TableCostRead,
     TableDeactivateBatchRequest,
     TableDeactivateBatchResponse,
+    TableEffectivePresetRead,
     TableGroupByResponse,
     TableGroupByRow,
     TableParamOverridePatch,
@@ -182,6 +184,7 @@ from cryo.planner.guardrails import (
 from cryo.planner.planner import build_plan
 from cryo.scanner.orphans import estimate_orphan_scan_cost
 from cryo.scheduler.continuous import validate_continuous_preset
+from cryo.scheduler.rules import EffectivePreset
 from cryo.scheduler.scheduler import fifo_priority
 from cryo.security.crypto import encrypt_secret
 from cryo.sources.factory import (
@@ -1165,6 +1168,16 @@ def list_tables(
     p95_breach: Annotated[bool, Query()] = False,
     no_reads_days: Annotated[int | None, Query(ge=1, le=3660)] = None,
     include_removed: Annotated[bool, Query()] = False,
+    effective_provenance: Annotated[
+        list[PresetProvenance] | None,
+        Query(
+            description=(
+                "Only tables whose effective preset comes from one of these: a pin "
+                "(assignment), a rule, a rule after a stale pin, the default preset, or none "
+                "(unmaintained). Repeat the parameter to combine."
+            )
+        ),
+    ] = None,
 ) -> PaginatedTables:
     predicate = _parse_filter(filter)
     tenant_id = require_tenant(session)
@@ -1174,7 +1187,7 @@ def list_tables(
         p95_breach=p95_breach,
         no_reads_days=no_reads_days,
     )
-    cursor_filter = view.cursor_filter(filter)
+    cursor_filter = _with_provenance_token(view.cursor_filter(filter), effective_provenance)
     stmt = (
         select(Table)
         .outerjoin(TableStats)
@@ -1202,6 +1215,10 @@ def list_tables(
     if predicate is not None:
         stmt = stmt.where(predicate)
         count_stmt = count_stmt.where(predicate)
+    if effective_provenance:
+        provenance_clause = _provenance_clause(session, stmt, effective_provenance)
+        stmt = stmt.where(provenance_clause)
+        count_stmt = count_stmt.where(provenance_clause)
 
     view_metrics = None
     if view.clause is not None:
@@ -1253,10 +1270,14 @@ def list_tables(
 
     view_fields = view.response_fields(view_metrics)
     maintenance = maintenance_summaries(session, items)
+    effective = presets.effective_presets_for_tables(session, items)
     return PaginatedTables(
         items=[
             table_to_read(item, include_raw=False).model_copy(
-                update={"maintenance": maintenance.get(item.id)}
+                update={
+                    "maintenance": maintenance.get(item.id),
+                    "effective_preset": _effective_preset_read(effective.get(item.id)),
+                }
             )
             for item in items
         ],
@@ -1273,6 +1294,35 @@ def list_tables(
     )
 
 
+def _with_provenance_token(
+    cursor_filter: str | None, provenances: Sequence[str] | None
+) -> str | None:
+    if not provenances:
+        return cursor_filter
+    token = "effective_provenance=" + ",".join(sorted(set(provenances)))
+    return f"{cursor_filter}|{token}" if cursor_filter else token
+
+
+def _provenance_clause(
+    session: Session, tables_stmt: Select[Any], provenances: Sequence[str]
+) -> ColumnElement[bool]:
+    candidates = select(Table).where(Table.id.in_(tables_stmt.with_only_columns(Table.id)))
+    ids = presets.table_ids_with_provenance(session, candidates, provenances)
+    return presets.id_in(session, Table.id, ids)
+
+
+def _effective_preset_read(effective: EffectivePreset | None) -> TableEffectivePresetRead:
+    if effective is None:
+        return TableEffectivePresetRead(provenance="none")
+    return TableEffectivePresetRead(
+        preset_id=uuid.UUID(effective.preset.id),
+        preset_name=effective.preset.name,
+        provenance=cast(PresetProvenance, effective.provenance),
+        rule_id=uuid.UUID(effective.rule_id) if effective.rule_id else None,
+        paused=effective.preset.paused,
+    )
+
+
 @router.get(
     "/tables/export.csv",
     response_class=Response,
@@ -1286,6 +1336,7 @@ def export_tables_csv(
     maintenance_overdue: Annotated[bool, Query()] = False,
     p95_breach: Annotated[bool, Query()] = False,
     no_reads_days: Annotated[int | None, Query(ge=1, le=3660)] = None,
+    effective_provenance: Annotated[list[PresetProvenance] | None, Query()] = None,
 ) -> Response:
     predicate = _parse_filter(filter)
     tenant_id = require_tenant(session)
@@ -1312,6 +1363,7 @@ def export_tables_csv(
             TableStats.small_files_count,
             TableStats.total_files,
             Table.last_scan_error_kind,
+            Table.id,
         )
         .select_from(Table)
         .join(Source, Source.id == Table.source_id)
@@ -1324,6 +1376,10 @@ def export_tables_csv(
         stmt = stmt.where(predicate)
     if view.clause is not None:
         stmt = stmt.where(view.clause)
+    effective = presets.resolve_effective_presets(
+        session, select(Table).where(Table.id.in_(stmt.with_only_columns(Table.id)))
+    )
+    wanted = set(effective_provenance or ())
     stmt = stmt.order_by(*_sort_clauses(sort))
 
     output = io.StringIO()
@@ -1346,9 +1402,15 @@ def export_tables_csv(
             "small_files",
             "total_files",
             "owner",
+            "effective_preset",
+            "effective_provenance",
         ]
     )
     for row in session.execute(stmt):
+        table_effective = effective.get(row[15])
+        provenance = presets.provenance_of(table_effective)
+        if wanted and provenance not in wanted:
+            continue
         writer.writerow(
             [
                 row[0],
@@ -1367,6 +1429,8 @@ def export_tables_csv(
                 row[12] if row[12] is not None else "",
                 row[13] if row[13] is not None else "",
                 row[3] or "",
+                table_effective.preset.name if table_effective is not None else "",
+                provenance,
             ]
         )
     return Response(
@@ -1425,6 +1489,7 @@ def group_tables(
     session: SessionDep,
     field: Annotated[str, Query()],
     filter: Annotated[str | None, Query()] = None,
+    effective_provenance: Annotated[list[PresetProvenance] | None, Query()] = None,
 ) -> TableGroupByResponse:
     """Collective counts/totals per distinct value of ``field`` -- the Tables page's "group by"
     view. Reuses the same filter predicate as ``GET /tables`` so a group-by respects whatever
@@ -1463,6 +1528,8 @@ def group_tables(
     stmt = scope_by_tenant(stmt, Table, tenant_id)
     if predicate is not None:
         stmt = stmt.where(predicate)
+    if effective_provenance:
+        stmt = stmt.where(_provenance_clause(session, stmt, effective_provenance))
     stmt = stmt.group_by(group_col).order_by(func.count(func.distinct(Table.id)).desc())
 
     rows = session.execute(stmt).all()

@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -24,7 +23,7 @@ import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import {
   Dialog,
   DialogContent,
@@ -168,7 +167,7 @@ export const PoliciesTab = () => {
   const s3Data = s3Tiering.data?.recommendations ?? [];
   const s3PageData = s3Data.slice(s3Page * TIER_PAGE_SIZE, (s3Page + 1) * TIER_PAGE_SIZE);
 
-  const tierColumns = useMemo<ColumnDef<TierPolicyRead, unknown>[]>(
+  const tierColumns = useMemo<DataTableColumnDef<TierPolicyRead, unknown>[]>(
     () => [
       { accessorKey: "name", header: "Name" },
       {
@@ -214,14 +213,14 @@ export const PoliciesTab = () => {
                   </ConfirmAction>
                 </div>
               )
-            } as ColumnDef<TierPolicyRead, unknown>
+            } as DataTableColumnDef<TierPolicyRead, unknown>
           ]
         : [])
     ],
     [canManage, removeTierPolicy.isPending]
   );
 
-  const s3Columns = useMemo<ColumnDef<(typeof s3Data)[number], unknown>[]>(
+  const s3Columns = useMemo<DataTableColumnDef<(typeof s3Data)[number], unknown>[]>(
     () => [
       {
         id: "table",
@@ -262,7 +261,7 @@ export const PoliciesTab = () => {
     []
   );
 
-  const candidateColumns = useMemo<ColumnDef<Record<string, unknown>, unknown>[]>(
+  const candidateColumns = useMemo<DataTableColumnDef<Record<string, unknown>, unknown>[]>(
     () => [
       {
         accessorKey: "partition_value",
@@ -280,7 +279,7 @@ export const PoliciesTab = () => {
     []
   );
 
-  const abacColumns = useMemo<ColumnDef<Record<string, unknown>, unknown>[]>(
+  const abacColumns = useMemo<DataTableColumnDef<Record<string, unknown>, unknown>[]>(
     () => [
       {
         accessorKey: "table_id",
@@ -312,7 +311,7 @@ export const PoliciesTab = () => {
     []
   );
 
-  const gitopsColumns = useMemo<ColumnDef<Record<string, unknown>, unknown>[]>(
+  const gitopsColumns = useMemo<DataTableColumnDef<Record<string, unknown>, unknown>[]>(
     () => [
       { accessorKey: "table_pattern", header: "Table pattern" },
       {

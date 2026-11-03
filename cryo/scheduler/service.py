@@ -15,6 +15,7 @@ from cryo.planner.job_coverage import (
     ActiveJob,
     effective_operations,
 )
+from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
 from cryo.scheduler.adaptive_routing import AdaptiveRoutingContext, resolve_destination_adaptive
 from cryo.scheduler.continuous_dispatch import ContinuousContext, ContinuousDispatcher
@@ -134,10 +135,12 @@ class SchedulerService:
         queue: MaintenanceQueue,
         *,
         leader_check: Callable[[], bool] | None = None,
+        lock_store: LockStore | None = None,
         continuous: ContinuousDispatcher | None = None,
     ) -> None:
         self._store = store
         self._queue = queue
+        self._lock_store = lock_store
         self._leader_check = leader_check or (lambda: True)
         self._continuous = continuous
         self._last_ml_drift_check: datetime | None = None
@@ -1513,7 +1516,9 @@ class SchedulerService:
         logger = logging.getLogger(__name__)
         try:
             with SessionLocal() as session:
-                result = sweep_pending_fallback_dispatches(session)
+                result = sweep_pending_fallback_dispatches(
+                    session, queue=self._queue, lock_store=self._lock_store
+                )
             if (
                 result.resolved_ok
                 or result.resolved_failed

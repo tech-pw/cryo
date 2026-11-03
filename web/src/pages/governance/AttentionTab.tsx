@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -21,7 +20,7 @@ import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import {
   Dialog,
   DialogContent,
@@ -140,7 +139,7 @@ export const AttentionTab = () => {
     [actOnApproval]
   );
 
-  const approvalColumns = useMemo<ColumnDef<PendingApprovalRead, unknown>[]>(
+  const approvalColumns = useMemo<DataTableColumnDef<PendingApprovalRead, unknown>[]>(
     () => [
       {
         id: "table",
@@ -203,7 +202,7 @@ export const AttentionTab = () => {
     [canApprove, actOnApproval.isPending, handleApprovalAction]
   );
 
-  const anomalyColumns = useMemo<ColumnDef<AnomalyAlertRead, unknown>[]>(
+  const anomalyColumns = useMemo<DataTableColumnDef<AnomalyAlertRead, unknown>[]>(
     () => [
       {
         id: "table",
