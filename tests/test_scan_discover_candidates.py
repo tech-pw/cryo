@@ -228,7 +228,7 @@ def test_a_table_with_a_missing_manifest_is_unreadable_not_failed(session) -> No
     table = Table(
         id=uuid4(),
         source_id=source.id,
-        schema_name="central",
+        schema_name="core",
         table_name="gold_polls_evolving",
         is_active=True,
     )
@@ -246,7 +246,7 @@ def test_a_table_with_a_missing_manifest_is_unreadable_not_failed(session) -> No
                 "(code=NotFound): api error NoSuchKey: The specified key does not exist."
             )
 
-    catalog = _MissingManifestCatalog({"central": ["gold_polls_evolving"]})
+    catalog = _MissingManifestCatalog({"core": ["gold_polls_evolving"]})
     summary = run_scan(
         session,
         source_id=None,
@@ -264,7 +264,7 @@ def test_a_transient_scan_error_still_counts_as_a_failure(session) -> None:
     """The counterpart: classification must not swallow errors a retry could clear."""
     source = _seed_source(session)
     table = Table(
-        id=uuid4(), source_id=source.id, schema_name="central", table_name="events", is_active=True
+        id=uuid4(), source_id=source.id, schema_name="core", table_name="events", is_active=True
     )
     session.add(table)
     session.commit()
@@ -280,7 +280,7 @@ def test_a_transient_scan_error_still_counts_as_a_failure(session) -> None:
         table_ids=[table.id],
         chunk_id=0,
         num_chunks=1,
-        source_factory=lambda _source: _FlakyCatalog({"central": ["events"]}),
+        source_factory=lambda _source: _FlakyCatalog({"core": ["events"]}),
     )
 
     assert (summary.scanned, summary.failed, summary.unreadable) == (0, 1, 0)

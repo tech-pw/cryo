@@ -27,7 +27,7 @@ from cryo.engines.trino.sql import quote_identifier, quote_qualified_name
 # Bounded per the design doc SS4.4's "a few hundred thousand rows per side" guidance --
 # high enough for the O(1/sqrt(n)) Jaccard estimation error to be small, low enough that
 # pulling + hashing a sample for a Stage-2 candidate pair stays cheap even for the fleet's
-# largest tables (e.g. the 24TB unified_bq.gold_dbt_pw_bq).
+# largest tables (e.g. the 24TB events.gold_dbt_events_wide).
 DEFAULT_SAMPLE_ROW_LIMIT = 200_000
 # TABLESAMPLE percentage is a request, not a guarantee -- Trino may return more or fewer
 # rows depending on split sizes. Combined with the hard LIMIT below, this bounds actual
