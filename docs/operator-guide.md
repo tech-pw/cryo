@@ -467,8 +467,10 @@ Log exploration (Loki via Grafana Explore):
 
 A whole-source scan (chunk 0 only; a table-scoped scan never does this) compares the registry
 with what the catalog lists and **soft-deletes** registered tables it no longer finds. The row
-stays. It gets `removed_from_catalog_at` and `removed_reason`, is set `is_active=false`, and is
-hidden from `GET /tables` unless you pass `include_removed=true`. Its queued and deferred jobs
+stays. It gets `removed_from_catalog_at` and `removed_reason`, is set `is_active=false`, and
+leaves the registry: `GET /tables`, its CSV export and group-by hide it unless you pass
+`removed=include` (everything) or `removed=only` (just removed tables; the Tables page's
+**Removed** quick view, which shows when and why and offers no bulk actions). Its queued and deferred jobs
 are skipped, and running jobs finish. Each removal writes a `table_removed_from_catalog` audit
 row. If the table is listed again, the next scan restores it (`table_restored_to_catalog`).
 By default nothing is ever hard-deleted.

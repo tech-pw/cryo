@@ -175,6 +175,8 @@ def test_csv_export_has_effective_preset_columns_and_honors_the_filter(api_db: A
     _seed(api_db)
     response = api_db.client.get("/api/v1/tables/export.csv", headers=VIEWER_HEADERS)
     assert response.status_code == 200
+    header = next(csv.reader(io.StringIO(response.text)))
+    assert header[16:18] == ["effective_preset", "effective_provenance"]
     rows = list(csv.DictReader(io.StringIO(response.text)))
     by_table = {row["table"]: row for row in rows}
     assert (by_table["pinned"]["effective_preset"], by_table["pinned"]["effective_provenance"]) == (

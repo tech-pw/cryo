@@ -165,6 +165,14 @@ active, then scanned / scan failing / not scanned, then needs work / no work, th
 reasons or selected, then succeeded / failed / in progress. It counts tables, not operations.
 Each node includes a `view` that names the explorer triage view listing those tables.
 
+Tables the catalog no longer lists (#120) are tombstones. `GET /tables`,
+`GET /tables/export.csv` and `GET /tables/group-by` take `removed`: `exclude` (default) hides
+them, `include` lists them with everything else, and `only` lists just them. Rows carry
+`removed_from_catalog_at` and `removed_reason`, and the CSV ends with those two columns. The
+older `include_removed=true` still works as an alias for `removed=include` (ignored when
+`removed` is set). The page cursor is bound to the mode. Removed tables are never maintained:
+bulk selection resolves only active tables.
+
 Table configuration (the table detail Config tab):
 
 ```http

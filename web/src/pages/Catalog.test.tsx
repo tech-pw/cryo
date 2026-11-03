@@ -237,7 +237,7 @@ describe("Consolidated Catalog page", { timeout: 20_000 }, () => {
     expect(await screen.findByText("Freshness view: Not updated 3-7 days")).toBeInTheDocument();
     await waitFor(() => {
       const freshnessCall = vi.mocked(listTables).mock.calls.find(([, args]) =>
-        JSON.stringify(args?.predicate).includes("last_snapshot_committed_at")
+        (JSON.stringify(args?.predicate) ?? "").includes("last_snapshot_committed_at")
       );
       expect(freshnessCall).toBeDefined();
       const serialized = JSON.stringify(freshnessCall?.[1].predicate);
@@ -330,6 +330,72 @@ describe("Consolidated Catalog page", { timeout: 20_000 }, () => {
     await waitFor(() => {
       const explorerTable = document.querySelector(".datalake-table");
       expect(within(explorerTable as HTMLElement).getByText("Catalog")).toBeInTheDocument();
+    });
+  });
+
+  it("lists removed tables read-only with when and why, and exports the same set", async () => {
+    vi.mocked(getMultiCatalogDashboard).mockResolvedValue({
+      total_catalogs: 0,
+      total_tables: 0,
+      total_cost_usd: 0,
+      catalogs: []
+    } as never);
+    vi.mocked(listSources).mockResolvedValue([]);
+    vi.mocked(listTables).mockResolvedValue({
+      items: [
+        {
+          ...(SAMPLE_TABLE as object),
+          is_active: false,
+          removed_from_catalog_at: "2026-10-01T03:00:00Z",
+          removed_reason: "not_found_in_catalog: prod_data/prod_data"
+        } as never
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0
+    });
+
+    renderPage("/catalogs?view=removed");
+
+    expect(await screen.findByText("Removed from catalog")).toBeInTheDocument();
+    const explorerTable = document.querySelector(".datalake-table") as HTMLElement;
+    expect(await within(explorerTable).findByText("not_found_in_catalog: prod_data/prod_data")).toBeInTheDocument();
+    expect(within(explorerTable).queryAllByRole("checkbox")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: /^Removed/, pressed: true })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Active only" })).not.toBeInTheDocument();
+
+    const listCall = vi
+      .mocked(listTables)
+      .mock.calls.find(([, args]) => args?.removed === "only" && args.limit !== 1);
+    expect(listCall).toBeDefined();
+    expect(JSON.stringify(listCall?.[1].predicate ?? null)).not.toContain("is_active");
+
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+    await waitFor(() => {
+      expect(exportTablesCsv).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ removed: "only" }));
+    });
+    anchorClick.mockRestore();
+  });
+
+  it("asks the server for removed tables too when Active only is turned off", async () => {
+    vi.mocked(getMultiCatalogDashboard).mockResolvedValue({
+      total_catalogs: 0,
+      total_tables: 0,
+      total_cost_usd: 0,
+      catalogs: []
+    } as never);
+    vi.mocked(listSources).mockResolvedValue([]);
+    vi.mocked(listTables).mockResolvedValue({ items: [SAMPLE_TABLE], total: 1, limit: 50, offset: 0 });
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Active only" }));
+
+    await waitFor(() => {
+      expect(listTables).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ removed: "include", limit: 50 })
+      );
     });
   });
 });
