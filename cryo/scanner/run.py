@@ -5,11 +5,13 @@ import hashlib
 import logging
 import os
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, NoReturn, Protocol
 from uuid import UUID
 
@@ -72,7 +74,8 @@ class ScanSummary:
     cancelled: bool = False
     # Sources whose table discovery failed (timeout, metastore transport error, bad
     # credentials). Their tables are not in `discovered`, so a metastore outage must not look
-    # like a clean scan of an empty catalog (#162). main() exits non-zero when this is set.
+    # like a clean scan of an empty catalog (#162). main() exits non-zero when this is set,
+    # and ScanWorker marks the chunk failed or partial_failed (#380).
     sources_failed: int = 0
     discovery_errors: tuple[str, ...] = ()
     # Missing-table reconcile (#120). Only chunk 0 of a whole-source scan reconciles.
@@ -106,7 +109,18 @@ def _scan_analyze_executor() -> ThreadPoolExecutor:
     return _SCAN_ANALYZE_EXECUTOR
 
 
-def _run_bounded[R](fn: Callable[[], R], *, timeout_seconds: float, description: str) -> R:
+# Well under the scanner daemon's 900s stale-chunk threshold (cli.py _STALE_CHUNK_SECONDS).
+_DISCOVERY_HEARTBEAT_SECONDS = 60.0
+
+
+def _run_bounded[R](
+    fn: Callable[[], R],
+    *,
+    timeout_seconds: float,
+    description: str,
+    heartbeat: Callable[[float], None] | None = None,
+    heartbeat_interval_seconds: float | None = None,
+) -> R:
     """Run `fn` with a hard wall-clock bound.
 
     PyIceberg/boto3 catalog clients don't reliably enforce their own timeouts against a slow
@@ -115,14 +129,29 @@ def _run_bounded[R](fn: Callable[[], R], *, timeout_seconds: float, description:
     one table hung for 100+ minutes and starved every subsequently queued scan). A timed-out
     call keeps running in the background executor -- it's abandoned, not cancelled -- but the
     caller regains control instead of blocking forever.
+
+    `heartbeat`, if given, is called with the elapsed seconds every
+    `heartbeat_interval_seconds` while `fn` is still running.
     """
+    interval = heartbeat_interval_seconds or _DISCOVERY_HEARTBEAT_SECONDS
     future = _scan_analyze_executor().submit(fn)
-    try:
-        return future.result(timeout=timeout_seconds)
-    except FuturesTimeoutError as exc:
-        raise TimeoutError(
-            f"{description} exceeded {timeout_seconds:.0f}s and was abandoned"
-        ) from exc
+    started = time.monotonic()
+    deadline = started + timeout_seconds
+    while True:
+        remaining = max(0.0, deadline - time.monotonic())
+        wait = remaining if heartbeat is None else min(remaining, interval)
+        try:
+            return future.result(timeout=wait)
+        except FuturesTimeoutError as exc:
+            # Same class as the builtin TimeoutError, so it may be `fn`'s own error.
+            if future.done():
+                raise
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"{description} exceeded {timeout_seconds:.0f}s and was abandoned"
+                ) from exc
+            if heartbeat is not None:
+                heartbeat(time.monotonic() - started)
 
 
 def deterministic_chunk[T](items: list[T], *, chunk_id: int, num_chunks: int) -> list[T]:
@@ -252,6 +281,16 @@ def run_scan(
     if scan_at.tzinfo is None:
         scan_at = scan_at.replace(tzinfo=UTC)
 
+    def discovery_heartbeat(source_name: str, elapsed_seconds: float) -> None:
+        _emit_progress(
+            progress_callback,
+            {
+                "event": "discovering",
+                "source": source_name,
+                "elapsed_seconds": round(elapsed_seconds),
+            },
+        )
+
     candidates, discovery_errors = _discover_candidates(
         session,
         source_id=source_id,
@@ -259,6 +298,8 @@ def run_scan(
         table_names=table_names,
         schema_names=schema_names,
         source_factory=source_factory,
+        timeout_seconds=settings.scan_discovery_timeout_seconds,
+        heartbeat=discovery_heartbeat,
     )
     if source_id is not None and not candidates and discovery_errors:
         # A source-scoped chunk (every queued scan chunk is) that discovers zero tables
@@ -927,6 +968,8 @@ def _discover_candidates(
     table_names: Sequence[tuple[str, str]] | None = None,
     schema_names: Sequence[str] | None = None,
     source_factory: Any,
+    timeout_seconds: float | None = None,
+    heartbeat: Callable[[str, float], None] | None = None,
 ) -> tuple[list[ScanCandidate], list[str]]:
     stmt = select(Source).where(Source.enabled.is_(True)).order_by(Source.name)
     if source_id is not None:
@@ -969,7 +1012,11 @@ def _discover_candidates(
 
     candidates: list[ScanCandidate] = []
     discovery_errors: list[str] = []
-    discovery_timeout = get_settings().scan_table_timeout_seconds
+    discovery_timeout = (
+        timeout_seconds
+        if timeout_seconds is not None
+        else get_settings().scan_discovery_timeout_seconds
+    )
     for source in session.scalars(stmt):
         try:
             allowed = source_allowed_schemas(source)
@@ -992,6 +1039,7 @@ def _discover_candidates(
                 _open_and_list,
                 timeout_seconds=discovery_timeout,
                 description=f"discover tables({source.name})",
+                heartbeat=(partial(heartbeat, source.name) if heartbeat is not None else None),
             )
             for schema_name, table_name in listed:
                 if effective_schemas and schema_name not in effective_schemas:

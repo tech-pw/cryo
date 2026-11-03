@@ -55,9 +55,13 @@ type ScanStatsPartitionAccum struct {
 	PartitionValue  string         `json:"partition_value"`
 	PartitionValues map[string]any `json:"partition_values"`
 	PartitionSpecID *int32         `json:"partition_spec_id,omitempty"`
-	Files           int            `json:"files"`
-	Small           int            `json:"small"`
-	SizeBytes       int64          `json:"size_bytes"`
+	// PartitionFields is set only on rows written under a spec other than the table's
+	// default one: their values are keyed by that older spec's fields, not the top-level
+	// partition_fields.
+	PartitionFields []ScanStatsPartitionField `json:"partition_fields,omitempty"`
+	Files           int                       `json:"files"`
+	Small           int                       `json:"small"`
+	SizeBytes       int64                     `json:"size_bytes"`
 	// DeleteFiles is position+equality delete files whose partition value maps to this
 	// partition -- tracked separately from Files/Small (which are data-file-only as of
 	// 2026-07-28) so callers can scope delete-cleanup work by where deletes are actually
@@ -127,6 +131,13 @@ type ScanStatsResponse struct {
 	MaxFilesPerPartition int     `json:"max_files_per_partition"`
 	AvgFilesPerPartition float64 `json:"avg_files_per_partition"`
 	PartitionSkewRatio   float64 `json:"partition_skew_ratio"`
+	// DefaultSpecID is the spec new writes use. Partitions written under any other spec
+	// keep the old layout until a rewrite moves them; the OldSpec* totals count them over
+	// the full map, before MaxPartitions truncation.
+	DefaultSpecID     *int32 `json:"default_spec_id,omitempty"`
+	OldSpecPartitions int    `json:"old_spec_partitions"`
+	OldSpecFiles      int64  `json:"old_spec_files"`
+	OldSpecBytes      int64  `json:"old_spec_bytes"`
 
 	FirstSnapshotAt       *string                   `json:"first_snapshot_at,omitempty"`
 	LastSnapshotAt        *string                   `json:"last_snapshot_committed_at,omitempty"`

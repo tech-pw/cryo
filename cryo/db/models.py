@@ -819,6 +819,8 @@ class Preset(TimestampMixin, Base):
     paused: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    # #77: drift-triggered maintenance settings; NULL means cron-only.
+    continuous: Mapped[JsonDict | None] = mapped_column(JSONB, nullable=True)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("cryo.tenants.id", ondelete="SET NULL"),
@@ -1427,6 +1429,50 @@ class TableOperationExclusion(Base):
     created_by: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class TableDrift(Base):
+    """What writers have committed to a table since its last successful maintenance.
+
+    Accumulated by the commit watcher from snapshot summaries and reset when a maintenance
+    job for the table succeeds. Continuous presets compare these counters against their
+    thresholds; nothing here is a measurement, so it never replaces a scan.
+    """
+
+    __tablename__ = "table_drift"
+
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cryo.tables.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    commits: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    data_files_added: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    small_files_added: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    delete_files_added: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    bytes_added: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    # Commits a maintenance job made (compaction's "replace" snapshots). Not drift; counted so
+    # the churn guard can see how many snapshots maintenance itself is adding.
+    maintenance_commits: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    # Health score the drift is measured from (the table's score when it was last reset) and
+    # the score the accumulated commits are estimated to have dropped it to.
+    baseline_score: Mapped[int | None] = mapped_column(Integer)
+    estimated_score: Mapped[int | None] = mapped_column(Integer)
+    first_commit_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_commit_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_snapshot_id: Mapped[int | None] = mapped_column(BigInteger)
+    reset_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
 

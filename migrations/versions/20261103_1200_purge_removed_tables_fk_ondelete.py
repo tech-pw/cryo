@@ -1,7 +1,7 @@
 """ON DELETE actions so a removed table can be hard-deleted (#330)
 
 Revision ID: 20261103_1200
-Revises: 20261026_1330
+Revises: 20261103_1510
 
 Purging a table tombstoned by #120 deletes its ``cryo.tables`` row. Most children already
 cascade; the rest had no ON DELETE action, so the delete failed. Every single-column foreign
@@ -30,7 +30,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "20261103_1200"
-down_revision = "20261026_1330"
+down_revision = "20261103_1510"
 branch_labels = None
 depends_on = None
 

@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
 
 from cryo.config import get_settings
-from cryo.db.models import AuditLog, Destination, MaintenanceJob, MaintenanceRun, Source, Table
+from cryo.db.models import (
+    AuditLog,
+    Destination,
+    MaintenanceJob,
+    MaintenanceRun,
+    Source,
+    Table,
+    TableStats,
+)
 from cryo.scanner.reconcile_missing import reconcile_missing_tables
 from cryo.scanner.run import ScanCandidate
 
@@ -203,20 +211,118 @@ def test_mass_removal_guard_removes_nothing_and_records_why(session, settings) -
     assert len(aborted) == 1
 
 
-def test_absolute_count_guard(session, settings) -> None:
+def _seen(session, table: Table, at: datetime) -> None:
+    session.add(
+        TableStats(
+            table_id=table.id,
+            scan_at=at,
+            needs_compaction=False,
+            compaction_priority="LOW",
+            grade="B",
+            overall_score=80,
+            total_files=1,
+            small_files_count=0,
+            total_size_gb=1.0,
+        )
+    )
+    session.commit()
+
+
+def test_count_cap_limits_a_run_instead_of_blocking_it(session, settings) -> None:
+    """#381: 551 of 14,006 missing (3.9%) used to remove nothing, forever, because 551 > 500."""
     source = _source(session)
     _filler(session, source, 40)
     rows = _register(session, source, "sales", "a", "b", "c")
     listing = {"bulk": [f"t{i}" for i in range(40)], "sales": ["keep"]}
-    catalog = _Catalog({**listing, "sales": ["keep"]})
+    catalog = _Catalog(listing)
     capped = settings.model_copy(update={"scan_missing_table_max_count": 2})
 
     result = reconcile_missing_tables(
         session, _candidates(source, catalog, listing), scan_at=SCAN_AT, settings=capped
     )
 
+    assert len(result.removed) == 2
+    assert sum(_fresh(session, row).removed_from_catalog_at is not None for row in rows.values())
+    assert not any("guard" in reason for reason in result.skipped)
+    capped_audit = session.scalars(
+        select(AuditLog).where(AuditLog.action == "missing_table_reconcile_capped")
+    ).all()
+    assert len(capped_audit) == 1
+    assert "removing 2 of 3" in capped_audit[0].detail
+    assert "1 left for later scans" in capped_audit[0].detail
+    assert not session.scalars(
+        select(AuditLog).where(AuditLog.action == "missing_table_reconcile_aborted")
+    ).all()
+
+
+def test_backlog_drains_over_runs_last_seen_longest_ago_first(session, settings) -> None:
+    source = _source(session)
+    _filler(session, source, 60)
+    gone = _register(session, source, "tmp", *[f"m{i}" for i in range(7)])
+    # m6 was never scanned: last seen at registration, the oldest evidence of all.
+    gone["m6"].first_seen_at = datetime(2026, 1, 1, tzinfo=UTC)
+    session.commit()
+    for days, name in enumerate(["m5", "m4", "m3", "m2", "m1", "m0"], start=1):
+        _seen(session, gone[name], datetime(2026, 10, 1, tzinfo=UTC) + timedelta(days=days))
+    listing = {"bulk": [f"t{i}" for i in range(60)], "tmp": []}
+    catalog = _Catalog(listing, missing_namespaces={"tmp"})
+    capped = settings.model_copy(update={"scan_missing_table_max_count": 3})
+
+    batches = []
+    for run in range(3):
+        result = reconcile_missing_tables(
+            session,
+            _candidates(source, catalog, listing),
+            scan_at=SCAN_AT + timedelta(hours=run),
+            settings=capped,
+        )
+        batches.append([name.rsplit(".", 1)[1] for name in result.removed])
+
+    assert batches == [["m6", "m5", "m4"], ["m3", "m2", "m1"], ["m0"]]
+    assert all(_fresh(session, row).removed_from_catalog_at is not None for row in gone.values())
+    assert (
+        len(
+            session.scalars(
+                select(AuditLog).where(AuditLog.action == "missing_table_reconcile_capped")
+            ).all()
+        )
+        == 2
+    )
+
+
+def test_capped_batch_is_deterministic_on_ties(session, settings) -> None:
+    source = _source(session)
+    _filler(session, source, 60)
+    gone = _register(session, source, "tmp", "c", "a", "b")
+    for row in gone.values():
+        row.first_seen_at = datetime(2026, 1, 1, tzinfo=UTC)
+    session.commit()
+    listing = {"bulk": [f"t{i}" for i in range(60)], "tmp": ["keep"]}
+    capped = settings.model_copy(update={"scan_missing_table_max_count": 2})
+
+    result = reconcile_missing_tables(
+        session, _candidates(source, _Catalog(listing), listing), scan_at=SCAN_AT, settings=capped
+    )
+
+    assert result.removed == [f"{source.name}.tmp.a", f"{source.name}.tmp.b"]
+
+
+def test_catalog_outage_over_the_count_cap_still_removes_nothing(session, settings) -> None:
+    source = _source(session)
+    rows = _register(session, source, "sales", *[f"t{i}" for i in range(20)])
+    listing = {"sales": ["t0", "t1", "t2"]}  # truncated listing: 17 of 20 missing
+    capped = settings.model_copy(update={"scan_missing_table_max_count": 5})
+
+    result = reconcile_missing_tables(
+        session, _candidates(source, _Catalog(listing), listing), scan_at=SCAN_AT, settings=capped
+    )
+
     assert result.removed == []
     assert all(_fresh(session, row).removed_from_catalog_at is None for row in rows.values())
+    assert any("guard" in reason for reason in result.skipped)
+    assert not session.scalars(
+        select(AuditLog).where(AuditLog.action == "missing_table_reconcile_capped")
+    ).all()
 
 
 def test_schema_that_lists_empty_is_skipped_unless_the_namespace_is_gone(session, settings) -> None:

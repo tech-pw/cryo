@@ -27,6 +27,7 @@ from cryo.db.models import (
 from cryo.db.repositories.job_dedupe import supersede_covered_jobs
 from cryo.db.repositories.operation_exclusions import excluded_operations
 from cryo.domain.enums import JobStatus, Mode, OperationType
+from cryo.engines.base import COMMIT_CONFLICT_MARKER
 from cryo.observability.correlation import correlation_id_from_summary
 from cryo.worker.worker import (
     AuditRecord,
@@ -177,6 +178,20 @@ class SQLJobStore:
             record_missing_metadata(session, uuid.UUID(table_id), reason=reason)
             session.commit()
 
+    def reset_table_drift(self, table_id: str) -> None:
+        from cryo.events.drift import reset_drift
+        from cryo.observability.metrics import continuous_drift_to_completion_seconds
+
+        now = datetime.now(UTC)
+        with self._session_factory() as session:
+            reset = reset_drift(session, uuid.UUID(table_id), at=now)
+            session.commit()
+        if reset is not None and reset.first_commit_at is not None:
+            first = reset.first_commit_at
+            if first.tzinfo is None:
+                first = first.replace(tzinfo=UTC)
+            continuous_drift_to_completion_seconds.observe(max(0.0, (now - first).total_seconds()))
+
     def update_resource_failure_backoff(
         self, table_id: str, status: JobStatus, error: str | None
     ) -> None:
@@ -218,6 +233,45 @@ class SQLJobStore:
         with self._session_factory() as session:
             job = _load_job(session, uuid.UUID(job_id))
             job.engine_ref = engine_ref
+            session.commit()
+
+    def count_commit_conflicts(self, job_id: str) -> int:
+        with self._session_factory() as session:
+            return int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(AuditLog)
+                    .where(
+                        AuditLog.job_id == uuid.UUID(job_id),
+                        AuditLog.detail.startswith(COMMIT_CONFLICT_MARKER, autoescape=True),
+                    )
+                )
+                or 0
+            )
+
+    def record_job_event(
+        self,
+        *,
+        job_id: str,
+        table_id: str,
+        action: str,
+        status: str,
+        detail: str | None,
+        actor: str | None,
+    ) -> None:
+        """Audit a job-level event that is not one maintenance operation."""
+        with self._session_factory() as session:
+            session.add(
+                AuditLog(
+                    table_id=uuid.UUID(table_id),
+                    job_id=uuid.UUID(job_id),
+                    action=action,
+                    status=status,
+                    engine="worker",
+                    detail=detail,
+                    actor=actor,
+                )
+            )
             session.commit()
 
     def record_audit(self, record: AuditRecord) -> None:
@@ -610,6 +664,12 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         if trimmed is not None:
             operations = trimmed
             params["requested_operations"] = [op.value for op in trimmed]
+    # Never taken from a preset or a table override: build_execution_plan drops the operations
+    # it gates unless an approval request for this table names them.
+    params.pop("approved_operations", None)
+    approved = _approved_request_operations(session, job.table_id, params)
+    if approved:
+        params["approved_operations"] = approved
     actor_raw = summary.get("actor")
     actor = actor_raw if isinstance(actor_raw, str) and actor_raw else None
     # AutoComp (SIGMOD 2025): governor.decide_job_admission's min_benefit_score/min_moop_score
@@ -667,9 +727,34 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         correlation_id=correlation_id_from_summary(summary),
         run_status=job.run.status if job.run else None,
         run_created_at=job.run.created_at if job.run else None,
+        run_trigger=job.run.trigger if job.run else None,
         requested_operations=(tuple(str(op) for op in job.operations) if job.operations else None),
         dedupe_key=job.dedupe_key,
     )
+
+
+_REQUEST_APPROVAL_GATED = (OperationType.MIGRATE_PARTITION_SPEC.value,)
+
+
+def _approved_request_operations(
+    session: Session, table_id: uuid.UUID, params: Mapping[str, Any]
+) -> list[str]:
+    requested = {str(op) for op in params.get("requested_operations") or ()}
+    gated = [op for op in _REQUEST_APPROVAL_GATED if op in requested]
+    if not gated:
+        return []
+    from cryo.workflows.approvals import ApprovalRequest, ApprovalStatus
+
+    rows = session.scalars(
+        select(ApprovalRequest.operation_type).where(
+            ApprovalRequest.table_id == table_id,
+            ApprovalRequest.operation_type.in_(gated),
+            ApprovalRequest.status == ApprovalStatus.APPROVED.value,
+            ApprovalRequest.executed_at.is_(None),
+            ApprovalRequest.expires_at > datetime.now(UTC),
+        )
+    )
+    return sorted(set(rows))
 
 
 def _intent_effect_destination_ids(intent: MaintenanceIntent | None) -> tuple[str, ...]:
@@ -871,6 +956,9 @@ def _latest_partitions(session: Session, table_id: uuid.UUID) -> Sequence[Mappin
             # compute_moop_scores scored these partitions.
             "compaction_benefit_score": row.compaction_benefit_score,
             "autocomp_traits": dict(row.autocomp_traits) if row.autocomp_traits else None,
+            # A row written under an older spec is filtered by that spec's own fields.
+            "partition_spec_id": row.partition_spec_id,
+            "partition_fields": list(row.partition_fields or []),
         }
         for row in rows
     ]

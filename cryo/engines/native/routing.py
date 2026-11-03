@@ -48,6 +48,11 @@ NATIVE_REWRITE_POSITION_DELETES_DETAIL = (
     "implementation; route to Spark (Trino has no equivalent procedure either)"
 )
 
+NATIVE_MIGRATE_PARTITION_SPEC_DETAIL = (
+    "migrate_partition_spec has no cryo-engine-go implementation; route to Spark "
+    "(Trino cannot filter old-spec partitions)"
+)
+
 NATIVE_ZORDER_DETAIL = (
     "z-order compaction is not supported in cryo-engine-go; route OPTIMIZE to Trino/Spark (Phase F)"
 )
@@ -366,6 +371,8 @@ def resolve_native_routing(
                 detail = NATIVE_CONVERT_DELETES_DETAIL
             elif operation.type is OperationType.REWRITE_POSITION_DELETES:
                 detail = NATIVE_REWRITE_POSITION_DELETES_DETAIL
+            elif operation.type is OperationType.MIGRATE_PARTITION_SPEC:
+                detail = NATIVE_MIGRATE_PARTITION_SPEC_DETAIL
             else:
                 detail = NATIVE_MANIFESTS_DETAIL
             if has_sql_fallback:

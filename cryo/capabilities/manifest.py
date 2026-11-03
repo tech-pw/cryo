@@ -13,6 +13,7 @@ from cryo.capabilities.models import (
     MaturityTier,
     OperationCapability,
     OperationDefinition,
+    SchedulingCapability,
     SupportStatus,
 )
 from cryo.domain.enums import EngineType, OperationType
@@ -166,6 +167,15 @@ _OPERATIONS = (
         operation=OperationType.REWRITE_POSITION_DELETES,
         label="Rewrite position deletes",
         description="Run a minor rewrite of position-delete files without full data compaction.",
+        destructive=False,
+    ),
+    OperationDefinition(
+        operation=OperationType.MIGRATE_PARTITION_SPEC,
+        label="Migrate to current partition spec",
+        description=(
+            "Rewrite partitions still written under an older partition spec into the default "
+            "spec. Runs only on request, after an approval."
+        ),
         destructive=False,
     ),
 )
@@ -432,6 +442,25 @@ _TRINO_CELLS = (
             "test_trino_rewrite_position_deletes_raises_unsupported",
         ),
     ),
+    _cell(
+        EngineType.TRINO,
+        OperationType.MIGRATE_PARTITION_SPEC,
+        SupportStatus.UNSUPPORTED,
+        MaturityTier.BLOCKED,
+        ExecutionMode.NONE,
+        limitations=(
+            "Trino enforces an OPTIMIZE filter only when every partition spec in use can enforce "
+            "it; an old-spec partition filter cannot be.",
+        ),
+        fallback_engines=(EngineType.SPARK_EMR,),
+        owner="engines/trino",
+        evidence=_evidence(
+            "cryo/engines/trino/sql.py",
+            "_render_operation",
+            "tests/test_partition_spec_migration.py",
+            "test_trino_renderer_refuses_migration",
+        ),
+    ),
 )
 
 
@@ -481,6 +510,13 @@ def _spark_cell(operation: OperationType) -> OperationCapability:
                 "test_spark_renders_rewrite_position_deletes_operation",
             )
             if operation is OperationType.REWRITE_POSITION_DELETES
+            else _evidence(
+                "cryo/engines/spark/sql.py",
+                "_render_migrate_partition_spec",
+                "tests/test_partition_spec_migration.py",
+                "test_spark_renders_migration_with_rewrite_all_and_filters",
+            )
+            if operation is OperationType.MIGRATE_PARTITION_SPEC
             else _SPARK_EVIDENCE
         ),
     )
@@ -605,6 +641,18 @@ _NATIVE_CELLS = (
         owner="engines/native",
         evidence=_NATIVE_EVIDENCE,
     ),
+    _cell(
+        EngineType.NATIVE,
+        OperationType.MIGRATE_PARTITION_SPEC,
+        SupportStatus.FALLBACK_REQUIRED,
+        MaturityTier.EXPERIMENTAL,
+        ExecutionMode.SQL_FALLBACK,
+        runtime_conditions=("A Spark fallback destination must be configured.",),
+        limitations=("cryo-engine-go has no rewrite-all mode for older-spec files.",),
+        fallback_engines=(EngineType.SPARK_EMR,),
+        owner="engines/native",
+        evidence=_NATIVE_EVIDENCE,
+    ),
 )
 
 _FLINK_CELLS = tuple(
@@ -641,8 +689,51 @@ def _validate_matrix(matrix: tuple[OperationCapability, ...]) -> None:
 
 _validate_matrix(_MATRIX)
 
+_SCHEDULING = (
+    SchedulingCapability(
+        trigger="cron",
+        label="Cron schedule",
+        maturity=MaturityTier.GA,
+        summary=(
+            "Each preset's cron fires one run over its tables, capped per run and drained in "
+            "backlog batches."
+        ),
+        owner="scheduler",
+        evidence=_evidence(
+            "cryo/scheduler/service.py",
+            "_dispatch_due_presets",
+            "tests/test_scheduler_backlog_drain.py",
+            "test_drained_batches_reach_every_candidate_once_per_cron_period",
+        ),
+    ),
+    SchedulingCapability(
+        trigger="continuous",
+        label="Continuous (drift-triggered)",
+        maturity=MaturityTier.EXPERIMENTAL,
+        summary=(
+            "Opt-in per preset. The commit watcher reads new snapshots from the live catalog "
+            "and a table is enqueued once its drift crosses a threshold, after a quiet period. "
+            "Jobs pass every governor gate."
+        ),
+        limitations=(
+            "Requires the `cryo events` process (Helm `events.enabled`).",
+            "Watches at most `events_probe_max_tables_per_poll` tables per poll.",
+            "Not load-tested against a real 1,000-table catalog.",
+            "A commit lost to a concurrent writer is retried once, then re-planned, and the "
+            "job fails after `worker_commit_conflict_max_deferrals` conflicts.",
+        ),
+        owner="scheduler",
+        evidence=_evidence(
+            "cryo/scheduler/continuous_dispatch.py",
+            "class ContinuousDispatcher",
+            "tests/test_continuous_maintenance.py",
+            "test_a_due_table_gets_one_run_through_the_normal_scheduler_path",
+        ),
+    ),
+)
+
 CAPABILITY_MANIFEST = CapabilityManifest(
-    schema_version="1.1.0",
+    schema_version="1.2.0",
     source="cryo.capabilities.manifest",
     maturity_definitions=(
         MaturityDefinition(
@@ -666,6 +757,7 @@ CAPABILITY_MANIFEST = CapabilityManifest(
     engines=_ENGINES,
     catalogs=_CATALOGS,
     matrix=_MATRIX,
+    scheduling=_SCHEDULING,
 )
 
 _CAPABILITY_INDEX = {(cell.engine, cell.operation): cell for cell in CAPABILITY_MANIFEST.matrix}

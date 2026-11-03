@@ -132,3 +132,23 @@ def test_defer_of_a_pending_job_does_not_touch_the_counter() -> None:
     queue.defer("job-1")
 
     assert queue.local_in_flight_by_replica("dest") == {"default": 2}
+
+
+def test_complete_returns_the_slot_of_a_running_job_once() -> None:
+    queue = _queue()
+    _seed_job_hash(queue, "job-1", JobStatus.RUNNING.value)
+
+    queue.complete("job-1", JobStatus.SUCCEEDED)
+    queue.complete("job-1", JobStatus.FAILED)
+
+    assert queue.local_in_flight_by_replica("dest") == {"default": 1}
+
+
+def test_complete_of_a_job_admit_never_counted_does_not_touch_the_counter() -> None:
+    """Native K8s jobs are never admit()ed; their hash still reads queued."""
+    queue = _queue()
+    _seed_job_hash(queue, "job-1", JobStatus.QUEUED.value)
+
+    queue.complete("job-1", JobStatus.FAILED)
+
+    assert queue.local_in_flight_by_replica("dest") == {"default": 2}

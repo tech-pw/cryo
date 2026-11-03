@@ -34,6 +34,18 @@ print.
 | `CRYO_SCAN_NUM_CHUNKS` | `int` | `4` | - |
 | `CRYO_SCAN_SMALL_FILE_MB` | `float` | `89.6` | - |
 | `CRYO_SCAN_NEEDS_COMPACTION_THRESHOLD` | `int` | `128` | - |
+| `CRYO_EVENTS_PROBE_MAX_TABLES_PER_POLL` | `int` | `100` | Most watched tables the commit watcher loads from the catalog in one poll. Tables past the cap wait for the next poll, oldest-probed first. |
+| `CRYO_EVENTS_PROBE_MIN_TABLE_INTERVAL_SECONDS` | `float` | `30.0` | Minimum seconds between two catalog probes of the same watched table. |
+| `CRYO_EVENTS_PROBE_TIMEOUT_SECONDS` | `float` | `10.0` | Seconds one catalog load_table may take before the probe gives up. |
+| `CRYO_EVENTS_TARGET_REFRESH_SECONDS` | `float` | `300.0` | Seconds between refreshes of the commit watcher's watched-table list. |
+| `CRYO_CONTINUOUS_MAINTENANCE_ENABLED` | `bool` | `true` | Kill switch for drift-triggered maintenance. Presets still opt in one by one with a continuous block; false stops every continuous trigger. |
+| `CRYO_CONTINUOUS_EVENTS_PER_TICK` | `int` | `500` | cryo:maintenance-eval entries the scheduler reads per tick. |
+| `CRYO_CONTINUOUS_EVALUATIONS_PER_TICK` | `int` | `50` | Pending tables the scheduler evaluates per tick, soonest due first. |
+| `CRYO_CONTINUOUS_DRIFT_SWEEP_SECONDS` | `float` | `300.0` | Seconds between sweeps of cryo.table_drift that re-add drifted tables to the pending set, so drift survives a Redis restart or a trimmed stream. |
+| `CRYO_CONTINUOUS_RESCAN_WAIT_SECONDS` | `int` | `1800` | How long a due table waits for the targeted rescan it requested before being maintained from its older scan stats anyway. 0 skips the rescan. |
+| `CRYO_WORKER_COMMIT_CONFLICT_RETRIES` | `int` | `1` | Times the worker re-runs one operation in place after it loses its commit to a concurrent writer. Only for jobs without a durable intent; a lost commit leaves the table unchanged, so the re-run is safe. |
+| `CRYO_WORKER_COMMIT_CONFLICT_RETRY_BACKOFF_SECONDS` | `float` | `5.0` | Seconds before each in-place re-run, multiplied by the attempt number. |
+| `CRYO_WORKER_COMMIT_CONFLICT_MAX_DEFERRALS` | `int` | `3` | Commit conflicts one job may hit before it stops deferring and fails. Below the limit the job is deferred, re-queued by the reconciler and re-planned from the table's current stats. 0 fails on the first conflict that survives the in-place re-runs. |
 | `CRYO_REPORT_COST_DOD_SPIKE_PCT` | `float` | `10.0` | Day-over-day fleet cost increase (%) that flags a spike. |
 | `CRYO_REPORT_COST_DOD_DECLINE_PCT` | `float` | `30.0` | Day-over-day fleet cost decrease (%) that flags a decline worth noting. |
 | `CRYO_REPORT_COST_WOW_SPIKE_PCT` | `float` | `15.0` | Week-over-week fleet cost increase (%) that flags a spike. |
@@ -75,7 +87,7 @@ print.
 | `CRYO_SCAN_DEAD_TABLE_LOOKBACK_DAYS` | `int` | `30` | - |
 | `CRYO_SCAN_REMOVE_MISSING_TABLES_ENABLED` | `bool` | `true` | Tombstone registry rows whose table is no longer in a complete catalog listing (#120): removed_from_catalog_at is set and the table goes inactive. Reversible: a table that shows up again is restored on the next scan. Nothing is hard-deleted. |
 | `CRYO_SCAN_MISSING_TABLE_MAX_FRACTION` | `float` | `0.2` | Mass-removal guard: if one scan would remove more than this share of a source's registered tables, it removes none and records why. Ignored for at most scan_missing_table_guard_min_count removals, so small catalogs still reconcile. |
-| `CRYO_SCAN_MISSING_TABLE_MAX_COUNT` | `int` | `500` | Mass-removal guard: never remove more than this many tables per source per scan; above it, remove none and record why. |
+| `CRYO_SCAN_MISSING_TABLE_MAX_COUNT` | `int` | `500` | Per-scan removal limit: remove at most this many missing tables per source per scan, the ones last seen longest ago first. The rest are removed by later scans, so a large backlog drains over several runs. 0 removes nothing. scan_missing_table_max_fraction is the catalog-outage guard. |
 | `CRYO_SCAN_MISSING_TABLE_GUARD_MIN_COUNT` | `int` | `5` | - |
 | `CRYO_DISPATCH_HEARTBEAT_STALL_MINUTES` | `int` | `1560` | Minutes since the last MaintenanceJob admitted/started/finished before vitals.dispatch_heartbeat calls dispatch stalled. Cryo's only dispatch source is the once-daily maintenance CronJob (default 26h gap, schedule permitting), not a continuously-draining queue -- this must exceed that gap plus the run's own max_runtime_minutes, or every quiet hour between runs reads as an outage. |
 | `CRYO_SCAN_PARALLEL_TABLES` | `int` | `0` | Tables to scan in parallel per chunk (0=serial). |
@@ -115,6 +127,7 @@ print.
 | `CRYO_STUCK_ADMITTED_AFTER_SECONDS` | `int` | `900` | Grace period before reconcile_stuck_admitted_jobs treats an ADMITTED job with no engine_ref as undispatched. Only applies to jobs that are genuinely absent from the claim queue; a job still waiting its turn is left alone however long the queue is. |
 | `CRYO_WORKER_DISPATCH_BACKLOG_PER_REPLICA` | `int` | `3` | Admission backpressure: the governor will not grow the undispatched ADMITTED backlog beyond this many jobs per live worker replica. Engine slot_cap bounds how much load the ENGINE can take; it says nothing about how fast workers can drain the claim queue, and workers process one job at a time. Without this the governor admits against engine capacity alone and buries the claim queue under work no worker can reach inside the stuck-admitted grace period. |
 | `CRYO_ENGINE_CONNECT_TIMEOUT_SEC` | `float` | `5.0` | Per-request connect timeout (seconds) for Trino coordinator probes and statement execution. The trino client doesn't expose a connect timeout directly, so we patch the requests Session it uses. |
+| `CRYO_SCAN_DISCOVERY_TIMEOUT_SECONDS` | `float` | `1800.0` | Hard wall-clock bound for listing one source's tables at the start of a scan chunk. Listing a large Hive Metastore can take far longer than scanning one table, so this is separate from scan_table_timeout_seconds. The chunk keeps heartbeating while it lists, so stale-chunk recovery does not re-queue it. Past this limit the source counts as a discovery failure and the chunk is reported failed (nothing discovered) or partial_failed (other sources listed). |
 | `CRYO_SCAN_TABLE_TIMEOUT_SECONDS` | `float` | `180.0` | Hard wall-clock bound for scanning a single table (catalog load, stats analysis, and orphan-file listing). Catalog/S3 clients don't reliably honor their own timeouts against a slow or unresponsive Hive Metastore/S3 endpoint, so this work runs in a bounded worker and is treated as a failed scan past this limit instead of blocking the scanner daemon's single poll loop forever. |
 | `CRYO_SCANNER_MAX_PARTITIONS_PER_TABLE` | `int` | `5000` | Cap on how many partition rows a single scan persists to table_partitions per table, keeping the ones with the most small files (the actual compaction signal). Real catalogs have a long tail of tables partitioned far more finely than any compaction decision needs -- one observed table had 397k partitions (median table: 8) and alone accounted for ~10% of table_partitions' total row count. |
 | `CRYO_NATIVE_ENGINE_ENABLED` | `bool` | `true` | Enable native cryo-engine maintenance (default workflow). |
@@ -280,6 +293,7 @@ Top-level values in `deploy/helm/cryo/values.yaml`. The chart's own schema,
 | `api` | `object` | *(object)* | no | - |
 | `backup` | `object` | *(object)* | no | - |
 | `containerSecurityContext` | `object` | *(object)* | no | - |
+| `events` | `object` | *(object)* | no | - |
 | `externalSecret` | `object` | *(object)* | no | - |
 | `global` | `object` | *(object)* | no | - |
 | `governor` | `object` | *(object)* | no | - |

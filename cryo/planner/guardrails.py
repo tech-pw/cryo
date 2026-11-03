@@ -20,6 +20,7 @@ CORRECT_ORDER: tuple[OperationType, ...] = (
     OperationType.CONVERT_EQUALITY_DELETES,
     OperationType.CONVERT_DELETES,
     OperationType.REWRITE_POSITION_DELETES,
+    OperationType.MIGRATE_PARTITION_SPEC,
     OperationType.OPTIMIZE,
     OperationType.COMPUTE_STATISTICS,
     OperationType.OPTIMIZE_MANIFESTS,
@@ -44,7 +45,8 @@ _STANDARD_OPERATIONS: frozenset[OperationType] = _LIGHT_OPERATIONS | {
 # Upper bound of what ``build_plan`` can emit per mode. Whether a given table actually gets each
 # one is a per-table planner decision; duplicate-job detection only needs the ceiling, because
 # "this mode would have covered it" is what makes a second job redundant. A parity test keeps
-# this from drifting from planner.py.
+# this from drifting from planner.py. MIGRATE_PARTITION_SPEC is in no mode: it is planned only
+# when a run names it, and a run that names its operations is deduped by that list.
 MODE_OPERATIONS: Mapping[Mode, frozenset[OperationType]] = {
     Mode.LIGHT: _LIGHT_OPERATIONS,
     Mode.STANDARD: _STANDARD_OPERATIONS,

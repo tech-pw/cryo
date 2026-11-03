@@ -86,6 +86,90 @@ class Settings(BaseSettings):
     scan_small_file_mb: float = Field(default=89.6, gt=0)
     scan_needs_compaction_threshold: int = Field(default=128, gt=0)
 
+    # `cryo events` commit watcher. Each probe is one catalog load_table (metadata only), so
+    # these bound catalog load: at most max_tables_per_poll loads per poll, and no table is
+    # loaded more often than min_table_interval_seconds.
+    events_probe_max_tables_per_poll: int = Field(
+        default=100,
+        ge=1,
+        description=(
+            "Most watched tables the commit watcher loads from the catalog in one poll. "
+            "Tables past the cap wait for the next poll, oldest-probed first."
+        ),
+    )
+    events_probe_min_table_interval_seconds: float = Field(
+        default=30.0,
+        ge=0,
+        description="Minimum seconds between two catalog probes of the same watched table.",
+    )
+    events_probe_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        description="Seconds one catalog load_table may take before the probe gives up.",
+    )
+    events_target_refresh_seconds: float = Field(
+        default=300.0,
+        gt=0,
+        description="Seconds between refreshes of the commit watcher's watched-table list.",
+    )
+    continuous_maintenance_enabled: bool = Field(
+        default=True,
+        description=(
+            "Kill switch for drift-triggered maintenance. Presets still opt in one by one "
+            "with a continuous block; false stops every continuous trigger."
+        ),
+    )
+    continuous_events_per_tick: int = Field(
+        default=500,
+        ge=1,
+        description="cryo:maintenance-eval entries the scheduler reads per tick.",
+    )
+    continuous_evaluations_per_tick: int = Field(
+        default=50,
+        ge=1,
+        description="Pending tables the scheduler evaluates per tick, soonest due first.",
+    )
+    continuous_drift_sweep_seconds: float = Field(
+        default=300.0,
+        gt=0,
+        description=(
+            "Seconds between sweeps of cryo.table_drift that re-add drifted tables to the "
+            "pending set, so drift survives a Redis restart or a trimmed stream."
+        ),
+    )
+    continuous_rescan_wait_seconds: int = Field(
+        default=1800,
+        ge=0,
+        description=(
+            "How long a due table waits for the targeted rescan it requested before being "
+            "maintained from its older scan stats anyway. 0 skips the rescan."
+        ),
+    )
+    worker_commit_conflict_retries: int = Field(
+        default=1,
+        ge=0,
+        description=(
+            "Times the worker re-runs one operation in place after it loses its commit to a "
+            "concurrent writer. Only for jobs without a durable intent; a lost commit leaves "
+            "the table unchanged, so the re-run is safe."
+        ),
+    )
+    worker_commit_conflict_retry_backoff_seconds: float = Field(
+        default=5.0,
+        ge=0,
+        description="Seconds before each in-place re-run, multiplied by the attempt number.",
+    )
+    worker_commit_conflict_max_deferrals: int = Field(
+        default=3,
+        ge=0,
+        description=(
+            "Commit conflicts one job may hit before it stops deferring and fails. Below the "
+            "limit the job is deferred, re-queued by the reconciler and re-planned from the "
+            "table's current stats. 0 fails on the first conflict that survives the in-place "
+            "re-runs."
+        ),
+    )
+
     # Fleet-cost day-over-day / week-over-week spike & decline thresholds for the daily
     # report (see cryo/reporting/cost_signals.py). Defaults are reasonable starting points,
     # not tuned to any specific deployment -- override per-environment as real threshold
@@ -321,8 +405,12 @@ class Settings(BaseSettings):
     scan_missing_table_max_count: int = Field(
         default=500,
         ge=0,
-        description="Mass-removal guard: never remove more than this many tables per source "
-        "per scan; above it, remove none and record why.",
+        description=(
+            "Per-scan removal limit: remove at most this many missing tables per source per "
+            "scan, the ones last seen longest ago first. The rest are removed by later scans, "
+            "so a large backlog drains over several runs. 0 removes nothing. "
+            "scan_missing_table_max_fraction is the catalog-outage guard."
+        ),
     )
     scan_missing_table_guard_min_count: int = Field(default=5, ge=0)
     dispatch_heartbeat_stall_minutes: int = Field(
@@ -527,6 +615,19 @@ class Settings(BaseSettings):
             "Per-request connect timeout (seconds) for Trino coordinator probes "
             "and statement execution. The trino client doesn't expose a connect "
             "timeout directly, so we patch the requests Session it uses."
+        ),
+    )
+    scan_discovery_timeout_seconds: float = Field(
+        default=1800.0,
+        gt=0,
+        le=7200.0,
+        description=(
+            "Hard wall-clock bound for listing one source's tables at the start of a scan "
+            "chunk. Listing a large Hive Metastore can take far longer than scanning one "
+            "table, so this is separate from scan_table_timeout_seconds. The chunk keeps "
+            "heartbeating while it lists, so stale-chunk recovery does not re-queue it. Past "
+            "this limit the source counts as a discovery failure and the chunk is reported "
+            "failed (nothing discovered) or partial_failed (other sources listed)."
         ),
     )
     scan_table_timeout_seconds: float = Field(

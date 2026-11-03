@@ -554,6 +554,30 @@ class DestinationPatch(BaseModel):
         return self
 
 
+class ContinuousSettings(BaseModel):
+    """Drift-triggered maintenance for a preset's tables (#77). Off unless ``enabled``.
+
+    A table becomes due when any set threshold is reached, then waits for ``debounce_seconds``
+    of writer quiet (at most ``max_delay_seconds`` after the first unmaintained commit). The
+    job still passes every governor gate. Rate limits and the churn cap are per table; null
+    disables that limit.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    max_commits: int | None = Field(default=None, ge=1, le=1_000_000)
+    max_small_files_added: int | None = Field(default=None, ge=1, le=100_000_000)
+    max_delete_file_ratio: float | None = Field(default=None, gt=0, le=1)
+    max_score_drop: int | None = Field(default=None, ge=1, le=100)
+    debounce_seconds: int = Field(default=300, ge=0, le=86_400)
+    max_delay_seconds: int = Field(default=3600, ge=60, le=7 * 86_400)
+    min_interval_seconds: int = Field(default=1800, ge=60, le=7 * 86_400)
+    max_runs_per_hour: int | None = Field(default=2, ge=1, le=60)
+    max_runs_per_day: int | None = Field(default=24, ge=1, le=1_440)
+    max_maintenance_commits_per_day: int | None = Field(default=48, ge=1, le=100_000)
+
+
 class PresetCreate(BaseModel):
     name: str
     destination_id: uuid.UUID
@@ -567,6 +591,7 @@ class PresetCreate(BaseModel):
     guardrails: JsonDict = Field(default_factory=dict)
     is_default: bool = False
     paused: bool = False
+    continuous: ContinuousSettings | None = None
 
 
 class PresetRead(PresetCreate, OrmModel):
@@ -594,6 +619,7 @@ class PresetPatch(BaseModel):
             "with error 'cancelled: preset paused'); admitted and running jobs finish."
         ),
     )
+    continuous: ContinuousSettings | None = None
 
 
 class PresetRuleCreate(BaseModel):

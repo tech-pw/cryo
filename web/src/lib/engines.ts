@@ -71,6 +71,7 @@ export const NATIVE_UNSUPPORTED_OPS = [
   "optimize_manifests",
   "compute_statistics",
   "rewrite_position_deletes",
+  "migrate_partition_spec",
   "expire_data"
 ] as const;
 

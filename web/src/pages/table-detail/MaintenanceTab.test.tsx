@@ -55,6 +55,8 @@ vi.mock("../../api/pathToA", () => ({
 
 vi.mock("../../api/client", () => ({
   getTableRuns,
+  getTableSpecMigration: vi.fn().mockResolvedValue({ recorded: false, old_spec_partitions: 0, last_run: null }),
+  requestSpecMigrationApproval: vi.fn(),
   getTableCost: vi.fn().mockResolvedValue({ table_id: "table-1", orphan_bytes: null }),
   getTableAudit: vi.fn().mockResolvedValue([]),
   getEffectiveParams: vi.fn().mockResolvedValue({
