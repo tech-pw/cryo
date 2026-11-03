@@ -613,9 +613,9 @@ class GovernorRunner(DaemonRunner):
         TTL expires (up to lock_ttl_seconds, default 6h), blocking every future
         admission attempt for that table with "table_locked". Confirmed live,
         2026-07-22: two tables stuck exactly this way after repeated Governor
-        restarts during same-day deploys. Run once per process lifetime (guarded by
-        the caller), on the leader only, since it's a global sweep, not a per-tick
-        concern.
+        restarts during same-day deploys. Runs on the leader's first tick and then every
+        _LOCK_RECONCILE_INTERVAL_SECONDS (guarded by the caller), since it's a global
+        sweep, not a per-tick concern.
         """
         try:
             from cryo.domain.enums import JobStatus
@@ -638,7 +638,7 @@ class GovernorRunner(DaemonRunner):
                     released += 1
             if released:
                 self._logger.info(
-                    "Startup lock reconciliation: released %d orphaned table lock(s)",
+                    "Lock reconciliation: released %d orphaned table lock(s)",
                     released,
                 )
         except Exception as exc:
@@ -817,6 +817,7 @@ class SchedulerRunner(DaemonRunner):
             self._service = SchedulerService(
                 wiring.scheduler_store,
                 wiring.queue,
+                lock_store=wiring.lock_store,
                 continuous=_continuous_dispatcher(wiring),
             )
             return self._service

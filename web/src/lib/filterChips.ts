@@ -1,5 +1,5 @@
 import type { TableFilterState } from "./predicate";
-import { NO_PRESET_FILTER } from "./predicate";
+import { COVERAGE_LABELS, NO_PRESET_FILTER } from "./predicate";
 
 export interface CatalogFilterOption {
   label: string;
@@ -56,6 +56,14 @@ export const buildFilterChips = (
       key: "preset",
       label: `Preset: ${names.join(", ")}`,
       onRemove: () => onPatch({ presetFilter: undefined })
+    });
+  }
+
+  if (filters.coverage?.length) {
+    chips.push({
+      key: "coverage",
+      label: `Coverage: ${filters.coverage.map((key) => COVERAGE_LABELS[key]).join(", ")}`,
+      onRemove: () => onPatch({ coverage: undefined })
     });
   }
 

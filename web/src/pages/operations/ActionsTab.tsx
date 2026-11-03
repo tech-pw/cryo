@@ -1,11 +1,10 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { listFleetAudit, type FleetAuditItem } from "../../api/fleetAudit";
 import { StatusTag } from "../../components/status";
-import { DataTable } from "../../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { Select } from "../../components/ui/select";
 import { useAuth } from "../../lib/auth";
 import { auditBytesLabel, auditFilesLabel } from "../../lib/auditFeed";
@@ -59,7 +58,7 @@ export const ActionsTab = () => {
       })
   });
 
-  const columns = useMemo<ColumnDef<FleetAuditItem, unknown>[]>(
+  const columns = useMemo<DataTableColumnDef<FleetAuditItem, unknown>[]>(
     () => [
       {
         id: "ts",

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import String, cast, delete, func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import String, any_, cast, delete, false, func, literal, select
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.orm import InstrumentedAttribute, Session, selectinload
+from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.selectable import Select
 
 from cryo.api.predicates import compile_predicate
 from cryo.db.model_utils import qualified_table_name
@@ -35,6 +39,9 @@ from cryo.scheduler.rules import (
 from cryo.scheduler.rules import (
     TableAssignment as AssignmentConfig,
 )
+
+PROVENANCE_NONE = "none"
+EFFECTIVE_PROVENANCES = ("assignment", "rule", "rule_after_stale_pin", "default", PROVENANCE_NONE)
 
 
 @dataclass(frozen=True)
@@ -211,16 +218,84 @@ def assert_preset_compatible_with_tables(
 
 def load_resolution_inputs(
     session: Session,
+    *,
+    table_ids: Collection[uuid.UUID] | None = None,
 ) -> tuple[list[PresetConfig], list[RuleConfig], list[AssignmentConfig]]:
+    """``table_ids`` limits the assignments loaded; resolution only reads a table's own pin."""
     presets = [preset_to_config(item) for item in session.scalars(select(Preset))]
     rules = [rule_to_config(item) for item in session.scalars(select(PresetRule))]
-    assignments = [assignment_to_config(item) for item in session.scalars(select(TableAssignment))]
+    assignment_stmt = select(TableAssignment)
+    if table_ids is not None:
+        assignment_stmt = assignment_stmt.where(TableAssignment.table_id.in_(list(table_ids)))
+    assignments = [assignment_to_config(item) for item in session.scalars(assignment_stmt)]
     return presets, rules, assignments
 
 
 def resolve_effective_preset(session: Session, table: Table) -> EffectivePreset | None:
     presets, rules, assignments = load_resolution_inputs(session)
     return effective_preset(table_to_candidate(table), presets, rules, assignments)
+
+
+def effective_presets_for_tables(
+    session: Session, tables: Sequence[Table]
+) -> dict[uuid.UUID, EffectivePreset | None]:
+    """Effective preset per table, from one load of presets/rules and the tables' own pins."""
+    if not tables:
+        return {}
+    presets, rules, assignments = load_resolution_inputs(
+        session, table_ids=[table.id for table in tables]
+    )
+    return {
+        table.id: effective_preset(table_to_candidate(table), presets, rules, assignments)
+        for table in tables
+    }
+
+
+def provenance_of(effective: EffectivePreset | None) -> str:
+    return effective.provenance if effective is not None else PROVENANCE_NONE
+
+
+def resolve_effective_presets(
+    session: Session, tables_stmt: Select[tuple[Table]]
+) -> dict[uuid.UUID, EffectivePreset | None]:
+    """Effective preset of every table ``tables_stmt`` selects.
+
+    Rules are evaluated in Python by the same resolver the scheduler uses, so this reads the
+    whole candidate set (stats columns only, never ``raw``) rather than a SQL approximation.
+    """
+    presets, rules, assignments = load_resolution_inputs(session)
+    candidates = session.scalars(
+        tables_stmt.options(
+            selectinload(Table.stats).load_only(*STATS_LOAD_ONLY_COLUMNS),
+            selectinload(Table.cost).load_only(*COST_LOAD_ONLY_COLUMNS),
+        )
+    )
+    return {
+        table.id: effective_preset(table_to_candidate(table), presets, rules, assignments)
+        for table in candidates
+    }
+
+
+def table_ids_with_provenance(
+    session: Session, tables_stmt: Select[tuple[Table]], provenances: Collection[str]
+) -> list[uuid.UUID]:
+    wanted = set(provenances)
+    return [
+        table_id
+        for table_id, effective in resolve_effective_presets(session, tables_stmt).items()
+        if provenance_of(effective) in wanted
+    ]
+
+
+def id_in(
+    session: Session, column: InstrumentedAttribute[uuid.UUID], ids: Sequence[uuid.UUID]
+) -> ColumnElement[bool]:
+    """``column IN ids`` that stays one bind parameter on Postgres, whatever the fleet size."""
+    if not ids:
+        return false()
+    if session.get_bind().dialect.name == "postgresql":
+        return column == any_(literal(list(ids), type_=ARRAY(PG_UUID(as_uuid=True))))
+    return column.in_(list(ids))
 
 
 def simulate_preset(

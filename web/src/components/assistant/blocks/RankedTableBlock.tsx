@@ -1,14 +1,13 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
 import { formatAssistantCell, type AssistantBlock, type AssistantColumn } from "../../../api/assistant";
-import { DataTable } from "../../ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../../ui/data-table";
 import { EvidenceLinks } from "./EvidenceLinks";
 
 const columnHeader = (column: AssistantColumn): string => column.header ?? column.label ?? column.key;
 
 export const assistantTableColumns = (
   columns: AssistantColumn[]
-): ColumnDef<Record<string, unknown>, unknown>[] =>
+): DataTableColumnDef<Record<string, unknown>, unknown>[] =>
   columns.map((column) => ({
     id: column.key,
     header: columnHeader(column),

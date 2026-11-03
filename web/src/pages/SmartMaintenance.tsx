@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { Info } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -22,7 +21,7 @@ import { ConfirmAction } from "../components/confirm";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { DataTable } from "../components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "../components/ui/data-table";
 import { EmptyState } from "../components/ui/empty-state";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/ui/sheet";
@@ -247,7 +246,7 @@ export function SmartMaintenance() {
     return null;
   };
 
-  const recColumns: ColumnDef<SmartLayoutRecommendationRead, unknown>[] = [
+  const recColumns: DataTableColumnDef<SmartLayoutRecommendationRead, unknown>[] = [
     {
       id: "table_ref",
       header: "Table",
@@ -370,7 +369,7 @@ export function SmartMaintenance() {
     }
   ];
 
-  const tierColumns: ColumnDef<DetectionTierRowRead, unknown>[] = [
+  const tierColumns: DataTableColumnDef<DetectionTierRowRead, unknown>[] = [
     {
       id: "table",
       header: "Table",

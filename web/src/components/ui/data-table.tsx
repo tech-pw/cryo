@@ -1,14 +1,19 @@
 import {
+  columnResizingFeature,
+  columnSizingFeature,
+  columnVisibilityFeature,
   flexRender,
-  getCoreRowModel,
-  useReactTable,
+  rowSelectionFeature,
+  tableFeatures,
+  useTable,
   type ColumnDef,
   type ColumnSizingState,
+  type ColumnVisibilityState,
   type Header,
   type OnChangeFn,
+  type RowData,
   type RowSelectionState,
-  type TableOptions,
-  type VisibilityState
+  type TableOptions
 } from "@tanstack/react-table";
 import { ChevronLeft, ChevronRight, Columns3, Rows2, Rows3 } from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -30,8 +35,19 @@ export interface DataTablePagination {
   pageSizeOptions?: number[];
 }
 
-export interface DataTableProps<TData> {
-  columns: ColumnDef<TData, unknown>[];
+const dataTableFeatures = tableFeatures({
+  rowSelectionFeature,
+  columnVisibilityFeature,
+  columnSizingFeature,
+  columnResizingFeature
+});
+
+export type DataTableFeatures = typeof dataTableFeatures;
+
+export type DataTableColumnDef<TData extends RowData, TValue = unknown> = ColumnDef<DataTableFeatures, TData, TValue>;
+
+export interface DataTableProps<TData extends RowData> {
+  columns: DataTableColumnDef<TData>[];
   data: TData[];
   density?: TableDensity;
   onDensityChange?: (density: TableDensity) => void;
@@ -41,7 +57,7 @@ export interface DataTableProps<TData> {
   emptyTitle?: string;
   emptyDescription?: string;
   emptyAction?: ReactNode;
-  getRowId?: TableOptions<TData>["getRowId"];
+  getRowId?: TableOptions<DataTableFeatures, TData>["getRowId"];
   rowSelection?: RowSelectionState;
   onRowSelectionChange?: OnChangeFn<RowSelectionState>;
   enableRowSelection?: boolean | ((row: { original: TData }) => boolean);
@@ -50,8 +66,8 @@ export interface DataTableProps<TData> {
   className?: string;
   tableClassName?: string;
   getRowClassName?: (row: TData) => string | undefined;
-  columnVisibility?: VisibilityState;
-  onColumnVisibilityChange?: OnChangeFn<VisibilityState>;
+  columnVisibility?: ColumnVisibilityState;
+  onColumnVisibilityChange?: OnChangeFn<ColumnVisibilityState>;
   columnSizing?: ColumnSizingState;
   onColumnSizingChange?: OnChangeFn<ColumnSizingState>;
   columnSizingStorageKey?: string;
@@ -94,7 +110,7 @@ function columnSizeStyle(size: number): CSSProperties {
   return { width: size, minWidth: size, maxWidth: size };
 }
 
-function ColumnResizeHandle<TData>({ header }: { header: Header<TData, unknown> }) {
+function ColumnResizeHandle<TData extends RowData>({ header }: { header: Header<DataTableFeatures, TData, unknown> }) {
   if (!header.column.getCanResize()) return null;
   const resizing = header.column.getIsResizing();
   return (
@@ -361,7 +377,7 @@ function TablePaginationBar({ pagination }: { pagination: DataTablePagination })
   );
 }
 
-export function DataTable<TData>({
+export function DataTable<TData extends RowData>({
   columns,
   data,
   density = "default",
@@ -412,7 +428,7 @@ export function DataTable<TData>({
   const tableColumns = useMemo(() => {
     if (!selectionEnabled) return columns;
 
-    const selectColumn: ColumnDef<TData, unknown> = {
+    const selectColumn: DataTableColumnDef<TData> = {
       id: "__select",
       header: ({ table }) => (
         <Checkbox
@@ -430,7 +446,6 @@ export function DataTable<TData>({
           aria-label="Select row"
         />
       ),
-      enableSorting: false,
       enableResizing: false,
       size: 40,
       minSize: 40,
@@ -440,10 +455,10 @@ export function DataTable<TData>({
     return [selectColumn, ...columns];
   }, [columns, selectionEnabled]);
 
-  const table = useReactTable({
+  const table = useTable({
+    features: dataTableFeatures,
     data,
     columns: tableColumns,
-    getCoreRowModel: getCoreRowModel(),
     getRowId,
     enableRowSelection,
     enableColumnResizing: columnResizingEnabled,
@@ -459,11 +474,9 @@ export function DataTable<TData>({
       rowSelection: rowSelection ?? {},
       columnVisibility: columnVisibility ?? {},
       columnSizing
-    },
-    manualPagination: Boolean(pagination),
-    pageCount: pagination ? Math.max(1, Math.ceil(pagination.totalRows / pagination.pageSize)) : undefined
+    }
   });
-  const isResizing = Boolean(table.getState().columnSizingInfo.isResizingColumn);
+  const isResizing = Boolean(table.state.columnResizing.isResizingColumn);
 
   const showToolbar = Boolean(toolbar || (showDensityToggle && onDensityChange));
   const isEmpty = !loading && data.length === 0;
