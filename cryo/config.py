@@ -86,6 +86,33 @@ class Settings(BaseSettings):
     scan_small_file_mb: float = Field(default=89.6, gt=0)
     scan_needs_compaction_threshold: int = Field(default=128, gt=0)
 
+    # `cryo events` commit watcher. Each probe is one catalog load_table (metadata only), so
+    # these bound catalog load: at most max_tables_per_poll loads per poll, and no table is
+    # loaded more often than min_table_interval_seconds.
+    events_probe_max_tables_per_poll: int = Field(
+        default=100,
+        ge=1,
+        description=(
+            "Most watched tables the commit watcher loads from the catalog in one poll. "
+            "Tables past the cap wait for the next poll, oldest-probed first."
+        ),
+    )
+    events_probe_min_table_interval_seconds: float = Field(
+        default=30.0,
+        ge=0,
+        description="Minimum seconds between two catalog probes of the same watched table.",
+    )
+    events_probe_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        description="Seconds one catalog load_table may take before the probe gives up.",
+    )
+    events_target_refresh_seconds: float = Field(
+        default=300.0,
+        gt=0,
+        description="Seconds between refreshes of the commit watcher's watched-table list.",
+    )
+
     # Fleet-cost day-over-day / week-over-week spike & decline thresholds for the daily
     # report (see cryo/reporting/cost_signals.py). Defaults are reasonable starting points,
     # not tuned to any specific deployment -- override per-environment as real threshold

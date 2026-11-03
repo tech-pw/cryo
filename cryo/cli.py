@@ -871,7 +871,7 @@ class EventsRunner(DaemonRunner):
             self._watcher = build_event_watcher(self._get_wiring())
             return self._watcher
         except Exception as exc:
-            self._logger.debug("Cannot initialize event watcher: %s", exc)
+            self._logger.warning("Cannot initialize event watcher: %s", exc)
             return None
 
 
