@@ -351,7 +351,7 @@ measure it against.
 
 ## 8. Expire driver kill, 2026-10-19
 
-`cdp.unified_bq.gold_dbt_pw_bq` (28,400 GB, 179,020 data files) ran `expire_snapshots` as
+`analytics.events.gold_dbt_events_wide` (28,400 GB, 179,020 data files) ran `expire_snapshots` as
 `cryo-spark-069a3d881f`. The driver pod exited 137, reason `OOMKilled`, after 12m 51s.
 The wrapper Job succeeded. The stored error was broadcast INFO because a cgroup SIGKILL
 does not print a JVM exception, and `get_job_run` was reading the driver log only.

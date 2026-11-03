@@ -61,14 +61,14 @@ _QUOTA_LOG = (
 
 def _optimize_plan() -> MaintenancePlan:
     return MaintenancePlan(
-        table_ref="cdp.mart.events",
+        table_ref="analytics.mart.events",
         mode=Mode.STANDARD,
         operations=(Operation(OperationType.OPTIMIZE, {"file_size_mb": 256}),),
     )
 
 
 def _engine(stats: dict[str, object] | None = None) -> tuple[SparkK8sEngine, MagicMock]:
-    engine = SparkK8sEngine(config={"catalog": "cdp"})
+    engine = SparkK8sEngine(config={"catalog": "analytics"})
     if stats is not None:
         engine = engine.with_table_stats(stats)
     client = MagicMock()
@@ -176,7 +176,7 @@ def test_expire_does_not_take_an_executor_step() -> None:
         state_details="Executor OOMKilled exit 137 (executor 1)",
     )
     plan = MaintenancePlan(
-        table_ref="cdp.mart.events",
+        table_ref="analytics.mart.events",
         mode=Mode.STANDARD,
         operations=(Operation(OperationType.EXPIRE_SNAPSHOTS, {"retention_days": 7}),),
     )

@@ -88,7 +88,7 @@ The research below is unchanged. This section records what the follow-up impleme
 
 | Measure | Value |
 |---|---|
-| Tables in the `cdp` source | 14,795 |
+| Tables in the production source | 14,795 |
 | 3,000 largest tables | **227.3 TB** of live data-file bytes (the 3,000th table is 0.25 GB) |
 | Concentration | top 100 tables = 73.6%, top 500 = 95.9% |
 | By bucket (those tables) | silver 108.3 TB, bronze 63.5 TB, gold 45.6 TB, temp 7.8 TB, other 2.1 TB |
@@ -275,7 +275,7 @@ What must be true before any offline class is safe on a live Iceberg table (**I*
 
 ```
 ┌ Archive ────────────────────────────────────────────────────────────────────────┐
-│ Policy: cdp-default (from source) · mode: advisory            [Edit] [Preview plan]│
+│ Policy: lake-default (from source) · mode: advisory            [Edit] [Preview plan]│
 │ Bytes by tier, observed from S3 2 h ago (1,204 of 1,310 partitions)               │
 │ ██████████████████░░░░░░░░▒▒▒▒▒▒   Hot 14.2 TB · Auto 3.1 TB · Archive-instant 6.8 TB│
 │ Projected saving $412/mo · Realized, last 30 d $188/mo · Retrieval fees $4         │
@@ -378,7 +378,7 @@ This session had no valid AWS credentials. Someone with access should check:
 
 ## 10. Method and caveats
 
-* **Live evidence** (**L**) was gathered on 2026-10-01 through the documented read-only path: a port-forward to `cryo-api` and a short-lived `viewer`-role dev token, `GET` requests only (a few hundred), against the production `cdp` source. The token was deleted and the tunnel closed afterwards. One `cryo-api` replica was OOMKilled during the probe (§2.4); it had restarted earlier that morning and its sibling holds about 3.8 GiB, so API memory headroom deserves a separate look, and `get_partition_access` should aggregate in SQL.
+* **Live evidence** (**L**) was gathered on 2026-10-01 through the documented read-only path: a port-forward to `cryo-api` and a short-lived `viewer`-role dev token, `GET` requests only (a few hundred), against the production source. The token was deleted and the tunnel closed afterwards. One `cryo-api` replica was OOMKilled during the probe (§2.4); it had restarted earlier that morning and its sibling holds about 3.8 GiB, so API memory headroom deserves a separate look, and `get_partition_access` should aggregate in SQL.
 * **Reproducing the numbers:** `GET /tables?limit=500&offset=N&sort=-total_size_gb` (stats carry `total_size_gb`, `partition_col`, `partition_col_type`, `query_count_30d`); `GET /tables/{id}/partitions?limit=1000&offset=N` (partition value, transform, `partition_size_gb`); `GET /tables/{id}/s3-tiering` and `/tier-candidates`; `GET /tables/{id}/partition-access?days=35`; `GET /sources/{id}/s3-log-configs`. Use a viewer token, pace requests a few seconds apart, watch `kubectl top pod -n cryo` between batches, and avoid `/partition-access` on tables with tens of thousands of partitions until that query is bounded.
 * **Sizes** are the scanner's live data-file bytes in GiB, matching S3's GB-month billing unit; the partition list is capped at 5,000 partitions per table (most small files first), which did not materially truncate the 150 tables analysed (parsed partition bytes equalled table bytes to 0.01% overall; one 330 GB table was at 93.5%).
 * **Not measured:** actual current storage class per object, actual reads by partition (§2.3), query-side retrieval exposure, and anything requiring AWS credentials (§9).
