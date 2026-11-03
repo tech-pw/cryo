@@ -210,10 +210,12 @@ export interface TableRead {
   failure_category_actionable_from_cryo?: boolean;
   owner_email?: string | null;
   stats?: TableStatsRead | null;
-  effective_preset?: string | null;
+  effective_preset?: TableEffectivePreset | null;
   maintenance?: TableMaintenance | null;
 }
 
+export type TableEffectivePreset = components["schemas"]["TableEffectivePresetRead"];
+export type EffectiveProvenance = TableEffectivePreset["provenance"];
 export type TableMaintenance = components["schemas"]["TableMaintenanceRead"];
 export type TableMaintenanceState = TableMaintenance["state"];
 export type TableJobRef = components["schemas"]["TableJobRef"];

@@ -105,6 +105,7 @@ import type {
   TableAlertSubscriptionRead,
   TableCostRead,
   TableRead,
+  EffectiveProvenance,
   TableRunRead,
   UUID,
   PlanVerdict,
@@ -207,7 +208,8 @@ const formatApiDetail = (detail: unknown): string => {
 
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  query?: Record<string, string | number | boolean | undefined>;
+  /** An array value repeats the parameter (`key=a&key=b`), the form FastAPI reads as a list. */
+  query?: Record<string, string | number | boolean | readonly string[] | undefined>;
   body?: unknown;
   signal?: AbortSignal;
 }
@@ -219,7 +221,8 @@ export const apiFetch = async <T>(
 ): Promise<T> => {
   const url = new URL(`${API_PREFIX}${path}`, window.location.origin);
   Object.entries(options.query ?? {}).forEach(([key, value]) => {
-    if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
+    if (Array.isArray(value)) value.forEach((item) => url.searchParams.append(key, item));
+    else if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   });
 
   const response = await fetch(`${url.pathname}${url.search}`, {
@@ -251,6 +254,7 @@ export interface TableViewQuery {
   maintenance_overdue?: boolean;
   p95_breach?: boolean;
   no_reads_days?: number;
+  effective_provenance?: EffectiveProvenance[];
 }
 
 export interface TableListPage extends PaginatedTables {
@@ -282,7 +286,8 @@ export const listTables = (
       freshness_breach: args.freshness_breach ? true : undefined,
       maintenance_overdue: args.maintenance_overdue ? true : undefined,
       p95_breach: args.p95_breach ? true : undefined,
-      no_reads_days: args.no_reads_days
+      no_reads_days: args.no_reads_days,
+      effective_provenance: args.effective_provenance
     },
     signal: args.signal
   });
@@ -298,7 +303,8 @@ export const exportTablesCsv = (
       freshness_breach: args.freshness_breach ? true : undefined,
       maintenance_overdue: args.maintenance_overdue ? true : undefined,
       p95_breach: args.p95_breach ? true : undefined,
-      no_reads_days: args.no_reads_days
+      no_reads_days: args.no_reads_days,
+      effective_provenance: args.effective_provenance
     },
     signal: args.signal
   });
@@ -308,10 +314,19 @@ export const getTablesMaintenanceFunnel = (api: ApiOptions, signal?: AbortSignal
 
 export const groupTables = (
   api: ApiOptions,
-  args: { field: TableGroupByField; predicate?: Predicate | null; signal?: AbortSignal }
+  args: {
+    field: TableGroupByField;
+    predicate?: Predicate | null;
+    effective_provenance?: EffectiveProvenance[];
+    signal?: AbortSignal;
+  }
 ) =>
   apiFetch<TableGroupByResponse>("/tables/group-by", api, {
-    query: { field: args.field, filter: serializePredicate(args.predicate) },
+    query: {
+      field: args.field,
+      filter: serializePredicate(args.predicate),
+      effective_provenance: args.effective_provenance
+    },
     signal: args.signal
   });
 
@@ -337,7 +352,8 @@ export const fetchAllMatchingTableIds = async (
       freshness_breach: args.freshness_breach,
       maintenance_overdue: args.maintenance_overdue,
       p95_breach: args.p95_breach,
-      no_reads_days: args.no_reads_days
+      no_reads_days: args.no_reads_days,
+      effective_provenance: args.effective_provenance
     });
     ids.push(...batch.items.map((table) => table.id));
   }
