@@ -541,6 +541,12 @@ left a large table unmatched until someone looked by hand.
   then the default.
 - **Unset default** with no replacement leaves unassigned tables unmaintained (provenance
   `none`). The preset form shows how many tables are affected before saving.
+- The Tables registry's **Effective preset** column shows which preset maintains each table
+  and why (Pinned, Rule, Default, or Unmaintained, plus "paused"). The **Coverage** filter
+  lists tables on the default (*On default*) or covered by nothing (*Unmaintained*).
+- **Upgrading to 0.2.0:** the migration gives a default preset that has no schedule
+  `0 2 * * *`, so it starts firing nightly at 02:00 in `CRYO_DISPLAY_TIMEZONE`. Pause it
+  before upgrading if you don't want that.
 - Every pause, resume, default switch and enable/disable writes an `audit_log` row
   (`preset_paused`, `preset_resumed`, `preset_default_set`, `preset_default_unset`,
   `preset_enabled`, `preset_disabled`) with the actor and affected-table count. The
