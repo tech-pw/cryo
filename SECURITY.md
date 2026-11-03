@@ -55,13 +55,19 @@ Two independent scanners check the git history for committed credentials:
 | Scanner | Workflow | When | Scope | Fails on |
 |---|---|---|---|---|
 | [gitleaks][gitleaks] 8.30.1 | `ci.yml`, job `Secret scan (gitleaks)` | Every PR, push to `main` that changes code, manual run | PR: `base..HEAD`. Otherwise the full history of the checked-out ref | Any match of a `.gitleaks.toml` rule that is not allowlisted |
-| [trufflehog][trufflehog] 3.99.8 | `secret-scan.yml`, job `Secret scan (trufflehog, changed commits)` | Every PR and push to `main` | The commits the PR or push adds | A verified (live) credential, or one whose verification failed (`--results=verified,unknown`) |
-| trufflehog 3.99.8 | `secret-scan.yml`, job `Secret scan (trufflehog, full history)` | Weekly, and manual `workflow_dispatch` | Every fetched commit | Same as above |
+| [trufflehog][trufflehog] 3.99.8 | `secret-scan.yml`, job `Secret scan (trufflehog, changed commits)` | Every PR and push to `main` | The commits the PR or push adds | A verified (live) credential, or an `unknown` one (verification errored) |
+| trufflehog 3.99.8 | `secret-scan.yml`, job `Secret scan (trufflehog, full history)` | Weekly, and manual `workflow_dispatch` | Every commit reachable from `HEAD` | Same as above |
 
 gitleaks matches the shape of a secret; trufflehog asks the provider whether the credential
-works. Unverified trufflehog matches are not reported, because gitleaks already covers those
-shapes with an allowlist in `.gitleaks.toml`. Add a gitleaks allowlist entry only for a value
-you have confirmed is not a credential, and say why in the entry.
+works. Unverified trufflehog matches (the provider said no) are not reported, because gitleaks
+already covers those shapes with an allowlist in `.gitleaks.toml`. Add a gitleaks allowlist
+entry only for a value you have confirmed is not a credential, and say why in the entry.
+
+Each trufflehog job runs two passes. The first fails on a verified result from any detector.
+The second fails on `unknown` results, except from the detectors that verify by connecting to
+the host written in the string (`HOST_DIALING_DETECTORS` in the workflow: JDBC, URI, Postgres
+and similar). Test and compose fixtures embed placeholder passwords in connection strings that point
+at `localhost` or compose-only hosts the runner cannot reach, so those detectors can only report `unknown` for them.
 
 The weekly full-history job also re-checks history after a rewrite and catches an old
 credential that a provider only starts verifying later. Run it by hand after any history
