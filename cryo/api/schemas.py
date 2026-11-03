@@ -617,6 +617,9 @@ class PresetSimulationResponse(BaseModel):
     sample: list[PresetSampleTable]
 
 
+EffectiveProvenance = Literal["assignment", "rule", "rule_after_stale_pin", "default", "none"]
+
+
 class EffectivePresetResponse(BaseModel):
     table_id: uuid.UUID
     preset_id: uuid.UUID | None = None
@@ -628,8 +631,19 @@ class EffectivePresetResponse(BaseModel):
     # that provenance value, so any table actually hitting that fallback path (e.g.
     # user_experience.silver_results) 500'd on every /effective-preset call instead of
     # reporting the (correct, safer-than-None) rule match it resolved to.
-    provenance: Literal["assignment", "rule", "rule_after_stale_pin", "default", "none"]
+    provenance: EffectiveProvenance
     rule_id: uuid.UUID | None = None
+
+
+class TableEffectivePresetRead(BaseModel):
+    """The preset that maintains a table, and why. ``provenance="none"``: unmaintained."""
+
+    preset_id: uuid.UUID | None = None
+    preset_name: str | None = None
+    provenance: EffectiveProvenance
+    rule_id: uuid.UUID | None = None
+    # A paused preset still owns its tables (#119); nothing is scheduled until it resumes.
+    paused: bool = False
 
 
 class TableParamOverridePatch(BaseModel):
@@ -723,6 +737,8 @@ class TableRead(OrmModel):
     stats: TableStatsRead | None = None
     # Populated by GET /tables only (bounded to the page); detail views leave it null.
     maintenance: TableMaintenanceRead | None = None
+    # GET /tables only, like `maintenance`. Detail views use GET /tables/{id}/effective-preset.
+    effective_preset: TableEffectivePresetRead | None = None
 
 
 TableMaintenanceState = Literal[

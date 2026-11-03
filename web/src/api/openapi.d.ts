@@ -13056,6 +13056,28 @@ export interface components {
             /** Deactivated Ids */
             deactivated_ids: string[];
         };
+        /**
+         * TableEffectivePresetRead
+         * @description The preset that maintains a table, and why. ``provenance="none"``: unmaintained.
+         */
+        TableEffectivePresetRead: {
+            /** Preset Id */
+            preset_id?: string | null;
+            /** Preset Name */
+            preset_name?: string | null;
+            /**
+             * Provenance
+             * @enum {string}
+             */
+            provenance: "assignment" | "rule" | "rule_after_stale_pin" | "default" | "none";
+            /** Rule Id */
+            rule_id?: string | null;
+            /**
+             * Paused
+             * @default false
+             */
+            paused: boolean;
+        };
         /** TableFilterTranslationRequest */
         TableFilterTranslationRequest: {
             /** Query */
@@ -13488,6 +13510,7 @@ export interface components {
             owner_email?: string | null;
             stats?: components["schemas"]["TableStatsRead"] | null;
             maintenance?: components["schemas"]["TableMaintenanceRead"] | null;
+            effective_preset?: components["schemas"]["TableEffectivePresetRead"] | null;
         };
         /** TableRunRead */
         TableRunRead: {
@@ -15240,6 +15263,8 @@ export interface operations {
                 p95_breach?: boolean;
                 no_reads_days?: number | null;
                 include_removed?: boolean;
+                /** @description Only tables whose effective preset comes from one of these: a pin (assignment), a rule, a rule after a stale pin, the default preset, or none (unmaintained). Repeat the parameter to combine. */
+                effective_provenance?: ("assignment" | "rule" | "rule_after_stale_pin" | "default" | "none")[] | null;
             };
             header?: never;
             path?: never;
@@ -15276,6 +15301,7 @@ export interface operations {
                 maintenance_overdue?: boolean;
                 p95_breach?: boolean;
                 no_reads_days?: number | null;
+                effective_provenance?: ("assignment" | "rule" | "rule_after_stale_pin" | "default" | "none")[] | null;
             };
             header?: never;
             path?: never;
@@ -15326,6 +15352,7 @@ export interface operations {
             query: {
                 field: string;
                 filter?: string | null;
+                effective_provenance?: ("assignment" | "rule" | "rule_after_stale_pin" | "default" | "none")[] | null;
             };
             header?: never;
             path?: never;

@@ -150,6 +150,16 @@ outcome, and `score_delta_7d`. The explorer filter grammar also accepts the comp
 (ISO timestamp). These are explorer-only and are not valid in preset rules. Sort also accepts
 `query_count_30d`, `scan_at` and `score_delta_7d`.
 
+Each row also carries `effective_preset`: the preset that maintains the table (`preset_id`,
+`preset_name`, `rule_id`, `paused`) and its `provenance`: `assignment` (pinned), `rule`,
+`rule_after_stale_pin`, `default`, or `none` (unmaintained). It is resolved by the scheduler's
+own resolver, so a paused preset still owns its tables. `GET /tables/{id}` leaves it null; use
+`GET /tables/{id}/effective-preset` there. Filter on it with `effective_provenance`, repeated
+to combine (`?effective_provenance=default&effective_provenance=none`). `GET /tables/group-by`
+and `GET /tables/export.csv` accept the same parameter, and the CSV ends with
+`effective_preset` and `effective_provenance` columns. Rule matching runs in Python, so this
+filter is not part of the `filter` predicate and can't drive a filter-mode bulk selection.
+
 `GET /tables/maintenance-funnel` returns the latest nightly batch as Sankey `nodes` and `links`:
 active, then scanned / scan failing / not scanned, then needs work / no work, then the skip
 reasons or selected, then succeeded / failed / in progress. It counts tables, not operations.
