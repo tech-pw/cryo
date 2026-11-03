@@ -26,6 +26,15 @@ jobs don't have this gap (NativeJobWatcher finalizes the job row directly); this
 now does the equivalent for the fallback path, using the same status mapping
 finalize_open_runs already uses for job-status vocabulary (succeeded/failed) so a job
 resolved here reads identically to one finalized any other way.
+
+Issue #382: every job that reaches this sweep was admitted through a native dispatch, and
+while that dispatch is active NativeJobWatcher owns the job: it renews the table lock,
+re-marks the job RUNNING each tick, and sets the final status and releases the lock when
+the pod ends. Finalizing such a job here made it terminal while its pod was still running
+and its lock still held, which the governor's periodic lock reconcile then released as
+"orphaned" mid-run. The sweep now leaves those jobs to the watcher. When it does end a job
+itself, it also releases what the job held, through the same release_job_claims the worker
+and the recovery paths use.
 """
 
 from __future__ import annotations
@@ -39,14 +48,18 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import AuditLog, Destination, MaintenanceJob, TableStats
+from cryo.db.models import AuditLog, Destination, MaintenanceJob, NativeDispatch, TableStats
+from cryo.db.repositories.native_dispatch import ACTIVE_DISPATCH_STATUSES
 from cryo.domain.enums import JobStatus, OperationType
 from cryo.engines.base import capacity_refusal_error, is_capacity_refusal
 from cryo.engines.spark.k8s import JobRunState
 from cryo.engines.spark.procedure_metrics import rewrite_file_counts
+from cryo.queue.job_release import release_job_claims
 
 if TYPE_CHECKING:
     from cryo.engines.spark.k8s_engine import SparkK8sEngine
+    from cryo.queue.locks import LockStore
+    from cryo.queue.redis_queue import MaintenanceQueue
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +77,8 @@ def sweep_pending_fallback_dispatches(
     session: Session,
     *,
     max_rows: int = 200,
+    queue: MaintenanceQueue | None = None,
+    lock_store: LockStore | None = None,
 ) -> FallbackSweepResult:
     """Resolve up to ``max_rows`` SUBMITTED audit rows to their real Spark outcome.
 
@@ -72,6 +87,9 @@ def sweep_pending_fallback_dispatches(
     bottleneck -- a backlog of pending rows is resolved across several ticks, not one.
     One row's lookup failure (network hiccup, destination since deleted) must not abort
     the rest of the batch.
+
+    ``queue`` and ``lock_store`` receive the in-flight slot and table lock of every job
+    this sweep finalizes; without them those are left to the periodic reconcilers.
     """
     rows = session.scalars(
         select(AuditLog)
@@ -85,6 +103,7 @@ def sweep_pending_fallback_dispatches(
     resolved_unknown = 0
     still_pending = 0
     lookup_errors = 0
+    finalized_jobs: list[tuple[str, str, JobStatus]] = []
 
     # engine_ref lookups all go through the same fallback destination's Spark client --
     # resolve it once per sweep call, not once per row, and skip the whole batch (leaving
@@ -167,7 +186,11 @@ def sweep_pending_fallback_dispatches(
             resolved_failed += 1
             job_status = JobStatus.FAILED
         row.resolved_at = datetime.now(UTC)
-        _finalize_job_row(session, job_id=row.job_id, status=job_status, error=row.detail)
+        finalized = _finalize_job_row(
+            session, job_id=row.job_id, status=job_status, error=row.detail
+        )
+        if finalized is not None:
+            finalized_jobs.append((str(finalized.id), str(finalized.table_id), job_status))
         # submit() (the async fire-and-forget path this sweep resolves) deliberately
         # skips cleanup at dispatch time -- the driver pod/credentials Secret are still
         # in use while the job runs (see SparkK8sEngine.submit's own docstring). Now that
@@ -192,6 +215,18 @@ def sweep_pending_fallback_dispatches(
     if resolved_ok or resolved_failed or resolved_unknown:
         session.commit()
 
+    # After the commit, like every other path that ends a job: a lock released ahead of a
+    # rolled-back status would let a second job onto a table this one still claims.
+    for job_id, table_id, job_status in finalized_jobs:
+        try:
+            release_job_claims(
+                queue, lock_store, job_id=job_id, table_id=table_id, status=job_status
+            )
+        except Exception:
+            logger.warning(
+                "Fallback sweep: could not release slot/lock for job %s", job_id, exc_info=True
+            )
+
     return FallbackSweepResult(
         resolved_ok, resolved_failed, resolved_unknown, still_pending, lookup_errors
     )
@@ -199,24 +234,34 @@ def sweep_pending_fallback_dispatches(
 
 def _finalize_job_row(
     session: Session, *, job_id: uuid.UUID | None, status: JobStatus, error: str | None
-) -> None:
+) -> MaintenanceJob | None:
     """Mirrors mark_status's own started_at/finished_at semantics (job_store.py) so a job
     finalized here reads identically to one finalized through the normal admission path.
+    Returns the job when this call finalized it, so the caller can release its claims.
 
     Only touches a job still in RUNNING -- a job that already reached a terminal state some
     other way (a later dispatch superseded it, an operator intervened) is left alone rather
     than overwritten by a possibly-stale resolution of an older audit row. job_id can, in
     principle, reference a since-deleted job (FK is nullable) -- silently no-ops rather than
-    erroring, since a missing job row means there's nothing left to finalize."""
+    erroring, since a missing job row means there's nothing left to finalize.
+
+    A RUNNING job whose native dispatch is still active belongs to NativeJobWatcher, which
+    sets its final status and releases its lock when the pod ends (see the module
+    docstring, #382)."""
     if job_id is None:
-        return
+        return None
     job = session.get(MaintenanceJob, job_id)
     if job is None or job.status != JobStatus.RUNNING.value:
-        return
+        return None
+    if job.dispatch_id is not None:
+        dispatch = session.get(NativeDispatch, job.dispatch_id)
+        if dispatch is not None and dispatch.status in ACTIVE_DISPATCH_STATUSES:
+            return None
     job.status = status.value
     job.finished_at = datetime.now(UTC)
     if status is not JobStatus.SUCCEEDED:
         job.error = error
+    return job
 
 
 def _resubmit_after_driver_oom(session: Session, row: AuditLog, result: object) -> bool:

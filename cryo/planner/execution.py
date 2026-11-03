@@ -80,6 +80,7 @@ def build_execution_plan(
         unverified=shared_location_unverified,
     )
     plan = gate_gc_disabled(plan, gc_disabled=gc_disabled_in_stats(stats))
+    plan = gate_unapproved_operations(plan, approved=params.get("approved_operations") or ())
     plan = gate_spark_time_columns(plan, engine=destination.engine, stats=stats)
     plan = gate_engine_unsupported(plan, destination=destination)
     plan = gate_trino_semantics(plan, destination=destination)
@@ -301,11 +302,49 @@ def gate_gc_disabled(plan: MaintenancePlan, *, gc_disabled: bool) -> Maintenance
     )
 
 
+# Approval-gated operations the planner adds only on request. The governor's approval gate
+# reads a stored plan, and a job is admitted before its first plan exists, so the check
+# that holds is this one, against the approvals the job store read for this job.
+_APPROVAL_GATED_ON_REQUEST = frozenset({OperationType.MIGRATE_PARTITION_SPEC})
+
+
+def gate_unapproved_operations(
+    plan: MaintenancePlan,
+    *,
+    approved: Collection[str],
+) -> MaintenancePlan:
+    """Drop request-only operations no approved, unexecuted approval request covers."""
+    approved_names = {str(op) for op in approved}
+    blocked = {
+        operation.type
+        for operation in plan.operations
+        if operation.type in _APPROVAL_GATED_ON_REQUEST
+        and operation.type.value not in approved_names
+    }
+    if not blocked:
+        return plan
+    names = ", ".join(sorted(op.value for op in blocked))
+    return replace(
+        plan,
+        operations=tuple(op for op in plan.operations if op.type not in blocked),
+        notes=(
+            *plan.notes,
+            f"Skipped {names}: no approved request covers it for this table. Request it from "
+            "the table's Maintain tab and approve it under Decisions, Approvals.",
+        ),
+    )
+
+
 _ENGINE_UNSUPPORTED: dict[str, dict[OperationType, str]] = {
     EngineType.TRINO.value: {
         OperationType.REWRITE_POSITION_DELETES: (
             "Skipped rewrite_position_deletes: Trino has no procedure for it. Route the table to "
             "a Spark destination to merge position deletes."
+        ),
+        OperationType.MIGRATE_PARTITION_SPEC: (
+            "Skipped migrate_partition_spec: Trino enforces an OPTIMIZE filter only when every "
+            "partition spec the table still uses can enforce it, and an old-spec partition "
+            "filter cannot be. Route the table to a Spark destination to migrate it."
         ),
     },
 }

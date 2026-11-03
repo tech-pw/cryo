@@ -26,6 +26,7 @@ SPARK_SCHEMA_READING_OPERATIONS = frozenset(
         OperationType.CONVERT_DELETES,
         OperationType.CONVERT_EQUALITY_DELETES,
         OperationType.REWRITE_POSITION_DELETES,
+        OperationType.MIGRATE_PARTITION_SPEC,
         OperationType.COMPUTE_STATISTICS,
         OperationType.EXPIRE_DATA,
     }

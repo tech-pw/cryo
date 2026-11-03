@@ -197,6 +197,30 @@ scheduler:
       # after fixing the benefit-score updater's own memory leak.
       memory: 6Gi
 
+# Commit watcher + TableCommitted consumer (`cryo events`). Reads each watched table's new
+# snapshots from the live catalog and accumulates per-table drift. Continuous presets need it;
+# without it they never trigger and only their cron runs. Off by default.
+events:
+  enabled: false
+  pollIntervalSeconds: 5
+  probe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    readinessFailureThreshold: 2
+    livenessFailureThreshold: 4
+    # One tick probes at most CRYO_EVENTS_PROBE_MAX_TABLES_PER_POLL tables, each bounded by
+    # CRYO_EVENTS_PROBE_TIMEOUT_SECONDS.
+    tickStallSeconds: 1800
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
 scannerWorker:
   replicas: 3
   # Readiness + liveness on the daemon's /healthz (observability.metricsPort). It turns 503
