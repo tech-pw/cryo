@@ -314,14 +314,16 @@ function vitalsBody(profile: VisualProfile) {
 function tablesBody(profile: VisualProfile, url: URL) {
   const limit = clampPageSize(numberParam(url, "limit", DEFAULT_TABLE_PAGE_SIZE), DEFAULT_TABLE_PAGE_SIZE);
   const offset = Math.max(0, Math.floor(numberParam(url, "offset", 0)));
-  const items = tablesPage(offset, limit, profile.tablesTotal, profile.flags);
+  // No fixture table has been removed from its catalog.
+  const total = url.searchParams.get("removed") === "only" ? 0 : profile.tablesTotal;
+  const items = tablesPage(offset, limit, total, profile.flags);
   return {
     items,
-    total: profile.tablesTotal,
+    total,
     limit,
     offset,
     cursor: null,
-    has_more: offset + items.length < profile.tablesTotal
+    has_more: offset + items.length < total
   };
 }
 

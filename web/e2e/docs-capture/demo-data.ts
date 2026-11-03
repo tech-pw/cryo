@@ -205,7 +205,9 @@ export function demoTablesBody(url: URL) {
   const sort = url.searchParams.get("sort") ?? url.searchParams.get("order_by") ?? "";
   const filter = url.searchParams.get("filter") ?? "";
   const ordered = sort.includes("score") || sort.includes("grade") ? byWorst : DEMO_TABLES;
-  const rows = ordered.filter((table) => matchesFilter(table, filter));
+  // No demo table has been removed from its catalog.
+  const rows =
+    url.searchParams.get("removed") === "only" ? [] : ordered.filter((table) => matchesFilter(table, filter));
   const items = rows.slice(offset, offset + limit);
   return { items, total: rows.length, limit, offset, cursor: null, has_more: offset + items.length < rows.length };
 }

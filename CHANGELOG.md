@@ -13,6 +13,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   `site/README.md` now describes how the published 720p copy is made.
 
 ### Added
+- A **Removed** quick view on the Tables page lists tables the scanner found gone from their
+  catalog, with when and why, read-only. `GET /tables` takes `removed=exclude|include|only`
+  (`include_removed=true` stays as an alias) (#330).
+
 - Opt-in hard purge of tables removed from the catalog. Set
   `CRYO_REMOVED_TABLE_PURGE_AFTER_DAYS` (default off, minimum 7) and the scheduler deletes
   older tombstones daily, writing a `table_purged` audit row each. `cryo
@@ -41,6 +45,9 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- Turning off "Active only" on the Tables page now lists tables removed from the catalog. It
+  used to drop only the `is_active` filter while the server kept hiding them. CSV export and
+  group-by now hide removed tables by default too, so their totals match the list (#330).
 - Native `expire_snapshots` now deletes the files only the expired snapshots referenced, as Spark
   and Trino do. Before, it committed metadata only, so standard/light runs, expire-only requests,
   and shared-location tables (none of which plan `remove_orphan_files`) leaked them (#374).

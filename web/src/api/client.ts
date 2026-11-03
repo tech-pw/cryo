@@ -1,5 +1,6 @@
 import type {
   AuditEntry,
+  RemovedTablesMode,
   SpecMigrationApprovalRead,
   SpecMigrationRead,
   ColumnUsageResponse,
@@ -254,6 +255,8 @@ export interface TableViewQuery {
   maintenance_overdue?: boolean;
   p95_breach?: boolean;
   no_reads_days?: number;
+  /** Omitted means `exclude`: tables the catalog no longer lists stay out of the registry. */
+  removed?: RemovedTablesMode;
   effective_provenance?: EffectiveProvenance[];
 }
 
@@ -287,6 +290,7 @@ export const listTables = (
       maintenance_overdue: args.maintenance_overdue ? true : undefined,
       p95_breach: args.p95_breach ? true : undefined,
       no_reads_days: args.no_reads_days,
+      removed: args.removed,
       effective_provenance: args.effective_provenance
     },
     signal: args.signal
@@ -304,6 +308,7 @@ export const exportTablesCsv = (
       maintenance_overdue: args.maintenance_overdue ? true : undefined,
       p95_breach: args.p95_breach ? true : undefined,
       no_reads_days: args.no_reads_days,
+      removed: args.removed,
       effective_provenance: args.effective_provenance
     },
     signal: args.signal
@@ -317,6 +322,7 @@ export const groupTables = (
   args: {
     field: TableGroupByField;
     predicate?: Predicate | null;
+    removed?: RemovedTablesMode;
     effective_provenance?: EffectiveProvenance[];
     signal?: AbortSignal;
   }
@@ -325,6 +331,7 @@ export const groupTables = (
     query: {
       field: args.field,
       filter: serializePredicate(args.predicate),
+      removed: args.removed,
       effective_provenance: args.effective_provenance
     },
     signal: args.signal
@@ -353,6 +360,7 @@ export const fetchAllMatchingTableIds = async (
       maintenance_overdue: args.maintenance_overdue,
       p95_breach: args.p95_breach,
       no_reads_days: args.no_reads_days,
+      removed: args.removed,
       effective_provenance: args.effective_provenance
     });
     ids.push(...batch.items.map((table) => table.id));
