@@ -6,6 +6,16 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ## [Unreleased]
 
+### Added
+- A **Removed** quick view on the Tables page lists tables the scanner found gone from their
+  catalog, with when and why, read-only. `GET /tables` takes `removed=exclude|include|only`
+  (`include_removed=true` stays as an alias) (#330).
+
+### Fixed
+- Turning off "Active only" on the Tables page now lists tables removed from the catalog. It
+  used to drop only the `is_active` filter while the server kept hiding them. CSV export and
+  group-by now hide removed tables by default too, so their totals match the list (#330).
+
 ## [0.2.0] — 2026-11-03
 
 First tagged release since v0.1.5. GitHub release notes group the 180+ merged pull requests;

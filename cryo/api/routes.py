@@ -10,6 +10,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Annotated, Any, Literal, cast
 
 import boto3
@@ -1125,6 +1126,40 @@ def simulate_preset(preset_id: uuid.UUID, session: SessionDep) -> PresetSimulati
     )
 
 
+class RemovedTables(StrEnum):
+    EXCLUDE = "exclude"
+    INCLUDE = "include"
+    ONLY = "only"
+
+
+REMOVED_TABLES_DESCRIPTION = (
+    "Tables the catalog no longer lists (#120) are kept as tombstones. `exclude` (default) "
+    "hides them, `include` lists them with everything else, `only` lists just them."
+)
+RemovedQuery = Annotated[RemovedTables | None, Query(description=REMOVED_TABLES_DESCRIPTION)]
+IncludeRemovedQuery = Annotated[
+    bool,
+    Query(
+        deprecated=True,
+        description="Alias for `removed=include`. Ignored when `removed` is set.",
+    ),
+]
+
+
+def _removed_mode(removed: RemovedTables | None, include_removed: bool) -> RemovedTables:
+    if removed is not None:
+        return removed
+    return RemovedTables.INCLUDE if include_removed else RemovedTables.EXCLUDE
+
+
+def _removed_clause(mode: RemovedTables) -> ColumnElement[bool] | None:
+    if mode is RemovedTables.EXCLUDE:
+        return Table.removed_from_catalog_at.is_(None)
+    if mode is RemovedTables.ONLY:
+        return Table.removed_from_catalog_at.is_not(None)
+    return None
+
+
 @router.get(
     "/tables",
     response_model=PaginatedTables,
@@ -1141,7 +1176,8 @@ def list_tables(
     maintenance_overdue: Annotated[bool, Query()] = False,
     p95_breach: Annotated[bool, Query()] = False,
     no_reads_days: Annotated[int | None, Query(ge=1, le=3660)] = None,
-    include_removed: Annotated[bool, Query()] = False,
+    removed: RemovedQuery = None,
+    include_removed: IncludeRemovedQuery = False,
 ) -> PaginatedTables:
     predicate = _parse_filter(filter)
     tenant_id = require_tenant(session)
@@ -1151,7 +1187,12 @@ def list_tables(
         p95_breach=p95_breach,
         no_reads_days=no_reads_days,
     )
+    removed_mode = _removed_mode(removed, include_removed)
     cursor_filter = view.cursor_filter(filter)
+    if removed_mode is not RemovedTables.EXCLUDE:
+        cursor_filter = "|".join(
+            part for part in (cursor_filter, f"removed={removed_mode.value}") if part
+        )
     stmt = (
         select(Table)
         .outerjoin(TableStats)
@@ -1172,10 +1213,10 @@ def list_tables(
     )
     stmt = scope_by_tenant(stmt, Table, tenant_id)
     count_stmt = scope_by_tenant(count_stmt, Table, tenant_id)
-    if not include_removed:
-        # Tables the catalog no longer lists (#120) stay in the DB but leave the registry.
-        stmt = stmt.where(Table.removed_from_catalog_at.is_(None))
-        count_stmt = count_stmt.where(Table.removed_from_catalog_at.is_(None))
+    removed_clause = _removed_clause(removed_mode)
+    if removed_clause is not None:
+        stmt = stmt.where(removed_clause)
+        count_stmt = count_stmt.where(removed_clause)
     if predicate is not None:
         stmt = stmt.where(predicate)
         count_stmt = count_stmt.where(predicate)
@@ -1263,6 +1304,7 @@ def export_tables_csv(
     maintenance_overdue: Annotated[bool, Query()] = False,
     p95_breach: Annotated[bool, Query()] = False,
     no_reads_days: Annotated[int | None, Query(ge=1, le=3660)] = None,
+    removed: RemovedQuery = None,
 ) -> Response:
     predicate = _parse_filter(filter)
     tenant_id = require_tenant(session)
@@ -1289,6 +1331,8 @@ def export_tables_csv(
             TableStats.small_files_count,
             TableStats.total_files,
             Table.last_scan_error_kind,
+            Table.removed_from_catalog_at,
+            Table.removed_reason,
         )
         .select_from(Table)
         .join(Source, Source.id == Table.source_id)
@@ -1297,6 +1341,9 @@ def export_tables_csv(
         .outerjoin(TableAssignment)
     )
     stmt = scope_by_tenant(stmt, Table, tenant_id)
+    removed_clause = _removed_clause(removed or RemovedTables.EXCLUDE)
+    if removed_clause is not None:
+        stmt = stmt.where(removed_clause)
     if predicate is not None:
         stmt = stmt.where(predicate)
     if view.clause is not None:
@@ -1323,6 +1370,8 @@ def export_tables_csv(
             "small_files",
             "total_files",
             "owner",
+            "removed_from_catalog_at",
+            "removed_reason",
         ]
     )
     for row in session.execute(stmt):
@@ -1344,6 +1393,8 @@ def export_tables_csv(
                 row[12] if row[12] is not None else "",
                 row[13] if row[13] is not None else "",
                 row[3] or "",
+                row[15].isoformat() if row[15] else "",
+                row[16] or "",
             ]
         )
     return Response(
@@ -1402,10 +1453,11 @@ def group_tables(
     session: SessionDep,
     field: Annotated[str, Query()],
     filter: Annotated[str | None, Query()] = None,
+    removed: RemovedQuery = None,
 ) -> TableGroupByResponse:
     """Collective counts/totals per distinct value of ``field`` -- the Tables page's "group by"
-    view. Reuses the same filter predicate as ``GET /tables`` so a group-by respects whatever
-    the user has already filtered down to."""
+    view. Reuses the same filter predicate and ``removed`` handling as ``GET /tables`` so the
+    group totals add up to the list's total."""
     raw_group_col = _GROUP_BY_FIELDS.get(field)
     if raw_group_col is None:
         raise HTTPException(
@@ -1438,6 +1490,9 @@ def group_tables(
     if field == "catalog":
         stmt = stmt.join(Source, Source.id == Table.source_id)
     stmt = scope_by_tenant(stmt, Table, tenant_id)
+    removed_clause = _removed_clause(removed or RemovedTables.EXCLUDE)
+    if removed_clause is not None:
+        stmt = stmt.where(removed_clause)
     if predicate is not None:
         stmt = stmt.where(predicate)
     stmt = stmt.group_by(group_col).order_by(func.count(func.distinct(Table.id)).desc())

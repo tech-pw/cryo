@@ -1,4 +1,5 @@
 import type { VisibilityState } from "@tanstack/react-table";
+import type { RemovedTablesMode } from "../api/types";
 import {
   BROKEN_TABLE_FAILURE_THRESHOLD,
   isFreshnessBucketKey
@@ -382,12 +383,28 @@ export const triageViewPredicate = (
   }
 };
 
+/** Tables the scanner found gone from their catalog (#120). Read-only: they're never maintained. */
+export const REMOVED_VIEW = "removed";
+
+/**
+ * Which removed tables the registry asks for. The removed view lists only them; turning
+ * "Active only" off adds them to everything else. Undefined is the server default (hidden).
+ */
+export const removedTablesMode = (
+  view: string | null | undefined,
+  filters: Pick<TableFilterState, "activeOnly">
+): RemovedTablesMode | undefined => {
+  if (view === REMOVED_VIEW) return "only";
+  return filters.activeOnly === false ? "include" : undefined;
+};
+
 export const explorerPredicate = (
   filters: TableFilterState,
   extras: { schema?: string; view?: string | null } = {}
 ): Predicate | null =>
   all([
-    tableFiltersToPredicate(filters),
+    // A removed table is always inactive, so "Active only" would empty the removed view.
+    tableFiltersToPredicate(extras.view === REMOVED_VIEW ? { ...filters, activeOnly: false } : filters),
     extras.schema
       ? leaf("schema_name", "in", extras.schema.split(",").map((part) => part.trim()).filter(Boolean))
       : null,

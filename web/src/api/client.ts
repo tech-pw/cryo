@@ -1,5 +1,6 @@
 import type {
   AuditEntry,
+  RemovedTablesMode,
   ColumnUsageResponse,
   MaintenanceImpactResponse,
   SkipEvaluationPage,
@@ -249,6 +250,8 @@ export interface TableViewQuery {
   maintenance_overdue?: boolean;
   p95_breach?: boolean;
   no_reads_days?: number;
+  /** Omitted means `exclude`: tables the catalog no longer lists stay out of the registry. */
+  removed?: RemovedTablesMode;
 }
 
 export interface TableListPage extends PaginatedTables {
@@ -280,7 +283,8 @@ export const listTables = (
       freshness_breach: args.freshness_breach ? true : undefined,
       maintenance_overdue: args.maintenance_overdue ? true : undefined,
       p95_breach: args.p95_breach ? true : undefined,
-      no_reads_days: args.no_reads_days
+      no_reads_days: args.no_reads_days,
+      removed: args.removed
     },
     signal: args.signal
   });
@@ -296,7 +300,8 @@ export const exportTablesCsv = (
       freshness_breach: args.freshness_breach ? true : undefined,
       maintenance_overdue: args.maintenance_overdue ? true : undefined,
       p95_breach: args.p95_breach ? true : undefined,
-      no_reads_days: args.no_reads_days
+      no_reads_days: args.no_reads_days,
+      removed: args.removed
     },
     signal: args.signal
   });
@@ -306,10 +311,15 @@ export const getTablesMaintenanceFunnel = (api: ApiOptions, signal?: AbortSignal
 
 export const groupTables = (
   api: ApiOptions,
-  args: { field: TableGroupByField; predicate?: Predicate | null; signal?: AbortSignal }
+  args: {
+    field: TableGroupByField;
+    predicate?: Predicate | null;
+    removed?: RemovedTablesMode;
+    signal?: AbortSignal;
+  }
 ) =>
   apiFetch<TableGroupByResponse>("/tables/group-by", api, {
-    query: { field: args.field, filter: serializePredicate(args.predicate) },
+    query: { field: args.field, filter: serializePredicate(args.predicate), removed: args.removed },
     signal: args.signal
   });
 
@@ -335,7 +345,8 @@ export const fetchAllMatchingTableIds = async (
       freshness_breach: args.freshness_breach,
       maintenance_overdue: args.maintenance_overdue,
       p95_breach: args.p95_breach,
-      no_reads_days: args.no_reads_days
+      no_reads_days: args.no_reads_days,
+      removed: args.removed
     });
     ids.push(...batch.items.map((table) => table.id));
   }

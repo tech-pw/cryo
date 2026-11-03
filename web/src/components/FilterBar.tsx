@@ -34,6 +34,8 @@ interface Props {
   hideSummary?: boolean;
   /** Hide the needs-compaction toggle when the page offers it as a quick view instead. */
   hideNeedsToggle?: boolean;
+  /** Hide the active-only toggle when the page already decides which tables are listed. */
+  hideActiveToggle?: boolean;
 }
 
 /** Chips for values the bar can't show on its own triggers (search, numeric thresholds, ...). */
@@ -123,7 +125,8 @@ export const FilterBar = ({
   trailing,
   actions,
   hideSummary = false,
-  hideNeedsToggle = false
+  hideNeedsToggle = false,
+  hideActiveToggle = false
 }: Props) => {
   const patch = (next: Partial<TableFilterState>) => onChange({ ...value, ...next });
   const chips = useMemo(
@@ -274,19 +277,21 @@ export const FilterBar = ({
               ) : null}
             </PopoverContent>
           </Popover>
-          <button
-            type="button"
-            aria-pressed={activeOnly}
-            title={activeOnly ? "Hiding tables dropped from the catalog" : "Including tables dropped from the catalog"}
-            onClick={() => patch({ activeOnly: !activeOnly })}
-            className="inline-flex h-[var(--control-height-sm)] cursor-pointer items-center gap-1.5 rounded-[var(--radius-default)] border border-border px-2.5 text-xs text-muted-foreground hover:text-foreground aria-pressed:border-transparent aria-pressed:bg-[var(--color-surface-sunken)] aria-pressed:text-foreground"
-          >
-            <span
-              className={`size-1.5 rounded-full ${activeOnly ? "bg-[var(--color-status-success)]" : "bg-muted-foreground/40"}`}
-              aria-hidden="true"
-            />
-            {activeOnly ? "Active only" : "Including dropped"}
-          </button>
+          {hideActiveToggle ? null : (
+            <button
+              type="button"
+              aria-pressed={activeOnly}
+              title={activeOnly ? "Hiding tables dropped from the catalog" : "Including tables dropped from the catalog"}
+              onClick={() => patch({ activeOnly: !activeOnly })}
+              className="inline-flex h-[var(--control-height-sm)] cursor-pointer items-center gap-1.5 rounded-[var(--radius-default)] border border-border px-2.5 text-xs text-muted-foreground hover:text-foreground aria-pressed:border-transparent aria-pressed:bg-[var(--color-surface-sunken)] aria-pressed:text-foreground"
+            >
+              <span
+                className={`size-1.5 rounded-full ${activeOnly ? "bg-[var(--color-status-success)]" : "bg-muted-foreground/40"}`}
+                aria-hidden="true"
+              />
+              {activeOnly ? "Active only" : "Including dropped"}
+            </button>
+          )}
           {trailing}
           {filterActive || !activeOnly ? (
             <Button size="sm" variant="ghost" onClick={() => (onReset ? onReset() : onChange({ activeOnly: true }))}>

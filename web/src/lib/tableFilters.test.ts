@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   explorerPredicate,
+  REMOVED_VIEW,
+  removedTablesMode,
   scanStaleCutoff,
   slaBulletState,
   triageViewPredicate,
@@ -8,6 +10,27 @@ import {
   unusedCoverageCopy,
   viewFilterSpec
 } from "./tableFilters";
+
+describe("removed tables", () => {
+  it("lists only removed tables in the removed view, whatever Active only says", () => {
+    expect(removedTablesMode(REMOVED_VIEW, { activeOnly: true })).toBe("only");
+    expect(removedTablesMode(REMOVED_VIEW, { activeOnly: false })).toBe("only");
+  });
+
+  it("adds removed tables when Active only is off and hides them otherwise", () => {
+    expect(removedTablesMode(null, { activeOnly: false })).toBe("include");
+    expect(removedTablesMode("failed", { activeOnly: false })).toBe("include");
+    expect(removedTablesMode(null, { activeOnly: true })).toBeUndefined();
+    expect(removedTablesMode(null, {})).toBeUndefined();
+  });
+
+  it("drops the is_active predicate in the removed view so it isn't always empty", () => {
+    const removed = JSON.stringify(explorerPredicate({ activeOnly: true, grades: ["D"] }, { view: REMOVED_VIEW }));
+    expect(removed).not.toContain("is_active");
+    expect(removed).toContain("grade");
+    expect(JSON.stringify(explorerPredicate({ activeOnly: true }))).toContain("is_active");
+  });
+});
 
 describe("viewFilterSpec", () => {
   it("sets a server filter for each saved view", () => {

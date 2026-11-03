@@ -107,6 +107,18 @@ export const useTriageCounts = (): {
   };
 };
 
+/** Tables the scanner found gone from their catalog. Kept for history, never maintained. */
+export const useRemovedTablesCount = () => {
+  const { api, token } = useAuth();
+  return useQuery({
+    queryKey: ["tables-removed-count", token],
+    queryFn: () => listTables(api, { limit: 1, offset: 0, removed: "only" }),
+    select: (page) => page.total,
+    staleTime: 60_000,
+    refetchInterval: 60_000
+  });
+};
+
 /** Count of active tables whose stats are older than the stale cutoff (scanner lag, not failures). */
 export const useStaleScanCount = () => {
   const { api, token } = useAuth();

@@ -9,6 +9,7 @@ export type Priority = "HIGH" | "MEDIUM" | "LOW" | string;
 export type CostPrecision = "heuristic" | "metadata" | "storage_truth";
 export type OperationType = components["schemas"]["OperationType"];
 export type MaturityTier = components["schemas"]["MaturityTier"];
+export type RemovedTablesMode = components["schemas"]["RemovedTables"];
 export type CapabilitySupportStatus = components["schemas"]["SupportStatus"];
 export type CapabilityExecutionMode = components["schemas"]["ExecutionMode"];
 export type JsonObject = Record<string, unknown>;
