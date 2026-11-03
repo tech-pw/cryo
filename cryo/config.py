@@ -630,6 +630,24 @@ class Settings(BaseSettings):
             "failed (nothing discovered) or partial_failed (other sources listed)."
         ),
     )
+    scan_engine_memlimit_ratio: float = Field(
+        default=0.75,
+        ge=0,
+        le=0.9,
+        description=(
+            "Fraction of the container memory limit given to the cryo-engine-go scan "
+            "subprocess as GOMEMLIMIT, so Go collects before the kernel OOM-kills the scanner "
+            "pod. 0 disables it. Ignored when the process cannot see a cgroup limit, unless "
+            "scan_engine_memlimit is set."
+        ),
+    )
+    scan_engine_memlimit: str = Field(
+        default="",
+        description=(
+            "Explicit GOMEMLIMIT for the scan subprocess, such as 2400MiB. Empty uses "
+            "scan_engine_memlimit_ratio of the cgroup memory limit."
+        ),
+    )
     scan_table_timeout_seconds: float = Field(
         default=180.0,
         gt=0,

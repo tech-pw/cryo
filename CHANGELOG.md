@@ -49,6 +49,12 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- The Go scan subprocess now gets `GOMEMLIMIT` at 75% of the container memory limit (or
+  `CRYO_SCAN_ENGINE_MEMLIMIT` when set), so one large table is collected inside the scanner
+  pod instead of OOM-killing it. The table name is logged before the subprocess starts, and a
+  kill (signal 9) is recorded as that table's scan failure, which the existing retry ladder
+  backs off (#378).
+
 - The governor's in-flight rebuild no longer fails on Postgres. `in_flight_counts` grouped by
   a second copy of `coalesce(replica, 'default')`, which Postgres rejects, so the correction
   never ran and capacity could drift toward zero. The query now groups by the same expression
