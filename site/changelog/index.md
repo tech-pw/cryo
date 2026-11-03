@@ -11,13 +11,21 @@ What changed in Cryo, generated from CHANGELOG.md at build time. Releases are ta
 
 Versions and support
 
-Cryo is pre-1.0. The latest release is [v0.1.5](https://github.com/tech-pw/cryo/releases/tag/v0.1.5), and fixes go to the newest release line only; older tags aren't patched. How version numbers move is in [docs/VERSIONING.md](https://github.com/tech-pw/cryo/blob/main/docs/VERSIONING.md); what support covers is in [docs/SUPPORT_POLICY.md](https://github.com/tech-pw/cryo/blob/main/docs/SUPPORT_POLICY.md). All tags are on the [tags page](https://github.com/tech-pw/cryo/tags).
+Cryo is pre-1.0. The latest release is [v0.2.0](https://github.com/tech-pw/cryo/releases/tag/v0.2.0), and fixes go to the newest release line only; older tags aren't patched. How version numbers move is in [docs/VERSIONING.md](https://github.com/tech-pw/cryo/blob/main/docs/VERSIONING.md); what support covers is in [docs/SUPPORT_POLICY.md](https://github.com/tech-pw/cryo/blob/main/docs/SUPPORT_POLICY.md). All tags are on the [tags page](https://github.com/tech-pw/cryo/tags).
 
 The `v0.1.x` tags were cut before the changelog had per-release sections, so their changes are still listed under Unreleased. Compare two tags on GitHub, for example [v0.1.4...v0.1.5](https://github.com/tech-pw/cryo/compare/v0.1.4...v0.1.5), to see exactly what shipped between them.
 
 All notable changes to Cryo will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/tech-pw/cryo/blob/main/CHANGELOG.md)
+## [Unreleased](https://github.com/tech-pw/cryo/compare/v0.2.0...HEAD)
+
+## [0.2.0](https://github.com/tech-pw/cryo/compare/v0.1.5...v0.2.0) — 2026-11-03
+
+First tagged release since v0.1.5. GitHub release notes group the 180+ merged pull requests; the highlights are below.
+
+### Removed
+
+- The unused Rust engines (`cryo-engine/`, `cryo-native/`) and their CI jobs. The Go engine (`engine-go/`, `cryo-engine-go`) is the native engine (#266).
 
 ### Added
 
@@ -31,6 +39,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Security
 
+- `cryo-engine-go` uses go-jose 4.1.6, which fixes a JWK-parsing DoS (CVE-2026-116587) and two parser panics flagged by the release image scan (#354).
 - Failed password and Google sign-ins are throttled per account (5 in 15 minutes) and per client IP (20), using Redis so the limit holds across replicas. Locked attempts get `429` with `Retry-After`, and the sign-in page says how long to wait. Each failure is audited as `auth.login_failed` (admin-only `GET /api/v1/auth/audit`) and counted in `cryo_auth_login_failures_total`. `/docs`, `/redoc` and `/openapi.json` are off by default in `prod` (`CRYO_API_DOCS_ENABLED`). `CRYO_METRICS_BEARER_TOKEN` protects the scraper `/metrics`. See the operator guide (#262).
 
 ### Changed
