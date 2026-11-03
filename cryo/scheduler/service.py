@@ -22,6 +22,7 @@ from cryo.scheduler.routing import build_destinations_index, resolve_destination
 from cryo.scheduler.rules import PresetConfig, PresetRule, TableAssignment, TableCandidate
 from cryo.scheduler.scheduler import (
     BACKLOG_TRIGGER,
+    RunDeadlinePolicy,
     ScheduledRunDraft,
     build_scheduled_run,
     enqueue_run,
@@ -234,6 +235,18 @@ class SchedulerService:
             return default
         return limit if limit > 0 else None
 
+    def _run_deadline_policy(self) -> RunDeadlinePolicy:
+        from cryo.config import get_settings
+        from cryo.display_time import display_zone
+
+        settings = get_settings()
+        max_hours = settings.scheduled_run_deadline_max_hours
+        return RunDeadlinePolicy(
+            max_duration=timedelta(hours=max_hours) if max_hours > 0 else None,
+            min_duration=timedelta(minutes=settings.scheduled_run_deadline_min_minutes),
+            tz=display_zone(),
+        )
+
     def _load_active_coverage(self) -> dict[str, list[ActiveJob]] | None:
         """Fleet-wide active-job coverage, read once per tick and updated as runs are built.
 
@@ -265,6 +278,7 @@ class SchedulerService:
         destinations = build_destinations_index(self._store.list_destinations())
 
         coverage = self._load_active_coverage()
+        deadline_policy = self._run_deadline_policy()
 
         runs_created = 0
         jobs_enqueued = 0
@@ -289,6 +303,7 @@ class SchedulerService:
                 budget_hint=self._scheduled_run_budget(preset),
                 now=current,
                 active_coverage=coverage,
+                deadline_policy=deadline_policy,
             )
             if not run.jobs:
                 self._store.mark_preset_run(preset.id, current)
@@ -388,6 +403,7 @@ class SchedulerService:
         assignments = self._store.list_assignments()
         destinations = build_destinations_index(self._store.list_destinations())
         coverage = self._load_active_coverage()
+        deadline_policy = self._run_deadline_policy()
 
         runs_created = 0
         jobs_enqueued = 0
@@ -405,6 +421,7 @@ class SchedulerService:
                 now=current,
                 active_coverage=coverage,
                 exclude_table_ids=attempted,
+                deadline_policy=deadline_policy,
             )
             if not run.jobs:
                 continue

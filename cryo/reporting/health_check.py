@@ -73,6 +73,7 @@ _STUCK_RUN_RECENCY_HOURS = 2  # live-verified 2026-09-01: age alone false-positi
 # still converging). Paired with _STUCK_RUN_HOURS: a run only counts as stuck once it's BOTH
 # past the age threshold AND has had zero jobs finish in this recency window -- large-but-
 # active runs never trip it regardless of total job count or how long they legitimately take.
+_OPEN_RUN_STATUSES = ("scheduled", "accepted", "queued", "running")
 _STUCK_JOB_HOURS = 6  # matches k8s_ttl_seconds_after_finished's typical 6h window elsewhere
 _MIN_APPROVAL_MATCH_RATE_PCT = 50.0  # 0% is exactly what the real bug produced; a healthy
 # fleet has some fraction of approvals genuinely expired/consumed-and-not-reused at any moment,
@@ -274,8 +275,12 @@ def _hours_between(later: datetime, earlier: datetime) -> float:
 
 
 def _check_stuck_runs(session: Session, *, now: datetime) -> CheckResult:
-    """Catches -shaped incidents: a MaintenanceRun open in status='running' with
+    """Catches -shaped incidents: a MaintenanceRun open (any non-terminal status) with
     nothing happening underneath it -- not just "open a long time".
+
+    Open means scheduled, accepted, queued or running: a run whose jobs never got admitted
+    stays "queued" and is just as stuck as a "running" one (#384). Age counts from
+    scheduled_at when set, so a run scheduled for later isn't open until its time comes.
 
     Live-verified 2026-09-01: raw age alone (the original check) false-positived on the
     fleet's own large cron runs -- one open 19h had 6,640 total jobs, 2,575 still non-terminal,
@@ -292,10 +297,11 @@ def _check_stuck_runs(session: Session, *, now: datetime) -> CheckResult:
     producing terminal jobs and gets caught here regardless of how large its job count is."""
     age_cutoff = now - timedelta(hours=_STUCK_RUN_HOURS)
     recency_cutoff = now - timedelta(hours=_STUCK_RUN_RECENCY_HOURS)
+    opened_at = func.coalesce(MaintenanceRun.scheduled_at, MaintenanceRun.created_at)
     candidates = session.execute(
-        select(MaintenanceRun.id, MaintenanceRun.trigger, MaintenanceRun.created_at)
-        .where(MaintenanceRun.status == "running", MaintenanceRun.created_at < age_cutoff)
-        .order_by(MaintenanceRun.created_at.asc())
+        select(MaintenanceRun.id, MaintenanceRun.trigger, opened_at.label("opened_at"))
+        .where(MaintenanceRun.status.in_(_OPEN_RUN_STATUSES), opened_at < age_cutoff)
+        .order_by(opened_at.asc())
     ).all()
     if not candidates:
         return CheckResult(
@@ -327,9 +333,9 @@ def _check_stuck_runs(session: Session, *, now: datetime) -> CheckResult:
             f"not stalled",
         )
     stuck = stuck[:10]
-    oldest_hours = _hours_between(now, stuck[0].created_at)
+    oldest_hours = _hours_between(now, stuck[0].opened_at)
     examples = [
-        f"{r.id} ({r.trigger}, {_hours_between(now, r.created_at):.0f}h open)" for r in stuck[:3]
+        f"{r.id} ({r.trigger}, {_hours_between(now, r.opened_at):.0f}h open)" for r in stuck[:3]
     ]
     return CheckResult(
         name="stuck_runs",

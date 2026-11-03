@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run a Cryo CDP (dev-hms) catalog scan with Go engine and sample RSS memory.
+"""Run a Cryo catalog scan with Go engine and sample RSS memory.
 
 Usage:
   .venv/bin/python scripts/local_go_scan_memory.py
-  .venv/bin/python scripts/local_go_scan_memory.py --schema cdp_revenue --parallel 2
+  .venv/bin/python scripts/local_go_scan_memory.py --schema revenue --parallel 2
   .venv/bin/python scripts/local_go_scan_memory.py --full --parallel 2
 """
 
@@ -95,7 +95,7 @@ def _sample_tree(root: int) -> dict[str, float]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", default="dev-hms", help="Cryo source name (CDP = dev-hms)")
+    parser.add_argument("--source", default="dev", help="Cryo source name")
     parser.add_argument("--schema", action="append", default=[], help="Limit to schema(s)")
     parser.add_argument("--parallel", type=int, default=1)
     parser.add_argument("--full", action="store_true", help="Ignore already-scanned-today skip")

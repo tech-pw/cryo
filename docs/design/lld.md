@@ -364,7 +364,9 @@ CREATE TABLE cryo.table_assignments (
 Ephemeral tables (`temp`/`tmp`/`scratch` schemas, `__dbt_tmp`, `_tmp` suffixes...) are never
 rule-matched or defaulted; pins still win. Default routing is implicit: no `table_assignments`
 row is written, so pinning or a matching rule moves a table off the default and unpinning moves
-it back.
+it back. `GET /api/v1/sla-status` reports the same value per row as `preset_provenance`;
+its `has_preset` is `preset_provenance != "none"`, so a default-routed table counts as covered
+and the SLA page labels it "Default preset" rather than "Assigned".
 
 **Paused vs disabled (#119).** `presets.paused = true` holds the preset: it still wins
 resolution (its tables keep showing it and are *not* re-routed), but the scheduler never lists
@@ -499,6 +501,24 @@ vs `Operations › {preset name} › Run …`).
 - `kind IN (adhoc, scheduled)` → "Maintenance"
 - Default operator filter during incidents: `status = failed` (no `kind` filter, per Part 1E)
 
+#### 3.4.2 `MaintenanceRun.status` — maintenance run lifecycle
+
+`scheduled` (future `scheduled_at`) → `queued` → `running` → `succeeded | partial | failed`,
+or `cancelled` from any open status.
+
+- Runs are created `queued` (or `scheduled`). `SQLJobStore.mark_status` moves a `queued` run
+  to `running` the first time one of its jobs is marked `admitted` or `running`, with one
+  conditional `UPDATE ... WHERE status = 'queued'`, so concurrent admissions are idempotent
+  and a `scheduled`, `cancelled` or finished run is never reopened.
+- `finalize_open_runs` closes runs from either `queued` or `running`: a run whose jobs all
+  ended without being admitted (skipped, deferred) never reaches `running`.
+- Batch runs (`cryo/maintenance/coordinator.py`) and smart-maintenance runs are created
+  `running` directly. Scan runs use `accepted | queued | running` and their own terminal
+  statuses (`cryo/db/repositories/scanner.py`).
+- The `stuck_runs` health check treats every non-terminal status (`scheduled`, `accepted`,
+  `queued`, `running`) as open and measures age from `scheduled_at` when set, else
+  `created_at`.
+
 ---
 
 ## 4. Domain enums & DTOs (`cryo/domain`)
@@ -600,7 +620,7 @@ class SourceCatalog(Protocol):
 A single JSON predicate grammar powers UI filters, preset rules, and bulk selection:
 ```json
 { "all": [
-    {"field": "schema_name", "op": "in", "value": ["mview"]},
+    {"field": "schema_name", "op": "in", "value": ["mart"]},
     {"field": "total_size_gb", "op": ">", "value": 100},
     {"field": "small_files_count", "op": ">=", "value": 1000},
     {"field": "grade", "op": "in", "value": ["D","F"]}
@@ -791,6 +811,16 @@ on cron tick:
          create_job(run, table, preset.destination, preset.mode, plan=None)  # plan built by worker
          enqueue(job)
 ```
+**Run deadline** (`scheduler.py::_deadline_at`): `guardrails.deadline_minutes` when the preset sets
+it; otherwise the preset's next cron fire after the run is built, held between
+`CRYO_SCHEDULED_RUN_DEADLINE_MIN_MINUTES` (60) and `CRYO_SCHEDULED_RUN_DEADLINE_MAX_HOURS` (168),
+and the cap alone when no fire falls inside it. Backlog batches get the same deadline, so no batch
+outlives its cron period. Past the deadline the Governor defers the run's remaining jobs
+(`deadline_near`); once the deferral grace is over the finalizer closes the run, and
+`reconcile_deferred_jobs` marks each job still deferred under a closed run `skipped` with
+`run_closed_while_deferred: <deferral reason>`, never `failed` — those jobs never ran (#383).
+`CRYO_SCHEDULED_RUN_DEADLINE_MAX_HOURS=0` restores the old "no deadline unless the preset sets one".
+
 `rules.py` provides `effective_preset(table)` and `tables_for_preset(preset)`. Budgeting is a *hint*;
 the **Governor** enforces real limits at admission time. Leader-elected (Redis lock) so only one
 scheduler is active.

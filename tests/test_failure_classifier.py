@@ -20,7 +20,7 @@ from cryo.scanner.failure_classifier import (
 # Verbatim from a demo.events scan on 2026-09-23, which produced this for 201 of 585 tables.
 MANIFEST_MISSING_ERROR = (
     "RuntimeError: load manifests: could not open manifest file: blob (key "
-    '"silver/central/gold_polls_evolving/metadata/'
+    '"silver/core/gold_polls_evolving/metadata/'
     'snap-2836956739000000000-1-d2373dc1-0000-0000-0000-000000000000.avro") '
     "(code=NotFound): operation error S3: GetObject, https response error StatusCode: 404, "
     "api error NoSuchKey: The specified key does not exist."
@@ -29,7 +29,7 @@ MANIFEST_MISSING_ERROR = (
 
 def test_classifies_access_denied_as_permission_denied() -> None:
     error = (
-        "When reading information for key 'bronze/central/videos_evolving/metadata/"
+        "When reading information for key 'bronze/core/videos_evolving/metadata/"
         "00007-x.json' in bucket 'lake': AWS Error ACCESS_DENIED during HeadObject "
         "operation: No response body."
     )
@@ -140,7 +140,7 @@ def test_a_missing_data_file_is_not_a_missing_manifest() -> None:
     """NoSuchKey on its own also covers a data file vanishing mid-scan, which a retry can
     clear. Only a missing *manifest* means the table's metadata itself is unreadable."""
     error = (
-        'could not open data file: blob (key "silver/central/events/data/part-0.parquet") '
+        'could not open data file: blob (key "silver/core/events/data/part-0.parquet") '
         "(code=NotFound): api error NoSuchKey: The specified key does not exist."
     )
     assert classify_scan_failure(error) == "other"
