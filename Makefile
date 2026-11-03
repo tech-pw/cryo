@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test unittest baseline capabilities-docs capabilities-docs-check config-reference config-reference-check cryobench-fixture cryobench-v2 cryobench-v2-check migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report shared-s3-anomalies shared-s3-anomalies-notify up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures seed-native-compaction-fixtures seed-native-compaction-perf-fixture test-hms-integration test-native-e2e test-native-e2e-go test-native-e2e-local test-native-e2e-local-go test-native-compaction-e2e test-native-compaction-e2e-go test-native-compaction-e2e-local test-native-compaction-e2e-local-go test-native-compaction-perf test-native-compaction-perf-go test-native-compaction-throughput-go validate-dense-compaction-memory build-engine-go build-engine-go-linux build-seed-native-fixtures test-engine-go smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-quality web-axe web-impeccable web-visual web-gen docs docs-preview start-local stop-local status-local
+.PHONY: install demo lint format typecheck test unittest baseline capabilities-docs capabilities-docs-check config-reference config-reference-check cryobench-fixture cryobench-v2 cryobench-v2-check migrate migrate-local api scan scanner worker governor scheduler report-scheduler daily-report shared-s3-anomalies shared-s3-anomalies-notify up up-cryo up-datalake down ps logs seed seed-docker seed-fragmented seed-hms-fixtures seed-hms-fixtures-docker seed-native-fixtures seed-native-compaction-fixtures seed-native-compaction-perf-fixture test-hms-integration test-native-e2e test-native-e2e-go test-native-e2e-local test-native-e2e-local-go test-native-compaction-e2e test-native-compaction-e2e-go test-native-compaction-e2e-local test-native-compaction-e2e-local-go test-native-compaction-perf test-native-compaction-perf-go test-native-compaction-throughput-go validate-dense-compaction-memory build-engine-go build-engine-go-linux build-seed-native-fixtures test-engine-go smoke-hms-trino smoke-file-counts smoke-compact spark-shell load-test-data load-test-data-docker web-install web-dev web-build web-test web-quality web-axe web-impeccable web-visual web-gen docs docs-preview start-local stop-local status-local
 
 PYTHON ?= python3.12
 TRINO_VERSION ?= 480
@@ -7,6 +7,15 @@ COMPOSE_CRYO = docker compose -f docker-compose.yml
 COMPOSE_DATALAKE = docker compose -f docker-compose.dev-datalake.yml
 COMPOSE_LOCAL = docker compose -f docker-compose.yml -f docker-compose.dev-datalake.yml -f docker-compose.observability.yml
 SPARK_RUNNER = $(COMPOSE_DATALAKE) --profile tools run --rm spark
+# The spark service defaults to the HMS catalog. scripts/spark_session.py only speaks REST and
+# falls back to localhost:8181, which inside the container is the container itself. Iceberg
+# 1.8.1 matches the jars already baked into the image.
+SPARK_REST_RUNNER = $(COMPOSE_DATALAKE) --profile tools run --rm \
+	-e ICEBERG_CATALOG=rest \
+	-e ICEBERG_REST_URI=http://iceberg-rest:8181 \
+	-e ICEBERG_WAREHOUSE=s3://warehouse/ \
+	-e ICEBERG_VERSION=1.8.1 \
+	spark
 NPM ?= npm
 
 install:
@@ -129,10 +138,18 @@ logs:
 	$(COMPOSE_LOCAL) logs -f
 
 seed-docker: up-datalake
-	$(SPARK_RUNNER) python3 scripts/create_test_tables.py
+	$(SPARK_REST_RUNNER) python3 scripts/create_test_tables.py
 
 seed-fragmented: up-datalake
-	$(SPARK_RUNNER) python3 scripts/create_partition_fixture_tables.py
+	$(SPARK_REST_RUNNER) python3 scripts/create_partition_fixture_tables.py
+
+# Empty UI to graded tables and one finished maintenance run. Safe to rerun; DEMO_SEED=0
+# keeps the existing fixture tables instead of recreating them.
+DEMO_SEED ?= 1
+demo:
+	START_OBSERVABILITY=$${START_OBSERVABILITY:-0} ./start-local.sh start
+	if [ "$(DEMO_SEED)" = "1" ]; then $(MAKE) seed-fragmented; fi
+	$(PYTHON) scripts/demo.py all
 
 seed-hms-fixtures:
 	HMS_FIXTURE_SCALE=$${HMS_FIXTURE_SCALE:-smoke} $(PYTHON) tests/integration/hms/generate_hms_fixture_tables.py
@@ -233,10 +250,10 @@ smoke-hms-trino: up-datalake
 	$(PYTHON) tests/integration/hms/smoke_hms_trino.py
 
 smoke-file-counts: up-datalake
-	$(SPARK_RUNNER) python3 scripts/smoke_file_counts.py
+	$(SPARK_REST_RUNNER) python3 scripts/smoke_file_counts.py
 
 smoke-compact: up-datalake
-	$(SPARK_RUNNER) python3 scripts/smoke_file_counts.py --compact --assert-drop
+	$(SPARK_REST_RUNNER) python3 scripts/smoke_file_counts.py --compact --assert-drop
 
 smoke-e2e:
 	$(PYTHON) scripts/smoke_cryo_e2e.py

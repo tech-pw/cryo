@@ -587,8 +587,11 @@ EOF
   fi
 
   cat <<EOF
-Local API auth header:
-  Authorization: Bearer admin
+Local API token (dev sign-in; role is viewer, operator or admin):
+  curl -s -X POST http://${API_HOST}:${API_PORT}/api/v1/auth/token \\
+    -H 'Content-Type: application/json' -d '{"role":"admin"}'
+
+Next: make demo   # seeds fragmented tables, scans, assigns a preset, runs maintenance
 EOF
 }
 
