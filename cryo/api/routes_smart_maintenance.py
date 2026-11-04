@@ -614,11 +614,16 @@ def execute_layout_recommendation(
             detail="This table is excluded from maintenance. Include it on the Runs page first.",
         )
 
+    from cryo.scheduler.scheduler import default_run_deadline
+
     run = MaintenanceRun(
         kind="adhoc",
         preset_id=None,
         trigger="layout-recommendation-apply",
         status="running",
+        deadline_at=default_run_deadline(
+            schedule_cron=None, guardrails=None, now=datetime.now(UTC)
+        ),
         summary=correlation_summary(
             {
                 "actor": principal.subject,

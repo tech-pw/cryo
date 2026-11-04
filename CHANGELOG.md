@@ -49,6 +49,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- An admitted job whose destination is gone releases its table lock when it fails.
+  Lock reconciliation logs the table, the job, and the status (or that the job is
+  missing) for every lock it releases. Ad-hoc runs get the same deadline as
+  scheduled runs, so a deferred job cannot hold one open with no deadline (#424).
 - Large unpartitioned tables are compacted instead of skipped once they pass the
   small-file threshold. The rewrite covers only small files and, on Spark and the
   native engine, groups of at most the chunk budget, with partial progress so a
