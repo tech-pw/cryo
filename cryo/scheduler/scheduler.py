@@ -4,6 +4,7 @@ import math
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, tzinfo
+from typing import Any
 from uuid import uuid4
 
 from cryo.domain.enums import JobStatus, Mode
@@ -289,6 +290,40 @@ def apply_priority_order(tables: Iterable[TableCandidate]) -> list[TableCandidat
             table.table_name,
         ),
     )
+
+
+def default_run_deadline(
+    *,
+    schedule_cron: str | None,
+    guardrails: Mapping[str, Any] | None,
+    now: datetime,
+) -> datetime | None:
+    """Deadline for one run, scheduled or ad-hoc, from the same policy (#383, #424).
+
+    An ad-hoc run has no tick of its own. It still closes at the preset's next cron
+    fire when that fire is inside the cap, and at the cap when the preset has no
+    cron. ``guardrails.deadline_minutes`` wins, as it does for a scheduled run.
+    ``now`` is the run's start: pass ``scheduled_at`` for a run that should not
+    begin until later.
+    """
+    from cryo.config import get_settings
+    from cryo.display_time import display_zone
+
+    settings = get_settings()
+    max_hours = settings.scheduled_run_deadline_max_hours
+    policy = RunDeadlinePolicy(
+        max_duration=timedelta(hours=max_hours) if max_hours > 0 else None,
+        min_duration=timedelta(minutes=settings.scheduled_run_deadline_min_minutes),
+        tz=display_zone(),
+    )
+    preset = PresetConfig(
+        id="run",
+        name="run",
+        destination_id="run",
+        guardrails=dict(guardrails or {}),
+        schedule_cron=schedule_cron,
+    )
+    return _deadline_at(preset, now, policy)
 
 
 def _deadline_at(

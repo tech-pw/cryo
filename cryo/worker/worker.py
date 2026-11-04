@@ -567,8 +567,17 @@ class Worker:
     ) -> MaintenanceJobRecord:
         destination = _try_get_destination(self._store, job.destination_id)
         if destination is None:
+            # Admitted by the governor, so this job holds the table lock. Completing
+            # the queue slot without releasing it is what the lock reconcile keeps
+            # finding after the job has already gone terminal (#424).
             self._store.mark_status(job.id, JobStatus.FAILED, error="destination_not_found")
-            self._queue.complete(job.id, JobStatus.FAILED)
+            release_job_claims(
+                self._queue,
+                self._lock_store,
+                job_id=job.id,
+                table_id=job.table_id,
+                status=JobStatus.FAILED,
+            )
             self._record_job_metrics(
                 destination_id=job.destination_id,
                 operation_type=_job_operation_type(job),

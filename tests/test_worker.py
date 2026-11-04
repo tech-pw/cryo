@@ -13,6 +13,22 @@ from cryo.worker.worker import (
 )
 
 
+def test_missing_destination_fails_the_admitted_job_and_releases_its_lock() -> None:
+    queue, locks, store = _worker_fixture()
+    locks.acquire_table_lock("table-1", "job-1", 3600)
+    store.destinations.clear()
+
+    result = Worker(
+        queue, store, lambda _destination: FakeMaintenanceEngine(), locks
+    ).process_next()
+
+    assert result is not None
+    assert result.status is JobStatus.FAILED
+    assert result.error == "destination_not_found"
+    assert queue.status("job-1") is JobStatus.FAILED
+    assert not locks.is_table_locked("table-1")
+
+
 def test_worker_builds_plan_executes_statements_and_marks_success() -> None:
     queue, locks, store = _worker_fixture()
     engine = FakeMaintenanceEngine()

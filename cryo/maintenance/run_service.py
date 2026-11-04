@@ -192,12 +192,22 @@ def start_maintenance_run(
     if skipped:
         summary["dedupe"] = _dedupe_summary(skipped)
 
+    anchor = payload.scheduled_at or datetime.now(UTC)
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=UTC)
+    from cryo.scheduler.scheduler import default_run_deadline
+
     run = api_routes.MaintenanceRun(
         kind="adhoc",
         preset_id=payload.preset_id,
         trigger=payload.trigger,
         status="scheduled" if payload.scheduled_at is not None else "queued",
         scheduled_at=payload.scheduled_at,
+        deadline_at=default_run_deadline(
+            schedule_cron=getattr(preset, "schedule_cron", None),
+            guardrails=getattr(preset, "guardrails", None),
+            now=anchor,
+        ),
         summary=summary,
     )
     session.add(run)

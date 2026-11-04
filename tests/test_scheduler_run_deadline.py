@@ -86,6 +86,23 @@ class TestDefaultDeadline:
     def test_unknown_schedule_uses_the_cap(self) -> None:
         assert _deadline(_preset(cron=None)) == NOW + timedelta(hours=168)
 
+    def test_adhoc_run_uses_the_same_deadline(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from cryo.config import get_settings
+        from cryo.scheduler.scheduler import default_run_deadline
+
+        monkeypatch.setattr("cryo.display_time.display_zone", lambda: UTC)
+        daily = default_run_deadline(schedule_cron="0 2 * * *", guardrails={}, now=NOW)
+        assert daily == NOW + timedelta(days=1)
+        capped = default_run_deadline(schedule_cron=None, guardrails={}, now=NOW)
+        hours = get_settings().scheduled_run_deadline_max_hours
+        if hours > 0:
+            assert capped == NOW + timedelta(hours=hours)
+        else:
+            assert capped is None
+        assert default_run_deadline(
+            schedule_cron=None, guardrails={"deadline_minutes": 90}, now=NOW
+        ) == (NOW + timedelta(minutes=90))
+
     def test_preset_deadline_minutes_wins(self) -> None:
         assert _deadline(_preset(deadline_minutes=90)) == NOW + timedelta(minutes=90)
 
