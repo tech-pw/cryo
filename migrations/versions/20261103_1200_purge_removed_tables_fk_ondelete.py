@@ -15,9 +15,16 @@ databases do not all follow the model naming convention, and some databases stil
 tables the models no longer define. Each rewritten constraint is tagged with a comment so the
 downgrade reverts exactly those.
 
-Locking: the drop and re-add run in the migration transaction as NOT VALID, which only touches
-the catalog (short ACCESS EXCLUSIVE locks, bounded by env.py's lock_timeout). VALIDATE then
-runs outside it and takes SHARE UPDATE EXCLUSIVE, so reads and writes continue while it scans.
+Locking: the drop and re-add are NOT VALID, which only touches the catalog, but each one takes
+ACCESS EXCLUSIVE on both the child and the parent. Taken one constraint at a time inside the
+shared migration transaction, which already holds ACCESS EXCLUSIVE on ``presets`` from
+20261103_1510, they deadlocked against a running app session (2026-11-04: the migrate hook
+waited on ``tables`` for ``fk_jobs_table_id_tables`` while a session holding ``tables`` waited
+on a relation the migration had already locked). So the rewrite runs in its own transaction
+after the earlier revisions commit, locks every relation it touches in one LOCK TABLE (parents
+first) under a short lock_timeout, and on a timeout or deadlock rolls back its subtransaction,
+releasing those locks, and tries again. VALIDATE then takes SHARE UPDATE EXCLUSIVE, so reads
+and writes continue while it scans.
 The four indexes make the SET NULL lookups a purge triggers index scans instead of full scans
 of audit_log and the diagnostics tables.
 
@@ -51,44 +58,84 @@ _CONSTRAINTS = """
       AND cardinality(c.conkey) = 1
 """
 
-UPGRADE_SQL = f"""
+LOCK_TIMEOUT = "3s"
+LOCK_ATTEMPTS = 20
+
+
+def _rewrite_sql(pending: str, body: str) -> str:
+    """Run ``body`` for each constraint ``pending`` selects, with every lock it needs held first.
+
+    Waiting on one relation while holding another is what deadlocks against app sessions, so
+    the locks are taken together before any ALTER. A lock timeout or deadlock rolls back the
+    inner block, releasing everything it took, so the app makes progress before the retry.
+    """
+    return f"""
 DO $$
-DECLARE r record;
+DECLARE
+  r record;
+  rels text;
+  attempt int := 0;
 BEGIN
-  FOR r IN {_CONSTRAINTS}
-      AND parent.relname IN ('tables', 'jobs', 'maintenance_intents')
-      AND c.confdeltype = 'a'
+  PERFORM set_config('lock_timeout', '{LOCK_TIMEOUT}', true);
   LOOP
-    EXECUTE format('ALTER TABLE cryo.%I DROP CONSTRAINT %I', r.child, r.conname);
-    EXECUTE format(
-      'ALTER TABLE cryo.%I ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES cryo.%I (%I) '
-      'ON DELETE %s NOT VALID',
-      r.child, r.conname, r.col, r.parent, r.parent_col,
-      CASE WHEN r.notnull THEN 'CASCADE' ELSE 'SET NULL' END
-    );
-    EXECUTE format('COMMENT ON CONSTRAINT %I ON cryo.%I IS %L', r.conname, r.child, '{MARKER}');
+    BEGIN
+      SELECT string_agg(format('cryo.%I', s.rel), ', ' ORDER BY
+               CASE s.rel WHEN 'tables' THEN 0 WHEN 'jobs' THEN 1
+                          WHEN 'maintenance_intents' THEN 2 ELSE 3 END, s.rel)
+        INTO rels
+        FROM (SELECT p.child AS rel FROM ({pending}) p
+              UNION SELECT p.parent FROM ({pending}) p) s;
+      IF rels IS NULL THEN
+        RETURN;
+      END IF;
+      EXECUTE 'LOCK TABLE ' || rels || ' IN ACCESS EXCLUSIVE MODE';
+      FOR r IN {pending} LOOP
+        {body}
+      END LOOP;
+      RETURN;
+    EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
+      attempt := attempt + 1;
+      IF attempt >= {LOCK_ATTEMPTS} THEN
+        RAISE;
+      END IF;
+      PERFORM pg_sleep(least(attempt, 5));
+    END;
   END LOOP;
 END $$
 """
 
-DOWNGRADE_SQL = f"""
-DO $$
-DECLARE r record;
-BEGIN
-  FOR r IN {_CONSTRAINTS}
+
+UPGRADE_SQL = _rewrite_sql(
+    f"""{_CONSTRAINTS}
+      AND parent.relname IN ('tables', 'jobs', 'maintenance_intents')
+      AND c.confdeltype = 'a'
+""",
+    f"""EXECUTE format('ALTER TABLE cryo.%I DROP CONSTRAINT %I', r.child, r.conname);
+        EXECUTE format(
+          'ALTER TABLE cryo.%I ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES cryo.%I (%I) '
+          'ON DELETE %s NOT VALID',
+          r.child, r.conname, r.col, r.parent, r.parent_col,
+          CASE WHEN r.notnull THEN 'CASCADE' ELSE 'SET NULL' END
+        );
+        EXECUTE format(
+          'COMMENT ON CONSTRAINT %I ON cryo.%I IS %L', r.conname, r.child, '{MARKER}'
+        );""",
+)
+
+DOWNGRADE_SQL = _rewrite_sql(
+    f"""{_CONSTRAINTS}
       AND obj_description(c.oid, 'pg_constraint') = '{MARKER}'
-  LOOP
-    EXECUTE format('ALTER TABLE cryo.%I DROP CONSTRAINT %I', r.child, r.conname);
-    EXECUTE format(
-      'ALTER TABLE cryo.%I ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES cryo.%I (%I) NOT VALID',
-      r.child, r.conname, r.col, r.parent, r.parent_col
-    );
-    EXECUTE format(
-      'COMMENT ON CONSTRAINT %I ON cryo.%I IS %L', r.conname, r.child, '{REVERTED_MARKER}'
-    );
-  END LOOP;
-END $$
-"""
+""",
+    f"""EXECUTE format('ALTER TABLE cryo.%I DROP CONSTRAINT %I', r.child, r.conname);
+        EXECUTE format(
+          'ALTER TABLE cryo.%I ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES cryo.%I (%I) '
+          'NOT VALID',
+          r.child, r.conname, r.col, r.parent, r.parent_col
+        );
+        EXECUTE format(
+          'COMMENT ON CONSTRAINT %I ON cryo.%I IS %L', r.conname, r.child, '{REVERTED_MARKER}'
+        );""",
+)
 
 
 def validate_sql(marker: str, *, clear_comment: bool) -> str:
@@ -136,8 +183,8 @@ def _drop_indexes() -> None:
 def upgrade() -> None:
     if not _is_postgres():
         return
-    op.execute(UPGRADE_SQL)
     with op.get_context().autocommit_block():
+        op.execute(UPGRADE_SQL)
         op.execute(validate_sql(MARKER, clear_comment=False))
         # A build that failed earlier leaves an INVALID index that IF NOT EXISTS would keep.
         _drop_indexes()
@@ -157,6 +204,5 @@ def downgrade() -> None:
         return
     with op.get_context().autocommit_block():
         _drop_indexes()
-    op.execute(DOWNGRADE_SQL)
-    with op.get_context().autocommit_block():
+        op.execute(DOWNGRADE_SQL)
         op.execute(validate_sql(REVERTED_MARKER, clear_comment=True))
