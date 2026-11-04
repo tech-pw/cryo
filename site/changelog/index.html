@@ -52,6 +52,7 @@
 </ul>
 <h3 id="unreleased-fixed">Fixed<a class="anchor" href="#unreleased-fixed" aria-label="Link to Fixed">#</a></h3>
 <ul>
+  <li>A Spark driver left <code>Pending</code> after its credentials Secret is deleted is removed once it is older than the driver TTL, including when its container never started. The Secret is no longer deleted while that driver pod still exists and has not finished (#423).</li>
   <li>An admitted job whose destination is gone releases its table lock when it fails. Lock reconciliation logs the table, the job, and the status (or that the job is missing) for every lock it releases. Ad-hoc runs get the same deadline as scheduled runs, so a deferred job cannot hold one open with no deadline (#424).</li>
   <li>Large unpartitioned tables are compacted instead of skipped once they pass the small-file threshold. The rewrite covers only small files and, on Spark and the native engine, groups of at most the chunk budget, with partial progress so a run that stops keeps the groups it finished. Trino still rewrites every small file in one statement. An operation that was explicitly requested and then skipped is shown on the run, and that job is no longer reported as a plain success (#422).</li>
   <li>The scanner no longer drops manifests written before a table was upgraded to format v3. A v3 manifest list may point at v2 files; those files are read as v2. A scan that still cannot read a manifest fails and keeps the previous stats, instead of storing file counts that are short by whole manifests (#421).</li>
