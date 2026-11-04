@@ -40,6 +40,13 @@ from cryo.api.deps import (
     require_operator,
     require_viewer,
 )
+from cryo.api.pagination import (
+    CursorError,
+    KeysetCursor,
+    keyset_predicate,
+    make_filter_repr,
+    make_sort_repr,
+)
 from cryo.api.predicates import compile_predicate
 from cryo.api.preview_cost import (
     savings_projection_for_plan,
@@ -1196,8 +1203,26 @@ def list_tables(
     filter: Annotated[str | None, Query()] = None,
     sort: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
-    offset: Annotated[int, Query(ge=0)] = 0,
-    cursor: Annotated[str | None, Query()] = None,
+    offset: Annotated[
+        int,
+        Query(
+            ge=0,
+            description=(
+                "Position of the page when cursor is omitted. Ignored when cursor is set, "
+                "because a cursor resumes after the last row instead of at an offset."
+            ),
+        ),
+    ] = 0,
+    cursor: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Opaque keyset cursor from the previous page. Resumes strictly after that "
+                "row (its sort values and table id) and is bound to the same filter, sort, "
+                "removed mode and effective_provenance. An older offset cursor is rejected."
+            ),
+        ),
+    ] = None,
     freshness_breach: Annotated[bool, Query()] = False,
     maintenance_overdue: Annotated[bool, Query()] = False,
     p95_breach: Annotated[bool, Query()] = False,
@@ -1270,44 +1295,57 @@ def list_tables(
     else:
         total = session.scalar(count_stmt) or 0
 
-    # Server-side cursor takes precedence over offset — clients pass back the
-    # previous page's cursor instead of computing `offset += limit`. The two
-    # compose: cursor pins the start of the page, limit caps its size.
-    actual_offset = offset
+    # A cursor seeks the row after the previous page. It does not resume at an
+    # offset: inserting or deleting a row ahead of that position would otherwise
+    # repeat or skip the remainder. `offset` applies only when no cursor is sent.
+    sort_keys = _sort_keys(sort)
+    order = tuple(key.ordered() for key in sort_keys)
+    filter_repr = make_filter_repr(cursor_filter)
+    sort_repr = make_sort_repr(sort)
+    reported_offset = offset
+    page = stmt.order_by(*order)
     if cursor:
-        from cryo.api.pagination import PageCursor, make_filter_repr, make_sort_repr
-
         try:
-            decoded = PageCursor.decode(cursor)
-        except Exception as exc:  # noqa: BLE001 - any decode problem ⇒ 400 with the message
+            decoded = KeysetCursor.decode(cursor)
+        except CursorError as exc:
             raise HTTPException(status_code=400, detail=f"Invalid cursor: {exc}") from exc
-        if not decoded.matches_request(
-            filter_repr=make_filter_repr(cursor_filter), sort_repr=make_sort_repr(sort)
-        ):
+        if not decoded.matches_request(filter_repr=filter_repr, sort_repr=sort_repr):
             raise HTTPException(
                 status_code=409,
                 detail="Cursor was issued for a different filter/sort combination",
             )
-        actual_offset = decoded.offset_within_key
+        if len(decoded.values) != len(sort_keys):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid cursor: sort values do not match this sort",
+            )
+        page = page.where(
+            keyset_predicate(
+                [
+                    (key.expression, key.descending, value)
+                    for key, value in zip(sort_keys, decoded.values, strict=True)
+                ]
+            )
+        )
+        reported_offset = 0
+    else:
+        page = page.offset(offset)
 
-    items = list(
-        session.scalars(stmt.order_by(*_sort_clauses(sort)).offset(actual_offset).limit(limit))
-    )
+    # One extra row tells us whether another page exists without trusting the
+    # count, which can move between the count query and this read.
+    value_columns = [key.expression.label(f"_sk{index}") for index, key in enumerate(sort_keys)]
+    fetched = list(session.execute(page.limit(limit + 1).add_columns(*value_columns)).all())
+    has_more = len(fetched) > limit
+    page_rows = fetched[:limit]
+    items = [row[0] for row in page_rows]
 
-    # Emit a next-page cursor only when there might be more rows past this page.
-    # The cheap "fetch limit+1 rows and trim" probe is correct without needing
-    # a second count query — and on a fully-indexed sort the row read is O(1)
-    # with the existing ORDER BY + LIMIT plan.
     next_cursor = None
-    has_more = actual_offset + len(items) < total
-    if has_more and items:
-        from cryo.api.pagination import PageCursor, make_filter_repr, make_sort_repr
-
-        next_cursor = PageCursor(
-            key=str(items[-1].id),
-            offset_within_key=actual_offset + len(items),
-            filter_repr=make_filter_repr(cursor_filter),
-            sort_repr=make_sort_repr(sort),
+    if has_more and page_rows:
+        last = page_rows[-1]
+        next_cursor = KeysetCursor(
+            values=[last[index + 1] for index in range(len(sort_keys))],
+            filter_repr=filter_repr,
+            sort_repr=sort_repr,
         ).encode()
 
     view_fields = view.response_fields(view_metrics)
@@ -1325,7 +1363,7 @@ def list_tables(
         ],
         total=total,
         limit=limit,
-        offset=actual_offset,
+        offset=reported_offset,
         cursor=next_cursor,
         has_more=has_more,
         unknown_count=view_fields["unknown_count"],
@@ -2855,25 +2893,57 @@ def _resolve_selection(session: Session, selection: AssignmentSelection) -> pres
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+class _SortKey:
+    """One ORDER BY term. ``descending`` is NULLS LAST, matching the list query."""
+
+    __slots__ = ("descending", "expression")
+
+    def __init__(self, expression: Any, descending: bool) -> None:
+        self.expression = expression
+        self.descending = descending
+
+    def ordered(self) -> Any:
+        if self.descending:
+            return self.expression.desc().nulls_last()
+        return self.expression.asc().nulls_last()
+
+
+def _sort_keys(sort: str | None) -> list[_SortKey]:
+    """Sort terms for ``GET /tables``, always ending in ``Table.id``.
+
+    The id is a unique tie-break so a keyset cursor can resume after one
+    specific row when several rows share a sort value. Callers that only need
+    the SQL clause use ``_sort_clauses``.
+    """
+    specs: list[tuple[str, bool]] = []
+    if sort:
+        for raw_field in sort.split(","):
+            field = raw_field.strip()
+            if not field:
+                continue
+            descending = field.startswith("-")
+            field_name = field[1:] if descending else field
+            if field_name not in SORT_FIELDS and field_name not in COMPUTED_SORT_FIELDS:
+                raise HTTPException(status_code=400, detail=f"Unsupported sort field: {field_name}")
+            specs.append((field_name, descending))
+    if not specs:
+        specs = [("schema_name", False), ("table_name", False)]
+    keys = [
+        _SortKey(
+            COMPUTED_SORT_FIELDS[field_name]()
+            if field_name in COMPUTED_SORT_FIELDS
+            else SORT_FIELDS[field_name],
+            descending,
+        )
+        for field_name, descending in specs
+    ]
+    if not any(key.expression is Table.id for key in keys):
+        keys.append(_SortKey(Table.id, False))
+    return keys
+
+
 def _sort_clauses(sort: str | None) -> tuple[Any, ...]:
-    if not sort:
-        return (Table.schema_name, Table.table_name)
-    clauses: list[ColumnElement[object]] = []
-    for raw_field in sort.split(","):
-        field = raw_field.strip()
-        if not field:
-            continue
-        descending = field.startswith("-")
-        field_name = field[1:] if descending else field
-        computed = COMPUTED_SORT_FIELDS.get(field_name)
-        column = computed() if computed is not None else SORT_FIELDS.get(field_name)
-        if column is None:
-            raise HTTPException(status_code=400, detail=f"Unsupported sort field: {field_name}")
-        if descending:
-            clauses.append(column.desc().nulls_last())
-        else:
-            clauses.append(column.asc().nulls_last())
-    return tuple(clauses or [Table.schema_name, Table.table_name])
+    return tuple(key.ordered() for key in _sort_keys(sort))
 
 
 def _apply_patch(model: object, values: dict[str, object]) -> None:

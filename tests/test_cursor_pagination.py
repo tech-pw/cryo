@@ -13,11 +13,14 @@ envelope); see cryo/api/pagination.py. These tests cover:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 
 from cryo.api.pagination import (
     CursorError,
+    KeysetCursor,
     PageCursor,
     make_filter_repr,
     make_sort_repr,
@@ -134,6 +137,28 @@ def test_paginated_tables_schema_exposes_cursor_field() -> None:
     )
     assert with_cursor.cursor == "abc"
     assert with_cursor.has_more is True
+
+
+def test_keyset_cursor_round_trips_sort_values() -> None:
+    when = datetime(2026, 11, 4, 12, 30, tzinfo=UTC)
+    ident = uuid.uuid4()
+    cursor = KeysetCursor(
+        values=["b", None, when, ident, 3, 1.5, Decimal("2.50"), False],
+        filter_repr=None,
+        sort_repr="table_name",
+    )
+    decoded = KeysetCursor.decode(cursor.encode())
+    assert decoded.values == ["b", None, when, ident, 3, 1.5, Decimal("2.50"), False]
+    assert decoded.matches_request(filter_repr=None, sort_repr="table_name")
+    assert not decoded.matches_request(filter_repr=None, sort_repr="-table_name")
+
+
+def test_keyset_cursor_rejects_an_offset_cursor() -> None:
+    legacy = PageCursor(
+        key="abc", offset_within_key=2, filter_repr=None, sort_repr="table_name"
+    ).encode()
+    with pytest.raises(CursorError, match="offset"):
+        KeysetCursor.decode(legacy)
 
 
 def test_empty_token_does_not_resume_a_real_session() -> None:

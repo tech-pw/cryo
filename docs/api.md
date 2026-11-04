@@ -133,6 +133,7 @@ use Trino presets that target this destination. `catalog_bindings` is Trino-only
 
 ```http
 GET /api/v1/tables?filter=<json>&sort=-small_files_count&limit=100&offset=0
+GET /api/v1/tables?sort=table_name&limit=100&cursor=<opaque>
 GET /api/v1/tables/{table_id}
 GET /api/v1/tables/{table_id}/partitions
 GET /api/v1/tables/{table_id}/audit
@@ -170,8 +171,12 @@ Tables the catalog no longer lists (#120) are tombstones. `GET /tables`,
 them, `include` lists them with everything else, and `only` lists just them. Rows carry
 `removed_from_catalog_at` and `removed_reason`, and the CSV ends with those two columns. The
 older `include_removed=true` still works as an alias for `removed=include` (ignored when
-`removed` is set). The page cursor is bound to the mode. Removed tables are never maintained:
-bulk selection resolves only active tables.
+`removed` is set). Pass `cursor` from the previous page to resume strictly after that
+row (its sort values and table id), so a table added or removed ahead of the cursor is
+not repeated or skipped. `offset` applies only when `cursor` is omitted. The cursor is
+bound to the filter, sort, `removed` mode and `effective_provenance`. A cursor issued
+before this change, or for a different combination, is rejected. Removed tables are never
+maintained: bulk selection resolves only active tables.
 
 Table configuration (the table detail Config tab):
 

@@ -49,6 +49,11 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- `GET /tables` cursors resume after the last row (its sort values and table id) instead of
+  at a stored offset, so a table discovered or removed between pages is not repeated or
+  skipped. Rows that share a sort value stay ordered by id. A cursor issued before this
+  change is rejected; request the first page again. `offset` still selects a page by
+  position when no cursor is sent (#418).
 - Migration `20261103_1200` no longer deadlocks against running Cryo pods. It rewrote one
   foreign key at a time inside the same transaction as `20261103_1510`, which still held
   `cryo.presets` exclusively, so an app session reading `tables` and then `presets` closed a
