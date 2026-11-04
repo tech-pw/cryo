@@ -35,6 +35,18 @@ logger = logging.getLogger(__name__)
 FILE_SIZE_BIN_COUNT = 40
 
 
+class IncompleteManifestScan(RuntimeError):
+    """A manifest could not be read, so the counts are not safe to store."""
+
+
+def manifest_read_failure(errors: Sequence[str]) -> IncompleteManifestScan:
+    first = errors[0]
+    return IncompleteManifestScan(
+        f"incomplete scan: {len(errors)} manifest read error(s); "
+        f"previous stats were kept. first: {first}"
+    )
+
+
 def record_file_size_bin(bins: list[int], size_bytes: int) -> None:
     if size_bytes <= 0:
         bins[0] += 1
@@ -307,6 +319,9 @@ def analyze_table(
             file_path = _attr(data_file, "file_path", None)
             if isinstance(file_path, str) and file_path:
                 accum.sample_path = file_path
+
+    if manifest_read_errors:
+        raise manifest_read_failure(manifest_read_errors)
 
     partition_rows = [
         partition_row(key, accum)

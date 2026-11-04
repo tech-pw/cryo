@@ -128,6 +128,20 @@ no `MinVersion`. Go clients already default to TLS 1.2, so this changes nothing 
 it states the floor explicitly so a static scan (gosec G402) can see it. `InsecureSkipVerify`
 stays an explicit operator opt-in through `rest.tls.skip-verify=true`, as upstream.
 
+### 6. Older manifests in a newer manifest list
+
+`manifest.go`, `NewManifestReader`: the reader rejected a manifest whose
+`format-version` metadata differed from the manifest-list entry. Upgrading a
+table to v3 does not rewrite existing manifests, so a v3 list legitimately
+points at v2 (and v1) files. Those files were skipped, the scan still reported
+success, and file counts were short by whole manifests.
+
+The reader now accepts a manifest whose own version is lower than or equal to
+the list entry and decodes it as that version. A manifest newer than the list
+is still rejected.
+
+Regression test: `manifest_format_version_test.go`.
+
 ## Removing this fork
 
 Once a released `apache/iceberg-go` version fixes these upstream (Avro day-transform
