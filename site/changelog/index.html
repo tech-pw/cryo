@@ -52,6 +52,9 @@
 </ul>
 <h3 id="unreleased-fixed">Fixed<a class="anchor" href="#unreleased-fixed" aria-label="Link to Fixed">#</a></h3>
 <ul>
+  <li>Migration <code>20261103_1200</code> no longer deadlocks against running Cryo pods. It rewrote one foreign key at a time inside the same transaction as <code>20261103_1510</code>, which still held <code>cryo.presets</code> exclusively, so an app session reading <code>tables</code> and then <code>presets</code> closed a cycle and the migrate hook failed with <code>DeadlockDetected</code> on <code>fk_jobs_table_id_tables</code>. The rewrite now runs after the earlier revisions commit, locks every relation it touches up front with a 3s lock timeout, and on a timeout or deadlock releases them and retries (up to 20 times). A failed attempt with the old image rolled back, so re-syncing is safe (#330).</li>
+</ul>
+<ul>
   <li>The Go scan subprocess now gets <code>GOMEMLIMIT</code> at 75% of the container memory limit (or <code>CRYO_SCAN_ENGINE_MEMLIMIT</code> when set), so one large table is collected inside the scanner pod instead of OOM-killing it. The table name is logged before the subprocess starts, and a kill (signal 9) is recorded as that table's scan failure, which the existing retry ladder backs off (#378).</li>
 </ul>
 <ul>
