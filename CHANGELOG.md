@@ -49,6 +49,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- The scanner no longer drops manifests written before a table was upgraded to
+  format v3. A v3 manifest list may point at v2 files; those files are read as
+  v2. A scan that still cannot read a manifest fails and keeps the previous
+  stats, instead of storing file counts that are short by whole manifests (#421).
 - `GET /tables` cursors resume after the last row (its sort values and table id) instead of
   at a stored offset, so a table discovered or removed between pages is not repeated or
   skipped. Rows that share a sort value stay ordered by id. A cursor issued before this

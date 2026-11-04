@@ -207,9 +207,31 @@ def run_scan_stats(
     payload = _parse_engine_payload(
         stdout, command="scan-stats", returncode=proc.returncode, stderr=stderr
     )
+    incomplete = incomplete_scan_message(payload)
+    if incomplete:
+        raise RuntimeError(incomplete)
     if not payload.get("ok", False):
         raise RuntimeError(payload.get("error") or f"scan-stats failed (exit={proc.returncode})")
     return payload
+
+
+def incomplete_scan_message(payload: Mapping[str, Any]) -> str | None:
+    """Why a payload must not replace the table's stats, or None when it is complete.
+
+    A manifest the reader skipped is missing from every count. An older engine
+    still reported ``ok: true`` and stored those short counts (#421).
+    """
+    errors = payload.get("manifest_read_errors")
+    if not isinstance(errors, list) or not errors:
+        return None
+    detail = payload.get("error")
+    if isinstance(detail, str) and detail.strip():
+        return detail
+    first = errors[0]
+    return (
+        f"incomplete scan: {len(errors)} manifest read error(s); "
+        f"previous stats were kept. first: {first}"
+    )
 
 
 def table_analysis_from_go_payload(
