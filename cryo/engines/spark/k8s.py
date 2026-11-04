@@ -600,7 +600,16 @@ class SparkK8sClient:
                 metrics=result_metrics_from_log(detail),
             )
         if phase == "Failed":
-            detail = _read_pod_log_tail(driver_pod_name, self._config.namespace)
+            # The stored tail is still 2000 lines. Executor loss and the rewrite pool
+            # can sit further up than that, above a long NullPointerException stack,
+            # and truncation then keeps only the NPE (#425). Scan a wider tail for
+            # those lines; only the lead and the last 2000 lines are returned.
+            wide = _read_pod_log_tail(
+                driver_pod_name,
+                self._config.namespace,
+                tail_lines=_FAILURE_SCAN_LINES,
+            )
+            detail = last_log_lines(wide, _LOG_TAIL_LINES)
             # A cgroup SIGKILL leaves INFO in the driver log and the reason on the
             # container status. truncate_error_message keeps the head, so the reason
             # has to be in front or the UI shows broadcast lines and the retry cannot
@@ -612,7 +621,7 @@ class SparkK8sClient:
                 # The driver survived, so look for what killed the job: an OOM-killed
                 # executor (Spark's follow-on NPE is not the cause, issue #166), else the
                 # driver container's own exit when the log tail holds no exception at all.
-                lead = executor_oom_summary(detail)
+                lead = driver_failure_lead(wide)
                 if lead is None and deepest_caused_by(detail) is None:
                     lead = _container_exit_summary(pod)
                 if lead:
@@ -1195,8 +1204,18 @@ def _adopt_credentials_secret(
         logger.warning("Failed to attach credentials Secret to Job %s", job_name)
 
 
+_LOG_TAIL_LINES = 2000
+# A SparkPlan.session() NPE stack can push the executor-loss lines, and the
+# Rewrite-Service frame that shows the rewrite pool, out of the stored tail.
+_FAILURE_SCAN_LINES = 20_000
+
+
 def _read_pod_log_tail(
-    pod_name: str, namespace: str, *, label_selector: str | None = None
+    pod_name: str,
+    namespace: str,
+    *,
+    label_selector: str | None = None,
+    tail_lines: int = _LOG_TAIL_LINES,
 ) -> str | None:
     """Best-effort: pull a tail of a pod's logs for the error.
 
@@ -1241,7 +1260,7 @@ def _read_pod_log_tail(
                 logs: str = core_api.read_namespaced_pod_log(
                     name=name,
                     namespace=namespace,
-                    tail_lines=2000,
+                    tail_lines=tail_lines,
                 )
                 tail = logs.strip()
                 if tail:
@@ -1310,6 +1329,68 @@ def executor_oom_summary(detail: str | None) -> str | None:
     if lost:
         return f"{EXECUTOR_OOM_PREFIX} exit 137 (executor {lost.group(1)})"
     return f"{EXECUTOR_OOM_PREFIX} exit 137"
+
+
+def last_log_lines(log: str | None, count: int) -> str | None:
+    """The last ``count`` lines, or the log itself when it is already shorter."""
+    if not log or count < 1:
+        return log
+    lines = log.splitlines()
+    if len(lines) <= count:
+        return log
+    return "\n".join(lines[-count:])
+
+
+# Iceberg 1.11 submits each file group to a pool named Rewrite-Service-N
+# (RewriteDataFilesSparkAction.rewriteService). SparkPlan.session is the active
+# session captured when the plan object is built. A plan built on that pool,
+# without the session set on the thread, is this NPE with no executor loss.
+_SESSION_NPE = "SparkPlan.session()"
+_FAILURE_CONTEXT_TOKENS = (
+    _SESSION_NPE,
+    "Lost executor",
+    "exit code 137",
+    _OOMKILLED_REASON,
+    _EXECUTOR_CONTAINER,
+    "Rewrite-Service-",
+    "RewriteDataFiles",
+)
+
+
+def session_npe_context(detail: str | None, *, limit: int = 24) -> str | None:
+    """Lines that tell a session NPE from an executor kill, from anywhere in the log."""
+    if not detail or _SESSION_NPE not in detail:
+        return None
+    kept: list[str] = []
+    seen: set[str] = set()
+    for line in detail.splitlines():
+        if not any(token in line for token in _FAILURE_CONTEXT_TOKENS):
+            continue
+        text = line.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        kept.append(text)
+        if len(kept) >= limit:
+            break
+    return "\n".join(kept) if kept else None
+
+
+def driver_failure_lead(detail: str | None) -> str | None:
+    """What truncation must keep from a driver log wider than the stored tail.
+
+    An executor OOM is the cause, and its summary has to be the first line so the
+    retry still matches. A session NPE with no OOM keeps the rewrite-pool and
+    executor-loss lines that sat above the stack (#425).
+    """
+    oom = executor_oom_summary(detail)
+    context = session_npe_context(detail)
+    if oom is None:
+        return context
+    if not context:
+        return oom
+    extra = [line for line in context.splitlines() if line != oom and _SESSION_NPE not in line]
+    return f"{oom}\n" + "\n".join(extra) if extra else oom
 
 
 def _container_exit_summary(pod: Any) -> str | None:

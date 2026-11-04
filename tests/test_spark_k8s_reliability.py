@@ -24,7 +24,9 @@ from cryo.engines.spark.k8s import (
     SparkK8sClient,
     SparkK8sConfig,
     _capped_submit_config,
+    driver_failure_lead,
     executor_oom_summary,
+    last_log_lines,
 )
 from cryo.engines.spark.k8s_engine import SparkK8sEngine, is_spark_executor_oom
 from cryo.engines.spark.procedure_metrics import result_metrics_from_log, rewrite_file_counts
@@ -91,6 +93,46 @@ def test_executor_oom_summary_reads_the_executor_kill_not_the_npe() -> None:
         is None
     )
     assert executor_oom_summary(None) is None
+
+
+def test_failure_lead_finds_an_executor_oom_above_a_long_stack() -> None:
+    from cryo.engines.base import ROOT_CAUSE_PREFIX
+
+    wide = "\n".join(
+        [
+            _EXECUTOR_OOM_LOG.split(_NPE)[0],
+            *(f"at org.apache.spark.stack.Frame{n}" for n in range(5000)),
+            _NPE,
+        ]
+    )
+    stored = last_log_lines(wide, 2000) or ""
+    assert "OOMKilled" not in stored
+    lead = driver_failure_lead(wide)
+    assert lead is not None
+    assert lead.startswith("Executor OOMKilled exit 137 (executor 2)")
+    # execute() names that first line as the root cause before truncating.
+    message = f"{ROOT_CAUSE_PREFIX}{lead.split(chr(10), 1)[0]}\n{lead}\n{stored}"
+    assert truncate_error_message(message).startswith(
+        f"{ROOT_CAUSE_PREFIX}Executor OOMKilled exit 137 (executor 2)"
+    )
+
+
+def test_failure_lead_keeps_the_rewrite_pool_when_there_is_no_executor_oom() -> None:
+    wide = "\n".join(
+        [
+            'Exception in thread "Rewrite-Service-3" java.lang.NullPointerException',
+            "at org.apache.iceberg.spark.actions.RewriteDataFilesSparkAction.rewrite",
+            *(f"at org.apache.spark.stack.Frame{n}" for n in range(5000)),
+            _NPE,
+        ]
+    )
+    lead = driver_failure_lead(wide)
+    assert lead is not None
+    assert not lead.startswith("Executor OOMKilled")
+    assert "Rewrite-Service-3" in lead
+    assert "RewriteDataFilesSparkAction" in lead
+    assert "SparkPlan.session()" in lead
+    assert "Rewrite-Service-3" in (truncate_error_message(f"{lead}\nnoise"))
 
 
 def test_get_job_run_front_loads_executor_oom() -> None:
