@@ -35,6 +35,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Fixed
 
+- A Spark `optimize` failure whose root is `SparkPlan.session()` being null keeps the executor-loss and `Rewrite-Service` lines from the driver log. Those lines were outside the stored tail, so the saved error was only the NullPointerException and an executor OOM above it was not classified (#425).
 - A Spark driver left `Pending` after its credentials Secret is deleted is removed once it is older than the driver TTL, including when its container never started. The Secret is no longer deleted while that driver pod still exists and has not finished (#423).
 - An admitted job whose destination is gone releases its table lock when it fails. Lock reconciliation logs the table, the job, and the status (or that the job is missing) for every lock it releases. Ad-hoc runs get the same deadline as scheduled runs, so a deferred job cannot hold one open with no deadline (#424).
 - Large unpartitioned tables are compacted instead of skipped once they pass the small-file threshold. The rewrite covers only small files and, on Spark and the native engine, groups of at most the chunk budget, with partial progress so a run that stops keeps the groups it finished. Trino still rewrites every small file in one statement. An operation that was explicitly requested and then skipped is shown on the run, and that job is no longer reported as a plain success (#422).

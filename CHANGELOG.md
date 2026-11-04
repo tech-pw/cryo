@@ -49,6 +49,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- A Spark `optimize` failure whose root is `SparkPlan.session()` being null keeps
+  the executor-loss and `Rewrite-Service` lines from the driver log. Those lines
+  were outside the stored tail, so the saved error was only the
+  NullPointerException and an executor OOM above it was not classified (#425).
 - A Spark driver left `Pending` after its credentials Secret is deleted is removed
   once it is older than the driver TTL, including when its container never started.
   The Secret is no longer deleted while that driver pod still exists and has not
