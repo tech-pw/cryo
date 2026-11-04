@@ -364,6 +364,8 @@ def test_submit_spark_sql_creates_credentials_secret_when_configured() -> None:
 
 
 def test_cleanup_credentials_secret_deletes_when_annotation_present() -> None:
+    from kubernetes.client.exceptions import ApiException
+
     cfg = SparkK8sConfig(namespace="cryo")
     client = SparkK8sClient(cfg)
     batch_api = MagicMock()
@@ -371,6 +373,7 @@ def test_cleanup_credentials_secret_deletes_when_annotation_present() -> None:
         metadata=SimpleNamespace(annotations={"cryo/credentials-secret-name": "cryo-spark-abc-aws"})
     )
     core_api = MagicMock()
+    core_api.read_namespaced_pod.side_effect = ApiException(status=404)
 
     with (
         patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api),
@@ -392,6 +395,7 @@ def test_cleanup_credentials_secret_falls_back_to_conventional_name() -> None:
     batch_api = MagicMock()
     batch_api.read_namespaced_job.side_effect = ApiException(status=404)
     core_api = MagicMock()
+    core_api.read_namespaced_pod.side_effect = ApiException(status=404)
 
     with (
         patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api),
@@ -434,6 +438,7 @@ def test_cleanup_after_run_deletes_driver_and_credentials() -> None:
     client = SparkK8sClient(cfg)
 
     with (
+        patch.object(client, "_driver_pod_phase", return_value="Succeeded"),
         patch.object(client, "cleanup_driver_pod") as cleanup_driver,
         patch.object(client, "cleanup_credentials_secret") as cleanup_secret,
     ):
@@ -777,9 +782,16 @@ def test_get_job_run_reraises_non_404_errors_on_wrapper_job_lookup() -> None:
 # restores the intended TTL behavior.
 
 
-def _pod(name: str, *, phase: str, start_time, has_start_time: bool = True) -> SimpleNamespace:
+def _pod(
+    name: str,
+    *,
+    phase: str,
+    start_time,
+    has_start_time: bool = True,
+    creation_timestamp=None,
+) -> SimpleNamespace:
     return SimpleNamespace(
-        metadata=SimpleNamespace(name=name),
+        metadata=SimpleNamespace(name=name, creation_timestamp=creation_timestamp),
         status=SimpleNamespace(
             phase=phase,
             start_time=start_time if has_start_time else None,
@@ -924,12 +936,127 @@ def test_cleanup_checks_both_succeeded_and_failed_phases() -> None:
     )
 
     calls = core_api.list_namespaced_pod.call_args_list
-    assert len(calls) == 2
+    assert len(calls) == 3
     phases = {c.kwargs["field_selector"] for c in calls}
-    assert phases == {"status.phase=Succeeded", "status.phase=Failed"}
+    assert phases == {"status.phase=Succeeded", "status.phase=Failed", "status.phase=Pending"}
     for c in calls:
         assert c.kwargs["label_selector"] == "spark-role=driver"
         assert c.kwargs["namespace"] == "cryo"
+
+
+def test_cleanup_deletes_a_pending_driver_whose_wrapper_job_is_gone() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from kubernetes.client.exceptions import ApiException
+
+    created = datetime.now(UTC) - timedelta(hours=2)
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.side_effect = [
+        SimpleNamespace(items=[]),
+        SimpleNamespace(items=[]),
+        SimpleNamespace(
+            items=[
+                _pod(
+                    "cryo-spark-stuck-driver",
+                    phase="Pending",
+                    start_time=None,
+                    has_start_time=False,
+                    creation_timestamp=created,
+                )
+            ]
+        ),
+    ]
+    core_api.read_namespaced_secret.side_effect = ApiException(status=404)
+
+    deleted = cleanup_stale_driver_pods(
+        namespace="cryo", older_than_seconds=3600, core_api=core_api, batch_api=_jobs()
+    )
+
+    assert deleted == 1
+    core_api.delete_namespaced_pod.assert_called_once_with(
+        name="cryo-spark-stuck-driver", namespace="cryo"
+    )
+
+
+def test_cleanup_keeps_a_pending_driver_that_can_still_start() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    created = datetime.now(UTC) - timedelta(hours=2)
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.side_effect = [
+        SimpleNamespace(items=[]),
+        SimpleNamespace(items=[]),
+        SimpleNamespace(
+            items=[
+                _pod(
+                    "cryo-spark-starting-driver",
+                    phase="Pending",
+                    start_time=None,
+                    has_start_time=False,
+                    creation_timestamp=created,
+                )
+            ]
+        ),
+    ]
+
+    deleted = cleanup_stale_driver_pods(
+        namespace="cryo",
+        older_than_seconds=3600,
+        core_api=core_api,
+        batch_api=_jobs("cryo-spark-starting"),
+    )
+
+    assert deleted == 0
+    core_api.delete_namespaced_pod.assert_not_called()
+
+
+def test_cleanup_deletes_a_pending_driver_whose_secret_is_gone() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from kubernetes.client.exceptions import ApiException
+
+    created = datetime.now(UTC) - timedelta(hours=2)
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.side_effect = [
+        SimpleNamespace(items=[]),
+        SimpleNamespace(items=[]),
+        SimpleNamespace(
+            items=[
+                _pod(
+                    "cryo-spark-nosecret-driver",
+                    phase="Pending",
+                    start_time=None,
+                    has_start_time=False,
+                    creation_timestamp=created,
+                )
+            ]
+        ),
+    ]
+    core_api.read_namespaced_secret.side_effect = ApiException(status=404)
+
+    deleted = cleanup_stale_driver_pods(
+        namespace="cryo",
+        older_than_seconds=3600,
+        core_api=core_api,
+        batch_api=_jobs("cryo-spark-nosecret"),
+    )
+
+    assert deleted == 1
+
+
+def test_cleanup_after_run_keeps_a_driver_that_has_not_finished() -> None:
+    cfg = SparkK8sConfig(namespace="cryo")
+    client = SparkK8sClient(cfg)
+
+    with (
+        patch.object(client, "_driver_pod_phase", return_value="Pending"),
+        patch.object(client, "cleanup_driver_pod") as cleanup_driver,
+        patch.object(client, "cleanup_credentials_secret") as cleanup_secret,
+    ):
+        client.cleanup_after_run("cryo-spark-abc")
+
+    cleanup_driver.assert_not_called()
+    cleanup_secret.assert_not_called()
 
 
 def test_cleanup_never_raises_on_list_failure() -> None:
@@ -1005,7 +1132,8 @@ def test_client_reuses_cached_batch_and_core_clients_across_calls() -> None:
     assert new_batch.call_count == 1
     assert new_core.call_count == 1
     # And every call actually landed on the one cached instance, not a fresh mock.
-    assert core_api.read_namespaced_pod.call_count == 2
+    # Two outcome lookups, plus cleanup_credentials_secret confirming the driver is gone.
+    assert core_api.read_namespaced_pod.call_count == 3
     assert batch_api.read_namespaced_job.call_count >= 1
 
 
