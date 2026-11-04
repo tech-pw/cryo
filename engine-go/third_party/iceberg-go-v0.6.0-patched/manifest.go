@@ -626,7 +626,14 @@ func NewManifestReader(file ManifestFile, in io.Reader) (*ManifestReader, error)
 			return nil, fmt.Errorf("manifest file's 'format-version' metadata is invalid: %w", err)
 		}
 	}
-	if formatVersion != file.Version() {
+	if formatVersion < 1 {
+		return nil, fmt.Errorf("manifest file's 'format-version' metadata indicates version %d, which is not a supported Iceberg manifest",
+			formatVersion)
+	}
+	// Upgrading a table does not rewrite existing manifests. A v3 manifest list
+	// legitimately points at v1 or v2 files, and those files must be decoded as
+	// the version they advertise. Only a manifest newer than the list is unreadable.
+	if formatVersion > file.Version() {
 		return nil, fmt.Errorf("manifest file's 'format-version' metadata indicates version %d, but entry from manifest list indicates version %d",
 			formatVersion, file.Version())
 	}

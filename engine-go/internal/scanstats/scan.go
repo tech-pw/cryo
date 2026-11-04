@@ -178,6 +178,22 @@ func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protoc
 		}
 	}
 
+	if len(acc.manifestErrors) > 0 {
+		// A missed manifest drops whole files from the counts. Saving that as a
+		// successful scan replaces good stats with a short table (#421).
+		msg := fmt.Sprintf(
+			"incomplete scan: %d manifest read error(s); previous stats were kept. first: %s",
+			len(acc.manifestErrors), acc.manifestErrors[0],
+		)
+		return protocol.ScanStatsResponse{
+			OK:                 false,
+			Error:              &msg,
+			SchemaName:         schemaName,
+			TableName:          tableName,
+			ManifestReadErrors: acc.manifestErrors,
+		}
+	}
+
 	meta := snapshotMeta(tbl)
 	formatVersion := detectFormatVersion(tbl)
 	resp = acc.finish(schemaName, tableName, &meta)
