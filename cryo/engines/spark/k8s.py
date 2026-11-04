@@ -762,6 +762,26 @@ class SparkK8sClient:
                 exc_info=True,
             )
 
+    def _driver_pod_phase(self, job_id: str) -> str | None:
+        """Phase of ``{job_id}-driver``, or None when that pod does not exist.
+
+        A read that fails for any other reason reports ``Unknown``: the pod may still
+        be there, and deleting its credentials Secret would leave it Pending forever.
+        """
+        try:
+            pod = self._core_client().read_namespaced_pod(
+                name=f"{job_id}-driver", namespace=self._config.namespace
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort; missing pod is the normal case
+            if _is_not_found(exc):
+                return None
+            logger.warning(
+                "Failed to read Spark driver pod %s-driver: %s", job_id, exc, exc_info=True
+            )
+            return "Unknown"
+        phase = getattr(getattr(pod, "status", None), "phase", None)
+        return phase if isinstance(phase, str) else "Unknown"
+
     def cleanup_credentials_secret(self, job_id: str) -> None:
         """Delete the per-job AWS credentials Secret created by submit_spark_sql, if any.
 
@@ -769,7 +789,20 @@ class SparkK8sClient:
         so credential Secrets don't accumulate. Missing/already-deleted is not an error.
         Prefers the Job annotation; falls back to the conventional ``{job_id}-aws`` name
         when the wrapper Job is already gone (TTL).
+
+        A driver that exists and is not Succeeded or Failed still has to mount this
+        Secret. Deleting it first leaves the pod Pending in CreateContainerConfigError
+        with its CPU and memory reserved, and the stale-pod sweep used to ignore
+        Pending (#423).
         """
+        phase = self._driver_pod_phase(job_id)
+        if phase in {"Pending", "Running", "Unknown"}:
+            logger.info(
+                "Keeping credentials Secret for %s; driver pod is %s",
+                job_id,
+                phase,
+            )
+            return
         secret_name: str | None = None
         try:
             batch_api = self._batch_client()
@@ -795,7 +828,19 @@ class SparkK8sClient:
             logger.warning("Failed to clean up credentials Secret for job %s", job_id)
 
     def cleanup_after_run(self, job_id: str) -> None:
-        """Reclaim driver pod + credentials Secret after a terminal (or cancelled) run."""
+        """Reclaim driver pod + credentials Secret after a terminal (or cancelled) run.
+
+        The phase is checked before the driver pod is deleted. Deleting the pod first
+        made the Secret look unused, and spark-submit can create the driver after that.
+        """
+        phase = self._driver_pod_phase(job_id)
+        if phase in {"Pending", "Running", "Unknown"}:
+            logger.info(
+                "Not cleaning Spark job %s; driver pod is %s and still needs its credentials",
+                job_id,
+                phase,
+            )
+            return
         self.cleanup_driver_pod(job_id)
         self.cleanup_credentials_secret(job_id)
 
@@ -892,13 +937,36 @@ _DRIVER_POD_SUFFIX = "-driver"
 _WRAPPER_JOB_LABEL_SELECTOR = "app.kubernetes.io/component=spark-fallback"
 
 
-def _live_wrapper_job_names(batch_api: client.BatchV1Api, namespace: str) -> frozenset[str]:
+def _wrapper_jobs(
+    batch_api: client.BatchV1Api, namespace: str
+) -> tuple[frozenset[str], frozenset[str]]:
+    """``(present, finished)`` names of Spark dispatch Jobs.
+
+    A finished Job stays in ``present`` until its TTL deletes it. Completed drivers
+    must wait for that (#377). A Pending driver whose Job has already finished will
+    never start.
+    """
     jobs = batch_api.list_namespaced_job(
         namespace=namespace, label_selector=_WRAPPER_JOB_LABEL_SELECTOR
     )
-    return frozenset(
-        job.metadata.name for job in jobs.items or [] if job.metadata and job.metadata.name
-    )
+    present: set[str] = set()
+    finished: set[str] = set()
+    for job in jobs.items or []:
+        name = job.metadata.name if job.metadata else None
+        if not name:
+            continue
+        present.add(name)
+        status = getattr(job, "status", None)
+        succeeded = int(getattr(status, "succeeded", 0) or 0)
+        failed = int(getattr(status, "failed", 0) or 0)
+        if succeeded >= 1 or failed >= 1 or getattr(status, "completion_time", None) is not None:
+            finished.add(name)
+    return frozenset(present), frozenset(finished)
+
+
+def _live_wrapper_job_names(batch_api: client.BatchV1Api, namespace: str) -> frozenset[str]:
+    present, _finished = _wrapper_jobs(batch_api, namespace)
+    return present
 
 
 def cleanup_stale_driver_pods(
@@ -937,8 +1005,9 @@ def cleanup_stale_driver_pods(
     nothing is deleted this pass.
     """
     api = core_api or _new_k8s_core_client()
+    jobs_api = batch_api or _new_k8s_batch_client()
     try:
-        live_wrappers = _live_wrapper_job_names(batch_api or _new_k8s_batch_client(), namespace)
+        live_wrappers, finished_wrappers = _wrapper_jobs(jobs_api, namespace)
     except Exception:  # noqa: BLE001 - best-effort cleanup only
         logger.warning(
             "Failed to list Spark dispatch Jobs; skipping driver pod cleanup", exc_info=True
@@ -946,7 +1015,7 @@ def cleanup_stale_driver_pods(
         return 0
     deleted = 0
     now = time.time()
-    for phase in ("Succeeded", "Failed"):
+    for phase in ("Succeeded", "Failed", "Pending"):
         try:
             pods = api.list_namespaced_pod(
                 namespace=namespace,
@@ -957,16 +1026,27 @@ def cleanup_stale_driver_pods(
             logger.warning("Failed to list %s Spark driver pods for cleanup", phase, exc_info=True)
             continue
         for pod in pods.items or []:
-            start_time = getattr(pod.status, "start_time", None)
-            if start_time is None:
-                continue
-            age_seconds = now - start_time.timestamp()
-            if age_seconds < older_than_seconds:
-                continue
             pod_name = pod.metadata.name if pod.metadata else None
-            if not pod_name:
+            if not pod_name or not pod_name.endswith(_DRIVER_POD_SUFFIX):
                 continue
-            if pod_name.removesuffix(_DRIVER_POD_SUFFIX) in live_wrappers:
+            job_name = pod_name.removesuffix(_DRIVER_POD_SUFFIX)
+            if phase == "Pending":
+                # A container that never started has no start_time. Age is from the
+                # pod object, which exists as soon as spark-submit creates it.
+                stamp = getattr(pod.metadata, "creation_timestamp", None)
+            else:
+                stamp = getattr(pod.status, "start_time", None)
+            if stamp is None:
+                continue
+            if now - stamp.timestamp() < older_than_seconds:
+                continue
+            if phase == "Pending":
+                # Still starting, and its Secret is there: leave it. A finished or
+                # deleted wrapper will never start it, and a missing Secret cannot.
+                if job_name in live_wrappers and job_name not in finished_wrappers:
+                    if not _credentials_secret_missing(api, namespace, f"{job_name}-aws"):
+                        continue
+            elif job_name in live_wrappers:
                 continue
             try:
                 api.delete_namespaced_pod(name=pod_name, namespace=namespace)
@@ -975,6 +1055,15 @@ def cleanup_stale_driver_pods(
                 if "404" not in str(exc):
                     logger.warning("Failed to delete stale Spark driver pod %s: %s", pod_name, exc)
     return deleted
+
+
+def _credentials_secret_missing(api: Any, namespace: str, name: str) -> bool:
+    """True only on a confirmed 404. Any other error keeps the driver."""
+    try:
+        api.read_namespaced_secret(name=name, namespace=namespace)
+    except Exception as exc:  # noqa: BLE001 - best-effort cleanup only
+        return _is_not_found(exc)
+    return False
 
 
 _k8s_config_loaded = False
