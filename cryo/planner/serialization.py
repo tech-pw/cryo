@@ -33,6 +33,11 @@ def plan_to_dict(plan: MaintenancePlan) -> dict[str, Any]:
             "candidate_partitions": plan.optimize_truncation.candidate_partitions,
             "max_chunks": plan.optimize_truncation.max_chunks,
         }
+    if plan.skipped_operations:
+        payload["skipped_operations"] = [
+            {"operation": operation, "reason": reason}
+            for operation, reason in plan.skipped_operations
+        ]
     return payload
 
 
@@ -87,7 +92,22 @@ def plan_from_dict(payload: Mapping[str, Any]) -> MaintenancePlan:
         operations=tuple(operations),
         notes=notes,
         optimize_truncation=_truncation_from_dict(payload.get("optimize_truncation")),
+        skipped_operations=_skipped_from_dict(payload.get("skipped_operations")),
     )
+
+
+def _skipped_from_dict(raw: object) -> tuple[tuple[str, str], ...]:
+    if not isinstance(raw, list):
+        return ()
+    skipped: list[tuple[str, str]] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        operation = item.get("operation")
+        reason = item.get("reason")
+        if isinstance(operation, str) and operation and isinstance(reason, str) and reason:
+            skipped.append((operation, reason))
+    return tuple(skipped)
 
 
 def _truncation_from_dict(raw: object) -> OptimizeTruncation | None:

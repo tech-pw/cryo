@@ -134,4 +134,5 @@ def gate_spark_time_columns(
             op for op in plan.operations if op.type not in SPARK_SCHEMA_READING_OPERATIONS
         ),
         notes=(*plan.notes, spark_time_columns_note(columns, skipped)),
+        skipped_operations=plan.skipped_operations,
     )
