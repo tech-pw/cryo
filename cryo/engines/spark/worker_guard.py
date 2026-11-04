@@ -165,6 +165,10 @@ def validate_spark_plan_scope(
     operation = unscoped_optimizes[0]
     if full_table_optimize_allowed(stats, operation.params):
         return
+    if _bounded_unpartitioned_group(operation.params):
+        # The rewrite is still unscoped, but each group is capped at the chunk budget
+        # and partial progress commits finished groups (#422).
+        return
     total_size_gb = _size_gb(stats)
     size_detail = "unknown" if total_size_gb is None else f"{total_size_gb:g} GB"
     chunk_size_gb = operation.params.get("chunk_size_gb", 100)
@@ -172,6 +176,21 @@ def validate_spark_plan_scope(
         "Spark plan contains an unscoped optimize operation for a table with size "
         f"{size_detail}, outside chunk size budget {chunk_size_gb} GB."
     )
+
+
+def _bounded_unpartitioned_group(params: Mapping[str, Any]) -> bool:
+    if not params.get("bounded_unpartitioned"):
+        return False
+    group = params.get("max_file_group_size_bytes")
+    if isinstance(group, bool) or not isinstance(group, int) or group < 1:
+        return False
+    try:
+        chunk_gb = float(params.get("chunk_size_gb", 100))
+    except (TypeError, ValueError):
+        return False
+    if chunk_gb <= 0:
+        return False
+    return group <= int(chunk_gb * 1024 * 1024 * 1024)
 
 
 def log_spark_payload(

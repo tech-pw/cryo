@@ -58,11 +58,13 @@ def build_plan(
         operations.append(Operation(OperationType.OPTIMIZE_MANIFESTS, dict(params)))
         kept = _apply_table_exclusions(operations, excluded, dropped_by_table)
         _note_table_exclusions(dropped_by_table, notes)
+        final_operations = _apply_skip_operations(kept, params, notes)
         return MaintenancePlan(
             table_ref=_table_ref(stats, params),
             mode=resolved_mode,
-            operations=_apply_skip_operations(kept, params, notes),
+            operations=final_operations,
             notes=tuple(notes),
+            skipped_operations=_skipped_requested_operations(params, final_operations, notes),
         )
 
     if resolved_mode in {Mode.LIGHT, Mode.STANDARD, Mode.DEEP}:
@@ -217,6 +219,7 @@ def build_plan(
         operations=final_operations,
         notes=tuple(notes),
         optimize_truncation=truncations[0] if truncations and planned_optimize else None,
+        skipped_operations=_skipped_requested_operations(params, final_operations, notes),
     )
 
 
@@ -336,12 +339,31 @@ def _optimize_operations(
             return [_optimize_operation(params)]
         if total_size_gb is None:
             notes.append("Skipped optimize: table is unpartitioned and total size is unknown.")
-        else:
-            notes.append(
-                "Skipped optimize: unpartitioned table size "
-                f"{total_size_gb:g} GB exceeds chunk size budget {chunk_size_gb:g} GB."
+            return []
+        # The whole table does not fit in one chunk. Skipping it means a large
+        # unpartitioned table is never compacted (#422). Rewrite only small files,
+        # in groups no bigger than the chunk, and keep going on the next run.
+        group_bytes = _chunk_bytes(chunk_size_gb)
+        notes.append(
+            "Planned bounded optimize: unpartitioned table size "
+            f"{total_size_gb:g} GB exceeds chunk size budget {chunk_size_gb:g} GB. "
+            "This run rewrites only small files, in groups of at most "
+            f"{chunk_size_gb:g} GB (Spark max-file-group-size-bytes with partial progress; "
+            "native max_bytes_per_group). Trino rewrites every small file in one statement "
+            "(file_size_threshold) because it has no group cap. Groups already committed "
+            "are kept if the run stops; the next run continues with what is left."
+        )
+        return [
+            _optimize_operation(
+                {
+                    **dict(params),
+                    "bounded_unpartitioned": True,
+                    "max_file_group_size_bytes": group_bytes,
+                    "max_bytes_per_group": group_bytes,
+                    "partial_progress": True,
+                }
             )
-        return []
+        ]
 
     if total_size_gb is not None and total_size_gb <= chunk_size_gb:
         notes.append("Planned full-table optimize: table is within chunk size budget.")
@@ -608,6 +630,37 @@ def effective_optimize_chunk_size_gb(
 
 def _effective_chunk_size_gb(chunk_size_gb: float, write_aware: bool) -> float:
     return max(1.0, chunk_size_gb / 2.0) if write_aware else chunk_size_gb
+
+
+def _chunk_bytes(chunk_size_gb: float) -> int:
+    return max(1, int(chunk_size_gb * 1024 * 1024 * 1024))
+
+
+def _skipped_requested_operations(
+    params: Mapping[str, Any],
+    operations: Sequence[Operation],
+    notes: Sequence[str],
+) -> tuple[tuple[str, str], ...]:
+    """Requested operations the plan did not emit, with the note that says why.
+
+    A nightly mode that never includes an operation is not a skip. An explicit
+    ``requested_operations`` list is: the run asked for it and got a note instead
+    (#422).
+    """
+    requested = params.get("requested_operations") or ()
+    planned = {operation.type.value for operation in operations}
+    skipped: list[tuple[str, str]] = []
+    for raw in requested:
+        name = str(raw)
+        if not name or name in planned:
+            continue
+        markers = (f"Skipped {name}:", f"Skipped {name}.")
+        reason = next(
+            (note for note in notes if note.startswith(markers)),
+            f"Skipped {name}.",
+        )
+        skipped.append((name, reason))
+    return tuple(skipped)
 
 
 def _is_write_aware(stats: Mapping[str, Any], params: Mapping[str, Any]) -> bool:

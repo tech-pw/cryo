@@ -101,11 +101,34 @@ export const jobOperationOutcomes = (job: PipelineJob): Map<string, OperationOut
       else if (jobOutcome === "running" || jobOutcome === "waiting") result.set(op, "waiting");
       else result.set(op, "skipped");
     }
+    recordSkippedOperations(job, result);
     return result;
   }
   const outcome = outcomeOf(job.status);
   for (const op of planOperationNames(job.plan)) result.set(op, outcome);
+  recordSkippedOperations(job, result);
   return result;
+}
+
+const recordSkippedOperations = (job: PipelineJob, result: Map<string, OperationOutcome>) => {
+  const raw = job.plan?.skipped_operations;
+  if (!Array.isArray(raw)) return;
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || !("operation" in item)) continue;
+    const op = item.operation;
+    if (typeof op === "string" && op && !result.has(op)) result.set(op, "skipped");
+  }
+};
+
+export const skippedOperationReason = (plan: JobRead["plan"], operation: string): string | undefined => {
+  const raw = plan?.skipped_operations;
+  if (!Array.isArray(raw)) return undefined;
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || !("operation" in item)) continue;
+    if (item.operation !== operation) continue;
+    return typeof item.reason === "string" && item.reason ? item.reason : undefined;
+  }
+  return undefined;
 };
 
 const orderIndex = (op: string) => {
@@ -164,5 +187,9 @@ export const pipelineStepsFromJobs = (jobs: PipelineJob[]): PipelineStep[] =>
     // One table: the icon and status tag say it all. Several tables: show the counts.
     else if (!single) step.detail = formatOperationCounts(counts);
     else if (counts.partial) step.detail = "partial";
+    else if (counts.skipped === counts.total && jobs.length === 1) {
+      const reason = skippedOperationReason(jobs[0]?.plan, counts.op);
+      if (reason) step.detail = reason;
+    }
     return step;
   });

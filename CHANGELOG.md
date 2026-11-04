@@ -49,6 +49,13 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- Large unpartitioned tables are compacted instead of skipped once they pass the
+  small-file threshold. The rewrite covers only small files and, on Spark and the
+  native engine, groups of at most the chunk budget, with partial progress so a
+  run that stops keeps the groups it finished. Trino still rewrites every small
+  file in one statement. An operation that was explicitly requested and then
+  skipped is shown on the run, and that job is no longer reported as a plain
+  success (#422).
 - The scanner no longer drops manifests written before a table was upgraded to
   format v3. A v3 manifest list may point at v2 files; those files are read as
   v2. A scan that still cannot read a manifest fails and keeps the previous

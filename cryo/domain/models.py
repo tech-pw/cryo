@@ -86,6 +86,9 @@ class MaintenancePlan:
     # Set when the plan rewrites fewer partitions than qualified. The run then must not count
     # as a full pass (#199): it does not start the nightly cooldown.
     optimize_truncation: OptimizeTruncation | None = None
+    # (operation, reason) for operations an explicit request asked for and the plan
+    # did not emit. Empty for a nightly plan that simply does not include them.
+    skipped_operations: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
