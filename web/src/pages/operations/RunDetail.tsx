@@ -21,7 +21,7 @@ import {
   maintenanceOpsToSteps,
   scanPipelineSteps
 } from "../../components/operations/OperationPipeline";
-import { pipelineStepsFromJobs } from "../../lib/runPipeline";
+import { pipelineStepsFromJobs, skippedOperationReason } from "../../lib/runPipeline";
 import { RunDurationBar } from "../../components/operations/RunDurationBar";
 import { RunHistoryGrid } from "../../components/operations/RunHistoryGrid";
 import {
@@ -84,6 +84,21 @@ const JOB_PAGE_SIZE = 50;
 const JOB_CHIP_STATUSES = ["failed", "succeeded", "skipped", "deferred"] as const;
 const CHIP_STATUS_SET = new Set<string>(JOB_CHIP_STATUSES);
 const IN_PROGRESS_JOB_STATUSES = new Set(["running", "admitted", "queued", "deferred"]);
+
+const SkippedOperationNotes = ({ job }: { job: JobRead }) => {
+  const raw = job.plan?.skipped_operations;
+  if (!Array.isArray(raw)) return null;
+  const reasons: string[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || !("operation" in item)) continue;
+    const operation = item.operation;
+    if (typeof operation !== "string") continue;
+    const reason = skippedOperationReason(job.plan, operation);
+    if (reason) reasons.push(reason);
+  }
+  if (reasons.length === 0) return null;
+  return <p className="mt-0.5 break-words text-xs text-muted-foreground">{reasons.join(" ")}</p>;
+};
 
 const tableRef = (job: JobRead) => {
   const planRef = job.plan?.table_ref;
@@ -642,12 +657,15 @@ export const RunDetail = () => {
         id: "table",
         header: "Table",
         cell: ({ row }) => (
-          <Link
-            to={`/tables/${row.original.table_id}`}
-            className="identity-stack break-all font-semibold hover:underline"
-          >
-            {tableRef(row.original)}
-          </Link>
+          <div className="min-w-0">
+            <Link
+              to={`/tables/${row.original.table_id}`}
+              className="identity-stack break-all font-semibold hover:underline"
+            >
+              {tableRef(row.original)}
+            </Link>
+            <SkippedOperationNotes job={row.original} />
+          </div>
         )
       },
       {

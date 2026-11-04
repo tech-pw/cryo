@@ -204,6 +204,11 @@ def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str
     max_concurrent = operation.params.get("max_concurrent_file_group_rewrites", 5)
     options.append(f"'max-concurrent-file-group-rewrites', '{max_concurrent}'")
     options.append(f"'rewrite-job-order', '{_rewrite_job_order(operation.params)}'")
+    group_bytes = _positive_int(operation.params.get("max_file_group_size_bytes"))
+    if group_bytes is not None:
+        # Bounds each file group on an unpartitioned table that is larger than one
+        # chunk. Partial progress (above) commits finished groups if the run stops.
+        options.append(f"'max-file-group-size-bytes', '{group_bytes}'")
 
     args.append(f"options => map({', '.join(options)})")
     rewrite_call = f"CALL {catalog}.system.rewrite_data_files(" + ", ".join(args) + ")"
@@ -601,6 +606,16 @@ def _rewrite_job_order(params: dict[str, Any]) -> str:
     # (deadline, lane death, a failed group) has already banked the biggest reductions.
     order = str(params.get("rewrite_job_order") or "files-desc").lower()
     return order if order in _REWRITE_JOB_ORDERS else "files-desc"
+
+
+def _positive_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _min_file_size_bytes(params: dict[str, Any], target_bytes: int) -> int | None:

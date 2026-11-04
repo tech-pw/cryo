@@ -347,9 +347,10 @@ def test_build_plan_allows_in_budget_unpartitioned_full_table_optimize() -> None
         operation for operation in plan.operations if operation.type is OperationType.OPTIMIZE
     )
     assert optimize.predicates is None
+    assert "bounded_unpartitioned" not in optimize.params
 
 
-def test_build_plan_skips_large_unpartitioned_full_table_optimize() -> None:
+def test_build_plan_bounds_large_unpartitioned_optimize() -> None:
     plan = build_plan(
         {
             "schema_name": "demo",
@@ -362,9 +363,15 @@ def test_build_plan_skips_large_unpartitioned_full_table_optimize() -> None:
         {"min_small_files": 1, "chunk_size_gb": 50},
     )
 
-    assert OperationType.OPTIMIZE not in [operation.type for operation in plan.operations]
+    optimize = next(
+        operation for operation in plan.operations if operation.type is OperationType.OPTIMIZE
+    )
+    assert optimize.predicates is None
+    assert optimize.params["bounded_unpartitioned"] is True
+    assert optimize.params["max_file_group_size_bytes"] == int(50 * 1024 * 1024 * 1024)
+    assert optimize.params["partial_progress"] is True
+    assert any("Planned bounded optimize" in note for note in plan.notes)
     assert OperationType.OPTIMIZE_MANIFESTS in [operation.type for operation in plan.operations]
-    assert any("unpartitioned table size" in note for note in plan.notes)
 
 
 def test_orphan_params_emit_min_age_hours() -> None:

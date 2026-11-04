@@ -60,4 +60,21 @@ describe("run pipeline", () => {
   it("returns nothing when no job names an operation", () => {
     expect(pipelineStepsFromJobs([{ status: "succeeded", plan: null }])).toEqual([]);
   });
+
+  it("shows an explicitly skipped operation and its reason", () => {
+    const reason = "Skipped optimize: table has 1 small files, below the threshold of 5.";
+    const steps = pipelineStepsFromJobs([
+      {
+        status: "partial",
+        plan: {
+          operations: ["optimize_manifests"],
+          skipped_operations: [{ operation: "optimize", reason }]
+        }
+      }
+    ]);
+    expect(steps.find((step) => step.key === "optimize")).toMatchObject({
+      status: "skipped",
+      detail: reason
+    });
+  });
 });

@@ -67,6 +67,23 @@ class DestinationConfig:
     config: Mapping[str, Any] = field(default_factory=dict)
 
 
+def requested_operation_skips(plan: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """Reasons for operations an explicit request asked for and the plan omitted."""
+    if not plan:
+        return ()
+    raw = plan.get("skipped_operations")
+    if not isinstance(raw, list):
+        return ()
+    reasons: list[str] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        reason = item.get("reason")
+        if isinstance(reason, str) and reason:
+            reasons.append(reason)
+    return tuple(reasons)
+
+
 @dataclass
 class MaintenanceJobRecord:
     id: str
@@ -1261,6 +1278,17 @@ class Worker:
                     )
             if had_skip and not had_success and final_status is JobStatus.SUCCEEDED:
                 final_status = JobStatus.SKIPPED
+            requested_skips = requested_operation_skips(plan_to_dict(plan))
+            if requested_skips and final_status is JobStatus.SUCCEEDED:
+                # The operator asked for an operation the plan did not run. Other
+                # statements may have succeeded; calling the job a plain success
+                # hides the skip (#422).
+                detail = "; ".join(requested_skips)
+                if had_success:
+                    final_status = JobStatus.PARTIAL
+                else:
+                    final_status = JobStatus.SKIPPED
+                error = detail
             if error in frozenset({"table_not_quiet", "awaiting_started_step_recovery"}):
                 if active_intent is None:
                     return self._store.get_job(job.id)

@@ -449,6 +449,7 @@ def gate_trino_semantics(
         mode=plan.mode,
         operations=tuple(operations),
         notes=(*plan.notes, *dict.fromkeys(notes)),
+        skipped_operations=plan.skipped_operations,
     )
 
 
