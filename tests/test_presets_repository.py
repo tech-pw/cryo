@@ -164,7 +164,8 @@ def test_repository_adapters_preserve_scheduler_resolution_shape() -> None:
 def test_sort_clauses_reject_unknown_fields() -> None:
     clauses = _sort_clauses("-small_files_count,table_name")
 
-    assert len(clauses) == 2
+    # The requested keys, plus the table id tie-break the keyset cursor resumes on.
+    assert len(clauses) == 3
 
     try:
         _sort_clauses("unknown")
@@ -183,7 +184,7 @@ def test_sort_clauses_accepts_consecutive_scan_failures() -> None:
     tables" with no obvious cause."""
     clauses = _sort_clauses("-consecutive_scan_failures")
 
-    assert len(clauses) == 1
+    assert len(clauses) == 2
 
 
 # ---------------------------------------------------------------------------
