@@ -49,6 +49,14 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- Migration `20261103_1200` no longer deadlocks against running Cryo pods. It rewrote one
+  foreign key at a time inside the same transaction as `20261103_1510`, which still held
+  `cryo.presets` exclusively, so an app session reading `tables` and then `presets` closed a
+  cycle and the migrate hook failed with `DeadlockDetected` on `fk_jobs_table_id_tables`. The
+  rewrite now runs after the earlier revisions commit, locks every relation it touches up
+  front with a 3s lock timeout, and on a timeout or deadlock releases them and retries (up to
+  20 times). A failed attempt with the old image rolled back, so re-syncing is safe (#330).
+
 - The Go scan subprocess now gets `GOMEMLIMIT` at 75% of the container memory limit (or
   `CRYO_SCAN_ENGINE_MEMLIMIT` when set), so one large table is collected inside the scanner
   pod instead of OOM-killing it. The table name is logged before the subprocess starts, and a
