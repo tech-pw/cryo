@@ -647,6 +647,11 @@ class GovernorRunner(DaemonRunner):
                 except KeyError:
                     lock_store.release_table_lock(table_id, job_id)
                     released += 1
+                    self._logger.info(
+                        "Lock reconciliation: released table %s held by missing job %s",
+                        table_id,
+                        job_id,
+                    )
                     continue
                 # ADMITTED holds the lock too: the governor takes it at admission, and the job
                 # may wait minutes for a worker. Releasing it lets a duplicate admit on top,
@@ -654,6 +659,13 @@ class GovernorRunner(DaemonRunner):
                 if record.status not in {JobStatus.RUNNING, JobStatus.ADMITTED}:
                     lock_store.release_table_lock(table_id, job_id)
                     released += 1
+                    status = getattr(record.status, "value", record.status)
+                    self._logger.info(
+                        "Lock reconciliation: released table %s held by job %s (%s)",
+                        table_id,
+                        job_id,
+                        status,
+                    )
             if released:
                 self._logger.info(
                     "Lock reconciliation: released %d orphaned table lock(s)",

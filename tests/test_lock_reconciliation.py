@@ -53,6 +53,21 @@ def _job(job_id: str, status: JobStatus) -> MaintenanceJobRecord:
     )
 
 
+def test_reconcile_names_the_job_and_status_it_releases(caplog) -> None:
+    lock_store = InMemoryLockStore()
+    lock_store.acquire_table_lock("t1", "job-a", 3600)
+    lock_store.acquire_table_lock("t2", "ghost", 3600)
+    job_store = InMemoryJobStore()
+    job_store.add_job(_job("job-a", JobStatus.FAILED))
+    wiring = SimpleNamespace(lock_store=lock_store, job_store=job_store)
+
+    with caplog.at_level("INFO"):
+        GovernorRunner()._reconcile_orphaned_table_locks(wiring)
+
+    assert "job job-a (failed)" in caplog.text
+    assert "missing job ghost" in caplog.text
+
+
 def test_reconcile_releases_lock_for_non_running_job() -> None:
     lock_store = InMemoryLockStore()
     lock_store.acquire_table_lock("t1", "job-a", 3600)
