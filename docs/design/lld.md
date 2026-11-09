@@ -512,6 +512,11 @@ or `cancelled` from any open status.
   and a `scheduled`, `cancelled` or finished run is never reopened.
 - `finalize_open_runs` closes runs from either `queued` or `running`: a run whose jobs all
   ended without being admitted (skipped, deferred) never reaches `running`.
+- An operation-scoped batch pass (`python -m cryo.maintenance.run --operations
+  expire_snapshots`, #443) plans with `requested_operations`, ranks by `total_snapshots`,
+  and packs at most `maintenance_ops_batch_size` tables per lane (`plan_batched_lanes`).
+  Its jobs carry `plan.batch_operations` and are excluded from `job_starts_cooldown`.
+  Per-table SQL, audit rows, locks and failure isolation are those of the full pass.
 - Batch runs (`cryo/maintenance/coordinator.py`) and smart-maintenance runs are created
   `running` directly. Scan runs use `accepted | queued | running` and their own terminal
   statuses (`cryo/db/repositories/scanner.py`).

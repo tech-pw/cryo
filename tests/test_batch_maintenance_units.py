@@ -25,7 +25,13 @@ from cryo.maintenance.k8s_lanes import (
     lane_scheduling,
     parse_capacity_types,
 )
-from cryo.maintenance.lanes import LaneLimits, LaneTable, lane_count, plan_lanes
+from cryo.maintenance.lanes import (
+    LaneLimits,
+    LaneTable,
+    lane_count,
+    plan_batched_lanes,
+    plan_lanes,
+)
 from cryo.maintenance.manifest import (
     DEFAULT_PARAMS,
     TableData,
@@ -313,6 +319,53 @@ def test_skip_operations_param_drops_orphan_removal_for_a_closed_gate() -> None:
     params = {**DEFAULT_PARAMS, "skip_operations": ["remove_orphan_files"]}
 
     assert "remove_orphan_files" not in [s.action for s in _work(params=params).statements]
+
+
+def test_expiry_scope_emits_the_same_expire_sql_as_a_full_pass() -> None:
+    """#443: the expiry pass reuses the Spark renderer; only the other statements go."""
+    scoped = _work(params={**DEFAULT_PARAMS, "requested_operations": ["expire_snapshots"]})
+    full = _work()
+
+    assert [s.action for s in scoped.statements] == ["expire_snapshots"]
+    expected = next(s.sql for s in full.statements if s.action == "expire_snapshots")
+    assert scoped.statements[0].sql == expected
+
+
+def test_batched_lanes_cap_tables_per_lane_and_keep_rank_order() -> None:
+    ids = [uuid.uuid4() for _ in range(7)]
+
+    lanes = plan_batched_lanes(
+        ids, LaneLimits(max_lanes=4), max_tables_per_lane=3, mem_mib=lambda _t: 0
+    )
+
+    assert len(lanes) == 3
+    assert [t.table_id for t in lanes[0].tables] == [ids[0], ids[3], ids[6]]
+    assert all(len(lane.tables) <= 3 for lane in lanes)
+    assert {(lane.cpu_milli, lane.mem_mib) for lane in lanes} == {(1000, 4096)}
+
+
+def test_batched_lanes_spread_an_oversized_adhoc_list_instead_of_dropping_it() -> None:
+    ids = [uuid.uuid4() for _ in range(10)]
+
+    lanes = plan_batched_lanes(
+        ids, LaneLimits(max_lanes=2), max_tables_per_lane=3, mem_mib=lambda _t: 0
+    )
+
+    assert [len(lane.tables) for lane in lanes] == [5, 5]
+
+
+def test_batched_lane_memory_follows_its_neediest_table_up_to_the_ceiling() -> None:
+    big, small = uuid.uuid4(), uuid.uuid4()
+    need = {big: 6827, small: 1000}
+
+    lanes = plan_batched_lanes(
+        [big, small],
+        LaneLimits(max_lanes=2, max_mem_mib=6144),
+        max_tables_per_lane=1,
+        mem_mib=need.__getitem__,
+    )
+
+    assert [lane.mem_mib for lane in lanes] == [6144, 4096]
 
 
 def test_lane_manifest_is_reproducible_gzip_json() -> None:

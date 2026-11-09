@@ -32,6 +32,11 @@ All notable changes to Cryo will be documented in this file. The format is based
   submit a Spark-on-Kubernetes statement and move on; the governor hands the job back when
   the Spark Job ends, so the worker fleet no longer caps Spark throughput (#435). See
   `docs/ASYNC_SPARK_DISPATCH.md`.
+- Expiry-only batch pass: `python -m cryo.maintenance.run --operations expire_snapshots`
+  (Helm `maintenance.expiry.enabled`, off by default). It runs up to `batchSize` tables'
+  `expire_snapshots` (default 25) in one Spark application per lane instead of one
+  application per table. Per-table SQL, job status, audit rows with `snapshots_expired`,
+  locks and failure isolation are unchanged (#443).
 - The docs homepage opens with the product demo loop (`docs/img/demo-loop.mp4`), the real UI
   on demo data, above the hero. Click to play, pause, seek or mute. The homepage film at the
   bottom is unchanged.

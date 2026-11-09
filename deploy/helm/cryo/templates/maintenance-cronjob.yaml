@@ -6,18 +6,31 @@ docs/BATCH_MAINTENANCE.md.
 
 Runs as the cryo-native ServiceAccount, which already has what the lanes need: create/delete
 Jobs and Secrets, read pods and pod logs, delete stray pods.
+
+maintenance.expiry adds a second CronJob for an expiry-only pass (#443): the same coordinator
+with --operations expire_snapshots, at most maintenance.expiry.batchSize tables per lane.
 */ -}}
+{{- $passes := list }}
 {{- if .Values.maintenance.enabled }}
+{{- $passes = append $passes (dict "suffix" "" "schedule" .Values.maintenance.schedule "suspend" .Values.maintenance.suspend "operations" "") }}
+{{- end }}
+{{- $expiry := .Values.maintenance.expiry | default (dict) }}
+{{- if $expiry.enabled }}
+{{- $passes = append $passes (dict "suffix" "-expiry" "schedule" $expiry.schedule "suspend" $expiry.suspend "operations" "expire_snapshots" "batchSize" ($expiry.batchSize | default 25)) }}
+{{- end }}
+{{- range $pass := $passes }}
+{{- with $ }}
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: {{ include "cryo.fullname" . }}-maintenance
+  name: {{ include "cryo.fullname" . }}-maintenance{{ $pass.suffix }}
   labels:
     {{- include "cryo.labels" . | nindent 4 }}
     app.kubernetes.io/component: maintenance
 spec:
-  schedule: {{ .Values.maintenance.schedule | quote }}
-  suspend: {{ .Values.maintenance.suspend | default false }}
+  schedule: {{ $pass.schedule | quote }}
+  suspend: {{ $pass.suspend | default false }}
   # Two runs at once would race for the same tables' locks and double the Spark footprint.
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 1800
@@ -60,6 +73,12 @@ spec:
                 {{- end }}
                 - name: CRYO_MAINTENANCE_TOP_N
                   value: {{ .Values.maintenance.topN | quote }}
+                {{- if $pass.operations }}
+                - name: CRYO_MAINTENANCE_OPERATIONS
+                  value: {{ $pass.operations | quote }}
+                - name: CRYO_MAINTENANCE_OPS_BATCH_SIZE
+                  value: {{ $pass.batchSize | quote }}
+                {{- end }}
                 - name: CRYO_MAINTENANCE_MAX_LANES
                   value: {{ .Values.maintenance.maxLanes | quote }}
                 - name: CRYO_MAINTENANCE_LANE_MAX_CPU_MILLI
@@ -94,4 +113,5 @@ spec:
                 {{- include "cryo.envFrom" . | nindent 16 }}
               resources:
                 {{- toYaml .Values.maintenance.resources | nindent 16 }}
+{{- end }}
 {{- end }}

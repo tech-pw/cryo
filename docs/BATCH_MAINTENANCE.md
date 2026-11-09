@@ -107,6 +107,48 @@ peaks around 220 MiB. An earlier version loaded whole `TableStats` rows, includi
 JSONB, and OOMKilled the api pod on 2026-09-24. The Helm values live under `maintenance:`; each maps to a
 `CRYO_MAINTENANCE_*` setting in `cryo/config.py`.
 
+### Expiry-only pass (#443)
+
+On the worker path every `expire_snapshots` step is its own Kubernetes Job and Spark
+application. About 35–45% of such a step is Spark startup and catalog load, repeated per table.
+The expiry pass removes that repetition. It runs the same coordinator with
+`--operations expire_snapshots` (Helm `maintenance.expiry.enabled`, env
+`CRYO_MAINTENANCE_OPERATIONS`). Each lane is one Spark application that runs the expiries of at
+most `maintenance.expiry.batchSize` tables (`CRYO_MAINTENANCE_OPS_BATCH_SIZE`, default 25) one
+after another.
+
+What changes compared with a full pass:
+
+- Planning passes `requested_operations`, so each table gets only its `expire_snapshots`
+  statement. The SQL comes from the same planner and `engines/spark/sql.py` renderer, so it is
+  identical to the statement a full pass or the worker would run.
+- Selection ignores AutoComp and the rewrite budget. It ranks by `total_snapshots` (most
+  first), drops tables that keep every snapshot they have (`<= retain_last`), and skips tables
+  with a successful expiry in the last 24h. A scheduled pass selects at most
+  `maxLanes x batchSize` tables. An explicit `--table-ids` list is never cut; it is spread
+  over `maxLanes`.
+- Lanes run the smallest lane tier (1 vCPU / 4 GiB). Memory is raised to the driver heap that
+  the per-job path gives the lane's largest table by file count.
+- Job rows carry `plan.batch_operations`. Those jobs do not start the compaction cooldown,
+  so the nightly pass still picks up a table the expiry pass just handled.
+
+What stays the same: per-table job rows and status, per-table audit rows with
+`snapshots_expired` / `objects_deleted`, per-table locks, and failure isolation. A failed
+`CALL` fails only its table, and a dead lane gets a replacement lane for the tables it never
+started. `--operations` also accepts `optimize_manifests` and `remove_orphan_files`. The
+orphan gate still applies to them.
+
+The pass does not go through the governor. Its concurrency is `maxLanes` pods, as for the
+nightly pass. The worker path is unchanged. A table the pass expired drops out of worker
+expiry plans for the planner's minimum interval (`expire_snapshots_min_interval_hours`,
+#179), because that interval reads the same audit rows. To turn the pass off, set
+`maintenance.expiry.enabled: false` (the default) or suspend the `cryo-maintenance-expiry`
+CronJob.
+
+Not done here: scheduler presets still plan `expire_snapshots`. They rely on the minimum
+interval, not on an explicit hand-off, and batching expiries claimed by different workers
+remains open.
+
 ## Failure modes worth knowing
 
 - **Coordinator is stopped (SIGTERM/SIGINT).** SIGTERM is turned into `SystemExit`, so the
