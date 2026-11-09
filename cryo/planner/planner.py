@@ -1257,6 +1257,7 @@ def _expire_params(
             )
     if protected_snapshot_ids:
         out["protected_snapshot_ids"] = sorted(set(int(s) for s in protected_snapshot_ids))
+    _copy_delete_parallelism(params, out)
     return out
 
 
@@ -1332,10 +1333,25 @@ def _expire_nothing_to_expire_note(
 
 def _orphan_params(params: Mapping[str, Any]) -> dict[str, Any]:
     days = int(params.get("orphan_retention_days", params.get("retention_days", 7)))
-    return {
+    out = {
         "retention_days": days,
         "orphan_min_age_hours": days * 24,
     }
+    _copy_delete_parallelism(params, out)
+    return out
+
+
+def _copy_delete_parallelism(params: Mapping[str, Any], out: dict[str, Any]) -> None:
+    """Keep an explicit max_concurrent_deletes, including 0 which disables it (#444).
+
+    ``_optional_int`` treats 0 as missing, and 0 is the value that turns this off.
+    """
+    if "max_concurrent_deletes" not in params:
+        return
+    try:
+        out["max_concurrent_deletes"] = max(0, int(params["max_concurrent_deletes"]))
+    except (TypeError, ValueError):
+        return
 
 
 def _table_ref(stats: Mapping[str, Any], params: Mapping[str, Any]) -> str:

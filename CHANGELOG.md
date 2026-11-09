@@ -77,6 +77,9 @@ All notable changes to Cryo will be documented in this file. The format is based
   floor, so a 1 GiB executor gets room for Parquet/ZSTD write buffers. A quarter of
   the doubled 2 GiB retry heap is still under that floor, so each OOM step also
   doubles the floor, up to 3072 MiB. The driver overhead is unchanged (#431).
+- Spark `expire_snapshots` and `remove_orphan_files` delete files four at a time
+  (`max_concurrent_deletes`) instead of one at a time on the driver. Set the
+  operation param to another count, or to 0 to leave the deletes serial (#444).
 - A Spark `optimize` failure whose root is `SparkPlan.session()` being null keeps
   the executor-loss and `Rewrite-Service` lines from the driver log. Those lines
   were outside the stored tail, so the saved error was only the
