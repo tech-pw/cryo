@@ -19,6 +19,7 @@ Architecture and contracts:
 - [`maintenance-batch-dispatch.md`](./maintenance-batch-dispatch.md): how batch jobs are dispatched
 - [`SAFE_ROLLOUT.md`](./SAFE_ROLLOUT.md): rolling maintenance out safely
 - [`WORKER_STEP_LEDGER.md`](./WORKER_STEP_LEDGER.md): per-statement step ledger and orphan recovery
+- [`ASYNC_SPARK_DISPATCH.md`](./ASYNC_SPARK_DISPATCH.md): opt-in async dispatch of Spark-on-K8s jobs
 - [`UPGRADE_ROLLBACK.md`](./UPGRADE_ROLLBACK.md): upgrade and rollback
 - [`BACKUP_RESTORE.md`](./BACKUP_RESTORE.md): backup and restore
 - [`SLOS.md`](./SLOS.md): service-level objectives

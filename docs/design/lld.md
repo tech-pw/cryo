@@ -1007,6 +1007,18 @@ mark job succeeded/failed; release lock; update live counters
 Failure on one statement/table is caught, audited, and isolated (run continues). Engine ref (Trino
 query id / EMR jobRunId) is recorded for traceability.
 
+**Async Spark dispatch (opt-in, `worker_async_spark_dispatch`, #435).** For a Spark-on-K8s
+statement of a job without a durable intent, the worker calls `SparkK8sEngine.execute_async`
+instead of `execute`, parks the job in the Redis `AsyncSparkRegistry` and returns. The job keeps
+`running`, its in-flight slot and its table lock. The governor leader's
+`resolve_parked_spark_jobs` reads a bounded, oldest-due slice of parked jobs, renews their locks,
+and calls `requeue_for_continuation` once the Spark Job ends. The worker that claims it (holding
+the job-owner lease) collects the same `ExecResult` the blocking path produces and records it
+through the same audit/ledger code, then submits the next statement or finalizes. Resumes use the
+saved `jobs.plan`; statement *n+1* is submitted only after *n* resolves; orphan recovery skips
+parked jobs. A per-worker cap (`worker_async_spark_max_in_flight`) falls back to the blocking path.
+Design note: [`ASYNC_SPARK_DISPATCH.md`](../ASYNC_SPARK_DISPATCH.md).
+
 ### 11.1 Native K8s Job path (create-on-admit)
 
 When a native destination has `config.k8s_dispatch=true` and the Governor is in-cluster:

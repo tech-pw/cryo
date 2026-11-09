@@ -22,9 +22,11 @@ from cryo.engines.base import (
     is_table_not_found_error,
     truncate_error_message,
 )
+from cryo.engines.spark.async_state import SparkAsyncState
 from cryo.engines.spark.k8s import (
     EXECUTOR_OOM_PREFIX,
     SUCCESS_STATES,
+    TERMINAL_STATES,
     SparkK8sClient,
     SparkK8sConfig,
 )
@@ -366,9 +368,42 @@ class SparkK8sEngine:
             )
 
     def execute(self, stmt: RenderedStatement, ctx: ExecCtx | None = None) -> ExecResult:
+        result = self._run(stmt, ctx, state=None)
+        assert isinstance(result, ExecResult)
+        return result
+
+    def execute_async(
+        self,
+        stmt: RenderedStatement,
+        ctx: ExecCtx | None = None,
+        state: SparkAsyncState | None = None,
+    ) -> ExecResult | SparkAsyncState:
+        """execute() without the wait: submit, or look once at the Job already submitted.
+
+        Returns a SparkAsyncState while the Spark Job is still running (or a catalog retry
+        is waiting out its backoff), and otherwise the exact ExecResult execute() would have
+        returned, retries included. The caller persists the state and calls again later with
+        it (#435).
+        """
+        return self._run(stmt, ctx, state=state or SparkAsyncState(started_at=time.time()))
+
+    def _run(
+        self,
+        stmt: RenderedStatement,
+        ctx: ExecCtx | None,
+        *,
+        state: SparkAsyncState | None,
+    ) -> ExecResult | SparkAsyncState:
+        blocking = state is None
         job_name = _build_job_name(stmt, ctx)
         start = time.monotonic()
-        job_id: str | None = None
+        job_id: str | None = state.ref if state is not None else None
+        pending = False
+
+        def _elapsed() -> int:
+            if state is None:
+                return _elapsed_ms(start)
+            return int((time.time() - state.started_at) * 1000)
 
         # A destination's `catalog` is a static default -- correct only for tables whose own
         # catalog_name matches it. A shared SQL-fallback destination routes tables from
@@ -390,54 +425,84 @@ class SparkK8sEngine:
                     "rendered statement nor this destination's config specifies one. Set "
                     "the table's source catalog_name or this destination's `catalog`."
                 ),
-                duration_ms=_elapsed_ms(start),
+                duration_ms=_elapsed(),
             )
         try:
-            oom_steps = 0
-            executor_oom_steps = 0
-            catalog_attempts = 0
+            oom_steps = state.oom_steps if state is not None else 0
+            executor_oom_steps = state.executor_oom_steps if state is not None else 0
+            catalog_attempts = state.catalog_attempts if state is not None else 0
             max_attempts = (
                 _SPARK_CATALOG_RETRY_ATTEMPTS
                 + _SPARK_OOM_RETRY_ATTEMPTS
                 + _SPARK_EXECUTOR_OOM_RETRY_ATTEMPTS
             )
-            for attempt in range(max_attempts):
+            for attempt in range(state.attempt if state is not None else 0, max_attempts):
                 attempt_name = job_name if attempt == 0 else f"{job_name}-r{attempt}"
-                logger.info(
-                    "spark-k8s execute submit action=%s sql_bytes=%d rss=%s MiB "
-                    "attempt=%d oom_steps=%d executor_oom_steps=%d",
-                    stmt.action.value,
-                    len(stmt.sql),
-                    process_rss_mib(),
-                    attempt + 1,
-                    oom_steps,
-                    executor_oom_steps,
-                )
+                if state is not None:
+                    state = replace(
+                        state,
+                        attempt=attempt,
+                        oom_steps=oom_steps,
+                        executor_oom_steps=executor_oom_steps,
+                        catalog_attempts=catalog_attempts,
+                    )
+                    if job_id is None and state.not_before and time.time() < state.not_before:
+                        pending = True
+                        return state
                 table_size_gb, total_files = _table_size_and_files(self._table_stats)
-                job_id = self.k8s_client.submit_spark_sql(
-                    stmt.sql,
-                    job_name=attempt_name,
-                    catalog=str(catalog),
-                    destination_id=self._destination_id,
-                    operation=stmt.action.value,
-                    total_size_gb=table_size_gb,
-                    total_files=total_files,
-                    oom_steps=oom_steps,
-                    executor_oom_steps=executor_oom_steps,
-                )
-                if ctx is not None and ctx.on_engine_ref is not None:
-                    ctx.on_engine_ref(job_id)
                 # Same cap submit_spark_sql applied to the Job's own activeDeadlineSeconds --
                 # must match, or this poll loop times out at a different wall-clock point than
                 # Kubernetes will actually kill the Job at. See wait_for_completion's docstring.
                 deadline_seconds = cap_deadline_seconds_for_table(
                     self._k8s_config.active_deadline_seconds, total_size_gb=table_size_gb
                 )
-                result = self.k8s_client.wait_for_completion(
-                    job_id, deadline_seconds=deadline_seconds
-                )
+                if job_id is not None and state is not None:
+                    result = self.k8s_client.get_job_run(job_id)
+                    if result.state not in TERMINAL_STATES:
+                        if time.time() - state.submitted_at >= deadline_seconds:
+                            raise TimeoutError(
+                                f"Spark Job {job_id} did not complete within {deadline_seconds}s"
+                            )
+                        pending = True
+                        return state
+                else:
+                    logger.info(
+                        "spark-k8s execute submit action=%s sql_bytes=%d rss=%s MiB "
+                        "attempt=%d oom_steps=%d executor_oom_steps=%d",
+                        stmt.action.value,
+                        len(stmt.sql),
+                        process_rss_mib(),
+                        attempt + 1,
+                        oom_steps,
+                        executor_oom_steps,
+                    )
+                    job_id = self.k8s_client.submit_spark_sql(
+                        stmt.sql,
+                        job_name=attempt_name,
+                        catalog=str(catalog),
+                        destination_id=self._destination_id,
+                        operation=stmt.action.value,
+                        total_size_gb=table_size_gb,
+                        total_files=total_files,
+                        oom_steps=oom_steps,
+                        executor_oom_steps=executor_oom_steps,
+                    )
+                    if ctx is not None and ctx.on_engine_ref is not None:
+                        ctx.on_engine_ref(job_id)
+                    if state is not None:
+                        pending = True
+                        return replace(
+                            state,
+                            ref=job_id,
+                            submitted_at=time.time(),
+                            deadline_seconds=deadline_seconds,
+                            not_before=None,
+                        )
+                    result = self.k8s_client.wait_for_completion(
+                        job_id, deadline_seconds=deadline_seconds
+                    )
 
-                duration_ms = _elapsed_ms(start)
+                duration_ms = _elapsed()
                 if result.state in SUCCESS_STATES:
                     input_files, output_files = rewrite_file_counts(
                         stmt.action.value, result.metrics
@@ -513,8 +578,16 @@ class SparkK8sEngine:
                         executor_oom_steps += 1
                     self.k8s_client.cleanup_after_run(job_id)
                     job_id = None
+                    if state is not None:
+                        state = replace(state, ref=None, not_before=None)
                     if catalog_retry:
-                        time.sleep(_catalog_retry_backoff_seconds(state_details, attempt))
+                        backoff = _catalog_retry_backoff_seconds(state_details, attempt)
+                        if blocking:
+                            time.sleep(backoff)
+                        elif state is not None:
+                            # The async caller parks instead of sleeping; the next attempt
+                            # is submitted once the backoff has passed.
+                            state = replace(state, not_before=time.time() + backoff)
                     continue
                 if is_spark_driver_oom(state_details) and _driver_heap_at_ceiling(
                     # oom_steps counts retries launched, so the pod that just died
@@ -556,7 +629,7 @@ class SparkK8sEngine:
                 engine_ref=job_id,
                 detail=stmt.sql,
                 error=truncate_error_message(str(exc)),
-                duration_ms=_elapsed_ms(start),
+                duration_ms=_elapsed(),
             )
         except Exception as exc:
             if job_id is None and is_capacity_refusal(str(exc)):
@@ -565,7 +638,7 @@ class SparkK8sEngine:
                     ok=False,
                     detail=stmt.sql,
                     error=truncate_error_message(capacity_refusal_error(str(exc))),
-                    duration_ms=_elapsed_ms(start),
+                    duration_ms=_elapsed(),
                 )
             return ExecResult(
                 ok=False,
@@ -573,13 +646,13 @@ class SparkK8sEngine:
                 engine_ref=job_id,
                 detail=stmt.sql,
                 error=truncate_error_message(f"Spark-on-K8s submission failed: {exc}"),
-                duration_ms=_elapsed_ms(start),
+                duration_ms=_elapsed(),
             )
         finally:
             # Best-effort: Spark leaves completed driver pods (and our AWS credential
             # Secrets) behind -- Job TTL does not cascade to the driver. Delete both
             # once the run is terminal (or timed out/raised).
-            if job_id is not None:
+            if job_id is not None and not pending:
                 self.k8s_client.cleanup_after_run(job_id)
 
 
