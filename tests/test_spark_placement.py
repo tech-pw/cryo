@@ -137,3 +137,42 @@ def test_chart_spark_nodepool_requires_a_node_class() -> None:
     with pytest.raises(subprocess.CalledProcessError) as err:
         _render("--set", "spark.k8s.karpenter.installNodePool=true")
     assert "nodeClassName is required" in err.value.stderr
+
+
+def test_spot_executors_keep_the_driver_on_demand() -> None:
+    cfg = SparkK8sConfig.from_config(
+        {
+            "namespace": "cryo",
+            "spark_k8s": {
+                "node_selector": "karpenter.sh/capacity-type=on-demand",
+                "executor_capacity_types": "spot,on-demand",
+            },
+        }
+    )
+    pod = _wrapper_pod(cfg)
+    command = pod["containers"][0]["command"]
+    assert "spark.kubernetes.driver.node.selector.karpenter.sh/capacity-type=on-demand" in command
+    assert not any(c.startswith("spark.kubernetes.node.selector.karpenter.sh/") for c in command)
+    assert "spark.kubernetes.node.selector.kubernetes.io/arch=amd64" in command
+    for conf in (
+        "spark.decommission.enabled=true",
+        "spark.storage.decommission.shuffleBlocks.enabled=true",
+    ):
+        assert conf in command
+
+    env = {e["name"]: e["value"] for e in pod["containers"][0]["env"]}
+    executor = json.loads(env["CRYO_EXECUTOR_POD_TEMPLATE"])["spec"]["affinity"]["nodeAffinity"]
+    required = executor["requiredDuringSchedulingIgnoredDuringExecution"]["nodeSelectorTerms"]
+    assert required[0]["matchExpressions"][0]["values"] == ["spot", "on-demand"]
+    preferred = executor["preferredDuringSchedulingIgnoredDuringExecution"][0]["preference"]
+    assert preferred["matchExpressions"][0]["values"] == ["spot"]
+    driver = json.loads(env["CRYO_DRIVER_POD_TEMPLATE"])["spec"]
+    assert "affinity" not in driver
+
+
+def test_on_demand_executor_types_skip_decommission() -> None:
+    cfg = SparkK8sConfig.from_config(
+        {"namespace": "cryo", "spark_k8s": {"executor_capacity_types": "on-demand"}}
+    )
+    command = _wrapper_pod(cfg)["containers"][0]["command"]
+    assert not any("decommission" in c for c in command)

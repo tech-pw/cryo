@@ -59,6 +59,8 @@ nodeSelector:
   value: {{ $tolerations | quote }}
 - name: CRYO_SPARK_K8S_PACK_PODS
   value: {{ or $k8s.packPods $pool | quote }}
+- name: CRYO_SPARK_K8S_EXECUTOR_CAPACITY_TYPES
+  value: {{ $k8s.executorCapacityTypes | quote }}
 {{- end }}
 
 {{/*
