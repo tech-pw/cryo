@@ -165,6 +165,11 @@ class DaemonRunner:
         # connection, a lock that never frees) from one that is merely idle between ticks --
         # see tick_stalled() and _run_with_signal's readiness check.
         self.tick_started_at: float | None = None
+        # time.monotonic() of the last heartbeat() inside the running tick. A tick that
+        # works through many items (a scanner-worker chunk of thousands of tables) calls
+        # heartbeat() per item, so the stall check measures time without progress rather
+        # than tick length. A plain float store, so worker threads may call it.
+        self.last_heartbeat_at: float | None = None
 
     def stop(self) -> None:
         self._stop.set()
@@ -172,6 +177,7 @@ class DaemonRunner:
     def run(self) -> None:
         self._logger.info("Starting %s (interval=%ds)", self.name, self.interval)
         while not self._stop.is_set():
+            self.last_heartbeat_at = None
             self.tick_started_at = time.monotonic()
             try:
                 self._tick()
@@ -191,12 +197,19 @@ class DaemonRunner:
     def _tick(self) -> None:
         raise NotImplementedError
 
+    def heartbeat(self) -> None:
+        """Record progress inside the running tick; resets the tick's stall clock."""
+        self.last_heartbeat_at = time.monotonic()
+
     def tick_stalled(self, stall_after_seconds: int, *, now: float | None = None) -> bool:
-        """True when one tick has been running longer than stall_after_seconds (0 = never)."""
+        """True when a tick has run longer than stall_after_seconds since it started or its
+        last heartbeat(), whichever is later (0 = never)."""
         started = self.tick_started_at
         if stall_after_seconds <= 0 or started is None:
             return False
-        return ((time.monotonic() if now is None else now) - started) > stall_after_seconds
+        beat = self.last_heartbeat_at
+        last_progress = started if beat is None else max(started, beat)
+        return ((time.monotonic() if now is None else now) - last_progress) > stall_after_seconds
 
 
 class BenefitScoreUpdaterRunner(DaemonRunner):
@@ -993,6 +1006,7 @@ class ScannerRunner(DaemonRunner):
             self._worker = ScanWorker(
                 RedisScanQueue(wiring.redis_client),
                 run_events=wiring.run_events,
+                heartbeat=self.heartbeat,
             )
             return self._worker
         except Exception as exc:

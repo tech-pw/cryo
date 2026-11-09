@@ -46,8 +46,10 @@ class ScanWorker:
         *,
         session_factory: Callable[[], Session] = SessionLocal,
         run_events: RunEventSink | None = None,
+        heartbeat: Callable[[], None] | None = None,
     ) -> None:
         self._queue = queue
+        self._heartbeat = heartbeat
         self._session_factory = session_factory
         self._run_events = run_events
 
@@ -133,6 +135,10 @@ class ScanWorker:
             )
 
             def progress(event: dict[str, Any]) -> None:
+                # One chunk can take hours in one daemon tick; per-table events keep the
+                # scanner-worker's /healthz stall check from killing a healthy chunk (#432).
+                if self._heartbeat is not None:
+                    self._heartbeat()
                 scanner_repo.record_scan_progress(
                     self._session_factory,
                     parsed_run_id,
