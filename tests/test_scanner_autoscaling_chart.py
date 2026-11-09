@@ -106,3 +106,30 @@ def test_a_zero_floor_is_not_swallowed_by_a_template_default() -> None:
         if d["kind"] == "ScaledObject" and d["metadata"]["name"] == "cryo-scanner-worker"
     )
     assert scaled["spec"]["minReplicaCount"] == 0
+
+
+@pytest.mark.parametrize(
+    "api_versions,expected",
+    [
+        ((), "HorizontalPodAutoscaler"),
+        (("--api-versions", "keda.sh/v1alpha1/ScaledObject"), "ScaledObject"),
+    ],
+)
+def test_keda_auto_follows_the_cluster_api(api_versions: tuple[str, ...], expected: str) -> None:
+    docs = render(*api_versions)
+    kinds = [
+        d["kind"]
+        for d in docs
+        if d["metadata"]["name"] == "cryo-scanner-worker"
+        and d["kind"] in {"HorizontalPodAutoscaler", "ScaledObject"}
+    ]
+    assert kinds == [expected]
+
+
+def test_scanner_hpa_floor_is_one() -> None:
+    hpa = next(
+        d
+        for d in render()
+        if d["kind"] == "HorizontalPodAutoscaler" and d["metadata"]["name"] == "cryo-scanner-worker"
+    )
+    assert hpa["spec"]["minReplicas"] == 1
