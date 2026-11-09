@@ -18,6 +18,7 @@ from cryo.domain.enums import EngineType, JobStatus
 from cryo.domain.intents import IntentStatus
 from cryo.domain.models import CapacitySnapshot
 from cryo.governor.admission import (
+    AdmissionBudget,
     AdmissionConfig,
     ReplicaBudget,
     admission_config_from_destination,
@@ -44,6 +45,7 @@ from cryo.governor.roi_gate import GateAction, ROIGate
 from cryo.observability.correlation import clear_context, set_context
 from cryo.observability.metrics import (
     governor_admission_decisions,
+    governor_admitted_waiting_for_worker,
     governor_qpp_decisions_total,
     governor_queue_depth,
     governor_wave_duration_seconds,
@@ -94,6 +96,7 @@ _MAX_WAVE_PENDING_READ = 2000
 
 # How often the Redis in-flight counters are rebuilt from Postgres.
 _IN_FLIGHT_REBUILD_INTERVAL_SECONDS = 300
+_WORKER_STARVATION_LOG_INTERVAL_SECONDS = 300
 
 _ADMITTED = "admitted"
 _DEFERRED = "deferred"
@@ -282,6 +285,7 @@ class Governor:
         # behind a multi-batch cohort.
         self._pending_fallback_dispatches: list[_PendingFallbackDispatch] = []
         self._last_in_flight_rebuild: float | None = None
+        self._last_worker_starvation_log: dict[str, float] = {}
 
     def _spark_engine_still_active(self, job: MaintenanceJobRecord) -> bool:
         """Real fix for a live incident, 2026-08-11: engine_activity_checker was declared as a
@@ -353,6 +357,39 @@ class Governor:
             return None
         allowance = workers * get_settings().worker_dispatch_backlog_per_replica
         return max(0, allowance - int(admitted_depth()))
+
+    def _report_worker_starvation(self, destination_id: str, budget: AdmissionBudget) -> None:
+        """Flag admitted jobs sitting unclaimed while this destination's engine has free slots.
+
+        That combination means workers, not the engine, are the bottleneck: each worker blocks
+        on one engine job, so fewer workers than slot_cap leaves slots idle while the admitted
+        stream ages. Low worker CPU makes the fleet look over-provisioned when it is the reverse.
+        """
+        admitted_depth = getattr(self._queue, "admitted_depth", None)
+        if not callable(admitted_depth):
+            return
+        free_slots = budget.total_available
+        waiting = int(admitted_depth()) if free_slots > 0 else 0
+        governor_admitted_waiting_for_worker.labels(destination=destination_id).set(waiting)
+        if waiting <= 0:
+            return
+        now = monotonic()
+        last = self._last_worker_starvation_log.get(destination_id)
+        if last is not None and now - last < _WORKER_STARVATION_LOG_INTERVAL_SECONDS:
+            return
+        self._last_worker_starvation_log[destination_id] = now
+        total_slots = sum(replica.capacity for replica in budget.replicas)
+        active_workers = getattr(self._queue, "active_worker_count", None)
+        workers = int(active_workers()) if callable(active_workers) else None
+        logger.warning(
+            "%d admitted job(s) waiting for a worker; %d/%d engine slots in use on destination "
+            "%s with %s active worker(s); consider worker replicas >= slot cap",
+            waiting,
+            total_slots - free_slots,
+            total_slots,
+            destination_id,
+            "unknown" if workers is None else workers,
+        )
 
     def run_wave(self, *, now: datetime | None = None) -> WaveResult:
         """One admission pass: repair queue state, then fill each destination's free slots.
@@ -529,6 +566,7 @@ class Governor:
             and get_settings().native_engine_enabled
         )
         if not use_native_k8s:
+            self._report_worker_starvation(destination_id, budget)
             if headroom.exhausted():
                 # The worker fleet already has as much queued as it can drain; adding more
                 # buys no throughput. Distinct from having no engine capacity, which is
