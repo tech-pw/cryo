@@ -16,6 +16,8 @@ from cryo.engines.expire_data_sql import expire_data_metadata, render_expire_dat
 from cryo.engines.table_ref import split_table_ref
 from cryo.planner.partitions import DEFAULT_RENDERABLE_CAPABILITIES
 
+DEFAULT_MAX_CONCURRENT_DELETES = 8
+
 
 class UnsupportedPredicateError(ValueError):
     pass
@@ -102,15 +104,24 @@ def _render_expire(catalog: str, table_name: str, params: dict[str, Any]) -> str
         # Iceberg's docs recommend this to keep the driver from collecting every expired
         # file path at once; lanes run Spark in local mode, where driver memory is the pod.
         expire_call += ", stream_results => true"
+    expire_call += _concurrent_deletes_arg(params)
     expire_call += ")"
     return f"{tag_stmt}{expire_call}"
+
+
+def _concurrent_deletes_arg(params: dict[str, Any]) -> str:
+    # Without it Iceberg deletes files one at a time on the driver, which is most of an
+    # expire step's work time. Same files either way; 0 restores serial deletes.
+    threads = int(params.get("max_concurrent_deletes", DEFAULT_MAX_CONCURRENT_DELETES))
+    return f", max_concurrent_deletes => {threads}" if threads > 0 else ""
 
 
 def _render_orphan(catalog: str, table_name: str, params: dict[str, Any]) -> str:
     older_than = _older_than_expr(params)
     return (
         f"CALL {catalog}.system.remove_orphan_files("
-        f"table => '{catalog}.{table_name}', older_than => {older_than})"
+        f"table => '{catalog}.{table_name}', older_than => {older_than}"
+        f"{_concurrent_deletes_arg(params)})"
     )
 
 

@@ -136,11 +136,11 @@ def test_spark_render_golden_operation_sql() -> None:
         (
             "CALL iceberg.system.expire_snapshots(table => 'iceberg.demo.events', "
             "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 3, "
-            "stream_results => true)"
+            "stream_results => true, max_concurrent_deletes => 8)"
         ),
         (
             "CALL iceberg.system.remove_orphan_files(table => 'iceberg.demo.events', "
-            "older_than => TIMESTAMP '2025-05-01 00:00:00')"
+            "older_than => TIMESTAMP '2025-05-01 00:00:00', max_concurrent_deletes => 8)"
         ),
         (
             "ALTER TABLE iceberg.demo.events SET TBLPROPERTIES ("
@@ -463,7 +463,8 @@ def test_spark_expire_snapshots_streaming_can_be_turned_off() -> None:
     )
     assert render(plan)[0].sql == (
         "CALL iceberg.system.expire_snapshots(table => 'iceberg.demo.events', "
-        "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 2)"
+        "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 2, "
+        "max_concurrent_deletes => 8)"
     )
 
 
@@ -489,7 +490,7 @@ def test_spark_expire_snapshots_streams_results_after_setting_the_protected_ref(
         "AS OF VERSION 11;\n"
         "CALL iceberg.system.expire_snapshots(table => 'iceberg.demo.events', "
         "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 2, "
-        "stream_results => true)"
+        "stream_results => true, max_concurrent_deletes => 8)"
     )
 
 
@@ -715,3 +716,13 @@ def test_spark_keeps_nested_namespaces() -> None:
 def test_spark_rejects_table_refs_that_could_break_out(table_ref: str) -> None:
     with pytest.raises(ValueError):
         render(_manifests_plan(table_ref))
+
+
+def test_spark_concurrent_deletes_can_be_turned_off() -> None:
+    from cryo.engines.spark.sql import _concurrent_deletes_arg
+
+    assert _concurrent_deletes_arg({}) == ", max_concurrent_deletes => 8"
+    assert (
+        _concurrent_deletes_arg({"max_concurrent_deletes": 16}) == ", max_concurrent_deletes => 16"
+    )
+    assert _concurrent_deletes_arg({"max_concurrent_deletes": 0}) == ""
