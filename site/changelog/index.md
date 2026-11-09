@@ -21,6 +21,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Added
 
+- The docs homepage opens with the product demo loop (`docs/img/demo-loop.mp4`), the real UI on demo data, above the hero. Click to play, pause, seek or mute. The homepage film at the bottom is unchanged.
 - `make demo` takes the local stack from an empty UI to graded tables and one finished maintenance run: it seeds the fragmented fixtures, scans `local-rest`, assigns `local-standard` and runs `optimize` + `optimize_manifests` through the API (`scripts/demo.py`). The Quickstart now ends there, with a check after each step (#217).
 - `README.md` opens with a 25-second loop of the real UI on demo data (Tables, a health grade, the run review, the run receipt), with an MP4 copy. `make web-demo-loop` re-records it from `web/e2e/docs-capture/demo-loop.ts` (#279). The homepage film already ends on the ice-cube mark (re-rendered in October), so the 0.2.0 note that it still showed the old mark is out of date; `site/README.md` now describes how the published 720p copy is made.
 - A **Removed** quick view on the Tables page lists tables the scanner found gone from their catalog, with when and why, read-only. `GET /tables` takes `removed=exclude|include|only` (`include_removed=true` stays as an alias) (#330).

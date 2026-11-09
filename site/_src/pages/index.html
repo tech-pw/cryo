@@ -9,8 +9,37 @@ THESIS: A calm promise first; the maintenance mechanism earns its own full-width
 OWN-WORLD: Sky gradient, dot grid, Cormorant + IBM Plex, one survey-orange marker at a time.
 STORY: Read the promise, watch one partition pass through Cryo, then scroll one table's core sample through a month of
 decay and the run that pays it back on the S3 bill.
-FIRST VIEWPORT: Type-first hero, tally, actions, stack. No product graphic.
+FIRST VIEWPORT: The product demo loop, then the type-first hero, tally, actions, stack.
 -->
+<section class="home-demo" aria-label="Product demo">
+    <div class="wrap">
+        <figure class="film">
+            <div class="film-stage">
+                <video playsinline preload="none" controlslist="nodownload nofullscreen noremoteplayback" disablepictureinpicture disableremoteplayback width="1280" height="800" poster="assets/video/demo-loop-poster.png" aria-label="Cryo demo loop: tables, health grades, a run, and its receipt">
+                    <source src="assets/video/demo-loop.mp4" type="video/mp4">
+                </video>
+                <button class="film-play" type="button" aria-label="Play">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7.2v9.6L17 12 9 7.2z"/></svg>
+                </button>
+                <div class="film-bar">
+                    <button class="film-toggle" type="button" aria-label="Play">
+                        <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7.2v9.6L17 12 9 7.2z"/></svg>
+                        <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 7h2.4v10H8.5V7zm4.6 0h2.4v10h-2.4V7z"/></svg>
+                    </button>
+                    <span class="film-time">0:00</span>
+                    <input class="film-scrub" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek" aria-valuemin="0" aria-valuemax="29" aria-valuenow="0" aria-valuetext="0:00">
+                    <span class="film-dur">0:29</span>
+                    <button class="film-mute" type="button" aria-label="Mute" aria-pressed="false">
+                        <svg class="i-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.2L11 6.2v11.6L7.2 14.5H4v-5zm9.2-2.3 1.3 1.3a3.2 3.2 0 0 1 0 4.5l-1.3 1.3a5 5 0 0 0 0-7.1zm2.4-2.4 1.3 1.3a6.6 6.6 0 0 1 0 9.3l-1.3 1.3a8.4 8.4 0 0 0 0-11.9z"/></svg>
+                        <svg class="i-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.2L11 6.2v11.6L7.2 14.5H4v-5zm11.2-1.7 1.4 1.4 1.4-1.4 1.1 1.1-1.4 1.4 1.4 1.4-1.1 1.1-1.4-1.4-1.4 1.4-1.1-1.1 1.4-1.4-1.4-1.4 1.1-1.1z"/></svg>
+                    </button>
+                </div>
+            </div>
+            <figcaption>The real UI on demo data: tables, a health grade, a run, and its receipt.</figcaption>
+        </figure>
+    </div>
+</section>
+
 <section class="hero sky" data-dots>
     <div class="wrap hero-in">
         <div class="hero-copy">
