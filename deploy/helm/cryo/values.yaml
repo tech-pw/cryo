@@ -483,6 +483,30 @@ spark:
     # The app merges this pin back if a destination selector drops it. Remove the
     # arch pin only after the published image is a multi-arch manifest list.
     nodeSelector: "karpenter.sh/capacity-type=on-demand,kubernetes.io/arch=amd64"
+    # Comma-separated `key=value:Effect` (or `key:Effect`) tolerations for the wrapper,
+    # driver and executor pods. Set automatically when karpenter.installNodePool is on.
+    tolerations: ""
+    # Prefer placing a job's executors on its driver's node, then on nodes that already run
+    # Spark, so jobs fill nodes instead of each pinning a fresh one. Preferred, never required.
+    packPods: false
+    # Spark pods carry karpenter.sh/do-not-disrupt, so on a shared pool one small driver
+    # keeps a mostly-empty node alive. A dedicated pool that only reclaims empty nodes
+    # contains that idle capacity and drains to zero between runs (#447).
+    karpenter:
+      installNodePool: false
+      # Existing EC2NodeClass to launch from. Spark reads the warehouse with the node's
+      # instance role, so use a class whose role has that access.
+      nodeClassName: ""
+      capacityTypes: [on-demand]
+      arch: [amd64]
+      instanceCategories: [c, m, r]
+      consolidateAfter: 2m
+      # Remove at most this share of the pool's nodes at once so the next burst of jobs
+      # can reuse warm nodes.
+      disruptionBudget: "20%"
+      expireAfter: 720h
+      limitCpu: "128"
+      limitMemory: 512Gi
 
 redis:
   enabled: true

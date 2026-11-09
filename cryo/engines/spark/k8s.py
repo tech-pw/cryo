@@ -19,6 +19,7 @@ per-job AWS credentials Secret.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
@@ -104,6 +105,8 @@ class SparkK8sConfig:
     active_deadline_seconds: int = _DEFAULT_ACTIVE_DEADLINE_SECONDS
     ttl_seconds_after_finished: int = _DEFAULT_TTL_SECONDS
     local_mode: bool = True
+    tolerations: tuple[dict[str, str], ...] = ()
+    pack_pods: bool = False
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> SparkK8sConfig:
@@ -186,7 +189,99 @@ class SparkK8sConfig:
             ),
             local_mode=str(_get("local_mode", "true")).strip().lower()
             not in ("0", "false", "no", "off"),
+            tolerations=_parse_tolerations(_get("tolerations")),
+            pack_pods=str(_get("pack_pods", "false")).strip().lower() in ("1", "true", "yes", "on"),
         )
+
+
+def _parse_tolerations(raw: Any) -> tuple[dict[str, str], ...]:
+    """``key=value:Effect`` or ``key:Effect``, comma-separated, or a list of toleration dicts."""
+    if isinstance(raw, (list, tuple)):
+        return tuple({str(k): str(v) for k, v in t.items()} for t in raw if isinstance(t, Mapping))
+    if not isinstance(raw, str):
+        return ()
+    out: list[dict[str, str]] = []
+    for item in (p.strip() for p in raw.split(",")):
+        if not item:
+            continue
+        spec, _, effect = item.rpartition(":")
+        if not spec:
+            spec, effect = item, ""
+        key, sep, value = spec.partition("=")
+        tol = {"key": key.strip(), "operator": "Equal" if sep else "Exists"}
+        if sep:
+            tol["value"] = value.strip()
+        if effect.strip():
+            tol["effect"] = effect.strip()
+        out.append(tol)
+    return tuple(out)
+
+
+_POD_TEMPLATE_DIR = "/tmp/cryo-pod-templates"
+# Spark labels every driver and executor with its application id. matchLabelKeys narrows a
+# term to pods with the same value, so the first term pulls a job's executors next to its
+# driver; the second fills nodes that already run Spark before Karpenter adds one.
+_PACK_AFFINITY: dict[str, Any] = {
+    "podAffinity": {
+        "preferredDuringSchedulingIgnoredDuringExecution": [
+            {
+                "weight": 100,
+                "podAffinityTerm": {
+                    "labelSelector": {
+                        "matchExpressions": [{"key": "spark-app-selector", "operator": "Exists"}]
+                    },
+                    "matchLabelKeys": ["spark-app-selector"],
+                    "topologyKey": "kubernetes.io/hostname",
+                },
+            },
+            {
+                "weight": 50,
+                "podAffinityTerm": {
+                    "labelSelector": {
+                        "matchExpressions": [{"key": "spark-role", "operator": "Exists"}]
+                    },
+                    "topologyKey": "kubernetes.io/hostname",
+                },
+            },
+        ]
+    }
+}
+
+
+def _attach_pod_templates(
+    pod_spec: dict[str, Any], templates: Mapping[str, str], cfg: SparkK8sConfig
+) -> None:
+    """spark-submit reads the template files locally, so write them into the wrapper first."""
+    container = pod_spec["containers"][0]
+    writes = " && ".join(
+        f'printf %s "$CRYO_{role.upper()}_POD_TEMPLATE" > {_POD_TEMPLATE_DIR}/{role}.json'
+        for role in templates
+    )
+    container["command"] = ["/bin/sh", "-c", f'{writes} && exec "$@"', "sh", *container["command"]]
+    container["env"] = [
+        *container.get("env", []),
+        *(
+            {"name": f"CRYO_{role.upper()}_POD_TEMPLATE", "value": template}
+            for role, template in templates.items()
+        ),
+    ]
+    container["volumeMounts"] = [{"name": "pod-templates", "mountPath": _POD_TEMPLATE_DIR}]
+    pod_spec["volumes"] = [{"name": "pod-templates", "emptyDir": {}}]
+    if cfg.tolerations:
+        pod_spec["tolerations"] = [dict(t) for t in cfg.tolerations]
+
+
+def _pod_templates(cfg: SparkK8sConfig) -> dict[str, str] | None:
+    """Driver and executor pod templates as JSON, or None when nothing needs one."""
+    if not cfg.tolerations and not cfg.pack_pods:
+        return None
+    spec: dict[str, Any] = {}
+    if cfg.tolerations:
+        spec["tolerations"] = [dict(t) for t in cfg.tolerations]
+    if cfg.pack_pods:
+        spec["affinity"] = _PACK_AFFINITY
+    pod = json.dumps({"apiVersion": "v1", "kind": "Pod", "spec": spec}, sort_keys=True)
+    return {"driver": pod, "executor": pod}
 
 
 @dataclass(frozen=True)
@@ -459,6 +554,13 @@ class SparkK8sClient:
         if cfg.node_selector:
             for _k, _v in cfg.node_selector.items():
                 spark_submit_cmd[1:1] = ["--conf", f"spark.kubernetes.node.selector.{_k}={_v}"]
+        pod_templates = _pod_templates(cfg)
+        if pod_templates:
+            for role in pod_templates:
+                spark_submit_cmd[1:1] = [
+                    "--conf",
+                    f"spark.kubernetes.{role}.podTemplateFile={_POD_TEMPLATE_DIR}/{role}.json",
+                ]
         if cfg.image_pull_secrets:
             secrets_csv = ",".join(cfg.image_pull_secrets)
             spark_submit_cmd[1:1] = [
@@ -553,6 +655,8 @@ class SparkK8sClient:
                 },
             },
         }
+        if pod_templates:
+            _attach_pod_templates(job_manifest["spec"]["template"]["spec"], pod_templates, cfg)
 
         batch_api = self._batch_client()
         created_job = batch_api.create_namespaced_job(

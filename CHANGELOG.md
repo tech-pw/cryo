@@ -15,6 +15,14 @@ All notable changes to Cryo will be documented in this file. The format is based
   separate executor pod. The driver takes the executor's CPU and heap, so each job is one pod
   with the same resources. Set `local_mode: false` on the destination's `spark_k8s` config
   (or `CRYO_SPARK_K8S_LOCAL_MODE=false`) to go back to executor pods (#450).
+- Optional dedicated Karpenter NodePool for Spark (`spark.k8s.karpenter.installNodePool`).
+  Spark pods are `do-not-disrupt`, so on a shared pool one small driver kept a mostly-empty
+  node alive. The new pool is tainted for Spark, only reclaims empty nodes, and caps node
+  removal with a disruption budget. Its `nodeClassName` must name an existing EC2NodeClass
+  whose role can read the warehouse. New `spark.k8s.tolerations` and `spark.k8s.packPods`
+  values (on with the pool) reach the wrapper, driver and executor pods through pod
+  templates. Packing prefers a job's executors on its driver's node, then nodes already
+  running Spark. Off by default; maintenance lanes are unchanged (#447).
 - `make demo` takes the local stack from an empty UI to graded tables and one finished
   maintenance run: it seeds the fragmented fixtures, scans `local-rest`, assigns
   `local-standard` and runs `optimize` + `optimize_manifests` through the API
