@@ -28,7 +28,11 @@ from cryo.engines.spark.k8s import (
     SparkK8sClient,
     SparkK8sConfig,
 )
-from cryo.engines.spark.procedure_metrics import rewrite_file_counts
+from cryo.engines.spark.procedure_metrics import (
+    bytes_freed_from_procedure,
+    expire_effect,
+    rewrite_file_counts,
+)
 from cryo.engines.spark.sizing import (
     cap_deadline_seconds_for_table,
     scale_executor_profile,
@@ -438,6 +442,12 @@ class SparkK8sEngine:
                     input_files, output_files = rewrite_file_counts(
                         stmt.action.value, result.metrics
                     )
+                    objects_deleted, snapshots_expired, expire_counts = expire_effect(
+                        stmt.action.value, result.metrics
+                    )
+                    bytes_freed = result.bytes_removed
+                    if bytes_freed is None:
+                        bytes_freed = bytes_freed_from_procedure(stmt.action.value, result.metrics)
                     return ExecResult(
                         ok=True,
                         engine_ref=job_id,
@@ -445,7 +455,10 @@ class SparkK8sEngine:
                         duration_ms=duration_ms,
                         input_files_count=input_files,
                         output_files_count=output_files,
-                        actual_bytes_freed=result.bytes_removed,
+                        actual_bytes_freed=bytes_freed,
+                        objects_deleted=objects_deleted,
+                        snapshots_expired=snapshots_expired,
+                        result_metrics=expire_counts,
                     )
                 state_details = result.state_details or "no details"
                 if is_capacity_refusal(state_details):

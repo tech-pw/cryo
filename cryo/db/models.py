@@ -1661,6 +1661,10 @@ class AuditLog(Base):
     # Compaction effectiveness ratio tracking (Feature 3)
     input_files_count: Mapped[int | None] = mapped_column(Integer)
     output_files_count: Mapped[int | None] = mapped_column(Integer)
+    # What a step removed (#434): Iceberg's expire procedure reports file counts, not bytes.
+    objects_deleted: Mapped[int | None] = mapped_column(BigInteger)
+    snapshots_expired: Mapped[int | None] = mapped_column(Integer)
+    result_metrics: Mapped[JsonDict | None] = mapped_column(JSONB)
     actor: Mapped[str | None] = mapped_column(Text)
     origin: Mapped[str | None] = mapped_column(Text)
     proposal_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))

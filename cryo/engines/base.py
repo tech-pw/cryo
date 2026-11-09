@@ -283,6 +283,8 @@ class ExecResult:
     objects_deleted: int | None = None
     snapshots_expired: int | None = None
     manifests_rewritten: int | None = None
+    # Per-kind counts the procedure reported (expire_snapshots deleted-file counts, #434).
+    result_metrics: dict[str, int] | None = None
     skipped: bool = False
 
 
