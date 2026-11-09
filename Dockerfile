@@ -1,4 +1,7 @@
-FROM golang:1.27.3-bookworm@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132 AS cryo-engine-go-builder
+# Runs on the build host and cross-compiles: CGO is off, so GOARCH is all a target needs.
+FROM --platform=$BUILDPLATFORM golang:1.27.3-bookworm@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132 AS cryo-engine-go-builder
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 
 WORKDIR /build
 COPY engine-go/go.mod engine-go/go.sum ./
@@ -7,12 +10,13 @@ COPY engine-go/go.mod engine-go/go.sum ./
 COPY engine-go/third_party ./third_party
 RUN go mod download
 COPY engine-go/ ./
-RUN CGO_ENABLED=0 go build -o cryo-engine-go ./cmd/cryo-engine-go
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o cryo-engine-go ./cmd/cryo-engine-go
 
 # Confirmed live, 2026-10-12: the prior digest (debian 13.6, 2026-era base rebuild) had
 # 40 fixable HIGH OS-package CVEs (bsdutils, gzip, lib{blkid1,mount1,pcre2-8-0,lastlog2-2})
 # purely from a stale base layer, unrelated to anything this app pins itself.
-FROM python:3.12-slim@sha256:2b4f19dae3a777dfc3b76730bda1e82e1f66ab2a2686fa93ca78edbfb4f04ffe
+# Multi-arch index digest (amd64 + arm64), so one pin serves both release platforms.
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
 WORKDIR /app
 
