@@ -1112,6 +1112,8 @@ def _fold_local_driver(cfg: SparkK8sConfig) -> SparkK8sConfig:
     return replace(
         cfg, driver_cpu_milli=folded.driver_cpu_milli, driver_mem_mib=folded.driver_mem_mib
     )
+
+
 def _driver_request_milli(cfg: SparkK8sConfig) -> int:
     fraction = min(1.0, max(0.0, cfg.driver_cpu_request_fraction))
     wanted = max(_MIN_DRIVER_CPU_REQUEST_MILLI, round(cfg.driver_cpu_milli * fraction))
