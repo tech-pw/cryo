@@ -56,6 +56,12 @@ All notable changes to Cryo will be documented in this file. The format is based
   `/healthz` stall check now measures time without progress, and each table the
   chunk starts or finishes counts as progress, so a healthy chunk that runs past
   `tickStallSeconds` keeps its pod (#432).
+- The governor now says when workers, not the engine, are the bottleneck. If admitted jobs
+  wait unclaimed while a destination has free engine slots, it logs `N admitted job(s)
+  waiting for a worker; X/Y engine slots in use` (at most every 5 minutes per destination)
+  and sets the `cryo_admitted_waiting_for_worker` gauge. The Helm chart documents sizing
+  `worker.replicas` / `native.keda.maxReplicas` to the engine `slot_cap`: a worker blocks on
+  one engine job at a time, so low worker CPU does not mean over-provisioned (#435).
 - A Spark `optimize` failure whose root is `SparkPlan.session()` being null keeps
   the executor-loss and `Rewrite-Service` lines from the driver log. Those lines
   were outside the stored tail, so the saved error was only the

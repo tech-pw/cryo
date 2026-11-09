@@ -53,6 +53,13 @@ governor_queue_depth = Gauge(
     ["destination"],
 )
 
+governor_admitted_waiting_for_worker = Gauge(
+    "cryo_admitted_waiting_for_worker",
+    "Admitted jobs not yet claimed by a worker while the destination still has free engine "
+    "slots (worker fleet, not the engine, is the bottleneck). 0 when the engine is full.",
+    ["destination"],
+)
+
 governor_in_flight = Gauge(
     "cryo_governor_in_flight_jobs",
     "Number of jobs currently in flight by destination and replica",

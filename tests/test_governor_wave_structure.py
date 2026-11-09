@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from cryo.domain.enums import EngineType, JobStatus, Mode
-from cryo.governor.admission import AdmissionConfig
+from cryo.governor.admission import AdmissionBudget, AdmissionConfig, ReplicaBudget
 from cryo.governor.governor import Governor, _WaveTally, _WorkerDrainHeadroom
 from cryo.queue.locks import InMemoryLockStore
 from cryo.queue.redis_queue import InMemoryMaintenanceQueue
@@ -363,3 +363,45 @@ def test_a_failed_in_flight_rebuild_never_breaks_the_wave(monkeypatch):
     )
 
     governor._maybe_rebuild_in_flight()
+
+
+def _waiting_gauge() -> float:
+    from cryo.observability.metrics import governor_admitted_waiting_for_worker
+
+    return governor_admitted_waiting_for_worker.labels(destination=DEST)._value.get()
+
+
+def test_admitted_jobs_with_free_engine_slots_flag_a_worker_bottleneck(caplog):
+    governor, queue, _, _ = _governor(slot_cap=5)
+    queue.enqueue("stale-1", DEST)
+    queue.admit("stale-1", DEST, "r1")
+
+    with caplog.at_level("WARNING", logger="cryo.governor.governor"):
+        governor._report_worker_starvation(
+            DEST,
+            AdmissionBudget(replicas=(ReplicaBudget("r1", 5, 1, 0, 4),)),
+        )
+        governor._report_worker_starvation(
+            DEST,
+            AdmissionBudget(replicas=(ReplicaBudget("r1", 5, 1, 0, 4),)),
+        )
+
+    assert _waiting_gauge() == 1
+    messages = [r.getMessage() for r in caplog.records if "waiting for a worker" in r.getMessage()]
+    assert len(messages) == 1
+    assert "1/5 engine slots in use" in messages[0]
+
+
+def test_full_engine_does_not_flag_a_worker_bottleneck(caplog):
+    governor, queue, _, _ = _governor(slot_cap=5)
+    queue.enqueue("stale-1", DEST)
+    queue.admit("stale-1", DEST, "r1")
+
+    with caplog.at_level("WARNING", logger="cryo.governor.governor"):
+        governor._report_worker_starvation(
+            DEST,
+            AdmissionBudget(replicas=(ReplicaBudget("r1", 5, 5, 0, 0),)),
+        )
+
+    assert _waiting_gauge() == 0
+    assert not any("waiting for a worker" in r.getMessage() for r in caplog.records)
