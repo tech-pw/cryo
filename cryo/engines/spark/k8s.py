@@ -115,6 +115,7 @@ class SparkK8sConfig:
     tolerations: tuple[dict[str, str], ...] = ()
     pack_pods: bool = False
     driver_cpu_request_fraction: float = _DEFAULT_DRIVER_CPU_REQUEST_FRACTION
+    dynamic_allocation: bool = False
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> SparkK8sConfig:
@@ -202,6 +203,8 @@ class SparkK8sConfig:
             driver_cpu_request_fraction=float(
                 _get("driver_cpu_request_fraction") or _DEFAULT_DRIVER_CPU_REQUEST_FRACTION
             ),
+            dynamic_allocation=str(_get("dynamic_allocation", "false")).strip().lower()
+            in ("1", "true", "yes", "on"),
         )
 
 
@@ -547,6 +550,8 @@ class SparkK8sClient:
                 ]
             )
         spark_submit_cmd[1:1] = label_confs
+        for conf_key, conf_value in _dynamic_allocation_confs(cfg).items():
+            spark_submit_cmd[1:1] = ["--conf", f"{conf_key}={conf_value}"]
         for conf_key, conf_value in (extra_confs or {}).items():
             spark_submit_cmd[1:1] = ["--conf", f"{conf_key}={conf_value}"]
 
@@ -1118,6 +1123,27 @@ def _driver_request_milli(cfg: SparkK8sConfig) -> int:
     fraction = min(1.0, max(0.0, cfg.driver_cpu_request_fraction))
     wanted = max(_MIN_DRIVER_CPU_REQUEST_MILLI, round(cfg.driver_cpu_milli * fraction))
     return min(cfg.driver_cpu_milli, wanted)
+
+
+def _dynamic_allocation_confs(cfg: SparkK8sConfig) -> dict[str, str]:
+    """Release executors that sit idle (planning, a straggler's tail) and ask again on demand.
+
+    Starts and peaks at the sized executor count, so parallelism never drops below today's.
+    Kubernetes has no external shuffle service; shuffle tracking keeps an executor that
+    still holds shuffle output, and its timeout bounds how long that can pin one.
+    """
+    if not cfg.dynamic_allocation or cfg.executor_instances <= 1:
+        return {}
+    n = str(cfg.executor_instances)
+    return {
+        "spark.dynamicAllocation.enabled": "true",
+        "spark.dynamicAllocation.shuffleTracking.enabled": "true",
+        "spark.dynamicAllocation.shuffleTracking.timeout": "600s",
+        "spark.dynamicAllocation.minExecutors": "1",
+        "spark.dynamicAllocation.initialExecutors": n,
+        "spark.dynamicAllocation.maxExecutors": n,
+        "spark.dynamicAllocation.executorIdleTimeout": "60s",
+    }
 
 
 _DRIVER_POD_LABEL_SELECTOR = "spark-role=driver"

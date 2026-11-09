@@ -17,6 +17,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   CPU HPA does. The HPA floor drops from 3 to 1. Scanner workers only serve ad-hoc scans;
   the scheduled sweep runs in the scanner CronJob's own pods. Set `true`/`false` to force
   either (#449).
+- Opt-in Spark dynamic allocation (`spark.k8s.dynamicAllocation`, or `dynamic_allocation` on
+  the destination). Jobs with more than one executor start and peak at their sized count,
+  release executors idle for 60s, and keep any executor that still holds shuffle output
+  (shuffle tracking, 600s timeout). Off by default (#453).
 - The docs homepage opens with the product demo loop (`docs/img/demo-loop.mp4`), the real UI
   on demo data, above the hero. Click to play, pause, seek or mute. The homepage film at the
   bottom is unchanged.

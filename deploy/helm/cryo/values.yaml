@@ -479,6 +479,9 @@ spark:
     executorCpuMilli: 2000
     executorMemMib: 4096
     executorInstances: 2
+    # Release idle executors mid-job (shuffle tracking on, 60s idle timeout). Starts and
+    # peaks at the sized executor count. Applies to jobs with more than one executor.
+    dynamicAllocation: false
     activeDeadlineSeconds: 7200
     ttlSecondsAfterFinished: 3600
     slotCap: 2
