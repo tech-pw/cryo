@@ -102,6 +102,7 @@ def _render_expire(catalog: str, table_name: str, params: dict[str, Any]) -> str
         # Iceberg's docs recommend this to keep the driver from collecting every expired
         # file path at once; lanes run Spark in local mode, where driver memory is the pod.
         expire_call += ", stream_results => true"
+    expire_call += _concurrent_deletes(params)
     expire_call += ")"
     return f"{tag_stmt}{expire_call}"
 
@@ -110,8 +111,25 @@ def _render_orphan(catalog: str, table_name: str, params: dict[str, Any]) -> str
     older_than = _older_than_expr(params)
     return (
         f"CALL {catalog}.system.remove_orphan_files("
-        f"table => '{catalog}.{table_name}', older_than => {older_than})"
+        f"table => '{catalog}.{table_name}', older_than => {older_than}"
+        f"{_concurrent_deletes(params)})"
     )
+
+
+def _concurrent_deletes(params: dict[str, Any]) -> str:
+    """Iceberg deletes expired or orphaned files one at a time unless told otherwise.
+
+    ``max_concurrent_deletes`` is the procedure's thread-pool size. The default is 4.
+    ``0`` leaves the clause off, which is the serial behaviour (#444).
+    """
+    raw = params.get("max_concurrent_deletes", 4)
+    try:
+        count = int(raw)
+    except (TypeError, ValueError):
+        count = 4
+    if count <= 0:
+        return ""
+    return f", max_concurrent_deletes => {count}"
 
 
 def _render_optimize(catalog: str, table_name: str, operation: Operation) -> str:

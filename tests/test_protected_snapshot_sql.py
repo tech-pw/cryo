@@ -26,6 +26,18 @@ def test_expire_emits_keep_sql_when_protected_ids_provided() -> None:
     assert expire_op.params["protected_snapshot_ids"] == [4242, 5151]
 
 
+def test_delete_parallelism_is_kept_on_expire_and_orphan_including_zero() -> None:
+    plan = build_plan(
+        _stats(),
+        [],
+        Mode.DEEP,
+        {"retention_days": 7, "retain_last": 1, "max_concurrent_deletes": 0},
+    )
+    by_type = {op.type: op.params for op in plan.operations}
+    assert by_type[OperationType.EXPIRE_SNAPSHOTS]["max_concurrent_deletes"] == 0
+    assert by_type[OperationType.REMOVE_ORPHAN_FILES]["max_concurrent_deletes"] == 0
+
+
 def test_expire_omits_keep_param_when_no_protected_ids() -> None:
     plan = build_plan(_stats(), [], Mode.STANDARD, {"retention_days": 7, "retain_last": 1})
     expire_op = next(op for op in plan.operations if op.type is OperationType.EXPIRE_SNAPSHOTS)

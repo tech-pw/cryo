@@ -136,11 +136,11 @@ def test_spark_render_golden_operation_sql() -> None:
         (
             "CALL iceberg.system.expire_snapshots(table => 'iceberg.demo.events', "
             "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 3, "
-            "stream_results => true)"
+            "stream_results => true, max_concurrent_deletes => 4)"
         ),
         (
             "CALL iceberg.system.remove_orphan_files(table => 'iceberg.demo.events', "
-            "older_than => TIMESTAMP '2025-05-01 00:00:00')"
+            "older_than => TIMESTAMP '2025-05-01 00:00:00', max_concurrent_deletes => 4)"
         ),
         (
             "ALTER TABLE iceberg.demo.events SET TBLPROPERTIES ("
@@ -463,8 +463,34 @@ def test_spark_expire_snapshots_streaming_can_be_turned_off() -> None:
     )
     assert render(plan)[0].sql == (
         "CALL iceberg.system.expire_snapshots(table => 'iceberg.demo.events', "
-        "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 2)"
+        "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 2, "
+        "max_concurrent_deletes => 4)"
     )
+
+
+def test_spark_delete_parallelism_is_configurable_and_zero_disables_it() -> None:
+    serial = MaintenancePlan(
+        table_ref="iceberg.demo.events",
+        mode=Mode.LIGHT,
+        operations=(
+            Operation(
+                OperationType.EXPIRE_SNAPSHOTS,
+                {
+                    "older_than": "2025-05-01 00:00:00",
+                    "retain_last": 1,
+                    "stream_results": False,
+                    "max_concurrent_deletes": 0,
+                },
+            ),
+            Operation(
+                OperationType.REMOVE_ORPHAN_FILES,
+                {"older_than": "2025-05-01 00:00:00", "max_concurrent_deletes": 16},
+            ),
+        ),
+    )
+    expire, orphan = (statement.sql for statement in render(serial))
+    assert "max_concurrent_deletes" not in expire
+    assert "max_concurrent_deletes => 16" in orphan
 
 
 def test_spark_expire_snapshots_streams_results_after_setting_the_protected_ref() -> None:
@@ -489,7 +515,7 @@ def test_spark_expire_snapshots_streams_results_after_setting_the_protected_ref(
         "AS OF VERSION 11;\n"
         "CALL iceberg.system.expire_snapshots(table => 'iceberg.demo.events', "
         "older_than => TIMESTAMP '2025-05-01 00:00:00', retain_last => 2, "
-        "stream_results => true)"
+        "stream_results => true, max_concurrent_deletes => 4)"
     )
 
 
