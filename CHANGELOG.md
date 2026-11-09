@@ -34,6 +34,11 @@ All notable changes to Cryo will be documented in this file. The format is based
   separate executor pod. The driver takes the executor's CPU and heap, so each job is one pod
   with the same resources. Set `local_mode: false` on the destination's `spark_k8s` config
   (or `CRYO_SPARK_K8S_LOCAL_MODE=false`) to go back to executor pods (#450).
+- Opt-in spot executors: `spark.k8s.executorCapacityTypes` (or `executor_capacity_types` on
+  the destination), e.g. `spot,on-demand`. Executors require one of the listed Karpenter
+  capacity types and prefer the first; the driver keeps the node selector's capacity type,
+  so the statement survives an executor loss. With spot, Spark decommissions executors and
+  migrates their shuffle and cached blocks to peers. Off by default (#452).
 - Optional dedicated Karpenter NodePool for Spark (`spark.k8s.karpenter.installNodePool`).
   Spark pods are `do-not-disrupt`, so on a shared pool one small driver kept a mostly-empty
   node alive. The new pool is tainted for Spark, only reclaims empty nodes, and caps node
