@@ -96,6 +96,10 @@ Pods do not all run as `serviceAccount`. With `native.enabled` or `spark.k8s.ena
 
 Catalogs and engines are not Helm values. Create them with `POST /api/v1/sources` and `POST /api/v1/destinations` after migrate. Supported source types are `rest`, `hive`, `glue`, `polaris`, and `nessie`. Unity Catalog and JDBC are rejected.
 
+## Sizing workers
+
+A worker runs one maintenance job at a time and blocks until the engine finishes it, so the fleet drains at about `workers / job duration`. Its CPU stays near zero while it waits, which does not mean it is over-provisioned. Set `worker.replicas` (or `native.keda.maxReplicas` with KEDA) to at least the largest destination `slot_cap`. With fewer workers than slots, engine slots sit idle and admitted jobs wait for a worker. The governor logs `N admitted job(s) waiting for a worker; X/Y engine slots in use` and sets the `cryo_admitted_waiting_for_worker` gauge when that happens.
+
 ## Production hardening
 
 These are off by default unless noted. Turn them on in your values file.
