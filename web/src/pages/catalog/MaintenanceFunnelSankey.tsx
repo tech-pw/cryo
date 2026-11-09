@@ -60,12 +60,26 @@ export const MaintenanceFunnelSankey = ({
 export const FunnelCaption = ({ funnel }: { funnel: TablesFunnel }) =>
   funnel.run_id ? (
     <p className="text-xs text-muted-foreground">
-      Where each active table landed in the{" "}
-      <Link className="underline underline-offset-2 hover:text-foreground" to={`/runs/${funnel.run_id}`}>
-        latest nightly run
-      </Link>{" "}
-      ({formatRelative(funnel.run_started_at)}). A job is that table's outcome. A table with no job and no
-      recorded decision was not in the run. Counted per table, not per operation. Click a stage to list those
-      tables as they are now.
+      {funnel.run_count > 1 ? (
+        <>
+          Where each active table landed across {formatNumber(funnel.run_count)} nightly runs since{" "}
+          {formatRelative(funnel.window_started_at)}: the{" "}
+          <Link className="underline underline-offset-2 hover:text-foreground" to={`/runs/${funnel.run_id}`}>
+            latest cron run
+          </Link>{" "}
+          and the backlog batches that reach the tables it capped. Each table counts once, by its latest run.
+          A table with no job and no recorded decision was not reached in that window.
+        </>
+      ) : (
+        <>
+          Where each active table landed in the{" "}
+          <Link className="underline underline-offset-2 hover:text-foreground" to={`/runs/${funnel.run_id}`}>
+            latest nightly run
+          </Link>{" "}
+          ({formatRelative(funnel.run_started_at)}). A job is that table's outcome. A table with no job and no
+          recorded decision was not in the run.
+        </>
+      )}{" "}
+      Counted per table, not per operation. Click a stage to list those tables as they are now.
     </p>
   ) : null;

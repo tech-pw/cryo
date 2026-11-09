@@ -134,7 +134,7 @@ const matchesFilter = (table: DemoTable, filter: string): boolean => {
 export function demoTablesFunnel() {
   const nodes = [
     ["active", "Active tables", 14],
-    ["not_in_run", "Not in this run", 1],
+    ["not_in_run", "Not reached", 1],
     ["no_work", "No work needed", 6],
     ["needs_work", "Needs work", 7],
     ["skip_cooldown", "Cooldown", 1, "skipped"],

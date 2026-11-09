@@ -838,6 +838,10 @@ class TablesFunnelResponse(BaseModel):
     run_status: str | None = None
     run_started_at: datetime | None = None
     run_finished_at: datetime | None = None
+    # Runs counted: the nightly cron run plus the preset's cron and backlog runs of the last
+    # 24 hours. Each table is counted once, by its latest run in that window.
+    run_count: int = 0
+    window_started_at: datetime | None = None
     total_active: int
     nodes: list[FunnelNode]
     links: list[FunnelLink]

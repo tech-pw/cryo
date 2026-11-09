@@ -58,6 +58,7 @@ describe("CatalogDashboard", () => {
   it("shows triage cards with exact counts and the catalog with an integer score", async () => {
     vi.mocked(getTablesMaintenanceFunnel).mockResolvedValue({
       run_id: null,
+      run_count: 0,
       total_active: 0,
       nodes: [],
       links: []
@@ -84,7 +85,7 @@ describe("CatalogDashboard", () => {
   });
 
   it("does not turn a missing fleet cost into zero", async () => {
-    vi.mocked(getTablesMaintenanceFunnel).mockResolvedValue({ run_id: null, total_active: 0, nodes: [], links: [] });
+    vi.mocked(getTablesMaintenanceFunnel).mockResolvedValue({ run_id: null, run_count: 0, total_active: 0, nodes: [], links: [] });
     vi.mocked(getMultiCatalogDashboard).mockResolvedValue({
       catalogs: [{ ...catalog, table_count: 0, monthly_cost_usd: 0, projected_savings_usd_month: null }],
       total_catalogs: 1,
