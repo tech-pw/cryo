@@ -53,7 +53,11 @@ from cryo.db.repositories.native_dispatch import ACTIVE_DISPATCH_STATUSES
 from cryo.domain.enums import JobStatus, OperationType
 from cryo.engines.base import capacity_refusal_error, is_capacity_refusal
 from cryo.engines.spark.k8s import JobRunState
-from cryo.engines.spark.procedure_metrics import rewrite_file_counts
+from cryo.engines.spark.procedure_metrics import (
+    bytes_freed_from_procedure,
+    expire_effect,
+    rewrite_file_counts,
+)
 from cryo.queue.job_release import release_job_claims
 
 if TYPE_CHECKING:
@@ -154,6 +158,19 @@ def sweep_pending_fallback_dispatches(
             row.status = "OK"
             if result.bytes_removed is not None:
                 row.actual_bytes_freed = result.bytes_removed
+            else:
+                measured = bytes_freed_from_procedure(str(row.action), result.metrics)
+                if measured is not None:
+                    row.actual_bytes_freed = measured
+            objects_deleted, snapshots_expired, expire_counts = expire_effect(
+                str(row.action), result.metrics
+            )
+            if objects_deleted is not None:
+                row.objects_deleted = objects_deleted
+            if snapshots_expired is not None:
+                row.snapshots_expired = snapshots_expired
+            if expire_counts is not None:
+                row.result_metrics = expire_counts
             input_files, output_files = rewrite_file_counts(str(row.action), result.metrics)
             if input_files is not None:
                 row.input_files_count = input_files

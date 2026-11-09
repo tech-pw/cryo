@@ -66,6 +66,12 @@ All notable changes to Cryo will be documented in this file. The format is based
   older than the driver TTL, and its credentials Secret with it. Its executors go with
   the driver. The Secret is no longer deleted while an executor of that driver has not
   finished. The governor Role gains `get` on Secrets, which the #423 check needs (#433).
+- `expire_snapshots` is left out of a plan, with a note, when the latest scan shows it
+  cannot remove anything: no more snapshots than `retain_last` keeps (counting commits
+  since the scan), or the oldest snapshot is still inside the retention window. Missing
+  stats still plan it. A successful Spark expiry now records the files it deleted on the
+  audit row (`objects_deleted`, the per-kind counts in `result_metrics`); bytes freed stay
+  NULL unless the procedure reported none deleted. Adds migration `20261109_1200` (#434).
 - A Spark `optimize` failure whose root is `SparkPlan.session()` being null keeps
   the executor-loss and `Rewrite-Service` lines from the driver log. Those lines
   were outside the stored tail, so the saved error was only the

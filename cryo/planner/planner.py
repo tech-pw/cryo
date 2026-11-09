@@ -74,7 +74,9 @@ def build_plan(
             protected_snapshot_ids=list(protected_snapshot_ids or []),
             notes=notes,
         )
-        expire_skip = _expire_interval_skip_note(stats, params, expire_params)
+        expire_skip = _expire_interval_skip_note(
+            stats, params, expire_params
+        ) or _expire_nothing_to_expire_note(stats, expire_params)
         if expire_skip is not None:
             notes.append(expire_skip)
         else:
@@ -1286,6 +1288,46 @@ def _expire_interval_skip_note(
         f"Skipped expire_snapshots: last successful expiry {float(hours_since):.1f}h ago, "
         f"inside the {min_hours:g}h minimum interval (expire_snapshots_min_interval_hours)."
     )
+
+
+def _expire_nothing_to_expire_note(
+    stats: Mapping[str, Any],
+    expire_params: Mapping[str, Any],
+) -> str | None:
+    """Why expire_snapshots would be a guaranteed no-op, or None to plan it.
+
+    16% of a week's successful expiries ran on tables with at most one snapshot, and none
+    recorded any effect (#434). Each still paid a Spark launch. Two cases provably remove
+    nothing: no more snapshots than retain_last keeps, or the oldest snapshot is still
+    inside the retention window. Missing stats plan the expiry: unknown is not nothing.
+    Commits counted since the scan (raw.commits_since_scan) are added to the scanned
+    count, so a table written after its scan is never judged by the stale number.
+    """
+    retain_last = int(expire_params.get("retain_last") or 1)
+    total = _optional_int(stats.get("scanned_snapshot_count", stats.get("total_snapshots")))
+    if total is not None:
+        raw = stats.get("raw")
+        since_scan = (
+            _optional_int(raw.get("commits_since_scan")) if isinstance(raw, Mapping) else None
+        )
+        current = total + max(0, since_scan or 0)
+        if current <= retain_last:
+            return (
+                f"Skipped expire_snapshots: latest scan shows {current} snapshot(s), "
+                f"no more than retain_last={retain_last} keeps, so nothing can expire."
+            )
+    oldest_hours = stats.get("hours_since_first_snapshot")
+    if oldest_hours is None:
+        return None
+    window_hours = _optional_int(expire_params.get("retention_hours"))
+    if window_hours is None:
+        window_hours = int(expire_params.get("retention_days") or 0) * 24
+    if window_hours > 0 and float(oldest_hours) < window_hours:
+        return (
+            f"Skipped expire_snapshots: oldest snapshot is {float(oldest_hours):.1f}h old, "
+            f"inside the {window_hours}h retention window, so nothing is old enough to expire."
+        )
+    return None
 
 
 def _orphan_params(params: Mapping[str, Any]) -> dict[str, Any]:

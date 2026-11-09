@@ -159,6 +159,8 @@ class AuditRecord:
     actual_bytes_freed: int | None = None
     snapshots_expired: int | None = None
     manifests_rewritten: int | None = None
+    objects_deleted: int | None = None
+    result_metrics: dict[str, int] | None = None
     actor: str | None = None
     # Async fallback-dispatch tracking. See AuditLog.engine_ref's docstring.
     engine_ref: str | None = None
@@ -2222,6 +2224,8 @@ class Worker:
                         actual_bytes_freed=getattr(result, "actual_bytes_freed", None),
                         snapshots_expired=getattr(result, "snapshots_expired", None),
                         manifests_rewritten=getattr(result, "manifests_rewritten", None),
+                        objects_deleted=getattr(result, "objects_deleted", None),
+                        result_metrics=getattr(result, "result_metrics", None),
                         actor=job.actor,
                     )
                 )
@@ -2753,6 +2757,8 @@ class Worker:
                         actual_bytes_freed=getattr(result, "actual_bytes_freed", None),
                         snapshots_expired=getattr(result, "snapshots_expired", None),
                         manifests_rewritten=getattr(result, "manifests_rewritten", None),
+                        objects_deleted=getattr(result, "objects_deleted", None),
+                        result_metrics=getattr(result, "result_metrics", None),
                         actor=job.actor,
                     )
                 )
