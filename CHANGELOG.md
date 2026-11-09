@@ -62,6 +62,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   and sets the `cryo_admitted_waiting_for_worker` gauge. The Helm chart documents sizing
   `worker.replicas` / `native.keda.maxReplicas` to the engine `slot_cap`: a worker blocks on
   one engine job at a time, so low worker CPU does not mean over-provisioned (#435).
+- A Spark driver still `Running` after its dispatch Job is gone is removed once it is
+  older than the driver TTL, and its credentials Secret with it. Its executors go with
+  the driver. The Secret is no longer deleted while an executor of that driver has not
+  finished. The governor Role gains `get` on Secrets, which the #423 check needs (#433).
 - A Spark `optimize` failure whose root is `SparkPlan.session()` being null keeps
   the executor-loss and `Rewrite-Service` lines from the driver log. Those lines
   were outside the stored tail, so the saved error was only the

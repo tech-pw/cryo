@@ -926,19 +926,21 @@ def test_cleanup_skips_pods_with_no_start_time() -> None:
 
 def test_cleanup_checks_both_succeeded_and_failed_phases() -> None:
     core_api = MagicMock()
-    core_api.list_namespaced_pod.side_effect = [
-        SimpleNamespace(items=[]),
-        SimpleNamespace(items=[]),
-    ]
+    core_api.list_namespaced_pod.return_value = SimpleNamespace(items=[])
 
     cleanup_stale_driver_pods(
         namespace="cryo", older_than_seconds=3600, core_api=core_api, batch_api=_jobs()
     )
 
     calls = core_api.list_namespaced_pod.call_args_list
-    assert len(calls) == 3
+    assert len(calls) == 4
     phases = {c.kwargs["field_selector"] for c in calls}
-    assert phases == {"status.phase=Succeeded", "status.phase=Failed", "status.phase=Pending"}
+    assert phases == {
+        "status.phase=Succeeded",
+        "status.phase=Failed",
+        "status.phase=Pending",
+        "status.phase=Running",
+    }
     for c in calls:
         assert c.kwargs["label_selector"] == "spark-role=driver"
         assert c.kwargs["namespace"] == "cryo"
@@ -1042,6 +1044,103 @@ def test_cleanup_deletes_a_pending_driver_whose_secret_is_gone() -> None:
     )
 
     assert deleted == 1
+
+
+def _sweep_running(name: str, *, hours: float, jobs: tuple[str, ...]) -> tuple[int, MagicMock]:
+    from datetime import UTC, datetime, timedelta
+
+    start = datetime.now(UTC) - timedelta(hours=hours)
+    core_api = MagicMock()
+    empty = SimpleNamespace(items=[])
+    running = SimpleNamespace(items=[_pod(name, phase="Running", start_time=start)])
+    core_api.list_namespaced_pod.side_effect = [empty, empty, empty, running]
+    deleted = cleanup_stale_driver_pods(
+        namespace="cryo", older_than_seconds=3600, core_api=core_api, batch_api=_jobs(*jobs)
+    )
+    return deleted, core_api
+
+
+def test_cleanup_deletes_a_running_driver_whose_wrapper_job_is_gone() -> None:
+    """#433: a Running driver outlived its Job and Secret for days, stuck requesting an
+    executor. Nobody resolves it once the Job is gone; its Secret goes with it."""
+    deleted, core_api = _sweep_running("cryo-spark-orphan-driver", hours=72, jobs=())
+
+    assert deleted == 1
+    core_api.delete_namespaced_pod.assert_called_once_with(
+        name="cryo-spark-orphan-driver", namespace="cryo"
+    )
+    core_api.delete_namespaced_secret.assert_called_once_with(
+        name="cryo-spark-orphan-aws", namespace="cryo"
+    )
+
+
+def test_cleanup_keeps_a_running_driver_with_a_live_wrapper_job() -> None:
+    deleted, core_api = _sweep_running(
+        "cryo-spark-busy-driver", hours=72, jobs=("cryo-spark-busy",)
+    )
+
+    assert deleted == 0
+    core_api.delete_namespaced_pod.assert_not_called()
+    core_api.delete_namespaced_secret.assert_not_called()
+
+
+def test_cleanup_keeps_a_young_running_driver_whose_job_is_missing() -> None:
+    deleted, core_api = _sweep_running("cryo-spark-new-driver", hours=0.1, jobs=())
+
+    assert deleted == 0
+    core_api.delete_namespaced_pod.assert_not_called()
+    core_api.delete_namespaced_secret.assert_not_called()
+
+
+def _executor(owner: str, phase: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        metadata=SimpleNamespace(
+            name=f"{owner}-exec-1", owner_references=[SimpleNamespace(kind="Pod", name=owner)]
+        ),
+        status=SimpleNamespace(phase=phase),
+    )
+
+
+def test_credentials_secret_kept_while_an_executor_still_runs() -> None:
+    client = SparkK8sClient(SparkK8sConfig(namespace="cryo"))
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.return_value = SimpleNamespace(
+        items=[_executor("cryo-spark-abc-driver", "Pending")]
+    )
+
+    with (
+        patch.object(client, "_driver_pod_phase", return_value=None),
+        patch.object(client, "_core_client", return_value=core_api),
+    ):
+        client.cleanup_credentials_secret("cryo-spark-abc")
+
+    core_api.delete_namespaced_secret.assert_not_called()
+
+
+def test_credentials_secret_deleted_once_driver_and_executors_are_gone() -> None:
+    from kubernetes.client.exceptions import ApiException
+
+    client = SparkK8sClient(SparkK8sConfig(namespace="cryo"))
+    core_api = MagicMock()
+    core_api.list_namespaced_pod.return_value = SimpleNamespace(
+        items=[
+            _executor("cryo-spark-abc-driver", "Failed"),
+            _executor("cryo-spark-other-driver", "Running"),
+        ]
+    )
+    batch_api = MagicMock()
+    batch_api.read_namespaced_job.side_effect = ApiException(status=404)
+
+    with (
+        patch.object(client, "_driver_pod_phase", return_value=None),
+        patch.object(client, "_core_client", return_value=core_api),
+        patch.object(client, "_batch_client", return_value=batch_api),
+    ):
+        client.cleanup_credentials_secret("cryo-spark-abc")
+
+    core_api.delete_namespaced_secret.assert_called_once_with(
+        name="cryo-spark-abc-aws", namespace="cryo"
+    )
 
 
 def test_cleanup_after_run_keeps_a_driver_that_has_not_finished() -> None:
