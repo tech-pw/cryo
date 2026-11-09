@@ -470,6 +470,9 @@ spark:
     # Set eks.amazonaws.com/role-arn here for the table data Spark reads and writes.
     serviceAccountAnnotations: {}
     driverCpuMilli: 1000
+    # Driver CPU request as a share of driverCpuMilli (the limit stays at driverCpuMilli).
+    # Maintenance drivers mostly wait on executors and S3. 1.0 makes request equal limit.
+    driverCpuRequestFraction: 0.25
     driverMemMib: 2048
     executorCpuMilli: 2000
     executorMemMib: 4096

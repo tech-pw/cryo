@@ -55,6 +55,13 @@ logger = logging.getLogger(__name__)
 
 _IN_CLUSTER_API_SERVER = "https://kubernetes.default.svc:443"
 _DEFAULT_IMAGE = "cryo-spark:latest"
+# A maintenance driver mostly waits on executors and S3; observed use is ~1% of a core.
+# Reserve a quarter of its limit and keep the limit, so bursts (planning, commit) still get
+# the full core. 1.0 restores request == limit.
+_DEFAULT_DRIVER_CPU_REQUEST_FRACTION = 0.25
+_MIN_DRIVER_CPU_REQUEST_MILLI = 250
+# The wrapper only runs spark-submit and polls the driver until it exits.
+_WRAPPER_REQUESTS = {"cpu": "50m", "memory": "256Mi"}
 _DEFAULT_ACTIVE_DEADLINE_SECONDS = 7200
 _DEFAULT_TTL_SECONDS = 3600
 _DESTINATION_LABEL = "cryo/destination"
@@ -107,6 +114,7 @@ class SparkK8sConfig:
     local_mode: bool = True
     tolerations: tuple[dict[str, str], ...] = ()
     pack_pods: bool = False
+    driver_cpu_request_fraction: float = _DEFAULT_DRIVER_CPU_REQUEST_FRACTION
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> SparkK8sConfig:
@@ -191,6 +199,9 @@ class SparkK8sConfig:
             not in ("0", "false", "no", "off"),
             tolerations=_parse_tolerations(_get("tolerations")),
             pack_pods=str(_get("pack_pods", "false")).strip().lower() in ("1", "true", "yes", "on"),
+            driver_cpu_request_fraction=float(
+                _get("driver_cpu_request_fraction") or _DEFAULT_DRIVER_CPU_REQUEST_FRACTION
+            ),
         )
 
 
@@ -481,7 +492,7 @@ class SparkK8sClient:
             # Explicit Kubernetes resource requests/limits so Karpenter can pack nodes
             # accurately instead of guessing from Spark's integer core counts.
             "--conf",
-            f"spark.kubernetes.driver.request.cores={cfg.driver_cpu_milli / 1000.0:.3f}",
+            f"spark.kubernetes.driver.request.cores={_driver_request_milli(cfg) / 1000.0:.3f}",
             "--conf",
             f"spark.kubernetes.driver.limit.cores={cfg.driver_cpu_milli / 1000.0:.3f}",
             "--conf",
@@ -646,7 +657,7 @@ class SparkK8sClient:
                                 "securityContext": container_security_context(),
                                 "command": spark_submit_cmd,
                                 "resources": {
-                                    "requests": {"cpu": "250m", "memory": "512Mi"},
+                                    "requests": dict(_WRAPPER_REQUESTS),
                                     "limits": {"cpu": "500m", "memory": "1Gi"},
                                 },
                             },
@@ -1101,6 +1112,12 @@ def _fold_local_driver(cfg: SparkK8sConfig) -> SparkK8sConfig:
     return replace(
         cfg, driver_cpu_milli=folded.driver_cpu_milli, driver_mem_mib=folded.driver_mem_mib
     )
+
+
+def _driver_request_milli(cfg: SparkK8sConfig) -> int:
+    fraction = min(1.0, max(0.0, cfg.driver_cpu_request_fraction))
+    wanted = max(_MIN_DRIVER_CPU_REQUEST_MILLI, round(cfg.driver_cpu_milli * fraction))
+    return min(cfg.driver_cpu_milli, wanted)
 
 
 _DRIVER_POD_LABEL_SELECTOR = "spark-role=driver"
