@@ -43,6 +43,7 @@ from cryo.engines.spark.sizing import (
     cap_deadline_seconds_for_table,
     cap_dispatch_profile,
     driver_max_result_size_mib,
+    executor_memory_overhead_mib,
     lightweight_driver_heap_mib,
 )
 
@@ -389,7 +390,8 @@ class SparkK8sClient:
             "--conf",
             f"spark.driver.memoryOverhead={DRIVER_MEMORY_OVERHEAD_MIB}m",
             "--conf",
-            f"spark.executor.memoryOverhead={DRIVER_MEMORY_OVERHEAD_MIB}m",
+            # Executors get their own overhead, sized from the (possibly OOM-stepped) heap.
+            f"spark.executor.memoryOverhead={executor_memory_overhead_mib(cfg.executor_mem_mib)}m",
             # Wrapper Job already has do-not-disrupt; driver/executor pods are created by
             # spark-submit and need the same annotation or Karpenter consolidation can
             # SIGTERM them mid-rewrite (example-cluster 2026-08-12: run 3af23a9f,

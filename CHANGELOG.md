@@ -72,6 +72,11 @@ All notable changes to Cryo will be documented in this file. The format is based
   stats still plan it. A successful Spark expiry now records the files it deleted on the
   audit row (`objects_deleted`, the per-kind counts in `result_metrics`); bytes freed stay
   NULL unless the procedure reported none deleted. Adds migration `20261109_1200` (#434).
+- Spark-on-Kubernetes executors no longer reuse the driver's fixed 384 MiB
+  `memoryOverhead`. Executor overhead is now 25% of the executor heap with a 768 MiB
+  floor, so a 1 GiB executor gets room for Parquet/ZSTD write buffers. On an executor
+  OOM retry the overhead grows with the doubled heap instead of staying at 384 MiB.
+  The driver overhead is unchanged (#431).
 - A Spark `optimize` failure whose root is `SparkPlan.session()` being null keeps
   the executor-loss and `Rewrite-Service` lines from the driver log. Those lines
   were outside the stored tail, so the saved error was only the

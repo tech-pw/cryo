@@ -260,6 +260,18 @@ def executor_heap_after_oom(executor_mem_mib: int, executor_oom_steps: int) -> i
     return max(executor_mem_mib, min(stepped, _EXECUTOR_OOM_CEILING_MIB))
 
 
+# Executor exit 137 is a cgroup kill: off-heap (Parquet/ZSTD write buffers, Arrow, Netty)
+# outgrew the overhead. Those buffers scale with the 256-512MB output files, not the heap,
+# so the driver's 384MiB is too small even for a 1GiB executor (issue #431).
+_EXECUTOR_OVERHEAD_FRACTION = 0.25
+_EXECUTOR_OVERHEAD_FLOOR_MIB = 768
+
+
+def executor_memory_overhead_mib(executor_mem_mib: int) -> int:
+    """Executor memoryOverhead for a given heap. Pod memory is heap + this value."""
+    return max(round(executor_mem_mib * _EXECUTOR_OVERHEAD_FRACTION), _EXECUTOR_OVERHEAD_FLOOR_MIB)
+
+
 def driver_max_result_size_mib(heap_mib: int) -> int:
     """Stay under the heap. Spark's 1g default is not safe on a 1024MiB driver."""
     return max(256, heap_mib - _MAX_RESULT_SIZE_HEADROOM_MIB)
