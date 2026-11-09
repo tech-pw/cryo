@@ -116,6 +116,7 @@ class SparkK8sConfig:
     pack_pods: bool = False
     driver_cpu_request_fraction: float = _DEFAULT_DRIVER_CPU_REQUEST_FRACTION
     dynamic_allocation: bool = False
+    executor_capacity_types: tuple[str, ...] = ()
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> SparkK8sConfig:
@@ -205,6 +206,11 @@ class SparkK8sConfig:
             ),
             dynamic_allocation=str(_get("dynamic_allocation", "false")).strip().lower()
             in ("1", "true", "yes", "on"),
+            executor_capacity_types=tuple(
+                t.strip()
+                for t in str(_get("executor_capacity_types") or "").split(",")
+                if t.strip()
+            ),
         )
 
 
@@ -285,17 +291,76 @@ def _attach_pod_templates(
         pod_spec["tolerations"] = [dict(t) for t in cfg.tolerations]
 
 
+_CAPACITY_TYPE_LABEL = "karpenter.sh/capacity-type"
+
+
+def _executor_capacity_affinity(types: tuple[str, ...]) -> dict[str, Any]:
+    """Any of ``types``, the first preferred; Karpenter falls back when it has no capacity."""
+    return {
+        "requiredDuringSchedulingIgnoredDuringExecution": {
+            "nodeSelectorTerms": [
+                {
+                    "matchExpressions": [
+                        {"key": _CAPACITY_TYPE_LABEL, "operator": "In", "values": list(types)}
+                    ]
+                }
+            ]
+        },
+        "preferredDuringSchedulingIgnoredDuringExecution": [
+            {
+                "weight": 100,
+                "preference": {
+                    "matchExpressions": [
+                        {"key": _CAPACITY_TYPE_LABEL, "operator": "In", "values": [types[0]]}
+                    ]
+                },
+            }
+        ],
+    }
+
+
 def _pod_templates(cfg: SparkK8sConfig) -> dict[str, str] | None:
     """Driver and executor pod templates as JSON, or None when nothing needs one."""
-    if not cfg.tolerations and not cfg.pack_pods:
+    if not cfg.tolerations and not cfg.pack_pods and not cfg.executor_capacity_types:
         return None
-    spec: dict[str, Any] = {}
-    if cfg.tolerations:
-        spec["tolerations"] = [dict(t) for t in cfg.tolerations]
-    if cfg.pack_pods:
-        spec["affinity"] = _PACK_AFFINITY
-    pod = json.dumps({"apiVersion": "v1", "kind": "Pod", "spec": spec}, sort_keys=True)
-    return {"driver": pod, "executor": pod}
+    specs: dict[str, dict[str, Any]] = {"driver": {}, "executor": {}}
+    for spec in specs.values():
+        if cfg.tolerations:
+            spec["tolerations"] = [dict(t) for t in cfg.tolerations]
+        if cfg.pack_pods:
+            spec["affinity"] = dict(_PACK_AFFINITY)
+    if cfg.executor_capacity_types:
+        executor = specs["executor"]
+        executor["affinity"] = {
+            **executor.get("affinity", {}),
+            "nodeAffinity": _executor_capacity_affinity(cfg.executor_capacity_types),
+        }
+    return {
+        role: json.dumps({"apiVersion": "v1", "kind": "Pod", "spec": spec}, sort_keys=True)
+        for role, spec in specs.items()
+    }
+
+
+def _node_selector_confs(cfg: SparkK8sConfig) -> list[str]:
+    """The destination's selector for both roles, except a capacity-type pin when executors
+    take their capacity types from the pod template instead: then it holds only the driver."""
+    confs: list[str] = []
+    for key, value in (cfg.node_selector or {}).items():
+        role = "driver." if cfg.executor_capacity_types and key == _CAPACITY_TYPE_LABEL else ""
+        confs += ["--conf", f"spark.kubernetes.{role}node.selector.{key}={value}"]
+    return confs
+
+
+def _decommission_confs(cfg: SparkK8sConfig) -> dict[str, str]:
+    """Move an executor's shuffle and cached blocks to its peers before a spot reclaim."""
+    if "spot" not in cfg.executor_capacity_types:
+        return {}
+    return {
+        "spark.decommission.enabled": "true",
+        "spark.storage.decommission.enabled": "true",
+        "spark.storage.decommission.shuffleBlocks.enabled": "true",
+        "spark.storage.decommission.rddBlocks.enabled": "true",
+    }
 
 
 @dataclass(frozen=True)
@@ -564,12 +629,14 @@ class SparkK8sClient:
         # aren't checkpointed, so on-demand only, matching the native engine's own rule --
         # enforced via cfg.node_selector, which defaults to on-demand (see from_config
         # above) but stays overridable per-destination rather than hardcoded here.
+        # executor_capacity_types relaxes the pin for executors only: losing one re-runs its
+        # tasks, and the driver, which holds the statement, keeps the destination's pin.
         #
         # Insert node selector spark.conf entries so they appear before the app path
         # (insert at index 1 to keep all --conf values before the application script)
-        if cfg.node_selector:
-            for _k, _v in cfg.node_selector.items():
-                spark_submit_cmd[1:1] = ["--conf", f"spark.kubernetes.node.selector.{_k}={_v}"]
+        spark_submit_cmd[1:1] = _node_selector_confs(cfg)
+        for conf_key, conf_value in _decommission_confs(cfg).items():
+            spark_submit_cmd[1:1] = ["--conf", f"{conf_key}={conf_value}"]
         pod_templates = _pod_templates(cfg)
         if pod_templates:
             for role in pod_templates:
