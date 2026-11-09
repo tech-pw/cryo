@@ -358,7 +358,7 @@ NODE_LABELS: Mapping[str, str] = {
     "not_scanned": "Not scanned yet",
     "scanned": "Scanned",
     "not_evaluated": "Not evaluated",
-    "not_in_run": "Not in this run",
+    "not_in_run": "Not reached",
     "no_work": "No work needed",
     "needs_work": "Needs work",
     "skip_cooldown": "Cooldown",
@@ -474,20 +474,38 @@ def latest_batch_run(session: Session) -> MaintenanceRun | None:
     ).first()
 
 
-def nightly_run_ids(session: Session, run: MaintenanceRun | None) -> list[uuid.UUID]:
-    """The nightly run plus the backlog batches its preset scheduled after it."""
+# A capped cron run reaches a few hundred tables; the backlog batches after it reach the rest
+# over the following hours. Right after the cron fires, the new cycle alone would chart a few
+# percent of the fleet, so the funnel covers a full day of the preset's runs.
+NIGHTLY_WINDOW = timedelta(hours=24)
+
+
+def nightly_window_start(run: MaintenanceRun, now: datetime | None = None) -> datetime:
+    created = run.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    return min(created, (now or datetime.now(UTC)) - NIGHTLY_WINDOW)
+
+
+def nightly_run_ids(
+    session: Session, run: MaintenanceRun | None, *, now: datetime | None = None
+) -> list[uuid.UUID]:
+    """The nightly run plus its preset's cron and backlog runs from the last 24 hours."""
     if run is None:
         return []
     if run.preset_id is None or run.trigger != "cron":
         return [run.id]
-    backlog = session.scalars(
-        select(MaintenanceRun.id).where(
+    others = session.scalars(
+        select(MaintenanceRun.id)
+        .where(
             MaintenanceRun.preset_id == run.preset_id,
-            MaintenanceRun.trigger == BACKLOG_TRIGGER,
-            MaintenanceRun.created_at >= run.created_at,
+            MaintenanceRun.trigger.in_(("cron", BACKLOG_TRIGGER)),
+            MaintenanceRun.created_at >= nightly_window_start(run, now),
+            MaintenanceRun.id != run.id,
         )
+        .order_by(MaintenanceRun.created_at)
     ).all()
-    return [run.id, *backlog]
+    return [run.id, *others]
 
 
 def tables_funnel(session: Session, *, tenant_id: uuid.UUID) -> TablesFunnelResponse:
@@ -503,18 +521,49 @@ def tables_funnel(session: Session, *, tenant_id: uuid.UUID) -> TablesFunnelResp
     ).label("scan_bucket")
     run_id = run.id if run is not None else None
     job_rank_whens = [(MaintenanceJob.status == status, rank) for status, rank in _JOB_RANK.items()]
-    jobs = (
+    # One row per table: its latest run in the window, and the worst job status in that run.
+    job_rank = case(*job_rank_whens, else_=0)
+    jobs_ranked = (
         select(
             MaintenanceJob.table_id.label("table_id"),
-            func.max(case(*job_rank_whens, else_=0)).label("job_rank"),
+            job_rank.label("job_rank"),
+            func.row_number()
+            .over(
+                partition_by=MaintenanceJob.table_id,
+                order_by=(MaintenanceRun.created_at.desc(), job_rank.desc()),
+            )
+            .label("pick"),
         )
+        .join(MaintenanceRun, MaintenanceRun.id == MaintenanceJob.run_id)
         .where(MaintenanceJob.run_id.in_(run_ids))
-        .group_by(MaintenanceJob.table_id)
+        .subquery()
+    )
+    jobs = (
+        select(jobs_ranked.c.table_id, jobs_ranked.c.job_rank)
+        .where(jobs_ranked.c.pick == 1)
+        .subquery()
+    )
+    evaluations_ranked = (
+        select(
+            SkipEvaluation.table_id,
+            SkipEvaluation.stage,
+            SkipEvaluation.reason,
+            func.row_number()
+            .over(
+                partition_by=SkipEvaluation.table_id,
+                order_by=MaintenanceRun.created_at.desc(),
+            )
+            .label("pick"),
+        )
+        .join(MaintenanceRun, MaintenanceRun.id == SkipEvaluation.run_id)
+        .where(SkipEvaluation.run_id.in_(run_ids))
         .subquery()
     )
     evaluations = (
-        select(SkipEvaluation.table_id, SkipEvaluation.stage, SkipEvaluation.reason)
-        .where(SkipEvaluation.run_id.in_(run_ids))
+        select(
+            evaluations_ranked.c.table_id, evaluations_ranked.c.stage, evaluations_ranked.c.reason
+        )
+        .where(evaluations_ranked.c.pick == 1)
         .subquery()
     )
     stmt = (
@@ -549,6 +598,10 @@ def tables_funnel(session: Session, *, tenant_id: uuid.UUID) -> TablesFunnelResp
         run_status=run.status if run is not None else None,
         run_started_at=run.created_at if run is not None else None,
         run_finished_at=run.finished_at if run is not None else None,
+        run_count=len(run_ids),
+        window_started_at=nightly_window_start(run)
+        if run is not None and len(run_ids) > 1
+        else None,
         total_active=sum(row.count for row in rows),
         nodes=nodes,
         links=links,
