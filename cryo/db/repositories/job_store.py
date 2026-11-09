@@ -83,6 +83,13 @@ class SQLJobStore:
             hours_since_expire = _hours_since_last_expire_snapshots(session, table.id)
             if hours_since_expire is not None:
                 stats["hours_since_last_expire_snapshots"] = hours_since_expire
+            if table.stats is not None:
+                # Its own key, not total_snapshots: feeding that here would also switch on
+                # backlog-aware retention tightening on this path, a separate change.
+                stats["scanned_snapshot_count"] = table.stats.total_snapshots
+                oldest_hours = _hours_since_first_snapshot(table.stats.raw)
+                if oldest_hours is not None:
+                    stats["hours_since_first_snapshot"] = oldest_hours
             partitions = _latest_partitions(session, table.id)
             source_config = dict(table.source.config) if table.source is not None else {}
             return TableMaintenanceData(
@@ -288,6 +295,9 @@ class SQLJobStore:
                     actual_bytes_freed=record.actual_bytes_freed,
                     input_files_count=record.input_files_count,
                     output_files_count=record.output_files_count,
+                    objects_deleted=record.objects_deleted,
+                    snapshots_expired=record.snapshots_expired,
+                    result_metrics=record.result_metrics,
                     actor=record.actor,
                     engine_ref=record.engine_ref,
                 )
@@ -823,6 +833,25 @@ def _hours_since_last_expire_snapshots(session: Session, table_id: uuid.UUID) ->
     if last.tzinfo is None:
         last = last.replace(tzinfo=UTC)
     return max(0.0, (datetime.now(UTC) - last).total_seconds() / 3600)
+
+
+def _hours_since_first_snapshot(raw: Mapping[str, Any] | None) -> float | None:
+    """Age of the oldest snapshot the last scan saw, for the planner's no-op expire gate.
+
+    Only grows between scans (a later expiry can only make the real oldest younger, which
+    leaves even less to expire), so a stale value never hides real work (#434).
+    """
+    value = (raw or {}).get("first_snapshot_at")
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return max(0.0, (datetime.now(UTC) - value).total_seconds() / 3600)
 
 
 def _last_maintained_at(session: Session, table_id: uuid.UUID) -> datetime | None:

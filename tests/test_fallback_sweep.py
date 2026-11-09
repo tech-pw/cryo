@@ -627,6 +627,36 @@ def test_sweep_records_rewrite_file_counts_on_success(session, monkeypatch) -> N
     assert (row.input_files_count, row.output_files_count) == (1024, 17)
 
 
+def test_sweep_records_what_expire_snapshots_removed(session, monkeypatch) -> None:
+    """Issue #434: expire's deleted-file counts reach the audit row; bytes stay unknown."""
+    _seed_spark_destination(session)
+    row = _audit_row(status="SUBMITTED", engine_ref="cryo-spark-exp")
+    row.action = "expire_snapshots"
+    session.add(row)
+    session.commit()
+
+    metrics = {
+        "deleted_data_files_count": 4,
+        "deleted_position_delete_files_count": 1,
+        "deleted_equality_delete_files_count": 0,
+        "deleted_manifest_files_count": 6,
+        "deleted_manifest_lists_count": 3,
+    }
+    mock_client = MagicMock()
+    mock_client.get_job_run.return_value = JobRunResult(
+        job_run_id="cryo-spark-exp", state=JobRunState.SUCCESS, metrics=metrics
+    )
+    monkeypatch.setattr("cryo.engines.spark.k8s_engine.SparkK8sClient", lambda config: mock_client)
+
+    sweep_pending_fallback_dispatches(session)
+
+    session.refresh(row)
+    assert row.objects_deleted == 14
+    assert row.result_metrics == metrics
+    assert row.snapshots_expired is None
+    assert row.actual_bytes_freed is None
+
+
 def _seed_dispatch(session, *, run_id, destination_id, status: str) -> NativeDispatch:
     dispatch = NativeDispatch(
         id=uuid4(),

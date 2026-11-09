@@ -330,6 +330,113 @@ def test_table_data_reports_hours_since_the_last_successful_expiry(
     assert 3.9 < stats["hours_since_last_expire_snapshots"] < 4.1
 
 
+# --- #434 ---------------------------------------------------------------------------------
+
+
+def test_expire_snapshots_skipped_when_no_more_snapshots_than_retain_last() -> None:
+    plan = build_plan(_expire_stats(scanned_snapshot_count=1), [], Mode.LIGHT, {})
+
+    assert OperationType.EXPIRE_SNAPSHOTS not in _ops(plan)
+    assert any(
+        "Skipped expire_snapshots" in note and "retain_last=1" in note for note in plan.notes
+    )
+
+
+def test_expire_snapshots_counts_commits_since_the_scan() -> None:
+    stats = _expire_stats(scanned_snapshot_count=1, raw={"commits_since_scan": 3})
+
+    assert OperationType.EXPIRE_SNAPSHOTS in _ops(build_plan(stats, [], Mode.LIGHT, {}))
+
+
+def test_expire_snapshots_skipped_when_oldest_snapshot_is_inside_the_window() -> None:
+    plan = build_plan(
+        _expire_stats(scanned_snapshot_count=40, hours_since_first_snapshot=100.0),
+        [],
+        Mode.LIGHT,
+        {"retention_days": 7},
+    )
+
+    assert OperationType.EXPIRE_SNAPSHOTS not in _ops(plan)
+    assert any("oldest snapshot is 100.0h old" in note for note in plan.notes)
+
+
+def test_expire_snapshots_planned_when_oldest_snapshot_is_past_the_window() -> None:
+    stats = _expire_stats(scanned_snapshot_count=40, hours_since_first_snapshot=200.0)
+
+    assert OperationType.EXPIRE_SNAPSHOTS in _ops(
+        build_plan(stats, [], Mode.LIGHT, {"retention_days": 7})
+    )
+
+
+def test_expire_snapshots_window_follows_retention_hours() -> None:
+    stats = _expire_stats(scanned_snapshot_count=40, hours_since_first_snapshot=30.0)
+
+    assert OperationType.EXPIRE_SNAPSHOTS in _ops(
+        build_plan(stats, [], Mode.LIGHT, {"retention_days": 7, "retention_hours": 24})
+    )
+
+
+def test_expire_snapshots_planned_when_snapshot_stats_are_missing() -> None:
+    assert OperationType.EXPIRE_SNAPSHOTS in _ops(
+        build_plan(_expire_stats(scanned_snapshot_count=None), [], Mode.LIGHT, {})
+    )
+
+
+def test_explicitly_requested_expire_with_nothing_to_expire_is_reported_skipped() -> None:
+    plan = build_plan(
+        _expire_stats(scanned_snapshot_count=1),
+        [],
+        Mode.LIGHT,
+        {"requested_operations": ["expire_snapshots"]},
+    )
+
+    assert OperationType.EXPIRE_SNAPSHOTS not in _ops(plan)
+    assert any("Skipped expire_snapshots" in note for note in plan.notes)
+
+
+def test_table_data_reports_snapshot_count_and_oldest_snapshot_age(
+    session, session_factory
+) -> None:
+    table = _source_table(session)
+    _stats(session, table, scan_at=datetime.now(UTC))
+    session.flush()
+    stats_row = session.get(TableStats, table.id)
+    stats_row.total_snapshots = 3
+    stats_row.raw = {"first_snapshot_at": (datetime.now(UTC) - timedelta(hours=10)).isoformat()}
+    session.commit()
+
+    stats = SQLJobStore(session_factory).get_table_data(str(table.id)).stats
+
+    assert stats["scanned_snapshot_count"] == 3
+    assert 9.9 < stats["hours_since_first_snapshot"] < 10.1
+    assert "total_snapshots" not in stats
+
+
+def test_worker_audit_records_expire_counts(session, session_factory) -> None:
+    from cryo.worker.worker import AuditRecord
+
+    table = _source_table(session)
+    session.commit()
+    job_id = str(uuid.uuid4())
+    SQLJobStore(session_factory).record_audit(
+        AuditRecord(
+            job_id=job_id,
+            table_id=str(table.id),
+            action=OperationType.EXPIRE_SNAPSHOTS,
+            status="OK",
+            engine="spark_emr",
+            objects_deleted=7,
+            snapshots_expired=2,
+            result_metrics={"deleted_manifest_files_count": 7},
+        )
+    )
+
+    row = session.query(AuditLog).filter(AuditLog.table_id == table.id).one()
+    assert (row.objects_deleted, row.snapshots_expired) == (7, 2)
+    assert row.result_metrics == {"deleted_manifest_files_count": 7}
+    assert row.actual_bytes_freed is None
+
+
 # --- #199 ---------------------------------------------------------------------------------
 
 

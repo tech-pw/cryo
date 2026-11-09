@@ -24,7 +24,7 @@ from cryo.db.repositories.operation_exclusions import excluded_operations_by_tab
 from cryo.domain.enums import EngineType, JobStatus, OperationType
 from cryo.engines.base import is_metastore_unreachable_error
 from cryo.engines.spark.k8s import SparkK8sConfig
-from cryo.engines.spark.procedure_metrics import bytes_freed_from_procedure
+from cryo.engines.spark.procedure_metrics import bytes_freed_from_procedure, expire_effect
 from cryo.maintenance.ernest import Calibration, DurationSample, calibrate
 from cryo.maintenance.k8s_lanes import (
     LaneRunner,
@@ -1126,6 +1126,9 @@ def _audit_row(outcome: TableOutcome, result: StatementResult, engine_ref: str |
     else:
         status = "FAILED"
         detail = result.error or "failed"
+    objects_deleted, snapshots_expired, expire_counts = (
+        expire_effect(result.action, result.metrics) if result.ok else (None, None, None)
+    )
     optimize_like = result.action in {
         OperationType.OPTIMIZE.value,
         OperationType.CONVERT_DELETES.value,
@@ -1147,6 +1150,9 @@ def _audit_row(outcome: TableOutcome, result: StatementResult, engine_ref: str |
         output_files_count=_metric_int(result.metrics, "added_data_files_count")
         if optimize_like and result.ok
         else None,
+        objects_deleted=objects_deleted,
+        snapshots_expired=snapshots_expired,
+        result_metrics=expire_counts,
         actor=ACTOR,
         committed_snapshot_id=_committed_snapshot_id(result.metrics),
         engine_ref=engine_ref,

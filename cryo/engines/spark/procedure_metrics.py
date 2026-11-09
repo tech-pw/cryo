@@ -44,6 +44,34 @@ def bytes_freed_from_procedure(action: str, metrics: dict[str, Any] | None) -> i
     return None
 
 
+def expire_effect(
+    action: str, metrics: dict[str, Any] | None
+) -> tuple[int | None, int | None, dict[str, int] | None]:
+    """(objects deleted, snapshots expired, per-kind counts) for expire_snapshots.
+
+    Iceberg's Spark procedure reports deleted-file counts by kind and no snapshot count, so
+    ``snapshots_expired`` is only set when the result carries one. None means unreported.
+    """
+    if action != "expire_snapshots" or not metrics:
+        return None, None, None
+    counts = {
+        key: value
+        for key in _EXPIRE_COUNT_KEYS
+        if (value := _optional_int(metrics.get(key))) is not None
+    }
+    snapshots = _optional_int(
+        metrics.get("deleted_snapshots_count", metrics.get("snapshots_expired"))
+    )
+    if snapshots is not None:
+        counts["deleted_snapshots_count"] = snapshots
+    objects = (
+        sum(counts[key] for key in _EXPIRE_COUNT_KEYS if key in counts)
+        if any(key in counts for key in _EXPIRE_COUNT_KEYS)
+        else None
+    )
+    return objects, snapshots, counts or None
+
+
 def action_from_sql(sql: str) -> str | None:
     lowered = sql.lower()
     if "remove_orphan_files" in lowered:

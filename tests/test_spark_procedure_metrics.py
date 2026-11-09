@@ -72,3 +72,22 @@ def test_orphan_dry_run_is_appended_once() -> None:
     once = with_orphan_dry_run(sql)
     assert once.endswith(", dry_run => true)")
     assert with_orphan_dry_run(once) == once
+
+
+def test_expire_effect_sums_deleted_files_and_keeps_the_breakdown() -> None:
+    from cryo.engines.spark.procedure_metrics import expire_effect
+
+    metrics = {
+        "deleted_data_files_count": 2,
+        "deleted_position_delete_files_count": 0,
+        "deleted_equality_delete_files_count": 0,
+        "deleted_manifest_files_count": 1,
+        "deleted_manifest_lists_count": 1,
+    }
+    assert expire_effect("expire_snapshots", metrics) == (4, None, metrics)
+    assert expire_effect("expire_snapshots", {}) == (None, None, None)
+    assert expire_effect("optimize", metrics) == (None, None, None)
+    objects, snapshots, _ = expire_effect(
+        "expire_snapshots", {**metrics, "deleted_snapshots_count": 5}
+    )
+    assert (objects, snapshots) == (4, 5)
