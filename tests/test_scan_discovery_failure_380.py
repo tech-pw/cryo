@@ -89,6 +89,30 @@ def _process(session, run: MaintenanceRun, *, chunk_id: int = 0, num_chunks: int
     return result, session.get(MaintenanceRun, run.id)
 
 
+def test_scan_progress_calls_the_heartbeat_per_table_event(session, monkeypatch) -> None:
+    # #432: every per-table event resets the scanner-worker daemon's stall clock.
+    run = _fleet_run(session)
+    beats: list[str] = []
+
+    def scan(session, *, progress_callback, **kwargs):
+        for name in ("a", "b", "c"):
+            ref = f"s.{name}"
+            progress_callback({"event": "start_table", "table_ref": ref})
+            progress_callback({"event": "table_result", "table_ref": ref, "outcome": "scanned"})
+        return ScanSummary(discovered=3, assigned=3, scanned=3)
+
+    monkeypatch.setattr(scanner_worker, "run_scan", scan)
+    worker = ScanWorker(
+        _OneShotQueue({"run_id": str(run.id), "chunk_id": 0, "num_chunks": 1}),
+        session_factory=_factory(session),
+        heartbeat=lambda: beats.append("beat"),
+    )
+    result = worker.process_next()
+
+    assert result is not None
+    assert len(beats) == 6
+
+
 def test_fleet_chunk_that_discovers_nothing_because_listing_failed_is_failed(
     session, monkeypatch
 ) -> None:

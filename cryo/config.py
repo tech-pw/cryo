@@ -713,8 +713,10 @@ class Settings(BaseSettings):
         ge=0,
         description=(
             "Background services report unhealthy on /healthz when a single loop tick has run "
-            "longer than this many seconds (0 disables the check). The Helm chart sets it per "
-            "service so its liveness probe restarts a hung scheduler, worker or scanner."
+            "this many seconds without progress (0 disables the check). The scanner-worker "
+            "records progress per table, so a long scan chunk is not a stall. The Helm chart "
+            "sets it per service so its liveness probe restarts a hung scheduler, worker or "
+            "scanner."
         ),
     )
     telemetry_ingest_on_startup: bool = Field(

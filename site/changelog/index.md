@@ -36,6 +36,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Fixed
 
+- A scanner-worker running a long scan chunk is no longer restarted as hung. The `/healthz` stall check now measures time without progress, and each table the chunk starts or finishes counts as progress, so a healthy chunk that runs past `tickStallSeconds` keeps its pod (#432).
 - A Spark `optimize` failure whose root is `SparkPlan.session()` being null keeps the executor-loss and `Rewrite-Service` lines from the driver log. Those lines were outside the stored tail, so the saved error was only the NullPointerException and an executor OOM above it was not classified (#425).
 - A Spark driver left `Pending` after its credentials Secret is deleted is removed once it is older than the driver TTL, including when its container never started. The Secret is no longer deleted while that driver pod still exists and has not finished (#423).
 - An admitted job whose destination is gone releases its table lock when it fails. Lock reconciliation logs the table, the job, and the status (or that the job is missing) for every lock it releases. Ad-hoc runs get the same deadline as scheduled runs, so a deferred job cannot hold one open with no deadline (#424).

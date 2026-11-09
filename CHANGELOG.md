@@ -52,6 +52,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- A scanner-worker running a long scan chunk is no longer restarted as hung. The
+  `/healthz` stall check now measures time without progress, and each table the
+  chunk starts or finishes counts as progress, so a healthy chunk that runs past
+  `tickStallSeconds` keeps its pod (#432).
 - A Spark `optimize` failure whose root is `SparkPlan.session()` being null keeps
   the executor-loss and `Rewrite-Service` lines from the driver log. Those lines
   were outside the stored tail, so the saved error was only the
