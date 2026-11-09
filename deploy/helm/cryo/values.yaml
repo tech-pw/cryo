@@ -266,7 +266,7 @@ scannerWorker:
     # mostly idle otherwise). `replicas` above still applies as the Deployment's initial
     # replica count only when both HPA and KEDA are disabled.
     enabled: true
-    minReplicas: 3
+    minReplicas: 1
     maxReplicas: 8
     targetCPUUtilizationPercentage: 70
     # Off (null) by default. CPython rarely returns heap to the OS after a scan, so idle
@@ -287,7 +287,9 @@ scannerWorker:
     # the plain HPA is omitted when KEDA is enabled. Either autoscaler prevents Helm
     # from setting a fixed Deployment replica count.
     keda:
-      enabled: false
+      # auto: on when the cluster serves keda.sh/v1alpha1 ScaledObject, otherwise the HPA
+      # above. true/false force it. `helm template` without --api-versions sees no KEDA.
+      enabled: auto
       # 0 = scale to zero when no ad-hoc scan is in flight, which is the overwhelmingly
       # common case: this queue is fed by UI/API "Trigger scan" requests, and in the 30 days
       # to 2026-09-22 prod served exactly zero of them (last one 2026-08-25), while holding a

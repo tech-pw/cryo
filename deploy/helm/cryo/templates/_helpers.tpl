@@ -158,3 +158,14 @@ default install gets a real, annotatable SA; point serviceAccount.name at an exi
 {{- define "cryo.secretStoreName" -}}
 {{- default (printf "%s-secret-store" (include "cryo.fullname" .)) .Values.externalSecret.secretStore.name }}
 {{- end }}
+
+{{/*
+"true" when the scanner-worker ScaledObject should render. `auto` turns it on only when the
+cluster serves KEDA's API, so a chart without KEDA still gets the plain HPA.
+*/}}
+{{- define "cryo.scannerKedaOn" -}}
+{{- $v := .Values.scannerWorker.autoscaling.keda.enabled }}
+{{- if eq (toString $v) "auto" }}
+{{- if .Capabilities.APIVersions.Has "keda.sh/v1alpha1/ScaledObject" }}true{{ end }}
+{{- else if $v }}true{{ end }}
+{{- end }}

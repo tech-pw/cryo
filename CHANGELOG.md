@@ -12,6 +12,11 @@ All notable changes to Cryo will be documented in this file. The format is based
   `spark-submit` wrapper Job requests 50m / 256Mi instead of 250m / 512Mi, with the same
   limits. Set `spark.k8s.driverCpuRequestFraction: 1.0` (or `driver_cpu_request_fraction`
   on the destination) to go back to request == limit (#448).
+- `scannerWorker.autoscaling.keda.enabled` defaults to `auto`: the scale-to-zero
+  ScaledObject renders when the cluster serves KEDA's `ScaledObject` API, otherwise the
+  CPU HPA does. The HPA floor drops from 3 to 1. Scanner workers only serve ad-hoc scans;
+  the scheduled sweep runs in the scanner CronJob's own pods. Set `true`/`false` to force
+  either (#449).
 - The docs homepage opens with the product demo loop (`docs/img/demo-loop.mp4`), the real UI
   on demo data, above the hero. Click to play, pause, seek or mute. The homepage film at the
   bottom is unchanged.

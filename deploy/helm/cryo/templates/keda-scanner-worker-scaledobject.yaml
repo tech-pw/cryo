@@ -26,7 +26,7 @@ Requires the KEDA operator installed in the cluster. Disabled by default. Mutual
 with scanner-worker-hpa.yaml's plain HPA -- that template only renders when this is disabled,
 so exactly one controller ever targets this Deployment's replica count.
 */ -}}
-{{- if .Values.scannerWorker.autoscaling.keda.enabled }}
+{{- if include "cryo.scannerKedaOn" . }}
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
