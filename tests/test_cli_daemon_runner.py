@@ -9,6 +9,8 @@ run() already caught and logged each exception, so the process stayed alive and
 
 from __future__ import annotations
 
+import time
+
 from cryo.cli import DaemonRunner
 
 
@@ -111,3 +113,39 @@ def test_tick_stalled() -> None:
     assert runner.tick_stalled(99, now=1_000.0)
     # 0 disables the check, however long the tick has run.
     assert not runner.tick_stalled(0, now=1_000_000.0)
+
+
+def test_tick_that_heartbeats_past_the_limit_is_not_stalled() -> None:
+    # #432: a scanner-worker chunk runs ~2h in one tick; per-table heartbeats keep it healthy.
+    runner = _FlakyRunner([])
+    runner.tick_started_at = 0.0
+    for beat in range(0, 7200, 300):
+        runner.last_heartbeat_at = float(beat)
+        assert not runner.tick_stalled(3600, now=beat + 299.0)
+
+
+def test_tick_with_no_heartbeat_past_the_limit_is_stalled() -> None:
+    runner = _FlakyRunner([])
+    runner.tick_started_at = 0.0
+    assert runner.tick_stalled(3600, now=3_601.0)
+    # A heartbeat followed by silence past the limit is still a hang.
+    runner.last_heartbeat_at = 1_000.0
+    assert not runner.tick_stalled(3600, now=4_000.0)
+    assert runner.tick_stalled(3600, now=4_601.0)
+
+
+def test_heartbeat_resets_the_stall_clock_and_a_new_tick_clears_it() -> None:
+    runner = _FlakyRunner([False])
+    runner.tick_started_at = time.monotonic() - 10_000
+    assert runner.tick_stalled(3600)
+    runner.heartbeat()
+    assert not runner.tick_stalled(3600)
+
+    def _stop(timeout: float | None = None) -> bool:
+        runner._stop.set()
+        return True
+
+    runner._stop.wait = _stop  # type: ignore[method-assign]
+    runner.run()
+    assert runner.last_heartbeat_at is None
+    assert runner.tick_started_at is None

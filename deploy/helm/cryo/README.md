@@ -102,7 +102,7 @@ These are off by default unless noted. Turn them on in your values file.
 
 | Key | Default | What it does |
 |---|---|---|
-| `scheduler.probe`, `worker.probe`, `scannerWorker.probe` | on | Readiness and liveness on each daemon's `/healthz`. It fails after 5 consecutive failed loop ticks, or when one tick runs longer than `tickStallSeconds` (scheduler and scanner-worker 3600, worker 0 = off because one worker tick can wait on an engine for hours) |
+| `scheduler.probe`, `worker.probe`, `scannerWorker.probe` | on | Readiness and liveness on each daemon's `/healthz`. It fails after 5 consecutive failed loop ticks, or when one tick runs longer than `tickStallSeconds` without progress (the scanner-worker counts each table as progress, so a long scan chunk is not a stall; scheduler and scanner-worker 3600, worker 0 = off because one worker tick can wait on an engine for hours) |
 | `scannerWorker.autoscaling.targetMemoryUtilizationPercentage` | `null` | Memory target for the scanner-worker HPA. Off because idle CPython heaps stay above the request and pin the HPA at `maxReplicas`. CPU, or `keda.enabled`, drives scaling |
 | `podDisruptionBudget.enabled` | `false` | `maxUnavailable: 1` PDBs for api, web, worker, scanner-worker and governor |
 | `networkPolicy.enabled` | `false` | Redis accepts only this release's pods. `networkPolicy.api.from` limits who reaches the API. A non-empty `networkPolicy.egress` limits all Cryo egress to DNS, the release and those rules, so add your database, catalog, object storage and engines |

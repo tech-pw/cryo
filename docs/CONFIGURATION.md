@@ -138,7 +138,7 @@ print.
 | `CRYO_SPARK_ICEBERG_VERSION` | `str \| None` | *(unset)* | Iceberg runtime version on the Spark destination, e.g. '1.12.0'. Used to gate Hilbert clustering; unknown is treated as unsupported, never as new enough. |
 | `CRYO_SPARK_RUNTIME_VERSION` | `str \| None` | *(unset)* | Spark version on the destination, e.g. '4.1.0'. Used to gate Hilbert clustering; unknown is treated as unsupported. |
 | `CRYO_HEALTH_PORT` | `int` | `8081` | HTTP port for /healthz and /metrics on background services. |
-| `CRYO_DAEMON_TICK_STALL_SECONDS` | `int` | `0` | Background services report unhealthy on /healthz when a single loop tick has run longer than this many seconds (0 disables the check). The Helm chart sets it per service so its liveness probe restarts a hung scheduler, worker or scanner. |
+| `CRYO_DAEMON_TICK_STALL_SECONDS` | `int` | `0` | Background services report unhealthy on /healthz when a single loop tick has run this many seconds without progress (0 disables the check). The scanner-worker records progress per table, so a long scan chunk is not a stall. The Helm chart sets it per service so its liveness probe restarts a hung scheduler, worker or scanner. |
 | `CRYO_TELEMETRY_INGEST_ON_STARTUP` | `bool` | `true` | When true, scheduler attempts query-log ingest ticks if configured. |
 | `CRYO_TELEMETRY_TRINO_URL` | `str \| None` | *(unset)* | Trino coordinator URL for scheduled query-log ingestion (CRYO_TELEMETRY_TRINO_URL). |
 | `CRYO_TELEMETRY_TRINO_USER` | `str \| None` | *(unset)* | Username for telemetry_trino_url, if the coordinator requires auth (CRYO_TELEMETRY_TRINO_USER). Defaults to 'cryo' if a password is set but no username is given. |
