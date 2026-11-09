@@ -791,6 +791,28 @@ class SparkK8sClient:
         phase = getattr(getattr(pod, "status", None), "phase", None)
         return phase if isinstance(phase, str) else "Unknown"
 
+    def _has_live_executors(self, job_id: str) -> bool:
+        """True when an executor owned by ``{job_id}-driver`` is not Succeeded/Failed.
+
+        A failed read counts as live: deleting the Secret under a running executor is the
+        failure this guards against.
+        """
+        try:
+            pods = self._core_client().list_namespaced_pod(
+                namespace=self._config.namespace, label_selector=_EXECUTOR_POD_LABEL_SELECTOR
+            )
+        except Exception:  # noqa: BLE001 - best-effort; err towards keeping the Secret
+            logger.warning("Failed to list Spark executor pods for %s", job_id, exc_info=True)
+            return True
+        driver_name = f"{job_id}{_DRIVER_POD_SUFFIX}"
+        for pod in pods.items or []:
+            owners = getattr(pod.metadata, "owner_references", None) or []
+            if not any(getattr(o, "name", None) == driver_name for o in owners):
+                continue
+            if getattr(pod.status, "phase", None) not in _TERMINAL_POD_PHASES:
+                return True
+        return False
+
     def cleanup_credentials_secret(self, job_id: str) -> None:
         """Delete the per-job AWS credentials Secret created by submit_spark_sql, if any.
 
@@ -811,6 +833,11 @@ class SparkK8sClient:
                 job_id,
                 phase,
             )
+            return
+        if self._has_live_executors(job_id):
+            # Executors mount the same Secret and outlive a deleted driver until garbage
+            # collection removes them; the stale-pod sweep deletes the Secret later (#433).
+            logger.info("Keeping credentials Secret for %s; executor pods still live", job_id)
             return
         secret_name: str | None = None
         try:
@@ -942,6 +969,8 @@ def _capped_submit_config(
 
 
 _DRIVER_POD_LABEL_SELECTOR = "spark-role=driver"
+_EXECUTOR_POD_LABEL_SELECTOR = "spark-role=executor"
+_TERMINAL_POD_PHASES = frozenset({"Succeeded", "Failed"})
 _DRIVER_POD_SUFFIX = "-driver"
 _WRAPPER_JOB_LABEL_SELECTOR = "app.kubernetes.io/component=spark-fallback"
 
@@ -1012,6 +1041,13 @@ def cleanup_stale_driver_pods(
     fallback dispatch waits for the scheduler's sweep), and the run was then recorded
     FAILED from the wrapper Job alone (issue #377). When the Job list cannot be read,
     nothing is deleted this pass.
+
+    A Running driver whose wrapper Job is gone is deleted too, once it is older than
+    ``older_than_seconds``. The Job holds the outcome; without it nobody resolves the
+    driver, and one stuck requesting an executor ran for days holding its reservation
+    (#433). Its executors are owned by the driver pod and go with it. Whenever a driver
+    is deleted because its Job is gone, its ``{job}-aws`` credentials Secret is deleted
+    as well, since no one else is left to clean it up.
     """
     api = core_api or _new_k8s_core_client()
     jobs_api = batch_api or _new_k8s_batch_client()
@@ -1024,7 +1060,7 @@ def cleanup_stale_driver_pods(
         return 0
     deleted = 0
     now = time.time()
-    for phase in ("Succeeded", "Failed", "Pending"):
+    for phase in ("Succeeded", "Failed", "Pending", "Running"):
         try:
             pods = api.list_namespaced_pod(
                 namespace=namespace,
@@ -1061,9 +1097,20 @@ def cleanup_stale_driver_pods(
                 api.delete_namespaced_pod(name=pod_name, namespace=namespace)
                 deleted += 1
             except Exception as exc:  # noqa: BLE001 - best-effort cleanup only
-                if "404" not in str(exc):
+                if not _is_not_found(exc):
                     logger.warning("Failed to delete stale Spark driver pod %s: %s", pod_name, exc)
+                    continue
+            if job_name not in live_wrappers:
+                _delete_credentials_secret(api, namespace, f"{job_name}-aws")
     return deleted
+
+
+def _delete_credentials_secret(api: Any, namespace: str, name: str) -> None:
+    try:
+        api.delete_namespaced_secret(name=name, namespace=namespace)
+    except Exception as exc:  # noqa: BLE001 - best-effort cleanup only
+        if not _is_not_found(exc):
+            logger.warning("Failed to delete Spark credentials Secret %s: %s", name, exc)
 
 
 def _credentials_secret_missing(api: Any, namespace: str, name: str) -> bool:
