@@ -10,6 +10,11 @@ All notable changes to Cryo will be documented in this file. The format is based
 - The docs homepage opens with the product demo loop (`docs/img/demo-loop.mp4`), the real UI
   on demo data, above the hero. Click to play, pause, seek or mute. The homepage film at the
   bottom is unchanged.
+- Spark `expire_snapshots`, `remove_orphan_files`, `optimize_manifests` and
+  `compute_statistics` run their tasks inside the driver pod (`local[N,3]`) instead of on a
+  separate executor pod. The driver takes the executor's CPU and heap, so each job is one pod
+  with the same resources. Set `local_mode: false` on the destination's `spark_k8s` config
+  (or `CRYO_SPARK_K8S_LOCAL_MODE=false`) to go back to executor pods (#450).
 - `make demo` takes the local stack from an empty UI to graded tables and one finished
   maintenance run: it seeds the fragmented fixtures, scans `local-rest`, assigns
   `local-standard` and runs `optimize` + `optimize_manifests` through the API

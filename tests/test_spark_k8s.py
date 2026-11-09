@@ -237,10 +237,43 @@ def test_expire_submit_disables_broadcast_and_sizes_the_driver_from_file_count()
     command = batch_api.create_namespaced_job.call_args.kwargs["body"]["spec"]["template"]["spec"][
         "containers"
     ][0]["command"]
-    assert "spark.driver.memory=3072m" in command
-    assert "spark.executor.instances=1" in command
+    # 3072 from the file count plus the 1024 executor heap the driver now runs in-process.
+    assert "spark.driver.memory=4096m" in command
+    assert "spark.kubernetes.driver.request.cores=1.500" in command
+    assert command[command.index("--local-master") + 1] == "local[2,3]"
     assert "spark.sql.autoBroadcastJoinThreshold=-1" in command
     assert "spark.driver.maxResultSize=2816m" in command
+
+
+def _submit_command(cfg: SparkK8sConfig, sql: str, **kwargs: object) -> list[str]:
+    batch_api = MagicMock()
+    with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
+        SparkK8sClient(cfg).submit_spark_sql(sql, catalog="analytics", **kwargs)
+    return batch_api.create_namespaced_job.call_args.kwargs["body"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]["command"]
+
+
+def test_local_mode_can_be_turned_off_per_destination() -> None:
+    cfg = SparkK8sConfig.from_config({"namespace": "cryo", "spark_k8s": {"local_mode": "false"}})
+    command = _submit_command(
+        cfg,
+        "CALL analytics.system.expire_snapshots(table => 'analytics.db.t')",
+        operation="expire_snapshots",
+        total_files=179_020,
+    )
+    assert "--local-master" not in command
+    assert "spark.driver.memory=3072m" in command
+
+
+def test_rewrites_keep_their_executor_pods() -> None:
+    command = _submit_command(
+        SparkK8sConfig(namespace="cryo"),
+        "CALL analytics.system.rewrite_data_files(table => 'analytics.db.t')",
+        operation="rewrite_data_files",
+        total_size_gb=100.0,
+    )
+    assert "--local-master" not in command
 
 
 def test_get_job_run_prefixes_oomkilled_from_container_status() -> None:

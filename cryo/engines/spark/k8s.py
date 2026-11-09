@@ -39,12 +39,15 @@ from cryo.engines.k8s_security import container_security_context, pod_security_c
 from cryo.engines.native.job_state import current_k8s_namespace
 from cryo.engines.spark.sizing import (
     DRIVER_MEMORY_OVERHEAD_MIB,
+    LOCAL_MODE_OPS,
     ExecutorProfile,
     cap_deadline_seconds_for_table,
     cap_dispatch_profile,
     driver_max_result_size_mib,
     executor_memory_overhead_mib,
+    fold_into_local_driver,
     lightweight_driver_heap_mib,
+    local_master,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,6 +103,7 @@ class SparkK8sConfig:
     node_selector: dict[str, str] | None = None
     active_deadline_seconds: int = _DEFAULT_ACTIVE_DEADLINE_SECONDS
     ttl_seconds_after_finished: int = _DEFAULT_TTL_SECONDS
+    local_mode: bool = True
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> SparkK8sConfig:
@@ -180,6 +184,8 @@ class SparkK8sConfig:
             ttl_seconds_after_finished=int(
                 _get("ttl_seconds_after_finished") or _DEFAULT_TTL_SECONDS
             ),
+            local_mode=str(_get("local_mode", "true")).strip().lower()
+            not in ("0", "false", "no", "off"),
         )
 
 
@@ -339,6 +345,9 @@ class SparkK8sClient:
         executor_overhead = executor_memory_overhead_mib(
             cfg.executor_mem_mib, oom_steps=executor_oom_steps
         )
+        if cfg.local_mode and operation in LOCAL_MODE_OPS:
+            cfg = _fold_local_driver(cfg)
+            runner_args = [*runner_args, "--local-master", local_master(cfg.driver_cpu_milli)]
         k8s_job_name = f"cryo-spark-{uuid.uuid4().hex[:10]}"
         driver_pod_name = f"{k8s_job_name}-driver"
 
@@ -970,6 +979,23 @@ def _capped_submit_config(
         active_deadline_seconds=cap_deadline_seconds_for_table(
             cfg.active_deadline_seconds, total_size_gb=total_size_gb
         ),
+    )
+
+
+def _fold_local_driver(cfg: SparkK8sConfig) -> SparkK8sConfig:
+    # executor_instances stays as is: if the runner's local master were ever ignored, the
+    # job still gets its executor instead of hanging with none.
+    folded = fold_into_local_driver(
+        ExecutorProfile(
+            executor_instances=cfg.executor_instances,
+            executor_cpu_milli=cfg.executor_cpu_milli,
+            executor_mem_mib=cfg.executor_mem_mib,
+            driver_cpu_milli=cfg.driver_cpu_milli,
+            driver_mem_mib=cfg.driver_mem_mib,
+        )
+    )
+    return replace(
+        cfg, driver_cpu_milli=folded.driver_cpu_milli, driver_mem_mib=folded.driver_mem_mib
     )
 
 
