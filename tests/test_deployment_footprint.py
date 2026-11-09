@@ -68,7 +68,7 @@ def test_load_component_footprints_against_the_real_chart_matches_committed_defa
 
     # scannerWorker: autoscaling.enabled=true in the committed chart -> minReplicas wins over
     # the fallback `replicas` field, since KEDA/HPA is the steady-state floor in practice.
-    assert by_name["scannerWorker"].replicas == 3
+    assert by_name["scannerWorker"].replicas == 1
 
 
 def test_load_component_footprints_prefers_autoscaling_min_replicas_when_enabled(

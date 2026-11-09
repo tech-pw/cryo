@@ -6,9 +6,8 @@
 # provisioned at a fixed 8 replicas for the fleet's largest-observed scan burst, but idle
 # between bursts.
 #
-# minReplicas matches the base chart's default (values.yaml scannerWorker.replicas: 3),
-# already the trusted floor after the Go scan-stats engine landed (see that value's own
-# comment) -- this does not lower the floor below what's already been verified safe.
+# minReplicas defaults to 1: the scheduled sweep runs in scanner-cronjob.yaml's own pods, so
+# this Deployment only serves ad-hoc scans and CPU scaling adds replicas for a burst.
 # maxReplicas matches values-prod.yaml's current fixed override (8), so this cannot burst
 # past what's already provisioned and proven to handle this fleet's largest scan (12,938
 # tables, one 397k-partition outlier) without a separate capacity review.
@@ -19,7 +18,7 @@
 # faster to a burst of ad-hoc scan requests, but that's a genuine follow-up, not a
 # blocker: gate it behind scannerWorker.autoscaling.keda.enabled once KEDA's presence on
 # this cluster is confirmed, rather than assume it here.
-{{- if and .Values.scannerWorker.autoscaling.enabled (not .Values.scannerWorker.autoscaling.keda.enabled) }}
+{{- if and .Values.scannerWorker.autoscaling.enabled (not (include "cryo.scannerKedaOn" .)) }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
