@@ -43,6 +43,7 @@ from cryo.engines.spark.sizing import (
     cap_deadline_seconds_for_table,
     cap_dispatch_profile,
     driver_max_result_size_mib,
+    executor_memory_overhead_mib,
     lightweight_driver_heap_mib,
 )
 
@@ -334,6 +335,10 @@ class SparkK8sClient:
             oom_steps=oom_steps,
             executor_oom_steps=executor_oom_steps,
         )
+        # A 1 GiB retry still sits under the 25% floor, so the step count doubles it (#431).
+        executor_overhead = executor_memory_overhead_mib(
+            cfg.executor_mem_mib, oom_steps=executor_oom_steps
+        )
         k8s_job_name = f"cryo-spark-{uuid.uuid4().hex[:10]}"
         driver_pod_name = f"{k8s_job_name}-driver"
 
@@ -389,7 +394,7 @@ class SparkK8sClient:
             "--conf",
             f"spark.driver.memoryOverhead={DRIVER_MEMORY_OVERHEAD_MIB}m",
             "--conf",
-            f"spark.executor.memoryOverhead={DRIVER_MEMORY_OVERHEAD_MIB}m",
+            f"spark.executor.memoryOverhead={executor_overhead}m",
             # Wrapper Job already has do-not-disrupt; driver/executor pods are created by
             # spark-submit and need the same annotation or Karpenter consolidation can
             # SIGTERM them mid-rewrite (example-cluster 2026-08-12: run 3af23a9f,

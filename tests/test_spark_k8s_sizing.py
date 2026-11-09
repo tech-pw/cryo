@@ -11,9 +11,12 @@ from __future__ import annotations
 from cryo.engines.spark.sizing import (
     DISPATCH_DEADLINE_SECONDS,
     DISPATCH_EXECUTOR_INSTANCES,
+    DRIVER_MEMORY_OVERHEAD_MIB,
     ExecutorProfile,
     cap_deadline_seconds_for_table,
     cap_dispatch_profile,
+    executor_heap_after_oom,
+    executor_memory_overhead_mib,
     scale_executor_profile,
     spark_slot_ceiling,
 )
@@ -254,3 +257,48 @@ def test_dispatch_ceiling_lightweight_ops_ignore_table_size() -> None:
     )
     assert profile.executor_instances == 1
     assert profile.executor_mem_mib == 1024
+
+
+# --- #431 executor memoryOverhead ---------------------------------------------------------
+
+
+def test_executor_overhead_has_a_compaction_floor() -> None:
+    assert executor_memory_overhead_mib(1024) == 768
+    assert executor_memory_overhead_mib(2048) == 768
+    assert executor_memory_overhead_mib(1024) > DRIVER_MEMORY_OVERHEAD_MIB
+
+
+def test_executor_overhead_scales_with_heap() -> None:
+    assert executor_memory_overhead_mib(4096) == 1024
+    assert executor_memory_overhead_mib(6144) == 1536
+    assert executor_memory_overhead_mib(12_288) == 3072
+
+
+def test_oom_retry_from_a_1gib_executor_grows_overhead() -> None:
+    # The production failures are a 1024 MiB heap. A quarter of the doubled heap is
+    # still under the 768 MiB floor, so the step count has to raise the overhead.
+    assert executor_memory_overhead_mib(1024) == 768
+    assert executor_memory_overhead_mib(2048) == 768
+    assert executor_memory_overhead_mib(2048, oom_steps=1) == 1536
+    assert executor_memory_overhead_mib(4096, oom_steps=2) == 3072
+
+
+def test_oom_retry_grows_heap_and_overhead_together() -> None:
+    profile = cap_dispatch_profile(
+        ExecutorProfile(2, 1000, 4096, 1000, 2048),
+        operation="optimize",
+        total_size_gb=120.0,
+    )
+    retried = cap_dispatch_profile(
+        ExecutorProfile(2, 1000, 4096, 1000, 2048),
+        operation="optimize",
+        total_size_gb=120.0,
+        executor_oom_steps=1,
+    )
+    assert retried.executor_mem_mib == executor_heap_after_oom(profile.executor_mem_mib, 1)
+    assert retried.executor_mem_mib > profile.executor_mem_mib
+    assert executor_memory_overhead_mib(retried.executor_mem_mib) > executor_memory_overhead_mib(
+        profile.executor_mem_mib
+    )
+    assert retried.driver_mem_mib == profile.driver_mem_mib
+    assert DRIVER_MEMORY_OVERHEAD_MIB == 384

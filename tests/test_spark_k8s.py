@@ -207,7 +207,9 @@ def test_submit_spark_sql_creates_job_with_expected_shape() -> None:
     assert command.index("spark.kubernetes.driver.label.eks-workload-name=cryo-spark") < script_idx
     # Spark 4.1.2 does not read spark.kubernetes.*.limit.memory. Pin the overhead it adds.
     assert "spark.driver.memoryOverhead=384m" in command
-    assert "spark.executor.memoryOverhead=384m" in command
+    # Executors size their own overhead from the heap (#431); a 1024MiB heap gets the floor.
+    assert "spark.executor.memory=1024m" in command
+    assert "spark.executor.memoryOverhead=768m" in command
     assert "spark.kubernetes.driver.limit.memory" not in " ".join(command)
     assert "spark.kubernetes.executor.limit.memory" not in " ".join(command)
     # S3FileIO tuning for the catalog the SQL runs against, as spark-submit confs that must
