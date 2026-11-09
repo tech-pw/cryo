@@ -107,6 +107,12 @@ All notable changes to Cryo will be documented in this file. The format is based
 - Spark `expire_snapshots` and `remove_orphan_files` delete files four at a time
   (`max_concurrent_deletes`) instead of one at a time on the driver. Set the
   operation param to another count, or to 0 to leave the deletes serial (#444).
+- The overview "Last nightly run" funnel covers the preset's cron and backlog runs from the
+  last 24 hours, not just the cycle since the latest cron fire. Right after a capped cron
+  run, it showed a few hundred tables and the rest of the fleet as not in the run. A table
+  evaluated in more than one of those runs was also counted once per run; each table now
+  counts once, by its latest run. The caption names how many runs are included, and the
+  "Not in this run" node is now "Not reached" (#445).
 - A Spark `optimize` failure whose root is `SparkPlan.session()` being null keeps
   the executor-loss and `Rewrite-Service` lines from the driver log. Those lines
   were outside the stored tail, so the saved error was only the

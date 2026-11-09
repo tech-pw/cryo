@@ -2,17 +2,18 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, func, select
 from sqlalchemy.orm import sessionmaker
 
-from cryo.api.table_maintenance import nightly_run_ids
+from cryo.api.table_maintenance import nightly_run_ids, tables_funnel
 from cryo.config import get_settings
 from cryo.db.models import Destination, MaintenanceJob, MaintenanceRun, Preset, Source, Table
 from cryo.db.repositories.scheduler_store import SQLSchedulerStore
 from cryo.domain.enums import JobStatus
+from cryo.maintenance.skip_history import SkipEvaluation
 from cryo.queue.redis_queue import InMemoryMaintenanceQueue
 from cryo.scheduler.rules import PresetConfig, PresetRule, TableCandidate
 from cryo.scheduler.scheduler import BACKLOG_TRIGGER
@@ -247,7 +248,7 @@ def test_nightly_funnel_includes_the_backlog_batches(session) -> None:
         created_at=NOW + timedelta(hours=3),
         trigger=BACKLOG_TRIGGER,
     )
-    _run(
+    previous_cycle = _run(
         session,
         preset,
         destination,
@@ -255,6 +256,50 @@ def test_nightly_funnel_includes_the_backlog_batches(session) -> None:
         created_at=NOW - timedelta(hours=20),
         trigger=BACKLOG_TRIGGER,
     )
+    _run(
+        session,
+        preset,
+        destination,
+        [(t2, "failed")],
+        created_at=NOW - timedelta(hours=30),
+        trigger=BACKLOG_TRIGGER,
+    )
     session.commit()
 
-    assert nightly_run_ids(session, cron) == [cron.id, backlog.id]
+    # Four hours into the cycle, the last 24 hours still include the previous cycle's tail.
+    assert nightly_run_ids(session, cron, now=NOW + timedelta(hours=4)) == [
+        cron.id,
+        previous_cycle.id,
+        backlog.id,
+    ]
+    # A cron run older than a day keeps everything its cycle scheduled after it.
+    assert nightly_run_ids(session, cron, now=NOW + timedelta(days=3)) == [cron.id, backlog.id]
+
+
+def test_nightly_funnel_counts_each_table_once_across_runs(session) -> None:
+    preset, destination, (t0, t1, _t2) = _seed(session)
+    now = datetime.now(UTC)
+    hours = timedelta(hours=1)
+    earlier = _run(session, preset, destination, [(t0, "failed")], created_at=now - 6 * hours)
+    cron = _run(session, preset, destination, [(t0, "succeeded")], created_at=now - hours)
+    for run in (earlier, cron):
+        session.add(
+            SkipEvaluation(
+                id=uuid4(),
+                run_id=run.id,
+                table_id=t1.id,
+                stage="planner",
+                reason="cooldown",
+                evaluated_at=run.created_at,
+            )
+        )
+    session.commit()
+
+    funnel = tables_funnel(session, tenant_id=UUID(int=0))
+    active = session.scalar(
+        select(func.count()).select_from(Table).where(Table.is_active.is_(True))
+    )
+
+    assert funnel.run_id == cron.id
+    assert funnel.run_count == 2
+    assert funnel.total_active == active

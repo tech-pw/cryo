@@ -14250,6 +14250,13 @@ export interface components {
             run_started_at?: string | null;
             /** Run Finished At */
             run_finished_at?: string | null;
+            /**
+             * Run Count
+             * @default 0
+             */
+            run_count: number;
+            /** Window Started At */
+            window_started_at?: string | null;
             /** Total Active */
             total_active: number;
             /** Nodes */
