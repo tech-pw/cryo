@@ -43,6 +43,24 @@ nodeSelector:
   kubernetes.io/arch: amd64
 {{- end }}
 
+{{/* Spark pod placement env, shared by every pod that submits Spark jobs. */}}
+{{- define "cryo.sparkPlacementEnv" -}}
+{{- $k8s := .Values.spark.k8s }}
+{{- $pool := $k8s.karpenter.installNodePool }}
+{{- $selector := $k8s.nodeSelector }}
+{{- $tolerations := $k8s.tolerations }}
+{{- if $pool }}
+{{- $selector = trimPrefix "," (printf "%s,cryo.io/workload=spark" $selector) }}
+{{- $tolerations = trimPrefix "," (printf "%s,cryo.io/workload=spark:NoSchedule" $tolerations) }}
+{{- end }}
+- name: CRYO_SPARK_K8S_NODE_SELECTOR
+  value: {{ $selector | quote }}
+- name: CRYO_SPARK_K8S_TOLERATIONS
+  value: {{ $tolerations | quote }}
+- name: CRYO_SPARK_K8S_PACK_PODS
+  value: {{ or $k8s.packPods $pool | quote }}
+{{- end }}
+
 {{/*
 Pod-level securityContext. Pass (list $ <override dict>) — the override wins key-by-key,
 so redis/web can swap in their images' own non-root UIDs.

@@ -1,0 +1,47 @@
+{{- $k := .Values.spark.k8s.karpenter }}
+{{- if and .Values.spark.k8s.enabled $k.installNodePool }}
+{{- if not $k.nodeClassName }}
+{{- fail "spark.k8s.karpenter.nodeClassName is required when installNodePool is true" }}
+{{- end }}
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: {{ include "cryo.fullname" . }}-spark
+  labels:
+    {{- include "cryo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: spark
+spec:
+  disruption:
+    # Spark pods are do-not-disrupt; only empty nodes are ever reclaimed.
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: {{ $k.consolidateAfter | quote }}
+    budgets:
+      - nodes: {{ $k.disruptionBudget | quote }}
+  limits:
+    cpu: {{ $k.limitCpu | quote }}
+    memory: {{ $k.limitMemory | quote }}
+  template:
+    metadata:
+      labels:
+        cryo.io/workload: spark
+    spec:
+      expireAfter: {{ $k.expireAfter | quote }}
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: {{ $k.nodeClassName | quote }}
+      taints:
+        - key: cryo.io/workload
+          value: spark
+          effect: NoSchedule
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: {{ toJson $k.capacityTypes }}
+        - key: kubernetes.io/arch
+          operator: In
+          values: {{ toJson $k.arch }}
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: {{ toJson $k.instanceCategories }}
+{{- end }}
