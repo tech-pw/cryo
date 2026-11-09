@@ -239,7 +239,8 @@ def test_expire_submit_disables_broadcast_and_sizes_the_driver_from_file_count()
     ][0]["command"]
     # 3072 from the file count plus the 1024 executor heap the driver now runs in-process.
     assert "spark.driver.memory=4096m" in command
-    assert "spark.kubernetes.driver.request.cores=1.500" in command
+    assert "spark.kubernetes.driver.limit.cores=1.500" in command
+    assert "spark.kubernetes.driver.request.cores=0.375" in command
     assert command[command.index("--local-master") + 1] == "local[2,3]"
     assert "spark.sql.autoBroadcastJoinThreshold=-1" in command
     assert "spark.driver.maxResultSize=2816m" in command
@@ -1372,3 +1373,37 @@ def test_new_k8s_batch_client_is_thread_safe_under_concurrent_first_access() -> 
         assert mock_batch_v1_api.call_count == 1
         assert len(results) == 8
         assert all(r is results[0] for r in results)
+
+
+def _submitted_container(cfg: SparkK8sConfig) -> dict:
+    batch_api = MagicMock()
+    with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
+        SparkK8sClient(cfg).submit_spark_sql("SELECT 1", catalog="sample")
+    return batch_api.create_namespaced_job.call_args.kwargs["body"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+
+
+def test_driver_reserves_a_quarter_of_its_cpu_limit() -> None:
+    container = _submitted_container(SparkK8sConfig(namespace="cryo", driver_cpu_milli=1000))
+    command = container["command"]
+    assert "spark.kubernetes.driver.request.cores=0.250" in command
+    assert "spark.kubernetes.driver.limit.cores=1.000" in command
+    executor = {
+        c.split("=")[0]: c.split("=")[1] for c in command if "executor." in c and "cores=" in c
+    }
+    assert (
+        executor["spark.kubernetes.executor.request.cores"]
+        == executor["spark.kubernetes.executor.limit.cores"]
+    )
+    assert container["resources"] == {
+        "requests": {"cpu": "50m", "memory": "256Mi"},
+        "limits": {"cpu": "500m", "memory": "1Gi"},
+    }
+
+
+def test_driver_cpu_request_fraction_one_restores_request_equal_to_limit() -> None:
+    cfg = SparkK8sConfig.from_config(
+        {"namespace": "cryo", "spark_k8s": {"driver_cpu_request_fraction": "1"}}
+    )
+    assert "spark.kubernetes.driver.request.cores=1.000" in _submitted_container(cfg)["command"]

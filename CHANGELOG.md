@@ -7,6 +7,11 @@ All notable changes to Cryo will be documented in this file. The format is based
 ## [Unreleased]
 
 ### Added
+- Spark drivers reserve a quarter of their CPU limit (at least 250m) instead of all of it;
+  the limit is unchanged, so planning and commit bursts still get the full core. The
+  `spark-submit` wrapper Job requests 50m / 256Mi instead of 250m / 512Mi, with the same
+  limits. Set `spark.k8s.driverCpuRequestFraction: 1.0` (or `driver_cpu_request_fraction`
+  on the destination) to go back to request == limit (#448).
 - The docs homepage opens with the product demo loop (`docs/img/demo-loop.mp4`), the real UI
   on demo data, above the hero. Click to play, pause, seek or mute. The homepage film at the
   bottom is unchanged.
