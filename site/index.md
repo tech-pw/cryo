@@ -9,6 +9,12 @@ updated: 2026-10-06
 
 Cryo reads your Apache Iceberg catalogs, grades every table from its metadata, and runs the maintenance it needs on the Trino or Spark you already have, when they have headroom. Ranking by real query workload turns on once query-log ingestion is enabled. Reading and writing never share a code path, and every run leaves a receipt.
 
+0:00
+
+0:29
+
+*The real UI on demo data: tables, a health grade, a run, and its receipt.*
+
 v0.2.0 · Pre-1.0 · Apache-2.0→
 
 # Keep every table healthy without deciding when or how.
