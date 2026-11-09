@@ -239,7 +239,8 @@ def test_expire_submit_disables_broadcast_and_sizes_the_driver_from_file_count()
     ][0]["command"]
     # 3072 from the file count plus the 1024 executor heap the driver now runs in-process.
     assert "spark.driver.memory=4096m" in command
-    assert "spark.kubernetes.driver.request.cores=1.500" in command
+    assert "spark.kubernetes.driver.limit.cores=1.500" in command
+    assert "spark.kubernetes.driver.request.cores=0.375" in command
     assert command[command.index("--local-master") + 1] == "local[2,3]"
     assert "spark.sql.autoBroadcastJoinThreshold=-1" in command
     assert "spark.driver.maxResultSize=2816m" in command
