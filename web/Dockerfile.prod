@@ -1,4 +1,5 @@
-FROM node:22-alpine AS build
+# Static assets only, so build on the host platform for every target.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 
 WORKDIR /app
 
