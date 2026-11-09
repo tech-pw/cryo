@@ -7,6 +7,9 @@ All notable changes to Cryo will be documented in this file. The format is based
 ## [Unreleased]
 
 ### Added
+- The docs homepage opens with the product demo loop (`docs/img/demo-loop.mp4`), the real UI
+  on demo data, above the hero. Click to play, pause, seek or mute. The homepage film at the
+  bottom is unchanged.
 - `make demo` takes the local stack from an empty UI to graded tables and one finished
   maintenance run: it seeds the fragmented fixtures, scans `local-rest`, assigns
   `local-standard` and runs `optimize` + `optimize_manifests` through the API
