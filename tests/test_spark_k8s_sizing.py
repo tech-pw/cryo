@@ -274,6 +274,15 @@ def test_executor_overhead_scales_with_heap() -> None:
     assert executor_memory_overhead_mib(12_288) == 3072
 
 
+def test_oom_retry_from_a_1gib_executor_grows_overhead() -> None:
+    # The production failures are a 1024 MiB heap. A quarter of the doubled heap is
+    # still under the 768 MiB floor, so the step count has to raise the overhead.
+    assert executor_memory_overhead_mib(1024) == 768
+    assert executor_memory_overhead_mib(2048) == 768
+    assert executor_memory_overhead_mib(2048, oom_steps=1) == 1536
+    assert executor_memory_overhead_mib(4096, oom_steps=2) == 3072
+
+
 def test_oom_retry_grows_heap_and_overhead_together() -> None:
     profile = cap_dispatch_profile(
         ExecutorProfile(2, 1000, 4096, 1000, 2048),
