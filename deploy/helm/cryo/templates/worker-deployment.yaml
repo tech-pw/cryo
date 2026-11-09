@@ -53,6 +53,8 @@ env:
     value: {{ include "cryo.fullname" .root }}-spark
   - name: CRYO_SPARK_K8S_DRIVER_CPU_MILLI
     value: {{ .root.Values.spark.k8s.driverCpuMilli | quote }}
+  - name: CRYO_SPARK_K8S_DRIVER_CPU_REQUEST_FRACTION
+    value: {{ .root.Values.spark.k8s.driverCpuRequestFraction | quote }}
   - name: CRYO_SPARK_K8S_DRIVER_MEM_MIB
     value: {{ .root.Values.spark.k8s.driverMemMib | quote }}
   - name: CRYO_SPARK_K8S_EXECUTOR_CPU_MILLI
