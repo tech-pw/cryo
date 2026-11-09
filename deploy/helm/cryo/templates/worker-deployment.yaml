@@ -63,6 +63,8 @@ env:
     value: {{ .root.Values.spark.k8s.executorMemMib | quote }}
   - name: CRYO_SPARK_K8S_EXECUTOR_INSTANCES
     value: {{ .root.Values.spark.k8s.executorInstances | quote }}
+  - name: CRYO_SPARK_K8S_DYNAMIC_ALLOCATION
+    value: {{ .root.Values.spark.k8s.dynamicAllocation | quote }}
   - name: CRYO_SPARK_K8S_ACTIVE_DEADLINE_SECONDS
     value: {{ .root.Values.spark.k8s.activeDeadlineSeconds | quote }}
   - name: CRYO_SPARK_K8S_TTL_SECONDS_AFTER_FINISHED

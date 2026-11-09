@@ -1407,3 +1407,37 @@ def test_driver_cpu_request_fraction_one_restores_request_equal_to_limit() -> No
         {"namespace": "cryo", "spark_k8s": {"driver_cpu_request_fraction": "1"}}
     )
     assert "spark.kubernetes.driver.request.cores=1.000" in _submitted_container(cfg)["command"]
+
+
+def _submit_cmd(cfg: SparkK8sConfig, **kwargs: object) -> list[str]:
+    batch_api = MagicMock()
+    with patch("cryo.engines.spark.k8s._new_k8s_batch_client", return_value=batch_api):
+        SparkK8sClient(cfg).submit_spark_sql("SELECT 1", catalog="sample", **kwargs)
+    return batch_api.create_namespaced_job.call_args.kwargs["body"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]["command"]
+
+
+def test_dynamic_allocation_is_off_by_default() -> None:
+    assert not any("dynamicAllocation" in c for c in _submit_cmd(SparkK8sConfig(namespace="cryo")))
+
+
+def test_dynamic_allocation_starts_and_peaks_at_the_sized_executor_count() -> None:
+    cfg = SparkK8sConfig.from_config(
+        {"namespace": "cryo", "spark_k8s": {"dynamic_allocation": "true", "executor_instances": 2}}
+    )
+    command = _submit_cmd(cfg)
+    instances = next(c for c in command if c.startswith("spark.executor.instances="))
+    n = instances.split("=")[1]
+    assert "spark.dynamicAllocation.enabled=true" in command
+    assert "spark.dynamicAllocation.shuffleTracking.enabled=true" in command
+    assert f"spark.dynamicAllocation.initialExecutors={n}" in command
+    assert f"spark.dynamicAllocation.maxExecutors={n}" in command
+
+
+def test_dynamic_allocation_skips_single_executor_jobs() -> None:
+    cfg = SparkK8sConfig.from_config(
+        {"namespace": "cryo", "spark_k8s": {"dynamic_allocation": "true"}}
+    )
+    command = _submit_cmd(cfg, operation="expire_snapshots")
+    assert not any("dynamicAllocation" in c for c in command)
