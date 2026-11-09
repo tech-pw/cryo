@@ -19,7 +19,7 @@ no separate destination or config duplication needed.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 # (size_gb_upper_bound, fraction_of_configured_max) -- table size is compared against each
 # upper_bound in order; the first tier it's strictly under wins. A table at or above the
@@ -337,6 +337,30 @@ def cap_dispatch_profile(
         driver_cpu_milli=min(profile.driver_cpu_milli, DISPATCH_DRIVER_CPU_MILLI),
         driver_mem_mib=min(profile.driver_mem_mib, DISPATCH_DRIVER_MEM_MIB),
     )
+
+
+# These ops run one 500m executor next to a driver that does the real work. In local mode
+# the driver runs the tasks itself: one pod instead of two, same CPU and heap in total.
+LOCAL_MODE_OPS = _LIGHTWEIGHT_OPS
+# local[N] runs each task once; F gives it the retries cluster mode had (spark.task.maxFailures).
+_LOCAL_TASK_MAX_FAILURES = 3
+# Deletes and manifest reads wait on S3, so two task threads per pod help even on one core.
+_LOCAL_MIN_THREADS = 2
+
+
+def fold_into_local_driver(profile: ExecutorProfile) -> ExecutorProfile:
+    """Give the driver the executors' CPU and heap so it can run their tasks in-process."""
+    instances = max(1, profile.executor_instances)
+    return replace(
+        profile,
+        driver_cpu_milli=profile.driver_cpu_milli + instances * profile.executor_cpu_milli,
+        driver_mem_mib=profile.driver_mem_mib + instances * profile.executor_mem_mib,
+    )
+
+
+def local_master(driver_cpu_milli: int) -> str:
+    threads = max(_LOCAL_MIN_THREADS, driver_cpu_milli // 1000)
+    return f"local[{threads},{_LOCAL_TASK_MAX_FAILURES}]"
 
 
 def cap_deadline_seconds(seconds: int) -> int:

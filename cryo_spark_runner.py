@@ -508,6 +508,11 @@ def main() -> int | NoReturn:
         action="store_true",
         help="Use path-style S3 addressing (required by MinIO and some Ceph gateways)",
     )
+    parser.add_argument(
+        "--local-master",
+        default=None,
+        help="Run tasks inside the driver (e.g. local[2,3]) instead of on executor pods",
+    )
     args = parser.parse_args()
 
     if args.repair_missing_files:
@@ -528,6 +533,10 @@ def main() -> int | NoReturn:
             "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
         )
     )
+    if args.local_master:
+        # Builder options override spark-submit's k8s:// master, so the driver never
+        # starts an executor allocator.
+        builder = builder.master(args.local_master)
     if args.catalog_uri:
         builder = builder.config(f"spark.sql.catalog.{args.catalog}.uri", args.catalog_uri)
     if args.catalog_warehouse:
