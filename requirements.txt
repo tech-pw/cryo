@@ -1,6 +1,6 @@
 pyspark>=3.5.8,<4.0.0
 pyiceberg[s3fs,pyarrow]>=0.7.0
-jupyterlab>=4.6.4
+jupyterlab>=4.6.5
 ipykernel>=7.4.0
 pandas>=2.0.0
 pyarrow>=23.0.1
