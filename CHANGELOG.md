@@ -26,6 +26,8 @@ All notable changes to Cryo will be documented in this file. The format is based
   on the runner's own platform; the Python base is pinned to its multi-arch index digest.
   The chart still pins `kubernetes.io/arch=amd64` until arm64 is validated on your cluster;
   set `kubernetes.io/arch=arm64` in `spark.k8s.nodeSelector` to try it (#451).
+- CI runs the Python tests in 4 parallel shards behind one aggregate `Test` check, and the
+  e2e, image-scan and browser jobs no longer wait for the unit tests.
 - The docs homepage opens with the product demo loop (`docs/img/demo-loop.mp4`), the real UI
   on demo data, above the hero. Click to play, pause, seek or mute. The homepage film at the
   bottom is unchanged.
