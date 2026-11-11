@@ -78,7 +78,7 @@ jobs:
     name: Image vulnerability scan & SBOM
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [lint, test]
+    needs: [lint]
     permissions:
       contents: read
     steps:
@@ -163,9 +163,13 @@ jobs:
       - name: Run mypy
         run: mypy cryo
 
-  test:
-    name: Test
+  test-shard:
+    name: Test shard ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -220,7 +224,22 @@ jobs:
         env:
           CRYO_DATABASE_URL: postgresql+psycopg://cryo:cryo@localhost:5432/cryo_test
           CRYO_REDIS_URL: redis://localhost:6379/0
-        run: pytest tests/ -v --tb=short
+          SHARD: ${{ matrix.shard }}
+        # Each shard gets its own Postgres/Redis, so test files never share state across shards.
+        run: |
+          find tests -name 'test_*.py' | sort | awk -v n=4 -v k="$SHARD" 'NR % n == k % n' > /tmp/shard-files
+          echo "shard $SHARD: $(wc -l < /tmp/shard-files) files"
+          pytest $(cat /tmp/shard-files) -v --tb=short
+
+  # Branch protection requires a check named "Test"; it passes only when every shard passed.
+  test:
+    name: Test
+    if: always()
+    needs: [test-shard]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All test shards passed
+        run: test "${{ needs.test-shard.result }}" = "success"
 
   cryo-engine-go:
     name: cryo-engine-go (Go)
@@ -273,7 +292,7 @@ jobs:
     name: native-e2e-go (REST + MinIO)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [lint, test]
+    needs: [lint]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Python
@@ -318,7 +337,7 @@ jobs:
     name: native-compaction-e2e-go (REST + MinIO)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [lint, test]
+    needs: [lint]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Python
@@ -447,7 +466,7 @@ jobs:
     name: Web E2E (critical path + axe-core WCAG gate)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [lint, test, web]
+    needs: [lint, web]
     defaults:
       run:
         working-directory: web
@@ -551,7 +570,7 @@ jobs:
     name: Web visual regression (Playwright snapshots)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [lint, test, web]
+    needs: [lint, web]
     defaults:
       run:
         working-directory: web
