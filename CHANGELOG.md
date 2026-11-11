@@ -28,6 +28,10 @@ All notable changes to Cryo will be documented in this file. The format is based
   set `kubernetes.io/arch=arm64` in `spark.k8s.nodeSelector` to try it (#451).
 - CI runs the Python tests in 4 parallel shards behind one aggregate `Test` check, and the
   e2e, image-scan and browser jobs no longer wait for the unit tests.
+- Opt-in async Spark dispatch (`CRYO_WORKER_ASYNC_SPARK_DISPATCH`, default off). Workers
+  submit a Spark-on-Kubernetes statement and move on; the governor hands the job back when
+  the Spark Job ends, so the worker fleet no longer caps Spark throughput (#435). See
+  `docs/ASYNC_SPARK_DISPATCH.md`.
 - The docs homepage opens with the product demo loop (`docs/img/demo-loop.mp4`), the real UI
   on demo data, above the hero. Click to play, pause, seek or mute. The homepage film at the
   bottom is unchanged.
