@@ -75,6 +75,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Security
 
+- CodeQL `init` and `analyze` move to v4.39.2 together; the two must share a version.
 - CI runs trufflehog alongside gitleaks: on every PR and push to `main` over the new commits, and weekly over the full history. It fails on verified credentials, and on credentials whose verification errored outside the connection-string detectors (#203).
 
 ## [0.2.0](https://github.com/tech-pw/cryo/compare/v0.1.5...v0.2.0) — 2026-11-03
