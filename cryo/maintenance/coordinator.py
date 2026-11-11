@@ -25,16 +25,25 @@ from cryo.domain.enums import EngineType, JobStatus, OperationType
 from cryo.engines.base import is_metastore_unreachable_error
 from cryo.engines.spark.k8s import SparkK8sConfig
 from cryo.engines.spark.procedure_metrics import bytes_freed_from_procedure, expire_effect
+from cryo.engines.spark.sizing import lightweight_driver_heap_mib
 from cryo.maintenance.ernest import Calibration, DurationSample, calibrate
 from cryo.maintenance.k8s_lanes import (
     LaneRunner,
     LaneSpec,
     LaneState,
     PollUpdate,
+    lane_mem_for_heap,
     lane_names,
     parse_capacity_types,
 )
-from cryo.maintenance.lanes import LaneLimits, LaneTable, lane_size, plan_lanes
+from cryo.maintenance.lanes import (
+    Lane,
+    LaneLimits,
+    LaneTable,
+    lane_size,
+    plan_batched_lanes,
+    plan_lanes,
+)
 from cryo.maintenance.manifest import (
     DEFAULT_PARAMS,
     TableData,
@@ -44,12 +53,14 @@ from cryo.maintenance.manifest import (
 )
 from cryo.maintenance.results import StatementResult
 from cryo.maintenance.selection import (
+    BATCH_OPERATIONS_KEY,
     AutoCompParams,
     Candidate,
     RankedCandidate,
     autocomp_trace,
     fit_budget,
     load_candidates,
+    rank_by_snapshots,
     rank_candidates,
 )
 from cryo.queue.locks import LockStore
@@ -64,6 +75,28 @@ _ENGINE = EngineType.SPARK_EMR.value
 _START_CUTOFF = timedelta(minutes=20)
 _OWNER_TTL_SECONDS = 300
 _MAX_DURATION_SAMPLES = 2000
+# What an operation-scoped pass (#443) may run: metadata work only. A rewrite needs AutoComp
+# selection and GB-based lane sizing, which this pass replaces.
+METADATA_OPERATIONS: tuple[str, ...] = (
+    OperationType.OPTIMIZE_MANIFESTS.value,
+    OperationType.EXPIRE_SNAPSHOTS.value,
+    OperationType.REMOVE_ORPHAN_FILES.value,
+)
+# The planner's default minimum expiry interval for 7-day retention (#179): selection skips
+# tables expired this recently instead of planning them into a no-op.
+_EXPIRY_INTERVAL_HOURS = 24.0
+
+
+def parse_operations(raw: str | Sequence[str] | None) -> tuple[str, ...]:
+    """Validated operation scope, in canonical order; empty means every operation."""
+    parts = raw.split(",") if isinstance(raw, str) else list(raw or ())
+    wanted = {p.strip() for p in parts if p and p.strip()}
+    unknown = wanted - set(METADATA_OPERATIONS)
+    if unknown:
+        raise ValueError(
+            f"unsupported --operations {sorted(unknown)}; allowed: {list(METADATA_OPERATIONS)}"
+        )
+    return tuple(op for op in METADATA_OPERATIONS if op in wanted)
 
 
 class LaneRunnerLike(Protocol):
@@ -142,6 +175,8 @@ class RunReport:
     paused: bool = False
     # Per rewrite statement (gib, cores, seconds): the duration model's training data.
     duration_samples: list[dict[str, float]] = field(default_factory=list)
+    # Operation scope of this pass (#443); empty for a full maintenance pass.
+    operations: list[str] = field(default_factory=list)
 
     @property
     def observed_rewrite_gb_per_hour(self) -> float | None:
@@ -157,6 +192,7 @@ class RunReport:
         return {
             "pipeline": "batch",
             "trigger": self.trigger,
+            "operations": self.operations,
             "paused": self.paused,
             "selected": self.selected,
             "nothing_to_do": self.nothing_to_do,
@@ -348,6 +384,7 @@ class BatchMaintenance:
         self._sleep = sleep
         self._holder = f"{ACTOR}-{uuid.uuid4().hex[:8]}"
         self._autocomp_params: AutoCompParams | None = None
+        self._operations: tuple[str, ...] = ()
 
     # -- defaults wired to the real stores -------------------------------------------------
 
@@ -372,10 +409,22 @@ class BatchMaintenance:
         table_ids: Sequence[uuid.UUID] | None = None,
         limit: int | None = None,
         dry_run: bool = False,
+        operations: str | Sequence[str] | None = None,
     ) -> RunReport:
+        """``operations`` scopes the pass to metadata operations (#443); None reads
+        CRYO_MAINTENANCE_OPERATIONS, and empty runs everything a table needs."""
         settings = self._settings
         started = self._clock()
-        report = RunReport(run_id=None, trigger=trigger, dry_run=dry_run, started_at=started)
+        self._operations = parse_operations(
+            settings.maintenance_operations if operations is None else operations
+        )
+        report = RunReport(
+            run_id=None,
+            trigger=trigger,
+            dry_run=dry_run,
+            started_at=started,
+            operations=list(self._operations),
+        )
         if not dry_run and not settings.maintenance_writes_enabled:
             from cryo.maintenance.writes import MaintenanceWritesDisabled
 
@@ -407,6 +456,20 @@ class BatchMaintenance:
         shared_ids = self._shared_location_ids(dry_run=dry_run, now=started, report=report)
         if report.orphan_gate_closed:
             params["skip_operations"] = [OperationType.REMOVE_ORPHAN_FILES.value]
+        if self._operations:
+            # requested_operations replaces skip_operations in the planner, so the closed
+            # orphan gate is applied to the request itself.
+            requested = [
+                op
+                for op in self._operations
+                if not (report.orphan_gate_closed and op == OperationType.REMOVE_ORPHAN_FILES.value)
+            ]
+            if not requested:
+                report.finished_at = self._clock()
+                if not dry_run:
+                    self._record_empty_run(report, trigger)
+                return report
+            params["requested_operations"] = requested
 
         ranked = self._select(table_ids=table_ids, limit=limit, now=started, report=report)
         report.selected = len(ranked)
@@ -451,10 +514,7 @@ class BatchMaintenance:
         report.planned_statements = sum(len(w.statements) for _, w in work)
 
         if dry_run:
-            lanes = plan_lanes(
-                [LaneTable(i.candidate.table_id, i.candidate.rewrite_gb) for i, _ in work],
-                self._lane_limits(),
-            )
+            lanes = self._plan_lanes([item for item, _ in work])
             report.lanes = [
                 _lane_summary(lane.index, lane.cpu_milli, lane.mem_mib, len(lane.tables))
                 for lane in lanes
@@ -509,7 +569,11 @@ class BatchMaintenance:
                     table_id=planned.table_id,
                     destination_id=destination.id,
                     mode="deep",
-                    plan=planned.plan,
+                    plan=(
+                        {**planned.plan, BATCH_OPERATIONS_KEY: list(self._operations)}
+                        if self._operations
+                        else planned.plan
+                    ),
                     status=JobStatus.RUNNING.value,
                     started_at=now,
                 )
@@ -621,6 +685,23 @@ class BatchMaintenance:
             row = rows[0]
             return _Destination(id=row.id, engine=row.engine, config=dict(row.config or {}))
 
+    def _plan_lanes(self, ranked: Sequence[RankedCandidate]) -> list[Lane]:
+        if not self._operations:
+            return plan_lanes(
+                [LaneTable(item.candidate.table_id, item.candidate.rewrite_gb) for item in ranked],
+                self._lane_limits(),
+            )
+        files = {item.candidate.table_id: item.candidate.total_files for item in ranked}
+        return plan_batched_lanes(
+            [item.candidate.table_id for item in ranked],
+            self._lane_limits(),
+            max_tables_per_lane=self._settings.maintenance_ops_batch_size,
+            # The heap the per-job path gives expire/orphan for this file count.
+            mem_mib=lambda tid: lane_mem_for_heap(
+                lightweight_driver_heap_mib(total_files=files.get(tid) or None)
+            ),
+        )
+
     def _lane_limits(self) -> LaneLimits:
         s = self._settings
         return LaneLimits(
@@ -664,6 +745,8 @@ class BatchMaintenance:
         report: RunReport,
     ) -> list[RankedCandidate]:
         s = self._settings
+        if self._operations:
+            return self._select_for_operations(table_ids=table_ids, limit=limit, now=now)
         with self._session_factory() as session:
             candidates = load_candidates(
                 session,
@@ -713,6 +796,42 @@ class BatchMaintenance:
         }
         return chosen
 
+    def _select_for_operations(
+        self,
+        *,
+        table_ids: Sequence[uuid.UUID] | None,
+        limit: int | None,
+        now: datetime,
+    ) -> list[RankedCandidate]:
+        """Selection for an operation-scoped pass: no compaction cooldown, no rewrite budget.
+
+        The pass's own jobs don't start the cooldown (BATCH_OPERATIONS_KEY), so the compaction
+        cooldown would only hide tables the nightly pass just compacted, which still need expiry.
+        """
+        s = self._settings
+        expiring = OperationType.EXPIRE_SNAPSHOTS.value in self._operations
+        with self._session_factory() as session:
+            candidates = load_candidates(
+                session,
+                now=now,
+                cooldown_hours=0,
+                max_stats_age_days=s.maintenance_max_stats_age_days,
+                table_ids=table_ids,
+                expired_within_hours=_EXPIRY_INTERVAL_HOURS if expiring else None,
+            )
+        if table_ids:
+            # An operator's explicit list: keep every table; the planner decides what each needs.
+            return rank_by_snapshots(candidates, limit=limit or len(candidates), min_snapshots=-1)
+        cap = s.maintenance_max_lanes * s.maintenance_ops_batch_size
+        only_expiry = self._operations == (OperationType.EXPIRE_SNAPSHOTS.value,)
+        return rank_by_snapshots(
+            candidates,
+            limit=min(limit or cap, cap),
+            # Expiry keeps retain_last snapshots, so a table with no more than that has nothing
+            # to expire.
+            min_snapshots=int(DEFAULT_PARAMS["retain_last"]) if only_expiry else 0,
+        )
+
     def _table_params(self, params: Mapping[str, Any], item: RankedCandidate) -> dict[str, Any]:
         cap_gb = self._autocomp_params.max_table_rewrite_gb if self._autocomp_params else None
         if not item.capped or cap_gb is None:
@@ -747,10 +866,7 @@ class BatchMaintenance:
         report: RunReport,
     ) -> LaneRunnerLike:
         by_id = {planned.table_id: planned for _, planned in runnable}
-        lanes = plan_lanes(
-            [LaneTable(item.candidate.table_id, item.candidate.rewrite_gb) for item, _ in runnable],
-            self._lane_limits(),
-        )
+        lanes = self._plan_lanes([item for item, _ in runnable])
         specs: list[LaneSpec] = []
         for lane in lanes:
             lane_work = [by_id[t.table_id] for t in lane.tables]

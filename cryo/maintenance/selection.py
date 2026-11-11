@@ -38,9 +38,9 @@ from typing import Any
 from sqlalchemy import ColumnElement, and_, or_, select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import MaintenanceJob, Source, Table, TableStats
+from cryo.db.models import AuditLog, MaintenanceJob, Source, Table, TableStats
 from cryo.db.repositories.exclusions import table_is_excluded
-from cryo.domain.enums import JobStatus
+from cryo.domain.enums import JobStatus, OperationType
 from cryo.maintenance.skip_history import (
     REASON_BACKOFF,
     REASON_COOLDOWN,
@@ -96,6 +96,7 @@ class Candidate:
     # None when the table was last scanned before the scanner measured it.
     files_below_target: int | None = None
     bytes_below_target: int | None = None
+    total_snapshots: int = 0
 
     @property
     def display_name(self) -> str:
@@ -147,6 +148,10 @@ COOLDOWN_JOB_STATUSES: tuple[str, ...] = (
 )
 
 
+# Set on the job plan by an operation-scoped batch pass (cryo.maintenance.run --operations).
+BATCH_OPERATIONS_KEY = "batch_operations"
+
+
 def job_starts_cooldown() -> ColumnElement[bool]:
     """SQL condition for a job that starts the nightly cooldown.
 
@@ -157,6 +162,9 @@ def job_starts_cooldown() -> ColumnElement[bool]:
     return and_(
         MaintenanceJob.status.in_(COOLDOWN_JOB_STATUSES),
         MaintenanceJob.plan["optimize_truncation"].as_string().is_(None),
+        # An operation-scoped pass (#443) did metadata work only; it must not park the table
+        # out of the compaction pass.
+        MaintenanceJob.plan[BATCH_OPERATIONS_KEY].as_string().is_(None),
     )
 
 
@@ -258,6 +266,29 @@ def rank_candidates(
     return chosen
 
 
+def rank_by_snapshots(
+    candidates: Sequence[Candidate], *, limit: int, min_snapshots: int = 0
+) -> list[RankedCandidate]:
+    """Ranking for an operation-scoped metadata pass (#443): most snapshots first.
+
+    AutoComp scores rewrite benefit against rewrite cost, which says nothing about expiry; and a
+    table needs no small files to carry an expirable snapshot backlog. ``min_snapshots`` drops
+    tables that keep every snapshot they have, which the planner would skip anyway.
+    """
+    kept = [c for c in candidates if c.total_snapshots > min_snapshots]
+    kept.sort(key=lambda c: (-c.total_snapshots, str(c.table_id)))
+    chosen = [
+        RankedCandidate(
+            candidate=c, score=float(c.total_snapshots), t1=0.0, t2=0.0, heat=0.0, s_c=0.0, gbhr=0.0
+        )
+        for c in kept[: max(limit, 0)]
+    ]
+    _remember_ranked(
+        candidates, chosen, min_delete_file_pct=DEFAULT_MIN_DELETE_FILE_PCT, require_eligible=False
+    )
+    return chosen
+
+
 def fit_budget(
     ranked: Sequence[RankedCandidate], budget_gbhr: float | None
 ) -> tuple[list[RankedCandidate], list[RankedCandidate]]:
@@ -328,6 +359,7 @@ def load_candidates(
     cooldown_hours: float,
     max_stats_age_days: float,
     table_ids: Sequence[uuid.UUID] | None = None,
+    expired_within_hours: float | None = None,
 ) -> list[Candidate]:
     """Active tables on enabled sources with usable, reasonably fresh stats.
 
@@ -335,7 +367,8 @@ def load_candidates(
     same way), tables in a maintenance back-off window, tables maintained successfully within
     the cooldown, schemas outside a source's maintenance allow-list when it has one, and
     schemas/tables an operator excluded. An explicit ``table_ids`` list (ad-hoc runs) skips
-    the cooldown but keeps every safety exclusion.
+    the cooldown but keeps every safety exclusion. ``expired_within_hours`` also drops tables
+    with a successful expire_snapshots that recent (the expiry pass, #443).
     """
     recently_maintained = (
         select(MaintenanceJob.table_id)
@@ -361,6 +394,7 @@ def load_candidates(
             TableStats.projected_savings_usd_month,
             TableStats.needs_compaction,
             TableStats.total_delete_files,
+            TableStats.total_snapshots,
             # Byte counts overflow a 32-bit int cast; a double is exact far past any table here.
             TableStats.raw["files_below_target"].as_float().label("files_below_target"),
             TableStats.raw["bytes_below_target"].as_float().label("bytes_below_target"),
@@ -381,6 +415,17 @@ def load_candidates(
         stmt = stmt.where(Table.id.in_(list(table_ids)))
     else:
         stmt = stmt.where(Table.id.not_in(recently_maintained))
+        if expired_within_hours:
+            recently_expired = (
+                select(AuditLog.table_id)
+                .where(
+                    AuditLog.action == OperationType.EXPIRE_SNAPSHOTS.value,
+                    AuditLog.status.in_(("OK", "succeeded")),
+                    AuditLog.ts >= now - timedelta(hours=expired_within_hours),
+                )
+                .distinct()
+            )
+            stmt = stmt.where(Table.id.not_in(recently_expired))
 
     candidates: list[Candidate] = []
     for row in session.execute(stmt).all():
@@ -401,6 +446,7 @@ def load_candidates(
                 delete_files=int(row.total_delete_files or 0),
                 files_below_target=_optional_int(row.files_below_target),
                 bytes_below_target=_optional_int(row.bytes_below_target),
+                total_snapshots=int(row.total_snapshots or 0),
             )
         )
     _remember_loaded(

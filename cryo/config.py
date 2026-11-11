@@ -291,6 +291,22 @@ class Settings(BaseSettings):
         description="Spark destination to run on; defaults to the only enabled Spark one.",
     )
     maintenance_max_lanes: int = Field(default=4, ge=1, le=16, description="Max Spark pods.")
+    maintenance_operations: str = Field(
+        default="",
+        description=(
+            "Comma-separated metadata operations for an operation-scoped pass, e.g. "
+            "expire_snapshots (#443). Empty runs every operation a table needs."
+        ),
+    )
+    maintenance_ops_batch_size: int = Field(
+        default=25,
+        ge=1,
+        le=500,
+        description=(
+            "Most tables one lane (one Spark application) runs in an operation-scoped pass; "
+            "a scheduled pass selects at most max_lanes x this many tables."
+        ),
+    )
     maintenance_lane_max_cpu_milli: int = Field(default=4000, ge=500)
     maintenance_lane_max_mem_mib: int = Field(default=16384, ge=2048)
     maintenance_lane_max_node_cpu: int = Field(
