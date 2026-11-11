@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import math
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -163,6 +164,11 @@ def lane_scheduling(
             }
         ]
     return selector, {"nodeAffinity": node_affinity}
+
+
+def lane_mem_for_heap(heap_mib: int) -> int:
+    """Pod memory whose lane heap (spark_submit_command) is at least ``heap_mib``."""
+    return math.ceil(heap_mib / _HEAP_FRACTION)
 
 
 def spark_submit_command(

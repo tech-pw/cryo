@@ -3,6 +3,8 @@
 --dry-run            select and plan only; print lanes and statement counts, touch nothing
 --limit N            override CRYO_MAINTENANCE_TOP_N for this run
 --table-ids a,b,...  run exactly these tables (ad-hoc); cooldown and eligibility are skipped
+--operations a,b     metadata-only pass (expire_snapshots, optimize_manifests,
+                     remove_orphan_files): many tables per Spark application (#443)
 """
 
 from __future__ import annotations
@@ -36,6 +38,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--table-ids", default=None, help="Comma-separated table UUIDs")
     parser.add_argument("--trigger", default=None, help="Recorded on the run row")
+    parser.add_argument(
+        "--operations",
+        default=None,
+        help="Comma-separated metadata operations; overrides CRYO_MAINTENANCE_OPERATIONS",
+    )
     return parser.parse_args(argv)
 
 
@@ -88,7 +95,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         notify=notify,
     )
     report = coordinator.run(
-        trigger=trigger, table_ids=table_ids, limit=args.limit, dry_run=args.dry_run
+        trigger=trigger,
+        table_ids=table_ids,
+        limit=args.limit,
+        dry_run=args.dry_run,
+        operations=args.operations,
     )
     print(
         json.dumps(

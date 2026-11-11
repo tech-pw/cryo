@@ -357,6 +357,15 @@ maintenance:
   # Hours before a maintained table is eligible again. Longer than a day lets the ranking move
   # past the hottest tables so the run rotates through the fleet instead of re-picking them.
   cooldownHours: 20
+  # Expiry-only pass (#443): a second CronJob running expire_snapshots for up to
+  # maxLanes x batchSize tables, batchSize tables per Spark application, instead of one
+  # Spark application per table on the worker path. Independent of maintenance.enabled.
+  # A table it expired is skipped by the worker's expiry for the planner's minimum interval.
+  expiry:
+    enabled: false
+    schedule: "0 7 * * *"
+    suspend: false
+    batchSize: 25
   resources:
     requests:
       cpu: 250m

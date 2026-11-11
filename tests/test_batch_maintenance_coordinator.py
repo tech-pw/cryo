@@ -753,3 +753,88 @@ def test_a_failed_statement_records_no_bytes_freed() -> None:
     row = _audit_row(outcome, result, None)
 
     assert row.status == "FAILED" and row.actual_bytes_freed is None
+
+
+def _set_snapshots(session_factory: Any, counts: dict[uuid.UUID, int]) -> None:
+    with session_factory() as session:
+        for table_id, count in counts.items():
+            stats = session.get(TableStats, table_id)
+            assert stats is not None
+            stats.total_snapshots = count
+        session.commit()
+
+
+def test_expiry_pass_runs_many_tables_per_lane_with_per_table_outcomes(session_factory) -> None:
+    """#443: one Spark application per lane runs the expiries of up to batch-size tables, each
+    table keeping its own job row, audit row, lock and failure."""
+    ids = _seed(session_factory, tables=5)
+    _set_snapshots(session_factory, {tid: 50 + i for i, tid in enumerate(ids)})
+    behaviour = _Behaviour(fail_seq={ids[4]: 0})
+    h = _harness(
+        session_factory,
+        behaviour=behaviour,
+        settings=_settings(maintenance_ops_batch_size=2, maintenance_max_lanes=4),
+    )
+
+    report = h.coordinator.run(trigger="batch-cron", operations="expire_snapshots")
+
+    manifests = h.runners[0].manifests
+    assert len(manifests) == 3
+    assert all(len(m["tables"]) <= 2 for m in manifests.values())
+    statements = [s for m in manifests.values() for t in m["tables"] for s in t["statements"]]
+    assert {s["action"] for s in statements} == {"expire_snapshots"}
+    assert len(statements) == 5
+    # Most snapshots first: the round-robin deal puts the top table first on lane 0.
+    assert manifests[0]["tables"][0]["table_id"] == str(ids[4])
+    jobs = _jobs(session_factory)
+    assert jobs[ids[4]].status == "failed"
+    assert {jobs[t].status for t in ids[:4]} == {"succeeded"}
+    assert all(job.plan["batch_operations"] == ["expire_snapshots"] for job in jobs.values())
+    with session_factory() as session:
+        audit = list(session.scalars(select(AuditLog)))
+        run = session.get(MaintenanceRun, report.run_id)
+    assert len(audit) == 5 and {a.action for a in audit} == {"expire_snapshots"}
+    assert run is not None and run.summary["operations"] == ["expire_snapshots"]
+    assert (report.succeeded, report.failed) == (4, 1)
+    for table_id in ids:
+        assert h.locks.acquire_table_lock(str(table_id), "someone-else", 60)
+
+
+def test_expiry_pass_skips_recent_expiries_and_tables_with_nothing_to_expire(
+    session_factory,
+) -> None:
+    ids = _seed(session_factory, tables=3)
+    _set_snapshots(session_factory, {ids[0]: 30, ids[1]: 30, ids[2]: 4})
+    with session_factory() as session:
+        session.add(
+            AuditLog(
+                table_id=ids[1],
+                action="expire_snapshots",
+                status="OK",
+                engine="spark_emr",
+                ts=NOW - timedelta(hours=2),
+            )
+        )
+        session.commit()
+    h = _harness(session_factory)
+
+    report = h.coordinator.run(trigger="batch-cron", operations=["expire_snapshots"])
+
+    assert report.selected == 1
+    assert set(_jobs(session_factory)) == {ids[0]}
+
+
+def test_expiry_pass_jobs_do_not_start_the_compaction_cooldown(session_factory) -> None:
+    ids = _seed(session_factory, tables=2)
+    _set_snapshots(session_factory, {tid: 30 for tid in ids})
+    _harness(session_factory).coordinator.run(trigger="batch-cron", operations="expire_snapshots")
+
+    report = _harness(session_factory).coordinator.run(trigger="batch-cron", dry_run=True)
+
+    assert report.selected == 2
+
+
+def test_unsupported_operation_scope_is_rejected(session_factory) -> None:
+    _seed(session_factory, tables=1)
+    with pytest.raises(ValueError, match="unsupported --operations"):
+        _harness(session_factory).coordinator.run(trigger="batch-cron", operations="optimize")

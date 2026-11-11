@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 
@@ -185,4 +185,34 @@ def plan_lanes(tables: Sequence[LaneTable], limits: LaneLimits | None = None) ->
         lane.index = i
     assert len(lanes) <= limits.max_lanes
     assert sum(len(lane.tables) for lane in lanes) == len(tables)
+    return lanes
+
+
+def plan_batched_lanes(
+    table_ids: Sequence[uuid.UUID],
+    limits: LaneLimits,
+    *,
+    max_tables_per_lane: int,
+    mem_mib: Callable[[uuid.UUID], int],
+) -> list[Lane]:
+    """Lanes for an operation-scoped metadata pass (#443): a fixed table count per lane.
+
+    Expiry does no rewrite, so the GB-based packing above would put every table on one lane.
+    Here each lane is one Spark application running at most ``max_tables_per_lane`` tables, so
+    a single application stays short. Scheduled selection never asks for more than
+    ``max_lanes x max_tables_per_lane``; an explicit ad-hoc list that does is spread over
+    ``max_lanes`` rather than dropped. Tables are dealt round-robin, which keeps rank order in
+    every lane. Each lane is the smallest tier, raised to the memory its neediest table asks for.
+    """
+    if not table_ids or limits.max_lanes < 1:
+        return []
+    per_lane = max(max_tables_per_lane, math.ceil(len(table_ids) / limits.max_lanes))
+    count = min(limits.max_lanes, math.ceil(len(table_ids) / per_lane))
+    cpu, base_mem = lane_size(0.0, limits)
+    lanes = [Lane(index=i, cpu_milli=cpu) for i in range(count)]
+    for position, table_id in enumerate(table_ids):
+        lanes[position % count].tables.append(LaneTable(table_id, 0.0))
+    for lane in lanes:
+        need = max([base_mem, *(mem_mib(t.table_id) for t in lane.tables)])
+        lane.mem_mib = min(need, limits.max_mem_mib)
     return lanes
