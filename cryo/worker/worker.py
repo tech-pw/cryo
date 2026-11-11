@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
-from time import perf_counter, sleep
+from time import perf_counter, sleep, time
 from typing import Any, Protocol, cast
 from uuid import UUID
 
@@ -32,6 +32,7 @@ from cryo.engines.native.routing import (
     native_fallback_mismatch_detail,
     native_fallback_supports,
 )
+from cryo.engines.spark.async_state import SparkAsyncState
 from cryo.intents.validation import (
     IntentValidationError,
     validate_effect_budget,
@@ -45,7 +46,8 @@ from cryo.observability.metrics import (
 )
 from cryo.observability.tracing import trace_operation
 from cryo.planner.execution import build_execution_plan, skip_operations_from_preset
-from cryo.planner.serialization import plan_to_dict
+from cryo.planner.serialization import plan_from_dict, plan_to_dict
+from cryo.queue.async_spark import AsyncSparkEntry, AsyncSparkRegistry
 from cryo.queue.job_release import release_job_claims
 from cryo.queue.locks import LockStore
 from cryo.queue.redis_queue import MaintenanceQueue
@@ -58,6 +60,36 @@ from cryo.queue.run_events import (
 from cryo.worker.safety_gates import requires_quiet_window, wait_for_table_quiet
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class AsyncSparkDispatch:
+    """Opt-in async dispatch for Spark-on-K8s statements (#435).
+
+    The worker submits the Spark Job, parks the job in ``registry`` and moves on. The
+    governor's resolver hands the job back once the Spark Job ends, and that pass records
+    the step exactly as the blocking path would. ``max_in_flight`` caps the Spark Jobs one
+    worker has parked; past it the worker blocks on the step as before. With ``enabled``
+    off the worker submits nothing new asynchronously but still resumes jobs parked before
+    the setting changed, so turning it off never strands one.
+    """
+
+    registry: AsyncSparkRegistry
+    holder: str
+    enabled: bool = True
+    max_in_flight: int = 4
+    poll_interval_seconds: float = 30.0
+    resume_owner_ttl_seconds: int = 900
+
+
+_TERMINAL_JOB_STATUSES = frozenset(
+    {
+        JobStatus.SUCCEEDED,
+        JobStatus.FAILED,
+        JobStatus.SKIPPED,
+        JobStatus.PARTIAL,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -512,7 +544,9 @@ class Worker:
         table_activity_probe: Callable[..., Any] | None = None,
         quiet_interval_sec: float = 1.0,
         quiet_max_wait_sec: float | None = 120.0,
+        async_spark: AsyncSparkDispatch | None = None,
     ) -> None:
+        self._async_spark = async_spark
         self._queue = queue
         self._store = store
         self._engine_factory = engine_factory or default_engine_factory
@@ -567,6 +601,40 @@ class Worker:
         *,
         job_start: float,
     ) -> MaintenanceJobRecord:
+        async_spark = self._async_spark
+        if async_spark is None:
+            return self._run_claimed_job(job, job_start=job_start, resume=None)
+        entry = async_spark.registry.get(job.id)
+        if entry is None:
+            if async_spark.enabled and job.status in _TERMINAL_JOB_STATUSES:
+                # A leftover stream entry for a job that already ended.
+                return job
+            return self._run_claimed_job(job, job_start=job_start, resume=None)
+        if job.status is not JobStatus.RUNNING:
+            # Parked, then ended some other way (operator, reaper): nothing to resume.
+            async_spark.registry.clear(job.id)
+            return job
+        # One worker resumes a parked job at a time. A duplicate hand-back finds the lease
+        # taken and leaves the job; the resolver hands it back again if it is still parked.
+        if self._lock_store is not None and not self._lock_store.acquire_job_owner(
+            job.id, async_spark.holder, async_spark.resume_owner_ttl_seconds
+        ):
+            return job
+        try:
+            # Job metrics cover the whole job, as on the blocking path, not just this pass.
+            elapsed = max(0.0, time() - entry.job_started_at) if entry.job_started_at else 0.0
+            return self._run_claimed_job(job, job_start=job_start - elapsed, resume=entry)
+        finally:
+            if self._lock_store is not None:
+                self._lock_store.release_job_owner(job.id, async_spark.holder)
+
+    def _run_claimed_job(
+        self,
+        job: MaintenanceJobRecord,
+        *,
+        job_start: float,
+        resume: AsyncSparkEntry | None,
+    ) -> MaintenanceJobRecord:
         destination = _try_get_destination(self._store, job.destination_id)
         if destination is None:
             # Admitted by the governor, so this job holds the table lock. Completing
@@ -589,7 +657,9 @@ class Worker:
             if self._on_job_finished is not None:
                 self._on_job_finished()
             return self._store.get_job(job.id)
-        if not self._ensure_table_lock(job):
+        # A resumed job still has a Spark Job whose outcome must be recorded, so a lost lock
+        # does not defer it here; the statement loop stops it before any new submission.
+        if not self._ensure_table_lock(job) and resume is None:
             self._store.mark_status(job.id, JobStatus.DEFERRED, error="table_locked")
             self._queue.defer(job.id)
             return self._store.get_job(job.id)
@@ -606,6 +676,7 @@ class Worker:
         attempt_id: str | None = None
         reconciliation_required = False
         effect_budget_usage = EffectBudgetUsage()
+        job_wall_start = resume.job_started_at if resume is not None else time()
         try:
             # Intent-bound jobs check the pause inside begin_attempt; legacy jobs have no
             # attempt, so without this a hold set from the UI would not stop them.
@@ -618,29 +689,30 @@ class Worker:
             table_data = self._store.get_table_data(job.table_id)
             set_context(snapshot_id=table_data.stats.get("snapshot_watermark"))
             table_ref = _table_ref_from_stats(table_data.stats)
-            safe_publish(
-                self._run_events,
-                job.run_id,
-                build_job_status(
-                    run_id=job.run_id,
-                    job_id=job.id,
-                    status=JobStatus.RUNNING.value,
-                    table_id=job.table_id,
-                    table_ref=table_ref,
-                    message="Job started",
-                ),
-            )
-            safe_publish(
-                self._run_events,
-                job.run_id,
-                build_log_line(
-                    run_id=job.run_id,
-                    job_id=job.id,
-                    table_id=job.table_id,
-                    table_ref=table_ref,
-                    message=f"Started maintenance job for {table_ref or job.table_id}",
-                ),
-            )
+            if resume is None:
+                safe_publish(
+                    self._run_events,
+                    job.run_id,
+                    build_job_status(
+                        run_id=job.run_id,
+                        job_id=job.id,
+                        status=JobStatus.RUNNING.value,
+                        table_id=job.table_id,
+                        table_ref=table_ref,
+                        message="Job started",
+                    ),
+                )
+                safe_publish(
+                    self._run_events,
+                    job.run_id,
+                    build_log_line(
+                        run_id=job.run_id,
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        table_ref=table_ref,
+                        message=f"Started maintenance job for {table_ref or job.table_id}",
+                    ),
+                )
             if job.intent_id is not None:
                 if self._intent_store is None:
                     raise RuntimeError("durable intent store is unavailable")
@@ -666,6 +738,10 @@ class Worker:
                     attempt_id=attempt_id,
                     snapshot_id=active_intent.observed_snapshot_id,
                 )
+            elif resume is not None and job.plan:
+                # A resumed job keeps the plan its steps were numbered against. Re-planning
+                # from newer stats could shift statement indexes under the step ledger.
+                plan = plan_from_dict(job.plan)
             else:
                 shared_location = self._has_shared_location(job.table_id)
                 plan = build_execution_plan(
@@ -748,20 +824,26 @@ class Worker:
                 native_routing = resolve_native_routing(plan, table_data.stats, destination.config)
 
             statements = engine.render(plan)
-            safe_publish(
-                self._run_events,
-                job.run_id,
-                build_log_line(
-                    run_id=job.run_id,
-                    job_id=job.id,
-                    table_id=job.table_id,
-                    table_ref=table_ref,
-                    engine=str(engine.type),
-                    message=(
-                        f"Built plan with {len(plan.operations)} operations "
-                        f"and {len(statements)} statements"
+            if resume is None:
+                safe_publish(
+                    self._run_events,
+                    job.run_id,
+                    build_log_line(
+                        run_id=job.run_id,
+                        job_id=job.id,
+                        table_id=job.table_id,
+                        table_ref=table_ref,
+                        engine=str(engine.type),
+                        message=(
+                            f"Built plan with {len(plan.operations)} operations "
+                            f"and {len(statements)} statements"
+                        ),
                     ),
-                ),
+                )
+            async_capable = (
+                self._async_spark is not None
+                and active_intent is None
+                and callable(getattr(engine, "execute_async", None))
             )
             if not statements and (native_routing is None or not native_routing.has_work):
                 final_status = JobStatus.SKIPPED
@@ -822,6 +904,9 @@ class Worker:
                     lock_held = self._renew_table_lock(job)
 
                     existing_step = None
+                    # The Spark state of the step a resumed job came back for (#435). Its
+                    # pre-submit checks already ran; only its outcome is left to collect.
+                    resumed_state: SparkAsyncState | None = None
                     if self._step_ledger is not None:
                         existing_step = self._step_ledger.get_step(job.id, index)
                         if existing_step is not None and existing_step.status in {
@@ -836,16 +921,29 @@ class Worker:
                             had_skip = had_skip or (existing_step.status is JobStepStatus.SKIPPED)
                             continue
                         if (
+                            resume is not None
+                            and existing_step is not None
+                            and existing_step.status is JobStepStatus.FAILED
+                        ):
+                            # Failed in an earlier async pass. The blocking loop would still
+                            # hold it in failed_actions, so rebuild that instead of re-running.
+                            failed_detail = existing_step.detail or "operation failed"
+                            failed_actions[statement.action] = failed_detail
+                            error = failed_detail
+                            continue
+                        if (
                             existing_step is not None
                             and existing_step.status is JobStepStatus.STARTED
                         ):
-                            final_status = JobStatus.RUNNING
-                            error = "awaiting_started_step_recovery"
-                            break
+                            if resume is None or resume.step_index != index:
+                                final_status = JobStatus.RUNNING
+                                error = "awaiting_started_step_recovery"
+                                break
+                            resumed_state = SparkAsyncState.from_dict(resume.spark)
                     # CR-02: the lock must be held before submitting a *new* statement --
                     # a lost/stolen lock here means another worker may already be mutating
                     # this table under a fresher attempt.
-                    if not lock_held:
+                    if not lock_held and resumed_state is None:
                         final_status = JobStatus.DEFERRED
                         error = "table_locked"
                         break
@@ -857,7 +955,7 @@ class Worker:
                         table_uuid = UUID(job.table_id)
                     except ValueError:
                         table_uuid = None
-                    if table_uuid is not None:
+                    if table_uuid is not None and resumed_state is None:
                         with SessionLocal() as abac_session:
                             allowed, reason = evaluate_maintenance_allowed(
                                 abac_session,
@@ -883,7 +981,7 @@ class Worker:
                             )
                             break
 
-                    if not self._preflight_before_step(
+                    if resumed_state is None and not self._preflight_before_step(
                         job=job,
                         destination=destination,
                         table_ref=table_ref,
@@ -894,7 +992,7 @@ class Worker:
                         error = "table_not_quiet"
                         break
 
-                    if self._step_ledger is not None:
+                    if self._step_ledger is not None and resumed_state is None:
                         self._step_ledger.begin_step(
                             job.id,
                             index,
@@ -965,46 +1063,71 @@ class Worker:
                         if _receipt_id is not None and self._intent_store is not None:
                             self._intent_store.set_effect_external_reference(_receipt_id, ref)
 
-                    safe_publish(
-                        self._run_events,
-                        job.run_id,
-                        build_log_line(
-                            run_id=job.run_id,
-                            job_id=job.id,
-                            table_id=job.table_id,
-                            table_ref=table_ref,
-                            operation=statement.action.value,
-                            engine=str(engine.type),
-                            message=(
-                                f"Executing {statement.action.value} "
-                                f"({index + 1}/{len(statements)})"
+                    if resumed_state is None:
+                        safe_publish(
+                            self._run_events,
+                            job.run_id,
+                            build_log_line(
+                                run_id=job.run_id,
+                                job_id=job.id,
+                                table_id=job.table_id,
+                                table_ref=table_ref,
+                                operation=statement.action.value,
+                                engine=str(engine.type),
+                                message=(
+                                    f"Executing {statement.action.value} "
+                                    f"({index + 1}/{len(statements)})"
+                                ),
                             ),
-                        ),
-                    )
+                        )
                     if receipt_id is not None:
                         self._intent_store.mark_effect_submitted(
                             receipt_id,
                             submission={"operation": statement.action.value},
                         )
+                    on_conflict_retry = partial(
+                        self._log_conflict_retry,
+                        job,
+                        table_ref,
+                        statement.action,
+                        str(engine.type),
+                    )
                     try:
-                        result = _execute_retrying_conflicts(
-                            partial(
-                                _execute_statement,
-                                engine,
-                                statement,
-                                _to_exec_ctx(exec_ctx, on_engine_ref=_on_engine_ref),
-                                effect_id=receipt_id,
-                                destination_id=job.destination_id,
-                            ),
-                            retries=_conflict_retries(receipt_id),
-                            on_retry=partial(
-                                self._log_conflict_retry,
-                                job,
-                                table_ref,
-                                statement.action,
-                                str(engine.type),
-                            ),
-                        )
+                        if resumed_state is not None or (async_capable and self._async_slot_free()):
+                            collected = self._execute_async_step(
+                                engine=engine,
+                                statement=statement,
+                                context=_to_exec_ctx(exec_ctx, on_engine_ref=_on_engine_ref),
+                                job=job,
+                                index=index,
+                                state=resumed_state,
+                                conflict_attempt=(
+                                    resume.conflict_attempt
+                                    if resume is not None and resumed_state is not None
+                                    else 0
+                                ),
+                                job_wall_start=job_wall_start,
+                                on_retry=on_conflict_retry,
+                            )
+                            if collected is None:
+                                # Parked: the Spark Job runs on, and this job keeps its slot,
+                                # its lock and its RUNNING status until the resolver hands it
+                                # back.
+                                return self._store.get_job(job.id)
+                            result = collected
+                        else:
+                            result = _execute_retrying_conflicts(
+                                partial(
+                                    _execute_statement,
+                                    engine,
+                                    statement,
+                                    _to_exec_ctx(exec_ctx, on_engine_ref=_on_engine_ref),
+                                    effect_id=receipt_id,
+                                    destination_id=job.destination_id,
+                                ),
+                                retries=_conflict_retries(receipt_id),
+                                on_retry=on_conflict_retry,
+                            )
                     except Exception as exc:
                         duration_ms = int((perf_counter() - started) * 1000)
                         if receipt_id is not None:
@@ -1662,6 +1785,95 @@ class Worker:
         if self._lock_store is None:
             return True
         return self._lock_store.renew_table_lock(job.table_id, job.id, self._lock_ttl_seconds)
+
+    def _async_slot_free(self) -> bool:
+        """Whether this worker may park one more Spark Job instead of blocking on it."""
+        async_spark = self._async_spark
+        if async_spark is None or not async_spark.enabled:
+            return False
+        try:
+            owned = async_spark.registry.owned_count(async_spark.holder)
+        except Exception:
+            logger.warning("Async Spark registry unavailable; running inline", exc_info=True)
+            return False
+        return owned < async_spark.max_in_flight
+
+    def _execute_async_step(
+        self,
+        *,
+        engine: ExecutableMaintenanceEngine,
+        statement: RenderedStatement,
+        context: ExecCtx,
+        job: MaintenanceJobRecord,
+        index: int,
+        state: SparkAsyncState | None,
+        conflict_attempt: int,
+        job_wall_start: float,
+        on_retry: Callable[[int, str], object],
+    ) -> BaseExecResult | None:
+        """Submit or collect one Spark statement without waiting. None means parked.
+
+        A finished statement comes back as the same result the blocking path produces, so
+        the caller records it through the same audit, ledger and verification code. A lost
+        commit is re-run in place as _execute_retrying_conflicts does, except that the
+        backoff is spent parked rather than asleep.
+        """
+        async_spark = self._async_spark
+        assert async_spark is not None
+        execute_async = cast(Any, engine).execute_async
+        outcome = execute_async(statement, context, state)
+        if not isinstance(outcome, BaseExecResult):
+            self._park_async_step(job, index, outcome, conflict_attempt, job_wall_start)
+            return None
+        if state is not None:
+            async_spark.registry.clear(job.id)
+        detail = outcome.error or outcome.detail or ""
+        if (
+            not outcome.ok
+            and conflict_attempt < _conflict_retries(None)
+            and is_commit_conflict(detail)
+        ):
+            from cryo.config import get_settings
+
+            worker_commit_conflicts_total.labels(outcome="retried").inc()
+            on_retry(conflict_attempt, detail[:300])
+            conflict_attempt += 1
+            now = time()
+            backoff = get_settings().worker_commit_conflict_retry_backoff_seconds
+            retry = SparkAsyncState(started_at=now, not_before=now + backoff * conflict_attempt)
+            self._park_async_step(job, index, retry, conflict_attempt, job_wall_start)
+            return None
+        return outcome
+
+    def _park_async_step(
+        self,
+        job: MaintenanceJobRecord,
+        index: int,
+        state: SparkAsyncState,
+        conflict_attempt: int,
+        job_wall_start: float,
+    ) -> None:
+        async_spark = self._async_spark
+        assert async_spark is not None
+        now = time()
+        async_spark.registry.park(
+            AsyncSparkEntry(
+                job_id=job.id,
+                table_id=job.table_id,
+                destination_id=job.destination_id,
+                step_index=index,
+                owner=async_spark.holder,
+                spark=state.to_dict(),
+                conflict_attempt=conflict_attempt,
+                job_started_at=job_wall_start,
+            ),
+            next_check_at=state.next_check_at(
+                now=now, poll_interval=async_spark.poll_interval_seconds
+            ),
+        )
+        logger.info(
+            "Parked job %s step %d on Spark Job %s", job.id, index, state.ref or "(retry pending)"
+        )
 
     def _supersede_covered_jobs(self, job: MaintenanceJobRecord) -> None:
         """Retire queued duplicates this success already did the work for.

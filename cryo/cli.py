@@ -476,6 +476,12 @@ class S3LogIngestRunner(DaemonRunner):
                 )
 
 
+def _async_spark_registry(wiring: Any) -> Any:
+    from cryo.queue.async_spark import RedisAsyncSparkRegistry
+
+    return RedisAsyncSparkRegistry(wiring.redis_client)
+
+
 class GovernorRunner(DaemonRunner):
     """Runs the admission governor wave loop."""
 
@@ -528,6 +534,7 @@ class GovernorRunner(DaemonRunner):
         # restarted governor cannot duplicate a still-running Job whose DB
         # member status had not yet been advanced.
         self._tick_native_watcher(wiring)
+        self._tick_async_spark_resolver(wiring)
         self._tick_scan_dispatch(wiring)
         result = governor.run_wave(now=datetime.now(UTC))
         if any(
@@ -607,6 +614,39 @@ class GovernorRunner(DaemonRunner):
                 self._logger.info("Spark driver pod cleanup: deleted=%d", deleted)
         except Exception as exc:
             self._logger.debug("Spark driver pod cleanup tick skipped: %s", exc)
+
+    def _tick_async_spark_resolver(self, wiring: Any) -> None:
+        """Hand parked async Spark jobs back to the workers once their Spark Job ends (#435).
+
+        Runs whether or not async dispatch is on, so jobs parked before it was turned off
+        still finish. One bounded sorted-set read when nothing is parked.
+        """
+        try:
+            from cryo.config import get_settings
+            from cryo.governor.async_spark_resolver import resolve_parked_spark_jobs
+
+            settings = get_settings()
+            result = resolve_parked_spark_jobs(
+                _async_spark_registry(wiring),
+                wiring.queue,
+                wiring.lock_store,
+                wiring.job_store,
+                limit=settings.async_spark_resolve_batch,
+                poll_interval_seconds=settings.async_spark_poll_interval_seconds,
+                resume_grace_seconds=settings.async_spark_resume_grace_seconds,
+            )
+            if result.handed_back or result.dropped or result.lookup_errors:
+                self._logger.info(
+                    "Async Spark resolve: examined=%d handed_back=%d running=%d dropped=%d "
+                    "lookup_errors=%d",
+                    result.examined,
+                    result.handed_back,
+                    result.still_running,
+                    result.dropped,
+                    result.lookup_errors,
+                )
+        except Exception as exc:
+            self._logger.warning("Async Spark resolve tick failed: %s", exc)
 
     def _tick_scan_dispatch(self, wiring: Any) -> None:
         import os
@@ -754,6 +794,7 @@ class WorkerRunner(DaemonRunner):
                 lock_store=wiring.lock_store,
                 step_ledger=step_ledger,
                 holder_id=default_worker_holder_id(),
+                is_async_parked=_async_spark_registry(wiring).is_parked,
             )
         except Exception as exc:
             self._logger.warning("Worker reconciliation tick failed: %s", exc)
@@ -780,17 +821,20 @@ class WorkerRunner(DaemonRunner):
             return self._worker
 
         try:
+            from cryo.config import get_settings
             from cryo.db.repositories.intents import IntentStore
             from cryo.db.repositories.job_steps import JobStepStore
             from cryo.db.repositories.run_finalizer import finalize_open_runs
             from cryo.db.session import SessionLocal
-            from cryo.worker.worker import Worker
+            from cryo.worker.orphan_recovery import default_worker_holder_id
+            from cryo.worker.worker import AsyncSparkDispatch, Worker
 
             wiring = self._get_wiring()
 
             def finalize_finished_runs() -> None:
                 finalize_open_runs(SessionLocal)
 
+            settings = get_settings()
             self._worker = Worker(
                 queue=wiring.queue,
                 store=wiring.job_store,
@@ -799,6 +843,13 @@ class WorkerRunner(DaemonRunner):
                 run_events=wiring.run_events,
                 step_ledger=JobStepStore(SessionLocal),
                 intent_store=IntentStore(SessionLocal),
+                async_spark=AsyncSparkDispatch(
+                    registry=_async_spark_registry(wiring),
+                    holder=default_worker_holder_id(),
+                    enabled=settings.worker_async_spark_dispatch,
+                    max_in_flight=settings.worker_async_spark_max_in_flight,
+                    poll_interval_seconds=settings.async_spark_poll_interval_seconds,
+                ),
             )
             return self._worker
         except Exception as exc:

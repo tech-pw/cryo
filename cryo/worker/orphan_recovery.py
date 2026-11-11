@@ -203,6 +203,7 @@ def recover_orphaned_jobs(
     lock_ttl_seconds: int = 21600,
     owner_ttl_seconds: int = DEFAULT_OWNER_TTL_SEC,
     table_ref_resolver: Callable[[MaintenanceJobRecord], str | None] | None = None,
+    is_async_parked: Callable[[str], bool] | None = None,
 ) -> RecoveryResult:
     """Scan non-terminal jobs and adopt RUNNING orphans with a started step.
 
@@ -260,6 +261,13 @@ def recover_orphaned_jobs(
             continue
 
         if job.status is not JobStatus.RUNNING:
+            continue
+
+        if is_async_parked is not None and is_async_parked(job.id):
+            # Parked by async Spark dispatch (#435): its open step is in flight on purpose,
+            # and the governor's resolver hands it back. Adopting it here would close the
+            # step without the audit row the resuming worker writes.
+            skipped += 1
             continue
 
         started = step_ledger.get_started_step(job.id)

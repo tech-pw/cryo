@@ -145,6 +145,41 @@ class Settings(BaseSettings):
             "maintained from its older scan stats anyway. 0 skips the rescan."
         ),
     )
+    worker_async_spark_dispatch: bool = Field(
+        default=False,
+        description=(
+            "Workers submit Spark-on-Kubernetes statements and move on instead of blocking "
+            "until the Spark Job ends. The governor leader hands each job back when its Spark "
+            "Job finishes. Jobs with a durable intent always block. Off keeps the blocking "
+            "path (#435)."
+        ),
+    )
+    worker_async_spark_max_in_flight: int = Field(
+        default=4,
+        ge=1,
+        description=(
+            "Spark Jobs one worker may have parked at once. Past it, the worker runs the "
+            "next Spark statement blocking, as with async dispatch off."
+        ),
+    )
+    async_spark_poll_interval_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description="How often the governor looks at each parked Spark Job.",
+    )
+    async_spark_resume_grace_seconds: float = Field(
+        default=600.0,
+        gt=0,
+        description=(
+            "How long a handed-back job may wait for a worker before the governor hands it "
+            "back again, so a worker that dies mid-resume does not strand the job."
+        ),
+    )
+    async_spark_resolve_batch: int = Field(
+        default=200,
+        ge=1,
+        description="Parked jobs the governor examines per tick, oldest due first.",
+    )
     worker_commit_conflict_retries: int = Field(
         default=1,
         ge=0,
