@@ -103,7 +103,7 @@ def _prod_args(*extra: str) -> tuple[str, ...]:
         "--set",
         f"image.digest={DIGEST}",
         "--set",
-        f"redis.image.digest={DIGEST}",
+        f"redis.image.digest={OTHER_DIGEST}",
         *extra,
     )
 

@@ -145,6 +145,27 @@ migration.image.digest is set, so setting image.digest pins migrations too (issu
   {{- if and .Values.redis.enabled (not .Values.redis.image.digest) -}}
     {{- fail "production with redis.enabled requires redis.image.digest (sha256:...)" -}}
   {{- end -}}
+  {{- /* A manifest digest belongs to the repository that built it, so one digest under two repositories is a copy-paste slip. */ -}}
+  {{- $pins := list (list "image" .Values.image.repository .Values.image.digest) -}}
+  {{- $pins = append $pins (list "migration.image" (default .Values.image.repository .Values.migration.image.repository) (default .Values.image.digest .Values.migration.image.digest)) -}}
+  {{- if .Values.native.enabled -}}{{- $pins = append $pins (list "native.image" .Values.native.image.repository .Values.native.image.digest) -}}{{- end -}}
+  {{- if .Values.spark.k8s.enabled -}}{{- $pins = append $pins (list "spark.k8s.image" .Values.spark.k8s.image.repository .Values.spark.k8s.image.digest) -}}{{- end -}}
+  {{- if .Values.web.enabled -}}{{- $pins = append $pins (list "web.image" .Values.web.image.repository .Values.web.image.digest) -}}{{- end -}}
+  {{- if .Values.redis.enabled -}}{{- $pins = append $pins (list "redis.image" .Values.redis.image.repository .Values.redis.image.digest) -}}{{- end -}}
+  {{- $seen := dict -}}
+  {{- range $pins -}}
+    {{- $name := index . 0 -}}{{- $repo := index . 1 -}}{{- $digest := index . 2 -}}
+    {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) -}}
+      {{- fail (printf "%s.digest %q is not sha256: followed by 64 hex characters" $name $digest) -}}
+    {{- end -}}
+    {{- with get $seen $digest -}}
+      {{- if ne (index . 1) $repo -}}
+        {{- fail (printf "%s.digest is the same as %s.digest but the repositories differ (%s vs %s); each repository needs its own digest" $name (index . 0) $repo (index . 1)) -}}
+      {{- end -}}
+    {{- else -}}
+      {{- $_ := set $seen $digest (list $name $repo) -}}
+    {{- end -}}
+  {{- end -}}
 {{- end -}}
 {{- end }}
 

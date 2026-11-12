@@ -39,7 +39,7 @@ def test_prod_render_with_pinned_images_sets_prod_on_every_workload() -> None:
         "--set",
         f"migration.image.digest={_DIGEST}",
         "--set",
-        f"redis.image.digest={_DIGEST}",
+        f"redis.image.digest={'sha256:' + '1' * 64}",
     )
 
     assert result.returncode == 0, result.stderr
@@ -64,3 +64,40 @@ def _container_env(doc: dict) -> list[dict[str, str]]:
         {e["name"]: e.get("value") for e in c.get("env", []) if "name" in e}
         for c in pod.get("containers", [])
     ]
+
+
+def _pinned(*extra: str) -> subprocess.CompletedProcess[str]:
+    return _helm(
+        "--set",
+        f"image.digest={_DIGEST}",
+        "--set",
+        f"redis.image.digest={'sha256:' + '1' * 64}",
+        *extra,
+    )
+
+
+def test_prod_render_rejects_one_digest_under_two_repositories() -> None:
+    result = _pinned(
+        "--set",
+        "web.enabled=true",
+        "--set",
+        "web.image.repository=cryo-web",
+        "--set",
+        f"web.image.digest={_DIGEST}",
+    )
+
+    assert result.returncode != 0
+    assert "web.image.digest is the same as image.digest" in result.stderr
+
+
+def test_prod_render_allows_the_api_digest_for_migrations() -> None:
+    result = _pinned("--set", f"migration.image.digest={_DIGEST}")
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_prod_render_rejects_a_malformed_digest() -> None:
+    result = _pinned("--set", "image.digest=sha256:abc")
+
+    assert result.returncode != 0
+    assert "not sha256: followed by 64 hex characters" in result.stderr
