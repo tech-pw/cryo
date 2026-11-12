@@ -5,7 +5,14 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from cryo.api.redact import redact_sensitive_dict
 from cryo.domain.enums import CostPrecision, EngineType, Mode, OperationType
@@ -775,6 +782,13 @@ class TableRead(OrmModel):
     # reads in the last 30.
     archive_candidate: bool = False
     stats: TableStatsRead | None = None
+
+    @field_validator("lifecycle", mode="before")
+    @classmethod
+    def _default_lifecycle(cls, value: object) -> object:
+        # An unflushed Table has no server default yet.
+        return "active" if value is None else value
+
     # Populated by GET /tables only (bounded to the page); detail views leave it null.
     maintenance: TableMaintenanceRead | None = None
     # GET /tables only, like `maintenance`. Detail views use GET /tables/{id}/effective-preset.
