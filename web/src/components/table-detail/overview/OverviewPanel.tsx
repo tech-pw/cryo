@@ -21,6 +21,7 @@ import { Button } from "../../ui/button";
 import { ChartDataTable } from "../../ui/chart-data-table";
 import { Skeleton } from "../../ui/skeleton";
 import { useAuth } from "../../../lib/auth";
+import { blockingReasonText } from "../../../lib/maintenanceReasons";
 import { formatBytesGb, formatCurrency, formatDuration, formatNumber, formatTime } from "../../../lib/format";
 import { useWriteControl } from "../../../lib/useWriteControl";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
@@ -277,7 +278,13 @@ function HealthHero({
             </>
           ) : (
             <>
-              <Clock3 size={13} aria-hidden="true" /> {gate ? gate.summary : "Not currently eligible"}
+              <Clock3 size={13} aria-hidden="true" /> {gate ? blockingReasonText(gate) : "Not currently eligible"}
+              {tableId ? (
+                <>
+                  {" · "}
+                  <Link to={`/tables/${tableId}?tab=maintenance#maintenance-checklist`}>Eligibility checklist</Link>
+                </>
+              ) : null}
             </>
           )}
         </p>
