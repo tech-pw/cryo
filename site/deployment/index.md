@@ -43,8 +43,12 @@ No clone needed. The chart version `X.Y.Z` is the release tag without its `v`, a
 **terminal**
 
 ```
+$ helm show values oci://ghcr.io/tech-pw/charts/cryo --version X.Y.Z    # defaults
+$ helm pull oci://ghcr.io/tech-pw/charts/cryo --version X.Y.Z --untar   # optional: read the templates
 $ helm install cryo oci://ghcr.io/tech-pw/charts/cryo --version X.Y.Z --namespace cryo --create-namespace
 ```
+
+The chart is an OCI artifact, so there is no `helm repo add`; pass the `oci://` address to every command (Helm 3.8+). It is also listed on [Artifact Hub](https://artifacthub.io/packages/helm/cryo/cryo).
 
 The chart README lists the values a production install must set, including the database connection, the production environment flag, and OIDC.
 
