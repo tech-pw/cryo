@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { getAsyncSparkSummary } from "../../api/asyncSpark";
 import { drainHint, getEngineLoad, type EngineLoadRow } from "../../api/engineLoad";
 import { useAuth } from "../../lib/auth";
 import { cn } from "../../lib/cn";
@@ -26,6 +27,14 @@ export const EngineLoadStrip = () => {
   const workers = load.data?.workers_online;
   const busy = load.data?.workers_busy;
   const hint = drainHint(load.data);
+  const asyncSpark = useQuery({
+    queryKey: ["async-spark-summary", token],
+    queryFn: () => getAsyncSparkSummary(api),
+    retry: false
+  });
+  const parked = asyncSpark.data?.parked;
+  const parkedCap =
+    asyncSpark.data && load.data?.workers_online ? asyncSpark.data.max_in_flight_per_worker * load.data.workers_online : null;
 
   return (
     <section className="ops-signal-card" aria-labelledby="engine-load-title">
@@ -90,6 +99,13 @@ export const EngineLoadStrip = () => {
           })}
         </ul>
       )}
+      {asyncSpark.data?.enabled && parked != null ? (
+        <p className="ops-load-row__detail">
+          Parked on Spark: {parked}
+          {parkedCap ? ` of ${parkedCap} allowed` : ""}
+          {asyncSpark.data.overdue ? ` · ${asyncSpark.data.overdue} not checked recently` : ""}
+        </p>
+      ) : null}
     </section>
   );
 };

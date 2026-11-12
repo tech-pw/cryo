@@ -29,6 +29,8 @@ class AsyncSparkEntry:
     spark: dict[str, Any] = field(default_factory=dict)
     conflict_attempt: int = 0
     job_started_at: float = 0.0
+    # When this step was parked; 0 for entries written before #491.
+    parked_at: float = 0.0
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), sort_keys=True)
@@ -45,6 +47,7 @@ class AsyncSparkEntry:
             spark=dict(payload.get("spark") or {}),
             conflict_attempt=int(payload.get("conflict_attempt") or 0),
             job_started_at=float(payload.get("job_started_at") or 0.0),
+            parked_at=float(payload.get("parked_at") or 0.0),
         )
 
 
@@ -65,11 +68,45 @@ class AsyncSparkRegistry(Protocol):
 
     def parked_count(self) -> int: ...
 
+    def mark_checked(self, job_ids: list[str], at: float) -> None: ...
+
+    def describe(self, job_ids: list[str]) -> dict[str, ParkedJob]: ...
+
+    def overdue_count(self, due_before: float) -> int: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ParkedJob:
+    """What the UI shows for a parked job (#491)."""
+
+    job_id: str
+    step_index: int
+    spark_ref: str | None
+    parked_at: float | None
+    last_checked_at: float | None
+    next_check_at: float | None
+
 
 class InMemoryAsyncSparkRegistry:
     def __init__(self) -> None:
         self._entries: dict[str, AsyncSparkEntry] = {}
         self._due: dict[str, float] = {}
+        self._checked: dict[str, float] = {}
+
+    def mark_checked(self, job_ids: list[str], at: float) -> None:
+        for job_id in job_ids:
+            if job_id in self._entries:
+                self._checked[job_id] = at
+
+    def describe(self, job_ids: list[str]) -> dict[str, ParkedJob]:
+        return {
+            job_id: _parked_job(entry, self._checked.get(job_id), self._due.get(job_id))
+            for job_id in job_ids
+            if (entry := self._entries.get(job_id)) is not None
+        }
+
+    def overdue_count(self, due_before: float) -> int:
+        return sum(1 for at in self._due.values() if at < due_before)
 
     def park(self, entry: AsyncSparkEntry, *, next_check_at: float) -> None:
         self._entries[entry.job_id] = entry
@@ -84,6 +121,7 @@ class InMemoryAsyncSparkRegistry:
     def clear(self, job_id: str) -> None:
         self._entries.pop(job_id, None)
         self._due.pop(job_id, None)
+        self._checked.pop(job_id, None)
 
     def owned_count(self, owner: str) -> int:
         return sum(1 for entry in self._entries.values() if entry.owner == owner)
@@ -127,6 +165,7 @@ class RedisAsyncSparkRegistry:
         previous = self.get(job_id)
         pipe = self._redis.pipeline()
         pipe.hdel(self._state_key(), job_id)
+        pipe.hdel(self._checked_key(), job_id)
         pipe.zrem(self._due_key(), job_id)
         if previous is not None:
             pipe.srem(self._owner_key(previous.owner), job_id)
@@ -155,6 +194,35 @@ class RedisAsyncSparkRegistry:
     def parked_count(self) -> int:
         return int(self._redis.hlen(self._state_key()) or 0)
 
+    def mark_checked(self, job_ids: list[str], at: float) -> None:
+        if job_ids:
+            self._redis.hset(self._checked_key(), mapping={job_id: at for job_id in job_ids})
+
+    def describe(self, job_ids: list[str]) -> dict[str, ParkedJob]:
+        if not job_ids:
+            return {}
+        pipe = self._redis.pipeline()
+        pipe.hmget(self._state_key(), job_ids)
+        pipe.hmget(self._checked_key(), job_ids)
+        for job_id in job_ids:
+            pipe.zscore(self._due_key(), job_id)
+        raws, checked, *due = pipe.execute()
+        out: dict[str, ParkedJob] = {}
+        for job_id, raw, checked_at, due_at in zip(job_ids, raws, checked, due, strict=True):
+            if raw:
+                out[job_id] = _parked_job(
+                    AsyncSparkEntry.from_json(raw),
+                    float(checked_at) if checked_at is not None else None,
+                    float(due_at) if due_at is not None else None,
+                )
+        return out
+
+    def overdue_count(self, due_before: float) -> int:
+        return int(self._redis.zcount(self._due_key(), "-inf", f"({due_before}") or 0)
+
+    def _checked_key(self) -> str:
+        return f"{self._prefix}:checked"
+
     def _state_key(self) -> str:
         return f"{self._prefix}:state"
 
@@ -163,3 +231,17 @@ class RedisAsyncSparkRegistry:
 
     def _owner_key(self, owner: str) -> str:
         return f"{self._prefix}:owner:{owner}"
+
+
+def _parked_job(
+    entry: AsyncSparkEntry, checked_at: float | None, due_at: float | None
+) -> ParkedJob:
+    ref = entry.spark.get("ref")
+    return ParkedJob(
+        job_id=entry.job_id,
+        step_index=entry.step_index,
+        spark_ref=str(ref) if ref else None,
+        parked_at=entry.parked_at or None,
+        last_checked_at=checked_at,
+        next_check_at=due_at,
+    )

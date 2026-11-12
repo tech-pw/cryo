@@ -38,6 +38,7 @@ import { Input } from "../../components/ui/input";
 import { MetricGrid, MetricTile } from "../../components/ui/metric-grid";
 import { RunLanes } from "../../components/charts";
 import { StatusTag, RunKindTag } from "../../components/status";
+import { ParkedSparkChip, useParkedJobs } from "../../components/ParkedSparkChip";
 import { describeCronSchedule } from "../../components/operations/scheduleSummary";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { useRunLiveEvents, isTerminalRunStatus } from "../../hooks/useRunLiveEvents";
@@ -541,6 +542,9 @@ export const RunDetail = () => {
   const jobRows = useMemo(() => snapshot?.jobs ?? jobs.data ?? [], [snapshot?.jobs, jobs.data]);
   const runFinished = runTerminal || isTerminalRunStatus(runData?.status);
   const statusChips = useMemo(() => jobStatusChips(jobRows), [jobRows]);
+  const parkedJobs = useParkedJobs(
+    useMemo(() => jobRows.filter((job) => job.status.toLowerCase() === "running").map((job) => job.id), [jobRows])
+  );
   const filteredJobs = useMemo(() => {
     const query = tableQuery.trim().toLowerCase();
     const matched = jobRows.filter((job) => {
@@ -671,7 +675,15 @@ export const RunDetail = () => {
       {
         id: "status",
         header: "Status",
-        cell: ({ row }) => <StatusTag status={row.original.status} />
+        cell: ({ row }) => {
+          const parked = parkedJobs.get(row.original.id);
+          return (
+            <div className="flex flex-wrap items-center gap-1">
+              <StatusTag status={row.original.status} />
+              {parked ? <ParkedSparkChip job={parked} /> : null}
+            </div>
+          );
+        }
       },
       {
         id: "timeline",
@@ -727,7 +739,7 @@ export const RunDetail = () => {
         )
       }
     ],
-    [forceAdmit, runData?.created_at, runData?.finished_at]
+    [forceAdmit, parkedJobs, runData?.created_at, runData?.finished_at]
   );
 
   if (!runId) {

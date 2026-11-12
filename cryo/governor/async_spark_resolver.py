@@ -62,6 +62,7 @@ def resolve_parked_spark_jobs(
     entries = registry.due(current, limit)
     if not entries:
         return AsyncSparkResolveResult()
+    registry.mark_checked([entry.job_id for entry in entries], current)
     statuses = _job_statuses(store, [entry.job_id for entry in entries])
     handed_back = still_running = dropped = lookup_errors = 0
     for entry in entries:
