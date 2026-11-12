@@ -312,7 +312,11 @@ async def ingest_from_query_events(
                     "is_equality": c.is_equality,
                     "is_range": c.is_range,
                 }
-                for c in predicate_info.filter_columns
+                for c in (
+                    predicate_info.filter_columns_for(table_name)
+                    if table_name
+                    else predicate_info.filter_columns
+                )
             ]
             if predicate_info
             else event.get("filter_columns"),
