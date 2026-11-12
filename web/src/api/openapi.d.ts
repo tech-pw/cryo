@@ -1814,7 +1814,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Aws Integration */
+        /**
+         * Get Aws Integration
+         * @description The source's AWS integration, or null when it has none.
+         *
+         *     Settings asks this for every source on every visit; most sources have no integration,
+         *     and a 404 for each showed up as console errors and failed requests in monitoring (#498).
+         */
         get: operations["get_aws_integration_api_v1_sources__source_id__aws_integration_get"];
         put?: never;
         /** Create Aws Integration */
@@ -6905,6 +6911,11 @@ export interface components {
             catalogs: components["schemas"]["CatalogCapability"][];
             /** Matrix */
             matrix: components["schemas"]["OperationCapability"][];
+            /**
+             * Scheduling
+             * @default []
+             */
+            scheduling: components["schemas"]["SchedulingCapability"][];
         };
         /** CatalogCapability */
         CatalogCapability: {
@@ -12066,6 +12077,28 @@ export interface components {
             /** Regret Ratio */
             regret_ratio: number;
         };
+        /**
+         * SchedulingCapability
+         * @description A way a maintenance run can be started, independent of engine and operation.
+         */
+        SchedulingCapability: {
+            /** Trigger */
+            trigger: string;
+            /** Label */
+            label: string;
+            maturity: components["schemas"]["MaturityTier"];
+            /** Summary */
+            summary: string;
+            /**
+             * Limitations
+             * @default []
+             */
+            limitations: string[];
+            /** Owner */
+            owner: string;
+            /** Evidence */
+            evidence: components["schemas"]["CapabilityEvidence"][];
+        };
         /** SchemaCostDashboardResponse */
         SchemaCostDashboardResponse: {
             /** Items */
@@ -15720,7 +15753,9 @@ export interface operations {
                 filter?: string | null;
                 sort?: string | null;
                 limit?: number;
+                /** @description Position of the page when cursor is omitted. Ignored when cursor is set, because a cursor resumes after the last row instead of at an offset. */
                 offset?: number;
+                /** @description Opaque keyset cursor from the previous page. Resumes strictly after that row (its sort values and table id) and is bound to the same filter, sort, removed mode and effective_provenance. An older offset cursor is rejected. */
                 cursor?: string | null;
                 freshness_breach?: boolean;
                 maintenance_overdue?: boolean;
@@ -18262,7 +18297,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AWSIntegrationRead"];
+                    "application/json": components["schemas"]["AWSIntegrationRead"] | null;
                 };
             };
             /** @description Validation Error */

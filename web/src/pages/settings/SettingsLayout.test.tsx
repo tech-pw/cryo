@@ -41,7 +41,7 @@ describe("SettingsLayout", () => {
   it("uses the settings subtitle and hides Admin from a viewer", () => {
     renderLayout();
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
-    expect(screen.getByText("What is connected, and who may call the model?")).toBeInTheDocument();
+    expect(screen.getByText("Settings for this Cryo install.")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Admin" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Connections" })).toHaveAttribute("href", "/settings/connections");
     expect(screen.getByRole("link", { name: "Access & policy" })).toHaveAttribute("href", "/settings/access");

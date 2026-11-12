@@ -1,6 +1,7 @@
 import { lazy } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 
+import { Alert } from "../../components/ui/alert";
 import { useAuth } from "../../lib/auth";
 import { SettingsLayout } from "./SettingsLayout";
 
@@ -28,13 +29,13 @@ export const SettingsAiHome = () => {
   if (tab === "skillsets") {
     if (role !== "admin") return <Navigate to="/settings/ai" replace />;
     return (
-      <SettingsLayout>
+      <SettingsLayout title="Skillsets" subtitle="Reusable instructions Ask Cryo can follow.">
         <Skillsets />
       </SettingsLayout>
     );
   }
   return (
-    <SettingsLayout>
+    <SettingsLayout title="AI & models" subtitle="Who may call the model, and through which provider.">
       <AiAccessTable />
       <p className="settings-note mt-3 text-sm text-muted-foreground">
         <Link to="/settings/ai/models" className="text-primary underline underline-offset-2">
@@ -47,7 +48,7 @@ export const SettingsAiHome = () => {
 };
 
 export const SettingsAccessHome = () => (
-  <SettingsLayout>
+  <SettingsLayout title="Access & policy" subtitle="Who can see and change what, and which policies apply.">
     <AccessControl />
     <div className="mt-8">
       <PoliciesTab />
@@ -57,9 +58,19 @@ export const SettingsAccessHome = () => (
 
 export const SettingsAdminHome = () => {
   const { role } = useAuth();
-  if (role !== "admin") return <Navigate to="/settings/connections" replace />;
+  if (role !== "admin") {
+    return (
+      <SettingsLayout title="Admin" subtitle="Operational controls for this Cryo install.">
+        <Alert
+          variant="info"
+          title="Admin role required"
+          description={`Your role is ${role ?? "unknown"}. Ask an admin to open this page or to change your role.`}
+        />
+      </SettingsLayout>
+    );
+  }
   return (
-    <SettingsLayout>
+    <SettingsLayout title="Admin" subtitle="Operational controls for this Cryo install.">
       <Connections embedded forcedTab="ops" />
     </SettingsLayout>
   );
