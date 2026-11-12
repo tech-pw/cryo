@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import LayoutRecommendation, QueryPattern, Source, Table, TableStats
+from cryo.optimizer.schema_columns import resolve_columns, table_schema_columns
 from cryo.telemetry.patterns import get_recommended_sort_columns, get_table_query_patterns
 
 logger = logging.getLogger(__name__)
@@ -328,6 +329,14 @@ def analyze_table_layout(
 
         # Get recommended columns based on query patterns
         recommended_cols, strategy = get_recommended_sort_columns(patterns)
+        schema = table_schema_columns(session, table_id)
+        if schema:
+            # Parsed query text can yield aliases or table names; keep real columns (#517).
+            recommended_cols, _unknown = resolve_columns(recommended_cols, schema)
+            if not recommended_cols:
+                strategy = "none"
+            elif strategy == "zorder" and len(recommended_cols) < 2:
+                strategy = "sort"
         analysis.recommended_columns = recommended_cols
         analysis.recommended_strategy = LayoutStrategy(strategy)
 

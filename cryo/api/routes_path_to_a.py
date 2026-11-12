@@ -132,7 +132,12 @@ def _sort_columns(session: Session, table_id: uuid.UUID) -> list[str]:
         column = item.get("column") if isinstance(item, Mapping) else item
         if isinstance(column, str) and column:
             columns.append(column)
-    return columns
+    # Offer only columns the table has: an unknown one fails at apply time (#517). With no
+    # scanned schema nothing can be checked, so no sort step is offered.
+    from cryo.optimizer.schema_columns import resolve_columns, table_schema_columns
+
+    resolved, _unknown = resolve_columns(columns, table_schema_columns(session, table_id))
+    return resolved
 
 
 def _property_changes(session: Session, table_id: uuid.UUID) -> dict[str, str]:

@@ -33,6 +33,28 @@ class PredicateInfo:
     projection_columns: list[str] = field(default_factory=list)
     tables_referenced: list[str] = field(default_factory=list)
     query_type: Literal["SELECT", "INSERT", "UPDATE", "DELETE", "OTHER"] = "OTHER"
+    # Lowercased alias -> lowercased bare table name, e.g. {"o": "orders"}.
+    table_aliases: dict[str, str] = field(default_factory=dict)
+
+    def filter_columns_for(self, table_name: str) -> list[ColumnReference]:
+        """Filter columns that belong to ``table_name`` (#517).
+
+        A column qualified with another table's name or alias is that table's, and a "column"
+        spelled like a referenced table is a parse slip. Unqualified columns in a join can't be
+        attributed and are kept; the schema check downstream drops any that aren't real.
+        """
+        own = table_name.rsplit(".", 1)[-1].lower()
+        qualifiers = {own} | {a for a, t in self.table_aliases.items() if t == own}
+        table_names = {ref.rsplit(".", 1)[-1].lower() for ref in self.tables_referenced}
+        kept: list[ColumnReference] = []
+        for ref in self.filter_columns:
+            qualifier = (ref.table_alias or "").rsplit(".", 1)[-1].lower()
+            if qualifier and qualifier not in qualifiers:
+                continue
+            if ref.column.lower() in table_names:
+                continue
+            kept.append(ref)
+        return kept
 
 
 @dataclass(frozen=True)
@@ -186,6 +208,8 @@ def _parse_with_sqlglot(sql: str) -> PredicateInfo | None:
             info.tables_referenced.append(f"{schema}.{name}")
         elif name:
             info.tables_referenced.append(name)
+        if name and table.alias:
+            info.table_aliases[table.alias.lower()] = name.lower()
 
     where = parsed.find(exp.Where)
     if where is not None:
@@ -266,6 +290,27 @@ def _extract_sqlglot_filter_columns(where: Any, info: PredicateInfo) -> None:
         record(column, None, False, False)
 
 
+_CLAUSE_KEYWORDS = frozenset(
+    {
+        "WHERE",
+        "JOIN",
+        "LEFT",
+        "RIGHT",
+        "INNER",
+        "OUTER",
+        "FULL",
+        "CROSS",
+        "ON",
+        "GROUP",
+        "ORDER",
+        "LIMIT",
+        "HAVING",
+        "UNION",
+        "USING",
+    }
+)
+
+
 def _parse_with_regex(sql: str) -> PredicateInfo:
     info = PredicateInfo()
 
@@ -287,6 +332,9 @@ def _parse_with_regex(sql: str) -> PredicateInfo:
         table_name = match.group(1).strip("\"'")
         if table_name.lower() not in ("select", "from", "where", "join"):
             info.tables_referenced.append(table_name)
+            alias = match.group(2)
+            if alias and alias.upper() not in _CLAUSE_KEYWORDS:
+                info.table_aliases[alias.lower()] = table_name.rsplit(".", 1)[-1].lower()
 
     # Extract SELECT columns (projections)
     select_match = _SELECT_PATTERN.search(sql)

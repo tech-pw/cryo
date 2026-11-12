@@ -399,6 +399,7 @@ def aggregate_from_iceberg_query_log(
             total_matched += 1
             window_query_counts[table.id] += 1
             predicate_info = parse_query_predicates(query_text)
+            predicate_info.filter_columns = predicate_info.filter_columns_for(table_name)
             selectivity = _selectivity_for_query(
                 inputs_json, schema_name=schema_name, table_name=table_name
             )

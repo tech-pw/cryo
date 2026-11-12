@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from cryo.db.models import LayoutRecommendation, QueryPattern, Table, TableStats
 from cryo.optimizer.pto.candidate_space import PtoPattern, build_candidate_space
 from cryo.optimizer.pto.score_heuristic import score_candidates
+from cryo.optimizer.schema_columns import resolve_columns, table_schema_columns
 
 PTO_MODEL = "heuristic_v1"
 
@@ -132,7 +133,13 @@ def generate_pto_recommendation(
             )
         if recommendation.status != "pending":
             return PtoRecommendationResult(None, "layout_recommendation_not_pending", len(ranked))
-    recommended_columns = [{"column": column} for column in candidate.sort_columns]
+    schema = table_schema_columns(session, table_id)
+    sort_columns = list(candidate.sort_columns)
+    if schema:
+        sort_columns, _unknown = resolve_columns(sort_columns, schema)
+        if not sort_columns:
+            return PtoRecommendationResult(None, "no_sort_column_in_schema", len(ranked))
+    recommended_columns = [{"column": column} for column in sort_columns]
     if recommendation is None:
         recommendation = LayoutRecommendation(
             id=uuid.uuid4(),
