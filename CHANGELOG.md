@@ -107,6 +107,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Fixed
 - Table overview shows cooldown as a short local-time line linking to the eligibility checklist instead of the raw reason string (#522).
+- Runs whose skipped operations had nothing to do are no longer partial; table runs are time-ordered and queue closes show as closed without running instead of failures (#521).
 - Helm: a prod render fails when one image digest is pinned under two repositories, or a digest is malformed (#486).
 - Spark on Kubernetes: a step whose pod is stuck in ImagePullBackOff/ErrImagePull/InvalidImageName/CreateContainerConfigError fails after a 3-minute grace and frees its Job, pod and Secret instead of waiting for the ~2h deadline (#485).
 - Home's "Latest nightly maintenance" card follows the worker-path nightly run, not only batch-coordinator runs, and says when the newest nightly run is more than 36h old. `GET /runs` accepts `pipeline=nightly`, using the same rule as the Tables funnel (#492).

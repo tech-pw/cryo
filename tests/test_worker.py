@@ -648,3 +648,35 @@ def test_default_engine_factory_does_not_override_explicit_destination_id() -> N
     )
     engine = default_engine_factory(destination)
     assert engine.config["destination_id"] == "explicit-override"
+
+
+def test_requested_operation_with_nothing_to_do_does_not_make_the_run_partial() -> None:
+    """#521: compaction skipped for too few small files is a success, not a partial run."""
+    queue, locks, store = _worker_fixture()
+    job = store.get_job("job-1")
+    job.params = {
+        "min_small_files": 10_000,
+        "chunk_size_gb": 100,
+        "requested_operations": ["optimize", "expire_snapshots"],
+    }
+    engine = FakeMaintenanceEngine()
+
+    result = Worker(queue, store, lambda destination: engine, locks).process_next()
+
+    assert result is not None
+    assert result.status is JobStatus.SUCCEEDED
+    assert not result.error
+    assert [record.action for record in store.audit] == [OperationType.EXPIRE_SNAPSHOTS]
+
+
+def test_nothing_to_do_skip_classification() -> None:
+    from cryo.planner.planner import is_nothing_to_do_skip
+
+    assert is_nothing_to_do_skip("Skipped optimize: table has 0 small files below threshold 5.")
+    assert is_nothing_to_do_skip(
+        "Skipped expire_snapshots: latest scan shows 1 snapshot(s), no more than retain_last=1 "
+        "keeps, so nothing can expire."
+    )
+    assert not is_nothing_to_do_skip(
+        "Skipped optimize: table is unpartitioned and total size is unknown."
+    )

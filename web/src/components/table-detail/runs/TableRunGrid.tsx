@@ -48,7 +48,7 @@ const TONE_LABEL: Record<CellTone, string> = {
   deferred: "Deferred",
   retry: "Up for retry",
   skipped: "Skipped",
-  removed: "Cancelled",
+  removed: "Closed without running",
   none: "No status"
 };
 
@@ -162,7 +162,8 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
   const counts = {
     success: allColumns.filter((column) => column.tone === "success").length,
     failed: allColumns.filter((column) => column.tone === "failed").length,
-    active: allColumns.filter((column) => isActiveTone(column.tone)).length
+    active: allColumns.filter((column) => isActiveTone(column.tone)).length,
+    closed: allColumns.filter((column) => column.tone === "removed").length
   };
   const shownChanges = columns.filter((column): column is ChangeColumn => column.kind === "change");
   const changeCount = shownChanges.reduce((sum, column) => sum + column.entries.length, 0);
@@ -179,6 +180,14 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
             <span className="td-runs-count" data-tone="success">{counts.success} succeeded</span>
             {counts.failed ? <> · <span className="td-runs-count" data-tone="failed">{counts.failed} failed</span></> : null}
             {counts.active ? <> · <span className="td-runs-count" data-tone="running">{counts.active} in progress</span></> : null}
+            {counts.closed ? (
+              <>
+                {" "}
+                · <span className="td-runs-count" title="Closed by the queue before any operation ran; not counted as failures.">
+                  {counts.closed} closed without running
+                </span>
+              </>
+            ) : null}
             {skippedWithWork ? (
               <>
                 {" "}
