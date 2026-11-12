@@ -157,7 +157,7 @@ describe("Home overview", () => {
   });
   it("reads only the last fourteen batch runs", async () => {
     renderHome();
-    await waitFor(() => expect(listRuns).toHaveBeenCalledWith(expect.anything(), { pipeline: "batch", limit: 14 }));
+    await waitFor(() => expect(listRuns).toHaveBeenCalledWith(expect.anything(), { pipeline: "nightly", limit: 14 }));
     expect(getDatalakeDashboard).toHaveBeenCalledWith(expect.anything(), { top_limit: 1, hot_limit: 5 });
   });
   it("refreshes read models without starting maintenance", async () => {

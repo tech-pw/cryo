@@ -103,6 +103,16 @@ export const latestBatchRun = (runs: readonly RunRead[]): RunRead | null => {
   return batches[0] ?? null;
 };
 
+/** A fleet nightly run from either pipeline: the batch coordinator, or the scheduler's cron preset. */
+export const isNightlyRun = (run: RunRead): boolean =>
+  isBatchPipeline(run.summary) || (run.kind === "scheduled" && run.trigger === "cron");
+
+export const latestNightlyRun = (runs: readonly RunRead[]): RunRead | null => {
+  const nightly = runs.filter(isNightlyRun);
+  nightly.sort((a, b) => createdAtMillis(b) - createdAtMillis(a));
+  return nightly[0] ?? null;
+};
+
 export interface NightlyRunView {
   status: string;
   succeededSelected: string;

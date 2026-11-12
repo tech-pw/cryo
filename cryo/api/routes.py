@@ -132,7 +132,12 @@ from cryo.api.schemas import (
 )
 from cryo.api.security import Principal, Role, principal_from_token
 from cryo.api.serializers import table_to_read
-from cryo.api.table_maintenance import maintenance_summaries, score_delta_expr, tables_funnel
+from cryo.api.table_maintenance import (
+    maintenance_summaries,
+    nightly_run_filter,
+    score_delta_expr,
+    tables_funnel,
+)
 from cryo.api.table_view_filters import build_table_view_filter
 from cryo.api.validators import validate_cron_field
 from cryo.config import Settings, get_settings
@@ -2418,7 +2423,10 @@ def list_runs(
     )
     if kind:
         stmt = stmt.where(MaintenanceRun.kind == kind)
-    if pipeline:
+    if pipeline == "nightly":
+        # Fleet nightly runs from either pipeline, the same rule the Tables funnel uses.
+        stmt = stmt.where(nightly_run_filter())
+    elif pipeline:
         stmt = stmt.where(MaintenanceRun.summary["pipeline"].astext == pipeline)
     if preset_id is not None:
         stmt = stmt.where(MaintenanceRun.preset_id == preset_id)

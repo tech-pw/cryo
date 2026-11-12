@@ -457,20 +457,27 @@ def build_funnel(rows: Iterable[FunnelRow]) -> tuple[list[FunnelNode], list[Funn
     return nodes, links
 
 
-def latest_batch_run(session: Session) -> MaintenanceRun | None:
-    """Newest fleet nightly run.
+def nightly_run_filter() -> ColumnElement[bool]:
+    """A fleet nightly run, from either pipeline.
 
     The batch coordinator stamps ``summary.pipeline = "batch"``. The scheduler's
     nightly preset does not: it writes ``kind="scheduled"`` and ``trigger="cron"``
     with a null summary. Scans and one-table runs are neither, so they cannot hide
     the nightly run by being newer.
     """
-    nightly = or_(
+    return or_(
         MaintenanceRun.summary["pipeline"].as_string() == "batch",
         and_(MaintenanceRun.kind == "scheduled", MaintenanceRun.trigger == "cron"),
     )
+
+
+def latest_batch_run(session: Session) -> MaintenanceRun | None:
+    """Newest fleet nightly run."""
     return session.scalars(
-        select(MaintenanceRun).where(nightly).order_by(MaintenanceRun.created_at.desc()).limit(1)
+        select(MaintenanceRun)
+        .where(nightly_run_filter())
+        .order_by(MaintenanceRun.created_at.desc())
+        .limit(1)
     ).first()
 
 

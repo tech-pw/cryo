@@ -22,7 +22,7 @@ import { optionalNumber } from "../lib/batchSummary";
 import { formatNumber } from "../lib/format";
 import { freshnessCatalogHref } from "../lib/freshness";
 import {
-  latestBatchRun,
+  latestNightlyRun,
   reclaimInputFromImpact,
   reclaimYesterdayDisplay
 } from "../lib/nowStrip";
@@ -104,7 +104,7 @@ export const DatalakeHealth = () => {
   });
   const nightlyRuns = useQuery({
     queryKey: ["health-nightly-runs", token, NIGHTS],
-    queryFn: () => listRuns(api, { pipeline: "batch", limit: NIGHTS }),
+    queryFn: () => listRuns(api, { pipeline: "nightly", limit: NIGHTS }),
     retry: 1,
     refetchInterval: LIVE_MS
   });
@@ -135,7 +135,7 @@ export const DatalakeHealth = () => {
 
   const data = dashboard.data;
   const runs = nightlyRuns.data ?? [];
-  const latest = nightlyRuns.isSuccess ? latestBatchRun(runs) : null;
+  const latest = nightlyRuns.isSuccess ? latestNightlyRun(runs) : null;
   const activeRun = runs.find((run) => !run.finished_at && nightOutcome(run) === "running") ?? null;
   const failedCount = latest ? optionalNumber(latest.summary, "failed") : null;
   const pauses = controls.isSuccess ? activePauses(controls.data) : null;
