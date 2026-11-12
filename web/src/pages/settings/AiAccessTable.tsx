@@ -66,6 +66,7 @@ export function AiAccessTable() {
         <Badge variant="outline">Read-only</Badge>
       </div>
       <SimpleTable
+        label="AI routes"
         className="px-1 pb-1"
         columns={[
           { title: "Capability", dataIndex: "capability", key: "capability" },

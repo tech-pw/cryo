@@ -96,6 +96,13 @@ export const healthScoreColor = (score: number): string => {
   return cryoColors.gradeF;
 };
 
+/** healthScoreColor for text: the success and warning hues are under 4.5:1 as small text. */
+export const healthScoreTextColor = (score: number): string => {
+  if (score >= 80) return "var(--color-status-success-fg)";
+  if (score >= 60) return "var(--color-status-warning-fg)";
+  return "var(--color-status-danger)";
+};
+
 export const CompactionTag = ({ needsCompaction }: { needsCompaction?: boolean | null }) => (
   <Badge variant={needsCompaction ? "warning" : "secondary"} className="whitespace-nowrap">
     {needsCompaction ? "Needs compaction" : "Healthy"}

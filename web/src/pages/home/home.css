@@ -92,7 +92,7 @@
 .home-overview .home-discoveries section > div:first-of-type { height: auto; min-height: 34px; padding-bottom: 10px; }
 .home-overview strong, .home-overview dd, .home-overview .home-run-value, .home-overview .home-grade-share { font-variant-numeric: tabular-nums; }
 .home-overview a:focus-visible, .home-overview summary:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 3px; border-radius: 4px; }
-.home-overview .home-data-age { color: var(--color-muted-subtle); }
+.home-overview .home-data-age { color: var(--color-muted); }
 .home-overview .home-now { margin-bottom: 20px; border: 1px solid var(--color-border-default); border-radius: 10px; background: var(--primitive-surface); }
 .home-overview .home-now ul { display: flex; flex-wrap: wrap; margin: 0; padding: 0; list-style: none; }
 .home-overview .home-now li { flex: 1 1 150px; min-width: 0; }
@@ -105,7 +105,7 @@
 .home-overview .home-now-label { color: var(--color-muted); font-size: 11px; line-height: 16px; }
 .home-overview .home-now-value { overflow: hidden; color: var(--color-ink); font-size: 13px; font-weight: 500; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
 .home-overview .home-now-value strong { font-weight: 600; }
-.home-overview .home-now-success { color: var(--color-status-success); }
+.home-overview .home-now-success { color: var(--color-status-success-fg); }
 .home-overview .home-now-warning { color: var(--color-status-warning); }
 .home-overview .home-now-danger { color: var(--color-status-danger); }
 .home-overview .home-night-history { margin-top: 4px; margin-bottom: 14px; }

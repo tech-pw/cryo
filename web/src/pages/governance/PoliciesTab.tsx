@@ -554,6 +554,7 @@ export const PoliciesTab = () => {
               <FormField<TierPolicyFormValues> name="source_id" label="Source">
                 {(field) => (
                   <select
+                    aria-label="Source"
                     className="h-[var(--control-height)] w-full rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
                     value={String(field.value ?? "")}
                     disabled={sources.isLoading}
@@ -570,6 +571,7 @@ export const PoliciesTab = () => {
               <FormField<TierPolicyFormValues> name="storage_class" label="Storage class">
                 {(field) => (
                   <select
+                    aria-label="Storage class"
                     className="h-[var(--control-height)] w-full rounded-[var(--radius-default)] border border-border bg-background px-3 text-sm"
                     value={String(field.value ?? "")}
                     onChange={(event) => field.onChange(event.target.value)}

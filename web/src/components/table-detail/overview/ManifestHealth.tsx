@@ -97,7 +97,7 @@ export const ManifestHealth = ({ stats }: { stats: TableStatsRead | null | undef
           <div key={fact.label} data-tone={fact.tone}>
             <dt>{fact.label}</dt>
             <dd>{fact.value}</dd>
-            <p>{fact.hint}</p>
+            <dd className="td-manifest-hint">{fact.hint}</dd>
           </div>
         ))}
       </dl>

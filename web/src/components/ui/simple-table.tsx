@@ -22,6 +22,8 @@ export interface SimpleTableProps<T> {
   emptyDescription?: string;
   className?: string;
   size?: "small" | "default";
+  /** Names the scroll container and makes it keyboard-focusable, so a wide table can be scrolled without a mouse. */
+  label?: string;
 }
 
 export function SimpleTable<T>({
@@ -32,7 +34,8 @@ export function SimpleTable<T>({
   emptyTitle = "No data",
   emptyDescription,
   className,
-  size = "default"
+  size = "default",
+  label
 }: SimpleTableProps<T>) {
   if (loading) {
     return <Skeleton className="h-32 w-full" />;
@@ -43,7 +46,10 @@ export function SimpleTable<T>({
   }
 
   return (
-    <div className={cn("overflow-x-auto", className)}>
+    <div
+      className={cn("overflow-x-auto", className)}
+      {...(label ? { role: "region", "aria-label": label, tabIndex: 0 } : {})}
+    >
       <table className={cn("td-schema-table w-full", size === "small" && "text-xs")}>
         <thead>
           <tr>

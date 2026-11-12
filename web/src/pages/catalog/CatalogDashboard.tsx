@@ -4,7 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { getMultiCatalogDashboard, type MultiCatalogDashboard } from "../../api/client";
 import { AsyncBoundary } from "../../components/AsyncBoundary";
 import { ChartCard } from "../../components/table-detail/ChartCard";
-import { healthScoreColor } from "../../components/status";
+import { healthScoreTextColor } from "../../components/status";
 import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Skeleton } from "../../components/ui/skeleton";
@@ -126,7 +126,7 @@ const CatalogRow = ({ catalog, selected, onSelect }: { catalog: CatalogStats; se
           </Badge>
           <span
             className="shrink-0 text-sm font-semibold tabular-nums"
-            style={{ color: healthScoreColor(score) }}
+            style={{ color: healthScoreTextColor(score) }}
             title="Average health score (0–100)"
           >
             {score}
