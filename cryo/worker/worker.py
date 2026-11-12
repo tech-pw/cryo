@@ -1866,6 +1866,7 @@ class Worker:
                 spark=state.to_dict(),
                 conflict_attempt=conflict_attempt,
                 job_started_at=job_wall_start,
+                parked_at=now,
             ),
             next_check_at=state.next_check_at(
                 now=now, poll_interval=async_spark.poll_interval_seconds

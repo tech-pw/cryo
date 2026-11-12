@@ -5368,6 +5368,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/async-spark/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Async Spark Summary */
+        get: operations["async_spark_summary_api_v1_async_spark_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/async-spark/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Parked Jobs
+         * @description Which of these jobs are parked on Spark, and when they were last checked.
+         */
+        post: operations["parked_jobs_api_v1_async_spark_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/{table_id}/quality-constraints": {
         parameters: {
             query?: never;
@@ -6607,6 +6644,19 @@ export interface components {
             filter?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** AsyncSparkSummary */
+        AsyncSparkSummary: {
+            /** Enabled */
+            enabled: boolean;
+            /** Parked */
+            parked: number | null;
+            /** Overdue */
+            overdue: number | null;
+            /** Max In Flight Per Worker */
+            max_in_flight_per_worker: number;
+            /** Poll Interval Seconds */
+            poll_interval_seconds: number;
         };
         /** AuditLogRead */
         AuditLogRead: {
@@ -10178,6 +10228,33 @@ export interface components {
             telemetry_coverage?: number | null;
             /** Telemetry Gap Tables */
             telemetry_gap_tables?: number | null;
+        };
+        /** ParkedJobRead */
+        ParkedJobRead: {
+            /** Job Id */
+            job_id: string;
+            /** Step Index */
+            step_index: number;
+            /** Spark Ref */
+            spark_ref: string | null;
+            /** Parked At */
+            parked_at: number | null;
+            /** Last Checked At */
+            last_checked_at: number | null;
+            /** Next Check At */
+            next_check_at: number | null;
+            /** Overdue */
+            overdue: boolean;
+        };
+        /** ParkedJobsQuery */
+        ParkedJobsQuery: {
+            /** Job Ids */
+            job_ids: string[];
+        };
+        /** ParkedJobsResponse */
+        ParkedJobsResponse: {
+            /** Jobs */
+            jobs: components["schemas"]["ParkedJobRead"][];
         };
         /**
          * PartitionAccessPoint
@@ -24551,6 +24628,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArchiveJobList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    async_spark_summary_api_v1_async_spark_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AsyncSparkSummary"];
+                };
+            };
+        };
+    };
+    parked_jobs_api_v1_async_spark_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ParkedJobsQuery"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParkedJobsResponse"];
                 };
             };
             /** @description Validation Error */
