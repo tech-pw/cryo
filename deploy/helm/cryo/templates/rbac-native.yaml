@@ -46,6 +46,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get", "list"]
+  # Warning events on a running step's pods, shown in the run console (#488).
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "delete", "patch"]

@@ -33,6 +33,7 @@ import { Alert } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { SparkPodsCard } from "../components/SparkPodsCard";
 import { MetricTile } from "../components/ui/stat";
 import { Skeleton } from "../components/ui/skeleton";
 import { useAuth } from "../lib/auth";
@@ -366,6 +367,8 @@ export const JobDetail = () => {
                 </Button>
               </ConfirmAction>
             ) : null}
+
+            {data.status === "running" && jobId ? <SparkPodsCard jobId={jobId} /> : null}
 
             {data.status === "failed" ? (
               <Card className="mb-4">

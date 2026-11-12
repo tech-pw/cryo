@@ -51,6 +51,7 @@ from cryo.api.routes_skip_history import router as skip_history_router
 from cryo.api.routes_smart_maintenance import router as smart_maintenance_router
 from cryo.api.routes_snapshots import router as snapshots_router
 from cryo.api.routes_sources import router as sources_router
+from cryo.api.routes_spark_pods import router as spark_pods_router
 from cryo.api.routes_table_config import router as table_config_router
 from cryo.api.routes_table_maintenance import router as table_maintenance_router
 from cryo.api.s3_log_config_routes import router as s3_log_config_router
@@ -251,6 +252,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(audit_router)
     app.include_router(impact_router)
     app.include_router(snapshots_router)
+    app.include_router(spark_pods_router)
     app.include_router(skip_history_router)
     app.include_router(engine_load_router)
     app.include_router(batch_router)
