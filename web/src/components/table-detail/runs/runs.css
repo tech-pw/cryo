@@ -2,9 +2,14 @@
   --tone-success: var(--color-status-success);
   --tone-failed: var(--color-status-danger);
   --tone-attention: var(--color-status-warning);
-  --tone-running: var(--color-chart-primary);
-  --tone-queued: var(--color-muted-subtle);
-  --tone-skipped: var(--color-border-strong);
+  /* Airflow task-state colours. */
+  --tone-running: #32cd32;
+  --tone-queued: #808080;
+  --tone-scheduled: #d2b48c;
+  --tone-deferred: #9370db;
+  --tone-retry: #ffd700;
+  --tone-skipped: #ff69b4;
+  --tone-removed: #d3d3d3;
   --tone-change: var(--color-ink);
   margin-top: 16px;
   padding: 20px;
@@ -148,6 +153,14 @@
 .td-grid-bar[data-tone="failed"] span { background: var(--tone-failed); }
 .td-grid-bar[data-tone="running"] span { background: var(--tone-running); }
 .td-grid-bar[data-tone="skipped"] span { background: var(--tone-skipped); }
+.td-grid-bar[data-tone="queued"] span { background: var(--tone-queued); }
+.td-grid-bar[data-tone="scheduled"] span { background: var(--tone-scheduled); }
+.td-grid-bar[data-tone="deferred"] span { background: var(--tone-deferred); }
+.td-grid-bar[data-tone="retry"] span { background: var(--tone-retry); }
+.td-grid-bar[data-tone="removed"] span { background: var(--tone-removed); }
+.td-grid-bar:is([data-tone="running"], [data-tone="queued"], [data-tone="scheduled"], [data-tone="deferred"], [data-tone="retry"]) span {
+  animation: td-pulse 1.4s ease-in-out infinite;
+}
 
 .td-grid-bar[data-selected],
 .td-grid-cell[data-selected] {
@@ -192,11 +205,14 @@
   animation: td-pulse 1.4s ease-in-out infinite;
 }
 .td-grid-cell[data-tone="queued"] {
-  background: transparent;
-  border-color: var(--tone-queued);
-  border-style: dashed;
+  background: var(--tone-queued);
+  animation: td-pulse 1.8s ease-in-out infinite;
 }
 .td-grid-cell[data-tone="skipped"] { background: var(--tone-skipped); }
+.td-grid-cell[data-tone="scheduled"] { background: var(--tone-scheduled); }
+.td-grid-cell[data-tone="deferred"] { background: var(--tone-deferred); animation: td-pulse 2.4s ease-in-out infinite; }
+.td-grid-cell[data-tone="retry"] { background: var(--tone-retry); animation: td-pulse 1.4s ease-in-out infinite; }
+.td-grid-cell[data-tone="removed"] { background: var(--tone-removed); }
 .td-grid-cell[data-tone="none"] {
   background: transparent;
   border-color: var(--color-border);
@@ -207,7 +223,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .td-grid-cell[data-tone="running"] { animation: none; }
+  .td-grid-cell, .td-grid-bar span { animation: none !important; }
   .td-grid-cell:hover { transform: none; }
 }
 
@@ -246,8 +262,12 @@
 .td-grid-legend li[data-tone="success"] i { background: var(--tone-success); }
 .td-grid-legend li[data-tone="failed"] i { background: var(--tone-failed); }
 .td-grid-legend li[data-tone="running"] i { background: var(--tone-running); }
-.td-grid-legend li[data-tone="queued"] i { border: 1px dashed var(--tone-queued); }
+.td-grid-legend li[data-tone="queued"] i { background: var(--tone-queued); }
 .td-grid-legend li[data-tone="skipped"] i { background: var(--tone-skipped); }
+.td-grid-legend li[data-tone="scheduled"] i { background: var(--tone-scheduled); }
+.td-grid-legend li[data-tone="deferred"] i { background: var(--tone-deferred); }
+.td-grid-legend li[data-tone="retry"] i { background: var(--tone-retry); }
+.td-grid-legend li[data-tone="removed"] i { background: var(--tone-removed); }
 .td-grid-legend li[data-tone="none"] i { border-color: var(--color-border); }
 .td-grid-bar--passed {
   justify-content: center;
@@ -414,6 +434,12 @@
   color: var(--tone-failed);
 }
 
+.td-run-queue { margin: 0.25rem 0 0; font-size: 0.8125rem; color: var(--color-muted); }
+.td-run-queue-basis { color: var(--color-muted-subtle); }
+.td-run-status:is([data-tone="queued"], [data-tone="scheduled"], [data-tone="deferred"], [data-tone="retry"]) {
+  background: color-mix(in srgb, var(--tone-queued) 14%, transparent);
+  animation: td-pulse 1.8s ease-in-out infinite;
+}
 .td-run-status[data-tone="running"] {
   background: color-mix(in srgb, var(--tone-running) 14%, transparent);
   color: var(--tone-running);

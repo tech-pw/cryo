@@ -1073,6 +1073,11 @@ class RunEffectivenessRead(BaseModel):
     headline: str | None = None
 
 
+class SkippedOperationRead(BaseModel):
+    operation: str
+    reason: str | None = None
+
+
 class TableRunRead(BaseModel):
     job_id: uuid.UUID
     run_id: uuid.UUID
@@ -1088,6 +1093,9 @@ class TableRunRead(BaseModel):
     after_stats: TableStatsSnapshotRead | None = None
     resource_estimate: RunResourceEstimateRead | None = None
     effectiveness: RunEffectivenessRead | None = None
+    # From the job's plan: what it will run, and what the planner left out and why.
+    planned_operations: list[str] = Field(default_factory=list)
+    skipped_operations: list[SkippedOperationRead] = Field(default_factory=list)
 
 
 class TableRunsResponse(BaseModel):

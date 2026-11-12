@@ -42,6 +42,7 @@ from cryo.api.routes_exclusions import table_router as table_hold_router
 from cryo.api.routes_explorer_views import router as explorer_views_router
 from cryo.api.routes_funnel import router as funnel_router
 from cryo.api.routes_impact import router as impact_router
+from cryo.api.routes_job_queue import router as job_queue_router
 from cryo.api.routes_partition_access import router as partition_access_router
 from cryo.api.routes_path_to_a import router as path_to_a_router
 from cryo.api.routes_preset_lifecycle import router as preset_lifecycle_router
@@ -251,6 +252,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(alerts_router)
     app.include_router(audit_router)
     app.include_router(impact_router)
+    app.include_router(job_queue_router)
     app.include_router(snapshots_router)
     app.include_router(spark_pods_router)
     app.include_router(skip_history_router)

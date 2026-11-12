@@ -545,8 +545,10 @@ class Worker:
         quiet_interval_sec: float = 1.0,
         quiet_max_wait_sec: float | None = 120.0,
         async_spark: AsyncSparkDispatch | None = None,
+        request_rescan: Callable[[str], bool] | None = None,
     ) -> None:
         self._async_spark = async_spark
+        self._request_rescan = request_rescan
         self._queue = queue
         self._store = store
         self._engine_factory = engine_factory or default_engine_factory
@@ -1499,6 +1501,7 @@ class Worker:
         )
         if final_status is JobStatus.SUCCEEDED:
             self._supersede_covered_jobs(job)
+            self._rescan_after_success(job)
         from cryo.governor.bandit_feedback import finalize_admission
 
         finalize_admission(
@@ -1875,6 +1878,21 @@ class Worker:
         logger.info(
             "Parked job %s step %d on Spark Job %s", job.id, index, state.ref or "(retry pending)"
         )
+
+    def _rescan_after_success(self, job: MaintenanceJobRecord) -> None:
+        """Queue a stats scan so the table shows its after-maintenance numbers right away.
+
+        Nightly batch runs are skipped: the batch coordinator rescans every table it
+        maintained once the whole run ends.
+        """
+        if self._request_rescan is None or _is_batch_trigger(job.run_trigger):
+            return
+        try:
+            self._request_rescan(job.table_id)
+        except Exception:  # noqa: BLE001 - a missed rescan only delays the after-stats
+            logger.warning(
+                "Post-maintenance rescan for %s not requested", job.table_id, exc_info=True
+            )
 
     def _supersede_covered_jobs(self, job: MaintenanceJobRecord) -> None:
         """Retire queued duplicates this success already did the work for.
@@ -3340,3 +3358,8 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def _is_batch_trigger(trigger: str | None) -> bool:
+    key = (trigger or "").lower()
+    return key == "cron" or key.startswith(("batch", "nightly", "schedul"))

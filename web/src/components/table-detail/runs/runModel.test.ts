@@ -124,7 +124,12 @@ describe("runModel", () => {
     expect(toneFor("running")).toBe("running");
     expect(toneFor("admitted")).toBe("queued");
     expect(toneFor("waiting")).toBe("queued");
-    expect(toneFor("cancelled")).toBe("skipped");
+    expect(toneFor("cancelled")).toBe("removed");
+    expect(toneFor("started")).toBe("running");
+    expect(toneFor("skipped")).toBe("skipped");
+    expect(toneFor("deferred")).toBe("deferred");
+    expect(toneFor("scheduled")).toBe("scheduled");
+    expect(toneFor("up_for_retry")).toBe("retry");
     expect(toneFor(null)).toBe("none");
   });
 
@@ -163,8 +168,34 @@ describe("runModel", () => {
       [run({ steps: [{ step_index: 0, operation_type: "convert_deletes", status: "succeeded" }] })],
       []
     );
-    expect(gridRows(columns)).toEqual(["convert_deletes", "optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"]);
-    expect(gridRows([])).toEqual(["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"]);
+    expect(gridRows(columns)).toEqual(["convert_deletes", "optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files", "stats_scan"]);
+    expect(gridRows([])).toEqual(["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files", "stats_scan"]);
+  });
+
+  it("fills an active run from its plan and marks planner skips", () => {
+    const [column] = buildRunColumns(
+      [
+        run({
+          status: "running",
+          finished_at: null,
+          steps: [{ step_index: 0, operation_type: "optimize", status: "started" }],
+          planned_operations: ["optimize", "expire_snapshots"],
+          skipped_operations: [{ operation: "remove_orphan_files", reason: "ran recently" }]
+        })
+      ],
+      []
+    );
+    expect(column.cells.get("optimize")?.tone).toBe("running");
+    expect(column.cells.get("expire_snapshots")?.tone).toBe("queued");
+    expect(column.cells.get("remove_orphan_files")).toMatchObject({ tone: "skipped", detail: "ran recently" });
+    expect(column.cells.get("stats_scan")?.tone).toBe("scheduled");
+  });
+
+  it("marks the stats scan done once after-stats exist, waiting just after the run", () => {
+    const done = buildRunColumns([run({ after_stats: { file_count: 1 } as never })], []);
+    expect(done[0].cells.get("stats_scan")?.tone).toBe("success");
+    const waiting = buildRunColumns([run({ finished_at: new Date().toISOString() })], []);
+    expect(waiting[0].cells.get("stats_scan")?.tone).toBe("queued");
   });
 
   it("reports before/after when both scans exist", () => {

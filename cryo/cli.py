@@ -476,6 +476,23 @@ class S3LogIngestRunner(DaemonRunner):
                 )
 
 
+def _post_maintenance_rescan(wiring: Any) -> Callable[[str], bool]:
+    from cryo.db.repositories.continuous_store import SQLContinuousStore
+    from cryo.db.session import SessionLocal
+
+    store = SQLContinuousStore(SessionLocal)
+
+    def request(table_id: str) -> bool:
+        return store.request_rescan(
+            table_id,
+            redis_client=wiring.redis_client,
+            trigger="post_maintenance",
+            requested_by="system:worker",
+        )
+
+    return request
+
+
 def _async_spark_registry(wiring: Any) -> Any:
     from cryo.queue.async_spark import RedisAsyncSparkRegistry
 
@@ -849,6 +866,11 @@ class WorkerRunner(DaemonRunner):
                     enabled=settings.worker_async_spark_dispatch,
                     max_in_flight=settings.worker_async_spark_max_in_flight,
                     poll_interval_seconds=settings.async_spark_poll_interval_seconds,
+                ),
+                request_rescan=(
+                    _post_maintenance_rescan(wiring)
+                    if settings.maintenance_rescan_enabled
+                    else None
                 ),
             )
             return self._worker

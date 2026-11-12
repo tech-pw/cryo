@@ -1125,6 +1125,23 @@ def _nearest_stats_snapshot(
     return session.scalars(query.limit(1)).first()
 
 
+def _plan_operations_payload(plan: Any) -> dict[str, list[Any]]:
+    """Planned and planner-skipped operation names from a job's stored plan."""
+    if not isinstance(plan, dict):
+        return {"planned_operations": [], "skipped_operations": []}
+    planned = [
+        str(op.get("type"))
+        for op in plan.get("operations") or []
+        if isinstance(op, dict) and op.get("type")
+    ]
+    skipped = [
+        {"operation": str(item.get("operation")), "reason": item.get("reason")}
+        for item in plan.get("skipped_operations") or []
+        if isinstance(item, dict) and item.get("operation")
+    ]
+    return {"planned_operations": planned, "skipped_operations": skipped}
+
+
 def _stats_snapshot_payload(row: TableStatsHistory | None) -> dict[str, object] | None:
     if row is None:
         return None
@@ -1334,6 +1351,7 @@ def table_runs(
                     steps, destinations_by_id.get(job.destination_id)
                 ),
                 "effectiveness": _run_effectiveness_payload(before_payload, after_payload),
+                **_plan_operations_payload(job.plan),
             }
         )
 

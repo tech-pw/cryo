@@ -856,6 +856,9 @@ export interface TableRunRead {
   before_stats?: TableStatsSnapshotRead | null;
   after_stats?: TableStatsSnapshotRead | null;
   resource_estimate?: RunResourceEstimateRead | null;
+  /** From the job's plan: operations it will run, and ones the planner left out. */
+  planned_operations?: string[];
+  skipped_operations?: Array<{ operation: string; reason?: string | null }>;
 }
 
 export interface TableRunsResponse {

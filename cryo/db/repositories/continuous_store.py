@@ -222,7 +222,14 @@ class SQLContinuousStore:
         except Exception as exc:
             logger.warning("Continuous audit %s for table %s failed: %s", action, table_id, exc)
 
-    def request_rescan(self, table_id: str, *, redis_client: Any) -> bool:
+    def request_rescan(
+        self,
+        table_id: str,
+        *,
+        redis_client: Any,
+        trigger: str = "continuous",
+        requested_by: str = "system:scheduler",
+    ) -> bool:
         """Queue a one-table scan so the planner sees the partitions the writer touched.
         False when the scan could not be requested; an already-active scan counts as done."""
         from cryo.db.repositories import datalake
@@ -232,8 +239,8 @@ class SQLContinuousStore:
         payload: dict[str, Any] = {
             "scope": "tables",
             "table_ids": [uuid.UUID(table_id)],
-            "trigger": "continuous",
-            "requested_by": "system:scheduler",
+            "trigger": trigger,
+            "requested_by": requested_by,
             "full_scan": True,
         }
         try:
@@ -257,7 +264,7 @@ class SQLContinuousStore:
                             "schema_names": [],
                             "cost_full_scan": False,
                             "full_scan": True,
-                            "trigger": "continuous",
+                            "trigger": trigger,
                         },
                     )
             return True

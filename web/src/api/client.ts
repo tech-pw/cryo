@@ -393,6 +393,16 @@ export const getTableHistory = (api: ApiOptions, id: UUID) =>
   apiFetch<{ items: Array<Record<string, unknown>> }>(`/tables/${id}/history`, api).then((payload) => payload.items);
 export const getTableRuns = (api: ApiOptions, id: UUID, query?: { limit?: number; offset?: number }) =>
   apiFetch<{ items: TableRunRead[] }>(`/tables/${id}/runs`, api, { query }).then((payload) => payload.items);
+export interface JobQueueStatus {
+  job_id: UUID;
+  status: string;
+  reason: string;
+  jobs_ahead: number | null;
+  eta_seconds: number | null;
+  eta_basis: string | null;
+}
+export const getJobQueueStatus = (api: ApiOptions, jobId: UUID) =>
+  apiFetch<JobQueueStatus>(`/jobs/${jobId}/queue-status`, api);
 export const getTableSkipEvaluations = (api: ApiOptions, id: UUID, query?: { limit?: number; offset?: number }) =>
   apiFetch<SkipEvaluationPage>(`/tables/${id}/skip-evaluations`, api, { query });
 export const getTableMaintenanceImpact = (api: ApiOptions, id: UUID, windowDays = 30) =>

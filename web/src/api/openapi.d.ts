@@ -5564,6 +5564,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{job_id}/queue-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Job Queue Status */
+        get: operations["get_job_queue_status_api_v1_jobs__job_id__queue_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/{table_id}/snapshots": {
         parameters: {
             query?: never;
@@ -9360,6 +9377,24 @@ export interface components {
              */
             force_admit: boolean;
         };
+        /** JobQueueStatus */
+        JobQueueStatus: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Status */
+            status: string;
+            /** Reason */
+            reason: string;
+            /** Jobs Ahead */
+            jobs_ahead?: number | null;
+            /** Eta Seconds */
+            eta_seconds?: number | null;
+            /** Eta Basis */
+            eta_basis?: string | null;
+        };
         /** JobRead */
         JobRead: {
             /**
@@ -12978,6 +13013,13 @@ export interface components {
              */
             evaluated_at: string;
         };
+        /** SkippedOperationRead */
+        SkippedOperationRead: {
+            /** Operation */
+            operation: string;
+            /** Reason */
+            reason?: string | null;
+        };
         /**
          * SkippedTableOps
          * @description Operations a new run did not queue because an active job already covers them.
@@ -14241,6 +14283,10 @@ export interface components {
             after_stats?: components["schemas"]["TableStatsSnapshotRead"] | null;
             resource_estimate?: components["schemas"]["RunResourceEstimateRead"] | null;
             effectiveness?: components["schemas"]["RunEffectivenessRead"] | null;
+            /** Planned Operations */
+            planned_operations?: string[];
+            /** Skipped Operations */
+            skipped_operations?: components["schemas"]["SkippedOperationRead"][];
         };
         /** TableRunsResponse */
         TableRunsResponse: {
@@ -25115,6 +25161,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImpactHistoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_job_queue_status_api_v1_jobs__job_id__queue_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobQueueStatus"];
                 };
             };
             /** @description Validation Error */
