@@ -152,6 +152,21 @@ describe("DecisionsPage", () => {
     expect(screen.getByText(VIEWER_REASON)).toBeInTheDocument();
   });
 
+  it("loads fleet SLA status only on the Approvals tab (#494)", async () => {
+    renderPage();
+    await screen.findByText("analytics.events");
+    expect(getSlaStatusDashboard).not.toHaveBeenCalled();
+  });
+
+  it("pages a long recommendation list instead of rendering every row (#494)", async () => {
+    const many = Array.from({ length: 120 }, (_, i) => ({ ...pending, id: `rec-${i}`, table_ref: `analytics.t${i}` }));
+    vi.mocked(listSmartLayoutRecommendations).mockResolvedValue({ items: many });
+    renderPage();
+    expect(await screen.findByText("analytics.t0")).toBeInTheDocument();
+    expect(screen.getByText("analytics.t49")).toBeInTheDocument();
+    expect(screen.queryByText("analytics.t50")).not.toBeInTheDocument();
+  });
+
   it("does not invent a skip count on the skipped tab", async () => {
     renderPage(["/decisions?tab=skipped"]);
     expect(await screen.findByRole("heading", { name: "No skip list is stored" })).toBeInTheDocument();

@@ -38,6 +38,7 @@ const DEFAULT_TAB: InsightsTab = "duplicates";
 const QUERY_WINDOW_HOURS = 24;
 const QUERY_LOG_SETUP = "/connections?tab=destinations";
 const SHARED_PATH_PAGE_SIZE = 25;
+const GROUP_PAGE_SIZE = 20;
 
 const isInsightsTab = (value: string | null): value is InsightsTab =>
   value === "duplicates" || value === "shared-paths" || value === "queries";
@@ -151,12 +152,14 @@ const DuplicatesPanel = () => {
     () => [...(clustersQuery.data?.clusters ?? [])].sort((a, b) => b.reclaimable_gb - a.reclaimable_gb),
     [clustersQuery.data?.clusters]
   );
+  const [shownGroups, setShownGroups] = useState(GROUP_PAGE_SIZE);
+  const shownClusters = useMemo(() => clusters.slice(0, shownGroups), [clusters, shownGroups]);
   const pairsQuery = useQuery({
-    queryKey: ["similarity-pairs", clusters.map((cluster) => cluster.cluster_id).join(",")],
+    queryKey: ["similarity-pairs", shownClusters.map((cluster) => cluster.cluster_id).join(",")],
     queryFn: async () => {
       // One group's failure must not blank the evidence of every other group.
       const pages = await Promise.allSettled(
-        clusters.map((cluster) =>
+        shownClusters.map((cluster) =>
           querySimilarityPairs(api, {
             table_ids: cluster.members.map((member) => member.table_id),
             min_score: 0,
@@ -168,11 +171,11 @@ const DuplicatesPanel = () => {
       const pairs: SimilarityPairRead[] = [];
       pages.forEach((page, index) => {
         if (page.status === "fulfilled") pairs.push(...page.value);
-        else failed.add(clusters[index].cluster_id);
+        else failed.add(shownClusters[index].cluster_id);
       });
       return { pairs, failed };
     },
-    enabled: clusters.length > 0
+    enabled: shownClusters.length > 0
   });
 
   const pairStatusFor = (clusterId: string) =>
@@ -241,8 +244,9 @@ const DuplicatesPanel = () => {
           }
         />
       ) : (
+        <>
         <ol className="flex flex-col gap-4">
-          {clusters.map((cluster, index) => {
+          {shownClusters.map((cluster, index) => {
             const matched = pairsForCluster(cluster, pairsQuery.data?.pairs ?? []);
             const pairStatus = pairStatusFor(cluster.cluster_id);
             const members = cluster.members
@@ -313,6 +317,17 @@ const DuplicatesPanel = () => {
             );
           })}
         </ol>
+        {clusters.length > shownClusters.length ? (
+          <div className="mt-4 flex items-center gap-3">
+            <Button variant="outline" onClick={() => setShownGroups((n) => n + GROUP_PAGE_SIZE)}>
+              Show {Math.min(GROUP_PAGE_SIZE, clusters.length - shownClusters.length)} more
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Showing {shownClusters.length} of {clusters.length} groups
+            </span>
+          </div>
+        ) : null}
+        </>
       )}
     </section>
   );

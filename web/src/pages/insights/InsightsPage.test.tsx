@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueryPerformanceData, SharedS3Report } from "../../api/client";
@@ -180,6 +180,26 @@ describe("InsightsPage", () => {
     const groups = screen.getAllByRole("listitem").filter((li) => li.textContent?.includes("Rank"));
     expect(groups[0]).not.toHaveTextContent("Pair evidence failed to load");
     expect(groups[1]).toHaveTextContent("Pair evidence failed to load");
+  });
+
+  it("renders 20 groups at a time and fetches pair evidence only for those (#494)", async () => {
+    const [first] = POPULATED_CLUSTERS.clusters;
+    const many = Array.from({ length: 25 }, (_, i) => ({
+      ...first,
+      cluster_id: `cluster-${i}`,
+      reclaimable_gb: 100 - i,
+      members: first.members.map((m) => ({ ...m, table_id: `${m.table_id}-${i}`, table_name: `${m.table_name}_${i}` }))
+    }));
+    vi.mocked(getSimilarityClusters).mockResolvedValue({ ...POPULATED_CLUSTERS, clusters: many });
+
+    renderPage();
+
+    expect(await screen.findByText("Showing 20 of 25 groups")).toBeInTheDocument();
+    expect(screen.queryByText("Rank 21")).not.toBeInTheDocument();
+    await waitFor(() => expect(querySimilarityPairs).toHaveBeenCalledTimes(20));
+    fireEvent.click(screen.getByRole("button", { name: "Show 5 more" }));
+    expect(await screen.findByText("Rank 25")).toBeInTheDocument();
+    expect(screen.queryByText(/Showing \d+ of 25 groups/)).not.toBeInTheDocument();
   });
 
   it("does not treat a missing query log as 0 queries", async () => {
