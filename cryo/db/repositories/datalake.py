@@ -161,6 +161,7 @@ def dashboard_datalake(
             TableStatsHistory.small_files_count,
             TableStatsHistory.overall_score,
         ),
+        since=_series_start(freshness_as_of, drift_limit),
     )
     drift_rows = list(
         session.execute(
@@ -244,15 +245,22 @@ def _as_day(value: object) -> date | None:
 
 
 def _latest_history_rows_per_table_day(
-    session: Session, history: Any, value_columns: tuple[Any, ...]
+    session: Session,
+    history: Any,
+    value_columns: tuple[Any, ...],
+    *,
+    since: datetime | None = None,
 ) -> Any:
     """Latest history row per table per UTC day, ranked as ``rn == 1``.
+
+    ``since`` bounds the rows ranked. Without it every history row in the fleet is ranked to
+    draw a 30-point chart, which took seconds on a 12k-table install (#494).
 
     Same shape as cryo.api.dashboard_routes._latest_rows_per_table_day (the fleet health
     trend) without its tenant scoping, which these fleet dashboards don't apply.
     """
     day = _day_bucket(session, history.scan_at)
-    return select(
+    stmt = select(
         day.label("day"),
         history.table_id.label("table_id"),
         history.scan_at.label("scan_at"),
@@ -263,7 +271,16 @@ def _latest_history_rows_per_table_day(
             order_by=(history.scan_at.desc(), history.id.desc()),
         )
         .label("rn"),
-    ).subquery()
+    )
+    if since is not None:
+        stmt = stmt.where(history.scan_at >= since)
+    return stmt.subquery()
+
+
+def _series_start(now: datetime, days: int) -> datetime:
+    """Start of a ``days``-point daily series ending today (UTC midnight)."""
+    today = _as_utc(now).replace(hour=0, minute=0, second=0, microsecond=0)
+    return today - timedelta(days=days - 1)
 
 
 def _running_job_count(session: Session) -> int:
@@ -544,6 +561,7 @@ def dashboard_cost(
     top_limit: int = 10,
     trend_limit: int = 30,
     settings: Settings | None = None,
+    now: datetime | None = None,
 ) -> dict[str, object]:
     settings = settings or Settings()
     # Same fleet-wide materialization trap as dashboard_datalake -- aggregate in SQL / load
@@ -555,7 +573,7 @@ def dashboard_cost(
     savings_by_operation = _sql_aggregate_savings_by_operation(session, settings=settings)
     cost_by_schema = _sql_aggregate_cost_by_schema(session)
     top_opportunities = _top_cost_opportunities(session, limit=top_limit)
-    trend = _cost_trend(session, limit=trend_limit, settings=settings)
+    trend = _cost_trend(session, limit=trend_limit, settings=settings, now=now)
 
     return {
         "totals": totals,
@@ -846,8 +864,10 @@ def _cost_trend(
     *,
     limit: int,
     settings: Settings | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, object]]:
     settings = settings or Settings()
+    now = now or datetime.now(UTC)
     # Latest row per table per day, as for the datalake drift series (issue #190).
     latest_cost = _latest_history_rows_per_table_day(
         session,
@@ -856,6 +876,7 @@ def _cost_trend(
             TableCostHistory.current_monthly_cost_usd,
             TableCostHistory.projected_savings_usd_month,
         ),
+        since=_series_start(now, limit),
     )
     drift_rows = [
         (_as_utc(scan_at) if isinstance(scan_at, datetime) else scan_at, current, savings)
@@ -871,7 +892,7 @@ def _cost_trend(
             .limit(limit)
         )
     ]
-    realized_by_day = _realized_savings_by_day(session, settings=settings, limit=limit)
+    realized_by_day = _realized_savings_by_day(session, settings=settings, limit=limit, now=now)
     return [
         {
             "scan_at": scan_at,
@@ -888,6 +909,7 @@ def _realized_savings_by_day(
     *,
     settings: Settings,
     limit: int,
+    now: datetime | None = None,
 ) -> dict[Any, float]:
     day_bucket = _day_bucket(session, AuditLog.ts).label("day_bucket")
     rows = list(
@@ -896,7 +918,11 @@ def _realized_savings_by_day(
                 day_bucket,
                 func.coalesce(func.sum(AuditLog.actual_bytes_freed), 0),
             )
-            .where(AuditLog.actual_bytes_freed.isnot(None), *realized_reclaim_conditions())
+            .where(
+                AuditLog.actual_bytes_freed.isnot(None),
+                AuditLog.ts >= _series_start(now or datetime.now(UTC), limit),
+                *realized_reclaim_conditions(),
+            )
             .group_by(day_bucket)
             .order_by(desc(day_bucket))
             .limit(limit)
