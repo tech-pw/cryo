@@ -506,6 +506,9 @@ spark:
     # Prefer placing a job's executors on its driver's node, then on nodes that already run
     # Spark, so jobs fill nodes instead of each pinning a fresh one. Preferred, never required.
     packPods: false
+    # New Spark submissions allowed per destination per minute, across all workers, plus a
+    # little jitter. Bursts outrun the CNI's warm IP pool (FailedCreatePodSandBox). 0 = off.
+    maxSubmitsPerMinute: 60
     # Karpenter capacity types for executors, most preferred first (e.g. "spot,on-demand").
     # The driver keeps nodeSelector's capacity type. With spot, executors decommission
     # gracefully and hand their shuffle blocks to peers. Needs Karpenter's interruption
