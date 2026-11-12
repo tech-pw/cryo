@@ -87,3 +87,17 @@
 .ops-funnel__stage.is-failed .ops-funnel__reason {
   color: var(--color-status-failed, var(--destructive));
 }
+
+.ops-load-workers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.ops-load-workers__hint {
+  margin: 0;
+  color: var(--color-status-warning-fg, var(--color-foreground));
+  font-size: 12px;
+  line-height: 1.4;
+}

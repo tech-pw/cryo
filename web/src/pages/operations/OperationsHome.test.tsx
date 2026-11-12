@@ -28,7 +28,8 @@ vi.mock("../../api/client", () => ({
   apiFetch: vi.fn()
 }));
 
-vi.mock("../../api/engineLoad", () => ({
+vi.mock("../../api/engineLoad", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../api/engineLoad")>()),
   getEngineLoad: vi.fn()
 }));
 

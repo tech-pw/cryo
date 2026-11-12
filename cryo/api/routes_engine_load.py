@@ -30,6 +30,10 @@ class EngineLoadResponse(BaseModel):
     engines: list[EngineLoadRow]
     # Consumers attached to the admitted stream; None when Redis is unreachable, never 0.
     workers_online: int | None = None
+    # Worker drain (#490). None when Redis is unreachable.
+    workers_busy: int | None = None
+    admitted_waiting: int | None = None
+    oldest_waiting_seconds: float | None = None
 
 
 def engine_load_rows(
@@ -84,8 +88,26 @@ def load_engine_admission(session: Session) -> EngineLoadResponse:
 )
 def get_engine_load(session: SessionDep) -> EngineLoadResponse:
     response = load_engine_admission(session)
-    response.workers_online = workers_online()
+    drain = worker_drain()
+    if drain is not None:
+        response.workers_online = int(drain["workers_alive"] or 0)
+        response.workers_busy = int(drain["workers_busy"] or 0)
+        response.admitted_waiting = int(drain["admitted_waiting"] or 0)
+        oldest = drain.get("oldest_waiting_seconds")
+        response.oldest_waiting_seconds = float(oldest) if oldest is not None else None
+    else:
+        response.workers_online = workers_online()
     return response
+
+
+def worker_drain() -> dict[str, int | float | None] | None:
+    try:
+        from cryo.infra.wiring import build_runtime_wiring
+
+        snapshot = getattr(build_runtime_wiring().queue, "drain_snapshot", None)
+        return snapshot() if callable(snapshot) else None
+    except Exception:  # noqa: BLE001 - best-effort; the card shows "Unavailable"
+        return None
 
 
 def workers_online() -> int | None:

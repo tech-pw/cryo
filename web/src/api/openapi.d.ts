@@ -8647,6 +8647,12 @@ export interface components {
             engines: components["schemas"]["EngineLoadRow"][];
             /** Workers Online */
             workers_online?: number | null;
+            /** Workers Busy */
+            workers_busy?: number | null;
+            /** Admitted Waiting */
+            admitted_waiting?: number | null;
+            /** Oldest Waiting Seconds */
+            oldest_waiting_seconds?: number | null;
         };
         /** EngineLoadRow */
         EngineLoadRow: {
