@@ -222,7 +222,7 @@ async function mockApi(page: Page): Promise<void> {
 async function signInAsAdmin(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByLabel("Username").fill("a11y-e2e");
-  await page.getByLabel("Role").selectOption("admin");
+  await page.getByRole("radio", { name: "admin", exact: true }).click();
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "Home", exact: true })).toBeVisible({ timeout: 15_000 });
 }

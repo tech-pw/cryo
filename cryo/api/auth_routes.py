@@ -19,7 +19,7 @@ from cryo.config import Settings, get_settings
 from cryo.db.models import AuditLog, AuthSettings, LocalUser
 from cryo.db.session import SessionLocal
 from cryo.governor.bandit_store import save_bandit
-from cryo.observability.metrics import auth_login_failures_total
+from cryo.observability.metrics import auth_login_failures_total, dev_token_in_prod_enabled
 from cryo.security.google_id_token import verify_google_id_token
 from cryo.security.jwt_tokens import issue_access_token
 from cryo.security.local_users import LOCAL_AUTH, invalidate_local_user
@@ -97,6 +97,21 @@ def _dev_token_enabled(settings: Settings) -> bool:
 
 def _dev_token_enabled_in_prod(settings: Settings) -> bool:
     return settings.environment == "prod" and settings.allow_dev_token_in_prod
+
+
+def report_dev_token_in_prod(settings: Settings) -> bool:
+    """Set the dev-token gauge and warn at startup.
+
+    The in-app banner only reaches people who are already signed in.
+    """
+    enabled = _dev_token_enabled_in_prod(settings)
+    dev_token_in_prod_enabled.set(1 if enabled else 0)
+    if enabled:
+        logger.warning(
+            "CRYO_ALLOW_DEV_TOKEN_IN_PROD is on: anyone who can reach the API can sign in "
+            "with any role, including admin. Turn it off once your identity provider is configured."
+        )
+    return enabled
 
 
 @router.get("/config", response_model=AuthConfigResponse)

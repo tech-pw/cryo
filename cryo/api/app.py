@@ -11,6 +11,7 @@ from cryo import __version__
 from cryo.api.advanced_routes import router as advanced_router
 from cryo.api.anomalies_routes import router as anomalies_router
 from cryo.api.assistant_routes import router as assistant_router
+from cryo.api.auth_routes import report_dev_token_in_prod
 from cryo.api.auth_routes import router as auth_router
 from cryo.api.capabilities import router as capabilities_router
 from cryo.api.correlation_middleware import CorrelationMiddleware
@@ -75,6 +76,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         environment=settings.environment,
     )
     init_tracing(settings, service_name=f"{settings.otel_service_name}-api")
+    report_dev_token_in_prod(settings)
     docs_served = settings.api_docs_served()
     app = FastAPI(
         title=settings.app_name,

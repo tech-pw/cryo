@@ -37,9 +37,9 @@ export const Login = () => {
     googleHostedDomain,
     googleAutoProvision
   } = useAuth();
-  const [subject, setSubject] = useState("operator");
+  const [subject, setSubject] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<RoleToken>("operator");
+  const [role, setRole] = useState<RoleToken>("viewer");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const errorRef = useRef<HTMLDivElement | null>(null);
   const roleHintId = useId();
@@ -225,29 +225,17 @@ export const Login = () => {
                 ) : null}
                 {devTokenEnabled ? (
                   <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="login-role">Role</Label>
+                    <span aria-hidden="true" className="text-sm font-medium leading-none">Role</span>
                     <Segmented
                       block
+                      radio
+                      aria-label="Role"
+                      aria-describedby={passwordLoginEnabled ? roleHintId : undefined}
                       className="h-[var(--control-height-lg)] [&_button]:h-full"
                       value={role}
                       options={roleOptions}
                       onChange={(next) => setRole(next as RoleToken)}
                     />
-                    <select
-                      id="login-role"
-                      tabIndex={-1}
-                      className="sr-only"
-                      value={role}
-                      aria-describedby={passwordLoginEnabled ? roleHintId : undefined}
-                      onChange={(event) => setRole(event.target.value as RoleToken)}
-                      required
-                    >
-                      {roleOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
                     {passwordLoginEnabled ? (
                       <p id={roleHintId} className="text-xs leading-4 text-muted-foreground">
                         Used only when signing in without a password.

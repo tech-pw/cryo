@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Login } from "./Login";
 
@@ -39,6 +39,19 @@ describe("Login page", () => {
     authMock.googleClientId = null;
     authMock.googleHostedDomain = null;
     authMock.googleAutoProvision = false;
+  });
+
+  it("starts dev sign-in as viewer with an empty username, and the role is a radio group", () => {
+    render(<Login />);
+    expect(screen.getByLabelText("Username")).toHaveValue("");
+    const group = screen.getByRole("radiogroup", { name: "Role" });
+    expect(group).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "viewer" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.keyDown(group, { key: "ArrowRight" });
+    expect(screen.getByRole("radio", { name: "operator" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "dana" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(authMock.signIn).toHaveBeenCalledWith("operator", "dana");
   });
 
   it("tells people on the allowed domain they will start as viewers", () => {

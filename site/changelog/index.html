@@ -103,6 +103,7 @@
 </ul>
 <h3 id="unreleased-security">Security<a class="anchor" href="#unreleased-security" aria-label="Link to Security">#</a></h3>
 <ul>
+  <li>Dev sign-in defaults to the viewer role with an empty username; the role picker is a radio group; a startup warning and the cryo_dev_token_in_prod_enabled gauge flag CRYO_ALLOW_DEV_TOKEN_IN_PROD in prod (#500).</li>
   <li>CodeQL <code>init</code> and <code>analyze</code> move to v4.39.2 together; the two must share a version.</li>
   <li>CI runs trufflehog alongside gitleaks: on every PR and push to <code>main</code> over the new commits, and weekly over the full history. It fails on verified credentials, and on credentials whose verification errored outside the connection-string detectors (#203).</li>
 </ul>
