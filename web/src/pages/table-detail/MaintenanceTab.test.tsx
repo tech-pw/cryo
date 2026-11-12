@@ -188,7 +188,7 @@ describe("MaintenanceTab", () => {
     expect(runGrid?.style.gridTemplateColumns).toBe("minmax(112px, max-content) 20px");
     expect(runGrid?.style.gridTemplateColumns).not.toContain("1fr");
     expect(document.querySelector(".td-grid-bar span")?.getAttribute("style")).toContain("height:");
-    expect(document.querySelector(".td-run-status")?.textContent).toContain("Waiting");
+    expect(document.querySelector(".td-run-status")?.textContent).toContain("Queued");
     expect(screen.queryByText("Running", { selector: ".td-run-status" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open full run/ })).toHaveAttribute("href", "/runs/run-9");
   });
