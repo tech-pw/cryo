@@ -69,6 +69,7 @@
 </ul>
 <h3 id="unreleased-fixed">Fixed<a class="anchor" href="#unreleased-fixed" aria-label="Link to Fixed">#</a></h3>
 <ul>
+  <li>Table overview shows cooldown as a short local-time line linking to the eligibility checklist instead of the raw reason string (#522).</li>
   <li>Runs whose skipped operations had nothing to do are no longer partial; table runs are time-ordered and queue closes show as closed without running instead of failures (#521).</li>
   <li>Helm: a prod render fails when one image digest is pinned under two repositories, or a digest is malformed (#486).</li>
   <li>Spark on Kubernetes: a step whose pod is stuck in ImagePullBackOff/ErrImagePull/InvalidImageName/CreateContainerConfigError fails after a 3-minute grace and frees its Job, pod and Secret instead of waiting for the ~2h deadline (#485).</li>
