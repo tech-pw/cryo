@@ -11,7 +11,26 @@ import os
 import time
 from dataclasses import asdict, dataclass
 
+from pydantic import BaseModel
+
 from cryo import __version__
+
+
+class ComponentBuild(BaseModel):
+    component: str
+    instance: str
+    image: str | None = None
+    version: str
+    git_sha: str | None = None
+    built_at: str | None = None
+    spark_image: str | None = None
+    native_image: str | None = None
+    reported_at: str
+
+
+class ComponentBuildsResponse(BaseModel):
+    components: list[ComponentBuild]
+    skew: bool
 
 
 @dataclass(frozen=True)

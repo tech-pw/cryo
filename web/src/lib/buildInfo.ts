@@ -86,3 +86,46 @@ export const buildSummary = (web: WebBuild, api: ApiVersion | undefined): string
     : "api unknown";
   return `Cryo ${apiPart}; web ${web.version}${web.gitSha ? ` (${shortSha(web.gitSha)})` : ""}`;
 };
+
+export interface ComponentBuild {
+  component: string;
+  instance: string;
+  image: string | null;
+  version: string;
+  git_sha: string | null;
+  built_at: string | null;
+  spark_image: string | null;
+  native_image: string | null;
+  reported_at: string;
+}
+
+export interface ComponentBuilds {
+  components: ComponentBuild[];
+  skew: boolean;
+}
+
+export const getComponentBuilds = async (token: string): Promise<ComponentBuilds> => {
+  const response = await fetch(`${API_PREFIX}/version/components`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) throw new Error(`GET ${API_PREFIX}/version/components failed: ${response.status}`);
+  return (await response.json()) as ComponentBuilds;
+};
+
+/** One row per component: instances on the same build collapse, a split shows each build. */
+export const groupComponentBuilds = (components: ComponentBuild[]) => {
+  const rows = new Map<string, ComponentBuild & { instances: number }>();
+  for (const c of components) {
+    const key = `${c.component}|${c.git_sha ?? c.version}|${c.image ?? ""}`;
+    const row = rows.get(key);
+    if (row) row.instances += 1;
+    else rows.set(key, { ...c, instances: 1 });
+  }
+  return [...rows.values()];
+};
+
+/** Spark and native image refs configured on the workers, deduplicated. */
+export const engineImages = (components: ComponentBuild[]) => ({
+  spark: [...new Set(components.map((c) => c.spark_image).filter((v): v is string => Boolean(v)))],
+  native: [...new Set(components.map((c) => c.native_image).filter((v): v is string => Boolean(v)))]
+});

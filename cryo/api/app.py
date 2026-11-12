@@ -55,7 +55,12 @@ from cryo.api.routes_table_maintenance import router as table_maintenance_router
 from cryo.api.s3_log_config_routes import router as s3_log_config_router
 from cryo.api.search_routes import router as search_router
 from cryo.api.slack_routes import router as slack_interactions_router
-from cryo.build_info import build_info, cached_schema_revision
+from cryo.build_info import (
+    ComponentBuild,
+    ComponentBuildsResponse,
+    build_info,
+    cached_schema_revision,
+)
 from cryo.config import Settings, get_settings
 from cryo.mcp.http import mount_mcp
 from cryo.observability.logging import configure_logging
@@ -64,6 +69,9 @@ from cryo.observability.tracing import init_tracing, instrument_fastapi, shutdow
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    from cryo.component_builds import start_component_reporter
+
+    start_component_reporter("api")
     yield
     shutdown_tracing()
 
@@ -170,6 +178,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         revision tell an attacker which advisories apply. schema_revision is the Alembic
         revision in the database, null when the database can't be reached."""
         return {**build_info().as_dict(), "schema_revision": cached_schema_revision()}
+
+    @app.get("/api/v1/version/components", tags=["health"], dependencies=[Depends(require_viewer)])
+    def component_versions() -> ComponentBuildsResponse:
+        """The build each running component reported in the last 10 minutes (#489)."""
+        from cryo.component_builds import build_skew, list_component_builds
+
+        records = list_component_builds()
+        return ComponentBuildsResponse(
+            components=[ComponentBuild(**record) for record in records], skew=build_skew(records)
+        )
 
     @app.get("/readyz", tags=["health"])
     def readyz() -> dict[str, str]:

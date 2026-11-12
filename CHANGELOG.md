@@ -8,6 +8,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Added
 - Spark on Kubernetes: new submissions are spaced per destination across all workers (default 60/min plus jitter, spark.k8s.maxSubmitsPerMinute, 0 = off), with a cryo_spark_submit_throttle_wait_seconds metric (#487).
+- Settings → About lists every component's image, version and commit (reported through Redis) with a version-skew warning; GET /api/v1/version/components and a cryo_component_build_info gauge (#489).
 - Spark drivers reserve a quarter of their CPU limit (at least 250m) instead of all of it;
   the limit is unchanged, so planning and commit bursts still get the full core. The
   `spark-submit` wrapper Job requests 50m / 256Mi instead of 250m / 512Mi, with the same
