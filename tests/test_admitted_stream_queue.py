@@ -418,3 +418,28 @@ def test_returning_an_admitted_job_still_releases_its_slot(redis):
     queue.return_to_pending("job-1", DEST)
 
     assert queue.local_in_flight_by_replica(DEST) == {"r1": 0}
+
+
+def test_drain_snapshot_counts_busy_workers_and_the_oldest_unclaimed_wait(redis):
+    """#490: the capacity card needs busy workers, unclaimed jobs and how long they waited."""
+    worker = _queue(redis, "worker-1")
+    _admit(worker, "job-1")
+    _admit(worker, "job-2")
+    _admit(worker, "job-3")
+    assert worker.claim_admitted() == "job-1"
+    time.sleep(0.01)
+
+    snapshot = worker.drain_snapshot()
+
+    assert snapshot["workers_alive"] == 1
+    assert snapshot["workers_busy"] == 1
+    assert snapshot["admitted_waiting"] == 2
+    assert snapshot["oldest_waiting_seconds"] is not None
+    assert 0 <= snapshot["oldest_waiting_seconds"] < 60
+
+
+def test_drain_snapshot_with_nothing_waiting(redis):
+    snapshot = _queue(redis, "worker-1").drain_snapshot()
+
+    assert snapshot["admitted_waiting"] == 0
+    assert snapshot["oldest_waiting_seconds"] is None

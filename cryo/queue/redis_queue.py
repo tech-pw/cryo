@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import time
 from collections import defaultdict, deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -517,6 +518,48 @@ class RedisMaintenanceQueue:
             if pending > 0 or int(inactive or 0) <= stale_after_ms:
                 alive += 1
         return alive
+
+    def drain_snapshot(self, stale_after_seconds: int = 60) -> dict[str, int | float | None]:
+        """Workers alive and busy, admitted jobs no worker has taken, and the oldest one's wait.
+
+        Bounded reads only: XINFO on the group plus one XRANGE entry after last-delivered-id.
+        """
+        try:
+            consumers = self._on_group(
+                lambda: self._redis.xinfo_consumers(self._stream_key(), _ADMITTED_GROUP)
+            )
+        except Exception:  # noqa: BLE001 - missing stream/group means no workers yet
+            consumers = []
+        stale_after_ms = stale_after_seconds * 1000
+        alive = busy = 0
+        for consumer in consumers or []:
+            pending = int(_field(consumer, "pending") or 0)
+            inactive = _field(consumer, "inactive")
+            if inactive is None:
+                inactive = _field(consumer, "idle")
+            if pending > 0:
+                busy += 1
+            if pending > 0 or int(inactive or 0) <= stale_after_ms:
+                alive += 1
+        oldest_wait: float | None = None
+        try:
+            last_id = None
+            for group in self._redis.xinfo_groups(self._stream_key()) or []:
+                if _decode(_field(group, "name")) == _ADMITTED_GROUP:
+                    last_id = _decode(_field(group, "last-delivered-id"))
+            start = f"({last_id}" if last_id and last_id != "0-0" else "-"
+            entries = self._redis.xrange(self._stream_key(), min=start, max="+", count=1)
+            if entries:
+                entry_ms = int(_decode(entries[0][0]).split("-", 1)[0])
+                oldest_wait = max(0.0, time.time() - entry_ms / 1000)
+        except Exception:  # noqa: BLE001 - the wait is optional detail
+            oldest_wait = None
+        return {
+            "workers_alive": alive,
+            "workers_busy": busy,
+            "admitted_waiting": self.admitted_depth(),
+            "oldest_waiting_seconds": oldest_wait,
+        }
 
     def mark_running(self, job_id: str) -> None:
         pipe = self._redis.pipeline()

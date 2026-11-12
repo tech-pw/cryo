@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { getEngineLoad, type EngineLoadRow } from "../../api/engineLoad";
+import { drainHint, getEngineLoad, type EngineLoadRow } from "../../api/engineLoad";
 import { useAuth } from "../../lib/auth";
 import { cn } from "../../lib/cn";
 import "./decisionFunnel.css";
@@ -23,6 +23,9 @@ export const EngineLoadStrip = () => {
     retry: false
   });
   const engines = load.data?.engines ?? [];
+  const workers = load.data?.workers_online;
+  const busy = load.data?.workers_busy;
+  const hint = drainHint(load.data);
 
   return (
     <section className="ops-signal-card" aria-labelledby="engine-load-title">
@@ -30,6 +33,20 @@ export const EngineLoadStrip = () => {
         <h2 id="engine-load-title">Engine load</h2>
         <p>Open slots versus the configured cap.</p>
       </header>
+      {load.isSuccess && workers != null ? (
+        <div className="ops-load-workers">
+          <p className="ops-load-row__detail">
+            <span className="ops-load-row__name">Workers</span>{" "}
+            {busy != null ? `${busy} of ${workers} busy` : `${workers} online`}
+            {load.data.admitted_waiting != null ? ` · ${load.data.admitted_waiting} admitted waiting` : ""}
+          </p>
+          {hint ? (
+            <p className="ops-load-workers__hint" role="status">
+              {hint}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {load.isError ? (
         <p className="ops-signal-card__empty">Engine admission unavailable. Retry from Runs.</p>
       ) : engines.length === 0 ? (
