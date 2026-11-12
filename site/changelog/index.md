@@ -51,12 +51,6 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Fixed
 
-- Helm: a prod render fails when one image digest is pinned under two repositories, or a digest is malformed (#486).
-- Spark on Kubernetes: a step whose pod is stuck in ImagePullBackOff/ErrImagePull/InvalidImageName/CreateContainerConfigError fails after a 3-minute grace and frees its Job, pod and Secret instead of waiting for the ~2h deadline (#485).
-- Home's "Latest nightly maintenance" card follows the worker-path nightly run, not only batch-coordinator runs, and says when the newest nightly run is more than 36h old. `GET /runs` accepts `pipeline=nightly`, using the same rule as the Tables funnel (#492).
-- The Runs page counts partial runs as runs with failures (**Runs with failures · 24h**, "2 failed, 9 partial"), so "No table failures" appears only when no table failed, and "Running now" says "runs waiting" instead of "Nothing queued" (#496).
-- On phones the top bar has one search control (the command palette) and no overlapping Batch/⌘K controls, the Settings tab strip fades at its edge and scrolls the current tab into view, the Runs timeline fits the screen, and the truncated Home engine-slots line shows every engine on hover (#497).
-- Accessibility: contrast fixes for success/warning/muted text, labelled selects, correct heading order and ARIA roles, keyboard-scrollable regions (#499).
 - Insights → Duplicates no longer shows "Pair evidence failed to load" on every group. Pairs are fetched with the new `POST /api/v1/dedup/pairs/query`, which takes table IDs in the body (a large group overflowed the URL limit with HTTP 414), and a failure is shown only on the group that failed (#493).
 - A scanner-worker running a long scan chunk is no longer restarted as hung. The `/healthz` stall check now measures time without progress, and each table the chunk starts or finishes counts as progress, so a healthy chunk that runs past `tickStallSeconds` keeps its pod (#432).
 - The governor now says when workers, not the engine, are the bottleneck. If admitted jobs wait unclaimed while a destination has free engine slots, it logs `N admitted job(s) waiting for a worker; X/Y engine slots in use` (at most every 5 minutes per destination) and sets the `cryo_admitted_waiting_for_worker` gauge. The Helm chart documents sizing `worker.replicas` / `native.keda.maxReplicas` to the engine `slot_cap`: a worker blocks on one engine job at a time, so low worker CPU does not mean over-provisioned (#435).
@@ -83,12 +77,11 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Changed
 
-- `GET /sources/{id}/aws-integration` returns `200` with `null` instead of `404` when a source has no AWS integration, so Settings no longer logs a failed request per source. A non-admin on /settings/admin sees "Admin role required" instead of a silent redirect, and each Settings page has its own heading (#498).
+- Decisions loads fleet SLA status only on the Approvals tab (it took 16 s on a 12k-table fleet) and pages recommendations 50 at a time. Insights → Duplicates shows 20 groups at a time and fetches pair evidence only for those (#494).
 - Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become skipped with `cancelled: preset paused`). Admitted and running jobs finish, and a run left with nothing active is marked cancelled. Before, queued jobs drained after a pause (#330).
 
 ### Security
 
-- Dev sign-in defaults to the viewer role with an empty username; the role picker is a radio group; a startup warning and the cryo_dev_token_in_prod_enabled gauge flag CRYO_ALLOW_DEV_TOKEN_IN_PROD in prod (#500).
 - CodeQL `init` and `analyze` move to v4.39.2 together; the two must share a version.
 - CI runs trufflehog alongside gitleaks: on every PR and push to `main` over the new commits, and weekly over the full history. It fails on verified credentials, and on credentials whose verification errored outside the connection-string detectors (#203).
 
