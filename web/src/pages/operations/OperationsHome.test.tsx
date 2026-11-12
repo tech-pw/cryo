@@ -164,15 +164,32 @@ describe("OperationsHome", () => {
 
     renderPage();
 
-    const failedQuickLink = await screen.findByRole("button", { name: /failed runs/i });
+    const failedQuickLink = await screen.findByRole("button", { name: /runs with failures/i });
     fireEvent.click(failedQuickLink);
 
     await waitFor(() => {
       expect(screen.getByRole("tab", { name: "History", selected: true })).toBeInTheDocument();
     });
     // The "Failed" filter button within the runs tab should now be the active one.
-    const failedFilterButton = screen.getByRole("button", { name: "Failed · 24h" });
+    const failedFilterButton = screen.getByRole("button", { name: "With failures · 24h" });
     expect(failedFilterButton.className).toMatch(/bg-primary/);
+  });
+
+  it("counts partial runs as runs with failures (#496)", async () => {
+    vi.mocked(getScannerStatus).mockResolvedValue(scannerStatus);
+    vi.mocked(listPresets).mockResolvedValue([preset]);
+    const now = new Date().toISOString();
+    vi.mocked(listRuns).mockResolvedValue([
+      { id: "run-1", kind: "maintenance", status: "partial", created_at: now, finished_at: now } as RunRead,
+      { id: "run-2", kind: "maintenance", status: "partial", created_at: now, finished_at: now } as RunRead,
+      { id: "run-3", kind: "maintenance", status: "succeeded", created_at: now, finished_at: now } as RunRead
+    ]);
+
+    renderPage();
+
+    const tile = await screen.findByRole("button", { name: /runs with failures/i });
+    await waitFor(() => expect(tile).toHaveTextContent("2 partial"));
+    expect(screen.queryByText("No table failures")).not.toBeInTheDocument();
   });
 
   it("restores the tab and run filter from the URL on load", async () => {
@@ -187,7 +204,7 @@ describe("OperationsHome", () => {
     await waitFor(() => {
       expect(screen.getByRole("tab", { name: "History", selected: true })).toBeInTheDocument();
     });
-    const failedFilterButton = screen.getByRole("button", { name: "Failed · 24h" });
+    const failedFilterButton = screen.getByRole("button", { name: "With failures · 24h" });
     expect(failedFilterButton.className).toMatch(/bg-primary/);
   });
 });

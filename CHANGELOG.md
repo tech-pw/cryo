@@ -101,6 +101,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Fixed
 - Home's "Latest nightly maintenance" card follows the worker-path nightly run, not only batch-coordinator runs, and says when the newest nightly run is more than 36h old. `GET /runs` accepts `pipeline=nightly`, using the same rule as the Tables funnel (#492).
+- The Runs page counts partial runs as runs with failures (**Runs with failures · 24h**, "2 failed, 9 partial"), so "No table failures" appears only when no table failed, and "Running now" says "runs waiting" instead of "Nothing queued" (#496).
 - A scanner-worker running a long scan chunk is no longer restarted as hung. The
   `/healthz` stall check now measures time without progress, and each table the
   chunk starts or finishes counts as progress, so a healthy chunk that runs past
