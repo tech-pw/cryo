@@ -164,11 +164,17 @@ def test_report_dev_token_in_prod_sets_gauge_and_warns(caplog) -> None:
     from cryo.observability.metrics import dev_token_in_prod_enabled
 
     with caplog.at_level("WARNING", logger="cryo.api.auth_routes"):
-        assert report_dev_token_in_prod(_settings(environment="prod", allow_dev_token_in_prod=True)) is True
+        assert (
+            report_dev_token_in_prod(_settings(environment="prod", allow_dev_token_in_prod=True))
+            is True
+        )
     assert dev_token_in_prod_enabled._value.get() == 1
     assert "CRYO_ALLOW_DEV_TOKEN_IN_PROD" in caplog.text
 
     caplog.clear()
-    assert report_dev_token_in_prod(_settings(environment="prod", allow_dev_token_in_prod=False)) is False
+    assert (
+        report_dev_token_in_prod(_settings(environment="prod", allow_dev_token_in_prod=False))
+        is False
+    )
     assert dev_token_in_prod_enabled._value.get() == 0
     assert caplog.text == ""
