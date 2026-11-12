@@ -100,13 +100,16 @@ def _dev_token_enabled_in_prod(settings: Settings) -> bool:
 
 
 def report_dev_token_in_prod(settings: Settings) -> bool:
-    """Set the dev-token gauge and warn at startup; the in-app banner only reaches people already signed in."""
+    """Set the dev-token gauge and warn at startup.
+
+    The in-app banner only reaches people who are already signed in.
+    """
     enabled = _dev_token_enabled_in_prod(settings)
     dev_token_in_prod_enabled.set(1 if enabled else 0)
     if enabled:
         logger.warning(
-            "CRYO_ALLOW_DEV_TOKEN_IN_PROD is on: anyone who can reach the API can sign in with any role, "
-            "including admin. Turn it off once your identity provider is configured."
+            "CRYO_ALLOW_DEV_TOKEN_IN_PROD is on: anyone who can reach the API can sign in "
+            "with any role, including admin. Turn it off once your identity provider is configured."
         )
     return enabled
 
