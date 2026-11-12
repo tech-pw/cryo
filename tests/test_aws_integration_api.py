@@ -92,11 +92,10 @@ def test_create_aws_integration_requires_existing_source(session):
     assert exc_info.value.status_code == 404
 
 
-def test_get_aws_integration_404_when_not_configured(session):
+def test_get_aws_integration_null_when_not_configured(session):
+    """No integration is a normal state, not an error (#498)."""
     source = _seed_source(session)
-    with pytest.raises(HTTPException) as exc_info:
-        get_aws_integration(source.id, session)
-    assert exc_info.value.status_code == 404
+    assert get_aws_integration(source.id, session) is None
 
 
 def test_delete_aws_integration_removes_it(session):
@@ -109,8 +108,7 @@ def test_delete_aws_integration_removes_it(session):
 
     delete_aws_integration(source.id, session)
 
-    with pytest.raises(HTTPException):
-        get_aws_integration(source.id, session)
+    assert get_aws_integration(source.id, session) is None
 
 
 def test_test_aws_integration_records_result(session):

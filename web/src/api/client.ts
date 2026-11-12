@@ -1482,7 +1482,7 @@ export const getDataQualityProfile = (api: ApiOptions, tableId: UUID, lookbackDa
   });
 
 export const getAwsIntegration = (api: ApiOptions, sourceId: UUID) =>
-  apiFetch<AWSIntegrationRead>(`/sources/${sourceId}/aws-integration`, api);
+  apiFetch<AWSIntegrationRead | null>(`/sources/${sourceId}/aws-integration`, api);
 
 export const createAwsIntegration = (api: ApiOptions, sourceId: UUID, body: AWSIntegrationWrite) =>
   apiFetch<AWSIntegrationRead>(`/sources/${sourceId}/aws-integration`, api, { method: "POST", body });

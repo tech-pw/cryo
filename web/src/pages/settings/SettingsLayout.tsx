@@ -8,7 +8,7 @@ import { visibleSettingsSections } from "../../lib/routes";
 export function SettingsLayout({
   children,
   title = "Settings",
-  subtitle = "What is connected, and who may call the model?"
+  subtitle = "Settings for this Cryo install."
 }: {
   children?: ReactNode;
   title?: string;

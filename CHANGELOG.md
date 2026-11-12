@@ -211,6 +211,7 @@ All notable changes to Cryo will be documented in this file. The format is based
   that removes nothing (#381).
 
 ### Changed
+- `GET /sources/{id}/aws-integration` returns `200` with `null` instead of `404` when a source has no AWS integration, so Settings no longer logs a failed request per source. A non-admin on /settings/admin sees "Admin role required" instead of a silent redirect, and each Settings page has its own heading (#498).
 - Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become
   skipped with `cancelled: preset paused`). Admitted and running jobs finish, and a run left
   with nothing active is marked cancelled. Before, queued jobs drained after a pause (#330).

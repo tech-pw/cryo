@@ -49,17 +49,17 @@ router = APIRouter(prefix="/api/v1", tags=["sources"])
 
 @router.get(
     "/sources/{source_id}/aws-integration",
-    response_model=AWSIntegrationRead,
+    response_model=AWSIntegrationRead | None,
     dependencies=[Depends(require_viewer)],
     tags=["sources"],
 )
-def get_aws_integration(source_id: uuid.UUID, session: SessionDep) -> AWSIntegration:
-    integration = session.scalar(
-        select(AWSIntegration).where(AWSIntegration.source_id == source_id)
-    )
-    if integration is None:
-        raise HTTPException(status_code=404, detail="No AWS integration configured")
-    return integration
+def get_aws_integration(source_id: uuid.UUID, session: SessionDep) -> AWSIntegration | None:
+    """The source's AWS integration, or null when it has none.
+
+    Settings asks this for every source on every visit; most sources have no integration,
+    and a 404 for each showed up as console errors and failed requests in monitoring (#498).
+    """
+    return session.scalar(select(AWSIntegration).where(AWSIntegration.source_id == source_id))
 
 
 @router.post(

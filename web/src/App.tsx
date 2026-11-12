@@ -124,7 +124,7 @@ const AuthenticatedRoutes = () => (
           <Route path="/settings" element={<LegacyRedirect />} />
           <Route path="/settings/connections" element={<SettingsConnectionsHome />} />
           <Route path="/settings/ai" element={<SettingsAiHome />} />
-          <Route path="/settings/ai/models" element={<SettingsLayout><AiModelsSettings /></SettingsLayout>} />
+          <Route path="/settings/ai/models" element={<SettingsLayout title="AI models" subtitle="The models behind Ask Cryo, their tiers, and API keys."><AiModelsSettings /></SettingsLayout>} />
           <Route path="/assistant/approve/:proposalId" element={<AssistantApprove />} />
           <Route path="/settings/access" element={<SettingsAccessHome />} />
           <Route path="/settings/admin" element={<SettingsAdminHome />} />

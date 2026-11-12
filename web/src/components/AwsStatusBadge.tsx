@@ -23,7 +23,7 @@ const statusOf = (
   isLoading: boolean | undefined,
   isError: boolean | undefined,
   error: unknown,
-  data: { enabled: boolean; last_test_ok?: boolean | null; bucket: string; region: string } | undefined
+  data: { enabled: boolean; last_test_ok?: boolean | null; bucket: string; region: string } | null | undefined
 ): AwsSourceStatus => {
   if (isLoading) return { kind: "loading" };
   if (isError) {
