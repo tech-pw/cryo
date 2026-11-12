@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { PageHeader } from "../../components/ui/page-header";
 import { cn } from "../../lib/cn";
@@ -18,6 +18,10 @@ export function SettingsLayout({
   const { pathname } = useLocation();
   const sections = visibleSettingsSections(role);
   const current = sections.find((section) => pathname.startsWith(section.path))?.id ?? "connections";
+  const currentRef = useRef<HTMLAnchorElement>(null);
+  useEffect(() => {
+    currentRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [current]);
 
   return (
     <div>
@@ -31,6 +35,8 @@ export function SettingsLayout({
           aria-label="Settings"
           className={cn(
             "settings-nav flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-border",
+            // Fade the trailing edge so a clipped tab reads as "scroll for more" on a phone.
+            "max-xl:[mask-image:linear-gradient(to_right,#000_calc(100%-2.5rem),transparent)] max-xl:pr-8",
             "xl:sticky xl:top-0 xl:w-48 xl:flex-col xl:overflow-visible xl:border-b-0"
           )}
         >
@@ -39,6 +45,7 @@ export function SettingsLayout({
             return (
               <Link
                 key={section.id}
+                ref={selected ? currentRef : undefined}
                 to={section.path}
                 aria-current={selected ? "page" : undefined}
                 className={cn(

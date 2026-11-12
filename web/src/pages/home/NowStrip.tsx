@@ -49,10 +49,10 @@ export const NowStrip = ({ pauses, activeRun, runningJobs, engines, enginesError
           {maintenance.text}{scopedPauses > 0 && !globalPause ? ` · ${formatNumber(scopedPauses)} ${scopedPauses === 1 ? "hold" : "holds"}` : ""}
         </Clause>
         <Clause label="Engine slots" href="/runs" tone={throttled ? "warning" : "neutral"}>
-          {enginesError ? "Unavailable" : engines == null ? "Loading…" : engines.length === 0 ? "None configured" : <>
+          {enginesError ? "Unavailable" : engines == null ? "Loading…" : engines.length === 0 ? "None configured" : <span title={engines.map((engine) => `${engine.name} ${formatNumber(engine.slots_used)}/${formatNumber(engine.slots_limit)}`).join(" · ")}>
             {shown.map((engine, index) => <span key={engine.destination_id} className="home-now-engine">{index > 0 ? " · " : ""}{engine.name} <strong>{formatNumber(engine.slots_used)}/{formatNumber(engine.slots_limit)}</strong></span>)}
             {hidden > 0 ? ` · +${formatNumber(hidden)}` : ""}
-          </>}
+          </span>}
         </Clause>
         <Clause label="Workers" href="/runs" tone={workersOnline === 0 ? "warning" : "neutral"}>
           {workersOnline == null ? "Unavailable" : workersOnline === 0 ? "None online" : `${formatNumber(workersOnline)} online`}
