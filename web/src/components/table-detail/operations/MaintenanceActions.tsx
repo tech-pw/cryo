@@ -64,7 +64,7 @@ export const MaintenanceActions = ({
   id?: string;
 }) => {
   const launcher = useOperationLauncher();
-  const recovery = pointsByOperation(deductions, tableId);
+  const recovery = pointsByOperation(deductions, tableId, stats?.small_files_count);
   const lastRuns = lastRunByOperation(audit);
   const recommended = RUNNABLE_OPERATIONS.filter((op) => (recovery.get(op) ?? 0) > 0);
   const blocked = !launcher || Boolean(launcher.blockedReason) || launcher.pending;

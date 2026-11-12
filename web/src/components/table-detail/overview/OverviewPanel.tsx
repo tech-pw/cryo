@@ -303,7 +303,7 @@ function HealthHero({
         {deductions.length ? (
           <ol className="td-deductions">
             {deductions.map((item, index) => {
-              const remedy = remedyForDeduction(item.label, tableId);
+              const remedy = remedyForDeduction(item.label, tableId, stats?.small_files_count);
               const severity = severityOf(item);
               return (
                 <li key={`${item.label}-${index}`} data-severity={severity}>
@@ -423,7 +423,7 @@ function OtherOperations({
   deductions: Deduction[];
 }) {
   const launcher = useOperationLauncher();
-  const recovery = pointsByOperation(deductions, tableId);
+  const recovery = pointsByOperation(deductions, tableId, stats?.small_files_count);
   const other = RUNNABLE_OPERATIONS.filter((op) => !(recovery.get(op) ?? 0));
   if (!other.length) return null;
   const blocked = !launcher || Boolean(launcher.blockedReason) || launcher.pending;

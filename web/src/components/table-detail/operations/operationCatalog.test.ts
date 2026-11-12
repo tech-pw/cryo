@@ -22,6 +22,11 @@ describe("operationCatalog", () => {
     expect(remedyForDeduction("High velocity streaming", "t")).toMatchObject({ kind: "none" });
   });
 
+  it("offers no compaction for fragmented partitions with nothing to compact (#518)", () => {
+    expect(remedyForDeduction("Fragmented partitions", "t", 0)).toMatchObject({ kind: "none" });
+    expect(remedyForDeduction("Fragmented partitions", "t", 12)).toEqual({ kind: "operation", op: "optimize" });
+  });
+
   it("sums recoverable points per operation and ignores malformed deductions", () => {
     const deductions = readDeductionList({
       health_deductions: [

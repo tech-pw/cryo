@@ -33,6 +33,7 @@ from cryo.scanner.health import (
     HEALTH_THRESHOLDS,
     MIN_SMALL_FILES_FOR_COMPACTION,
     compute_design_findings,
+    excess_files_per_partition,
     grade_for_score,
     health_thresholds_for,
 )
@@ -444,9 +445,16 @@ def _apply_layout(snapshot: TableSnapshot, projection: _Projection, layout: _Lay
     )
     projection.set("total_files", points_for("total_files", layout.files, limits))
     if layout.partitions:
-        avg = layout.files / layout.partitions
+        excess = excess_files_per_partition(
+            _health_stats(
+                snapshot,
+                total_files=layout.files,
+                total_partitions=layout.partitions,
+                avg_files_per_partition=layout.files / layout.partitions,
+            )
+        )
         projection.set(
-            "avg_files_per_partition", points_for("avg_files_per_partition", avg, limits)
+            "avg_files_per_partition", points_for("avg_files_per_partition", excess, limits)
         )
     if layout.small_files is not None:
         projection.set(

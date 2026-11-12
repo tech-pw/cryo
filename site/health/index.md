@@ -2,7 +2,7 @@
 title: Health and cost
 description: How Cryo grades tables from A to F, how deductions work with a worked example, and what each maintenance operation projects.
 canonical: https://tech-pw.github.io/cryo/health/
-updated: 2026-10-06
+updated: 2026-11-12
 ---
 
 # Health and cost
@@ -36,6 +36,10 @@ Worked example: how a table reaches 64.
 | Manifest files bloat (warning) | −8 | 84 |
 | Position delete file buildup (critical) | −20 | 64 |
 | Final score and grade | | **C** 64 |
+
+### Fragmented partitions
+
+This check counts files a partition holds beyond what its data needs, not the raw file count. A partition needs one file per 75% of the target file size (`write.target-file-size-bytes`, or 256 MB when unset), because Iceberg compaction leaves files above that size alone. A 150 GB unpartitioned table in 448 files of 345 MB needs about 600 files, so it has no excess and loses no points. A partition of 448 files of 2 MB needs 5, so it has 443 extra files and loses 20. The warning and critical limits are 50 and 200 extra files per partition, scaled up for tables over 100 GB. When the table has no compaction candidates, the Overview shows no Compact files button for this check.
 
 On the [Tables page](https://tech-pw.github.io/cryo/tables/), every row carries its grade, its score change over 7 days and the evidence behind it: small files out of total files, size and reads. The **Health triage** view lists grade D and F tables first.
 

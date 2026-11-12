@@ -839,6 +839,12 @@ statements (as args/JSON) and executes them with the Iceberg-configured `SparkSe
   thresholds (`128MB` compaction / `8MB` health), per-partition accumulation, delete-file metrics,
   manifest stats, properties, transform detection, `needs_compaction` + `priority` formulas.
 - `health.py`: the exact `_compute_health_score` deductions (WARN −8 / CRIT −20) → score + A–F grade.
+  *Fragmented partitions* (#518) grades **excess** files per partition, not the raw average:
+  `avg_files_per_partition − max(1, ceil(avg_partition_bytes / (0.75 × target)))`, where target is
+  the table's `write.target-file-size-bytes` (default 256 MiB) and 0.75 mirrors Iceberg
+  `rewrite_data_files` `min-file-size-bytes`. Thresholds (50 / 200, size-scaled) and weights are
+  unchanged; only the measured quantity changed. Inputs are stored scan stats only. Path to A
+  projects the same quantity. See `docs/health-fragmented-partitions.md`.
 - `cost.py`: Tier-0 snapshot-overhead heuristic + `$0.023/GB-month` S3 estimate (parity, always set),
   **plus Tier-1 metadata byte accounting** — during the manifest stream it also walks retained
   snapshots' manifest lists (deduped, bounded by `cost_scan_max_snapshots/_manifests`) to split bytes
