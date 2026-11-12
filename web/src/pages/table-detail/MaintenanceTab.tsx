@@ -16,7 +16,8 @@ import { QueryErrorAlert } from "../../components/common";
 import { Badge } from "../../components/ui/badge";
 import { useAuth } from "../../lib/auth";
 import { auditBytesLabel } from "../../lib/auditFeed";
-import { formatTime, humanizeInstants } from "../../lib/format";
+import { formatTime } from "../../lib/format";
+import { blockingReasonText } from "../../lib/maintenanceReasons";
 import { tableKeys } from "./tableKeys";
 import "./maintenanceTab.css";
 
@@ -75,7 +76,7 @@ const EligibilityChecklist = ({ reasons }: { reasons: BlockingReasonRead[] }) =>
       {reasons.map((reason, index) => (
         <li key={`${reason.code}-${index}`} className="rounded-[var(--radius-default)] border border-border p-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
-            <p className="text-sm font-medium text-foreground">{humanizeInstants(reason.summary)}</p>
+            <p className="text-sm font-medium text-foreground">{blockingReasonText(reason)}</p>
             <Badge variant={reason.blocks_nightly_selection ? "warning" : "secondary"}>
               {reason.blocks_nightly_selection ? "Blocks nightly selection" : "Does not block nightly selection"}
             </Badge>
