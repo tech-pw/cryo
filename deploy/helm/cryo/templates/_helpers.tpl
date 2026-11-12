@@ -61,6 +61,8 @@ nodeSelector:
   value: {{ or $k8s.packPods $pool | quote }}
 - name: CRYO_SPARK_K8S_EXECUTOR_CAPACITY_TYPES
   value: {{ $k8s.executorCapacityTypes | quote }}
+- name: CRYO_SPARK_K8S_MAX_SUBMITS_PER_MINUTE
+  value: {{ ternary $k8s.maxSubmitsPerMinute 60 (hasKey $k8s "maxSubmitsPerMinute") | quote }}
 {{- end }}
 
 {{/*

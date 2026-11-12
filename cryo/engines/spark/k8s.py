@@ -50,6 +50,7 @@ from cryo.engines.spark.sizing import (
     lightweight_driver_heap_mib,
     local_master,
 )
+from cryo.engines.spark.submit_throttle import DEFAULT_MAX_SUBMITS_PER_MINUTE, wait_for_submit_slot
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,7 @@ class SparkK8sConfig:
     dynamic_allocation: bool = False
     executor_capacity_types: tuple[str, ...] = ()
     stuck_pod_grace_seconds: int = _DEFAULT_STUCK_POD_GRACE_SECONDS
+    max_submits_per_minute: int = DEFAULT_MAX_SUBMITS_PER_MINUTE
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> SparkK8sConfig:
@@ -220,6 +222,9 @@ class SparkK8sConfig:
             ),
             stuck_pod_grace_seconds=int(
                 _get("stuck_pod_grace_seconds") or _DEFAULT_STUCK_POD_GRACE_SECONDS
+            ),
+            max_submits_per_minute=int(
+                _get("max_submits_per_minute", DEFAULT_MAX_SUBMITS_PER_MINUTE)
             ),
         )
 
@@ -661,6 +666,7 @@ class SparkK8sClient:
                 f"spark.kubernetes.container.image.pullSecrets={secrets_csv}",
             ]
 
+        wait_for_submit_slot(destination_id or cfg.namespace, cfg.max_submits_per_minute)
         credentials_secret_name: str | None = None
         core_api = None
         if cfg.s3_access_key and cfg.s3_secret_key:

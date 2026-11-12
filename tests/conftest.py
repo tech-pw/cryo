@@ -344,3 +344,11 @@ def _patch_sqlite_incompatible_defaults() -> None:
                 originals.append((column, column.server_default))
                 column.server_default = None
     return originals
+
+
+@pytest.fixture(autouse=True)
+def _no_spark_submit_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Submit spacing sleeps and reaches for Redis; it has its own tests."""
+    monkeypatch.setattr(
+        "cryo.engines.spark.k8s.wait_for_submit_slot", lambda *_args, **_kwargs: 0.0
+    )

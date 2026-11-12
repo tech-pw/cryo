@@ -25,6 +25,12 @@ dev_token_in_prod_enabled = Gauge(
     "1 when CRYO_ALLOW_DEV_TOKEN_IN_PROD lets anyone mint a token for any role on a prod install.",
 )
 
+spark_submit_throttle_wait_seconds = Histogram(
+    "cryo_spark_submit_throttle_wait_seconds",
+    "Seconds a Spark-on-Kubernetes submission waited for its per-destination submit slot.",
+    buckets=(0, 0.5, 1, 2, 5, 10, 30, 60, 120, 300),
+)
+
 api_requests_total = Counter(
     "cryo_api_requests_total",
     "API requests by bounded route template, method, and status class.",
