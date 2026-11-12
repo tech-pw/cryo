@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -34,6 +34,8 @@ import { useWriteControl } from "../../lib/useWriteControl";
 import { DecisionFunnelStrip } from "../operations/DecisionFunnelStrip";
 import type { WriteAccess } from "../../lib/permissions";
 
+const QUEUE_PAGE_SIZE = 50;
+const MISSING_PRESET_SHOWN = 25;
 const DECISION_TABS = ["recommendations", "approvals", "skipped"] as const;
 type DecisionTab = (typeof DECISION_TABS)[number];
 
@@ -259,6 +261,7 @@ export function DecisionsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = tabFromSearch(searchParams.get("tab"));
   const statusFilter = searchParams.get("status");
+  const [queuePage, setQueuePage] = useState(0);
   const reviewId = searchParams.get("review");
 
   const setTab = (tab: string) => {
@@ -303,7 +306,9 @@ export function DecisionsPage() {
   });
   const sla = useQuery({
     queryKey: ["sla-status", token, "decisions-missing-preset"],
-    queryFn: () => getSlaStatusDashboard(api, true)
+    queryFn: () => getSlaStatusDashboard(api, true),
+    // Fleet-wide SLA status is the slowest call here; only the Approvals tab shows it.
+    enabled: activeTab === "approvals"
   });
 
   const visible = useMemo(
@@ -312,6 +317,9 @@ export function DecisionsPage() {
   );
   const pending = useMemo(() => visible.filter((item) => item.status === "pending"), [visible]);
   const shown = statusFilter === "pending" ? pending : visible;
+  const pageCount = Math.max(1, Math.ceil(shown.length / QUEUE_PAGE_SIZE));
+  const page = Math.min(queuePage, pageCount - 1);
+  const pageRows = useMemo(() => shown.slice(page * QUEUE_PAGE_SIZE, (page + 1) * QUEUE_PAGE_SIZE), [shown, page]);
   const approvalCount = operationApprovals.isSuccess ? (operationApprovals.data ?? []).length : null;
   const review = visible.find((item) => item.id === reviewId) ?? null;
   const reviewTier = review
@@ -508,7 +516,16 @@ export function DecisionsPage() {
       emptyTitle="No proposals"
       emptyDescription="Strategies recorded as none at 0% confidence are hidden. Nothing else is waiting."
     >
-      <DataTable columns={queueColumns} data={shown} getRowId={(row) => row.id} />
+      <DataTable
+        columns={queueColumns}
+        data={pageRows}
+        getRowId={(row) => row.id}
+        pagination={
+          shown.length > QUEUE_PAGE_SIZE
+            ? { pageIndex: page, pageSize: QUEUE_PAGE_SIZE, totalRows: shown.length, onPageChange: setQueuePage }
+            : undefined
+        }
+      />
     </AsyncBoundary>
   );
 
@@ -624,7 +641,7 @@ export function DecisionsPage() {
                   Breached tables with no preset assigned. This is an alert, not a second proposal queue.
                 </p>
                 <ul className="space-y-1">
-                  {missingPreset.map((row) => (
+                  {missingPreset.slice(0, MISSING_PRESET_SHOWN).map((row) => (
                     <li key={row.table_id}>
                       <Link to={`/tables/${row.table_id}`} className="text-primary hover:underline">
                         {row.table_name}
@@ -632,6 +649,11 @@ export function DecisionsPage() {
                     </li>
                   ))}
                 </ul>
+                {missingPreset.length > MISSING_PRESET_SHOWN ? (
+                  <p className="text-muted-foreground">
+                    and {missingPreset.length - MISSING_PRESET_SHOWN} more
+                  </p>
+                ) : null}
               </CardContent>
             </Card>
           ) : null}
