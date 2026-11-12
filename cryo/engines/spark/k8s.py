@@ -27,7 +27,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -65,6 +65,12 @@ _WRAPPER_REQUESTS = {"cpu": "50m", "memory": "256Mi"}
 _DEFAULT_ACTIVE_DEADLINE_SECONDS = 7200
 _DEFAULT_TTL_SECONDS = 3600
 _DESTINATION_LABEL = "cryo/destination"
+# Container waiting reasons that do not clear on their own. A registry blip can cause a
+# short ErrImagePull, so they only fail the step after the grace period (#485).
+_STUCK_WAITING_REASONS = frozenset(
+    {"ErrImagePull", "ImagePullBackOff", "InvalidImageName", "CreateContainerConfigError"}
+)
+_DEFAULT_STUCK_POD_GRACE_SECONDS = 180
 
 
 class JobRunState(StrEnum):
@@ -117,6 +123,7 @@ class SparkK8sConfig:
     driver_cpu_request_fraction: float = _DEFAULT_DRIVER_CPU_REQUEST_FRACTION
     dynamic_allocation: bool = False
     executor_capacity_types: tuple[str, ...] = ()
+    stuck_pod_grace_seconds: int = _DEFAULT_STUCK_POD_GRACE_SECONDS
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> SparkK8sConfig:
@@ -210,6 +217,9 @@ class SparkK8sConfig:
                 t.strip()
                 for t in str(_get("executor_capacity_types") or "").split(",")
                 if t.strip()
+            ),
+            stuck_pod_grace_seconds=int(
+                _get("stuck_pod_grace_seconds") or _DEFAULT_STUCK_POD_GRACE_SECONDS
             ),
         )
 
@@ -787,6 +797,10 @@ class SparkK8sClient:
             raise
 
         phase = pod.status.phase if pod.status else None
+        if phase == "Pending":
+            stuck = _stuck_waiting_summary(pod, self._config.stuck_pod_grace_seconds)
+            if stuck:
+                return self._fail_stuck(job_id, f"driver pod {stuck}")
         if phase == "Succeeded":
             detail = _read_pod_log_tail(driver_pod_name, self._config.namespace)
             from cryo.engines.spark.procedure_metrics import (
@@ -877,7 +891,61 @@ class SparkK8sClient:
             return JobRunResult(job_run_id=job_id, state=JobRunState.FAILED, state_details=detail)
         if status is not None and status.succeeded and status.succeeded >= 1:
             return self._wrapper_succeeded_outcome(job_id)
+        stuck = self._stuck_wrapper_pod(job_id)
+        if stuck:
+            return self._fail_stuck(job_id, f"wrapper pod {stuck}")
         return JobRunResult(job_run_id=job_id, state=JobRunState.RUNNING)
+
+    def _stuck_wrapper_pod(self, job_id: str) -> str | None:
+        try:
+            pods = self._core_client().list_namespaced_pod(
+                namespace=self._config.namespace, label_selector=f"job-name={job_id}"
+            )
+        except Exception:  # noqa: BLE001 - a failed read must not fail a healthy job
+            logger.warning("Failed to list wrapper pods for %s", job_id, exc_info=True)
+            return None
+        for pod in pods.items or []:
+            stuck = _stuck_waiting_summary(pod, self._config.stuck_pod_grace_seconds)
+            if stuck:
+                return stuck
+        return None
+
+    def _fail_stuck(self, job_id: str, summary: str) -> JobRunResult:
+        """Fail a step whose pod cannot start, and free the cluster resources it holds.
+
+        cleanup_after_run skips a Pending driver, so the Job, driver pod and credentials
+        Secret are deleted here rather than left to the activeDeadlineSeconds.
+        """
+        logger.warning("Failing Spark job %s: %s", job_id, summary)
+        namespace = self._config.namespace
+        secret_name = f"{job_id}-aws"
+        try:
+            job = self._batch_client().read_namespaced_job(name=job_id, namespace=namespace)
+            annotations = job.metadata.annotations if job.metadata else None
+            secret_name = (annotations or {}).get("cryo/credentials-secret-name") or secret_name
+        except Exception:  # noqa: BLE001 - Job may be gone; fall back to the default name
+            pass
+        for delete in (
+            lambda: self._batch_client().delete_namespaced_job(
+                name=job_id, namespace=namespace, propagation_policy="Background"
+            ),
+            lambda: self._core_client().delete_namespaced_pod(
+                name=f"{job_id}{_DRIVER_POD_SUFFIX}", namespace=namespace
+            ),
+            lambda: self._core_client().delete_namespaced_secret(
+                name=secret_name, namespace=namespace
+            ),
+        ):
+            try:
+                delete()
+            except Exception as exc:  # noqa: BLE001 - best-effort cleanup only
+                if not _is_not_found(exc):
+                    logger.warning("Cleanup after stuck Spark job %s failed", job_id, exc_info=True)
+        return JobRunResult(
+            job_run_id=job_id,
+            state=JobRunState.FAILED,
+            state_details=f"Spark job {job_id} could not start: {summary}",
+        )
 
     def _wrapper_succeeded_outcome(self, job_id: str) -> JobRunResult:
         """Wrapper Job succeeded but the driver pod is gone: read the driver's final status
@@ -1561,6 +1629,37 @@ def _read_pod_log_tail(
                 continue
     except Exception:  # noqa: BLE001 - best-effort diagnostics only
         pass
+    return None
+
+
+def _stuck_waiting_summary(pod: Any, grace_seconds: int) -> str | None:
+    """Describe a container stuck in a non-recovering waiting state for longer than the grace.
+
+    Measured from pod creation, so a pod that has been retrying the pull since it was created
+    fails once the grace passes.
+    """
+    status = getattr(pod, "status", None)
+    created = getattr(getattr(pod, "metadata", None), "creation_timestamp", None)
+    if status is None or not isinstance(created, datetime):
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    age = (datetime.now(UTC) - created).total_seconds()
+    if age < grace_seconds:
+        return None
+    statuses = [
+        *(getattr(status, "init_container_statuses", None) or []),
+        *(getattr(status, "container_statuses", None) or []),
+    ]
+    for container in statuses:
+        waiting = getattr(getattr(container, "state", None), "waiting", None)
+        reason = getattr(waiting, "reason", None)
+        if reason in _STUCK_WAITING_REASONS:
+            image = getattr(container, "image", None) or "its image"
+            if reason == "CreateContainerConfigError":
+                message = getattr(waiting, "message", None) or "invalid container config"
+                return f"{reason} for {int(age // 60)}m: {message}"
+            return f"{image} could not be pulled: {reason} for {int(age // 60)}m"
     return None
 
 
