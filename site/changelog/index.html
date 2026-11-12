@@ -109,6 +109,7 @@
 </ul>
 <h3 id="unreleased-changed">Changed<a class="anchor" href="#unreleased-changed" aria-label="Link to Changed">#</a></h3>
 <ul>
+  <li>Home, Cost and vitals read only the history inside their chart window (with new scan_at indexes) instead of ranking the whole fleet history on every load (#494).</li>
   <li><code>GET /sources/{id}/aws-integration</code> returns <code>200</code> with <code>null</code> instead of <code>404</code> when a source has no AWS integration, so Settings no longer logs a failed request per source. A non-admin on /settings/admin sees &quot;Admin role required&quot; instead of a silent redirect, and each Settings page has its own heading (#498).</li>
   <li>Decisions loads fleet SLA status only on the Approvals tab (it took 16 s on a 12k-table fleet) and pages recommendations 50 at a time. Insights → Duplicates shows 20 groups at a time and fetches pair evidence only for those (#494).</li>
   <li>Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become skipped with <code>cancelled: preset paused</code>). Admitted and running jobs finish, and a run left with nothing active is marked cancelled. Before, queued jobs drained after a pause (#330).</li>

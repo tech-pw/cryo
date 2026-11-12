@@ -434,7 +434,10 @@ class TableCost(Base):
 
 class TableCostHistory(Base):
     __tablename__ = "table_cost_history"
-    __table_args__ = (Index("ix_table_cost_history_table_scan", "table_id", "scan_at"),)
+    __table_args__ = (
+        Index("ix_table_cost_history_table_scan", "table_id", "scan_at"),
+        Index("ix_table_cost_history_scan_at", "scan_at"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     table_id: Mapped[uuid.UUID] = mapped_column(
@@ -521,7 +524,10 @@ class TableColumn(TimestampMixin, Base):
 
 class TableStatsHistory(Base):
     __tablename__ = "table_stats_history"
-    __table_args__ = (Index("ix_table_stats_history_table_scan", "table_id", "scan_at"),)
+    __table_args__ = (
+        Index("ix_table_stats_history_table_scan", "table_id", "scan_at"),
+        Index("ix_table_stats_history_scan_at", "scan_at"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     table_id: Mapped[uuid.UUID] = mapped_column(

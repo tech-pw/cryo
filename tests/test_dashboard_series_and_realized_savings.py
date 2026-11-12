@@ -97,7 +97,9 @@ def _seed_two_tables_seconds_apart(session) -> None:
 
 
 def _assert_one_point_per_day(session) -> None:
-    payload = datalake_repo.dashboard_datalake(session, settings=Settings(_env_file=None))
+    payload = datalake_repo.dashboard_datalake(
+        session, settings=Settings(_env_file=None), now=DAY + timedelta(days=2)
+    )
     drift = payload["drift"]
     assert len(drift) == 2
     first_day, second_day = drift
@@ -106,7 +108,9 @@ def _assert_one_point_per_day(session) -> None:
     assert first_day["small_files_count"] == 4
     assert second_day["total_size_gb"] == pytest.approx(11.0)
 
-    trend = datalake_repo._cost_trend(session, limit=30, settings=Settings(_env_file=None))
+    trend = datalake_repo._cost_trend(
+        session, limit=30, settings=Settings(_env_file=None), now=DAY + timedelta(days=2)
+    )
     assert [round(float(point["current_monthly_cost_usd"]), 4) for point in trend] == [30.0, 11.0]
 
 
@@ -169,7 +173,9 @@ def test_realized_savings_count_only_successful_reclaim_actions(session) -> None
     assert freed == 2 * 1024**3
     assert usd == pytest.approx(round(2 * settings.cost_price_per_gb_month, 4))
 
-    by_day = datalake_repo._realized_savings_by_day(session, settings=settings, limit=30)
+    by_day = datalake_repo._realized_savings_by_day(
+        session, settings=settings, limit=30, now=DAY + timedelta(days=1)
+    )
     assert list(by_day.values()) == [pytest.approx(usd)]
 
 
@@ -198,3 +204,18 @@ def test_cost_totals_reclaimable_counts_measured_tables(session) -> None:
     totals = datalake_repo._sql_aggregate_cost_totals(session, settings=Settings(_env_file=None))
     assert totals["reclaimable_bytes"] == 500
     assert totals["reclaimable_tables_measured"] == 1
+
+
+def test_series_only_rank_history_inside_the_window(session) -> None:
+    """#494: the drift and cost series read only the last ``limit`` days of history."""
+    table_id = _table(session, name="old")
+    _history(session, table_id, DAY - timedelta(days=60), size_gb=500.0, score=10)
+    _history(session, table_id, DAY, size_gb=5.0, score=90)
+    session.commit()
+    now = DAY + timedelta(hours=1)
+    drift = datalake_repo.dashboard_datalake(
+        session, settings=Settings(_env_file=None), now=now, drift_limit=30
+    )["drift"]
+    assert [point["total_size_gb"] for point in drift] == [pytest.approx(5.0)]
+    trend = datalake_repo._cost_trend(session, limit=30, settings=Settings(_env_file=None), now=now)
+    assert [point["current_monthly_cost_usd"] for point in trend] == [pytest.approx(5.0)]

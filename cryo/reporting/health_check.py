@@ -1006,6 +1006,9 @@ def _check_namespace_unused_cost(session: Session, *, now: datetime) -> CheckRes
     )
 
 
+_FILE_TREND_LOOKBACK = timedelta(days=30)
+
+
 def compute_fleet_file_trend(session: Session, *, now: datetime | None = None) -> FleetFileTrend:
     """Both today_row and yesterday_row are joined against Table.is_active -- confirmed live,
     2026-09-09: deactivate_orphaned_evolving_catalog_entries deactivating 1,227 stale
@@ -1015,6 +1018,10 @@ def compute_fleet_file_trend(session: Session, *, now: datetime | None = None) -
     and avg file size that had nothing to do with actual compaction throughput. Any bulk
     deactivation will keep reproducing this without the filter."""
     now = now or datetime.now(UTC)
+    # Both sides cover tables scanned in the lookback. Ranking all history ever written took
+    # seconds per /vitals load (#494); a table not scanned since has the same numbers on both
+    # sides, so leaving it out of both doesn't move the trend.
+    lookback_start = now - timedelta(days=1) - _FILE_TREND_LOOKBACK
     today_row = session.execute(
         select(
             func.sum(TableStats.total_files),
@@ -1024,7 +1031,7 @@ def compute_fleet_file_trend(session: Session, *, now: datetime | None = None) -
         )
         .select_from(TableStats)
         .join(Table, Table.id == TableStats.table_id)
-        .where(Table.is_active.is_(True))
+        .where(Table.is_active.is_(True), TableStats.scan_at >= lookback_start)
     ).one()
     today_total_files = int(today_row[0] or 0)
     today_small_files = int(today_row[1] or 0)
@@ -1056,7 +1063,11 @@ def compute_fleet_file_trend(session: Session, *, now: datetime | None = None) -
         )
         .select_from(TableStatsHistory)
         .join(Table, Table.id == TableStatsHistory.table_id)
-        .where(TableStatsHistory.scan_at < yesterday_cutoff, Table.is_active.is_(True))
+        .where(
+            TableStatsHistory.scan_at < yesterday_cutoff,
+            TableStatsHistory.scan_at >= lookback_start,
+            Table.is_active.is_(True),
+        )
         .subquery()
     )
     yesterday_row = session.execute(
