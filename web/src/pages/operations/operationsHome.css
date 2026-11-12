@@ -109,6 +109,11 @@
   font-weight: 650;
 }
 
+.bg-primary > .ops-filter-count {
+  /* Darken, not lighten: white text on a lighter primary falls under 4.5:1. */
+  background: rgb(0 0 0 / 22%);
+}
+
 .ops-started {
   display: flex;
   flex-direction: column;

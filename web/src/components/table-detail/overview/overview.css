@@ -332,6 +332,7 @@
 
 .td-deductions li {
   --sev: var(--color-status-warning);
+  --sev-fg: var(--color-status-warning-fg);
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) auto;
   align-items: center;
@@ -347,6 +348,7 @@
 
 .td-deductions li[data-severity="critical"] {
   --sev: var(--color-status-danger);
+  --sev-fg: var(--color-status-danger);
 }
 
 .td-ded-points {
@@ -355,7 +357,7 @@
   justify-content: center;
   height: 26px;
   padding: 0 2px;
-  color: var(--sev);
+  color: var(--sev-fg, var(--sev));
   font-size: 12.5px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
@@ -756,7 +758,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.td-manifest-strip p {
+.td-manifest-strip .td-manifest-hint {
   margin-top: 2px;
   color: var(--color-muted);
   font-size: 11.5px;

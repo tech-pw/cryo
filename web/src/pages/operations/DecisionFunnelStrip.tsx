@@ -40,7 +40,7 @@ export const DecisionFunnelStrip = () => {
       ) : stages.length === 0 ? (
         <p className="ops-signal-card__empty">No funnel recorded yet.</p>
       ) : (
-        <ol className="ops-funnel">
+        <ol className="ops-funnel" tabIndex={0} aria-label="Decision funnel stages">
           {stages.map((stage, index) => {
             const failed = stage.stage === "failed";
             const previous = index > 0 ? stages[index - 1].count : null;

@@ -103,6 +103,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 - Home's "Latest nightly maintenance" card follows the worker-path nightly run, not only batch-coordinator runs, and says when the newest nightly run is more than 36h old. `GET /runs` accepts `pipeline=nightly`, using the same rule as the Tables funnel (#492).
 - The Runs page counts partial runs as runs with failures (**Runs with failures · 24h**, "2 failed, 9 partial"), so "No table failures" appears only when no table failed, and "Running now" says "runs waiting" instead of "Nothing queued" (#496).
 - On phones the top bar has one search control (the command palette) and no overlapping Batch/⌘K controls, the Settings tab strip fades at its edge and scrolls the current tab into view, the Runs timeline fits the screen, and the truncated Home engine-slots line shows every engine on hover (#497).
+- Accessibility: contrast fixes for success/warning/muted text, labelled selects, correct heading order and ARIA roles, keyboard-scrollable regions (#499).
 - A scanner-worker running a long scan chunk is no longer restarted as hung. The
   `/healthz` stall check now measures time without progress, and each table the
   chunk starts or finishes counts as progress, so a healthy chunk that runs past

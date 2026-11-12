@@ -782,7 +782,7 @@ export const InsightsPage = () => {
         className="!mb-0 !pb-3"
         subtitle="Which tables are the same physical data, and which queries are slow?"
       />
-      <div role="tablist" aria-label="Insights" className="-mt-4">
+      <div className="-mt-4">
         <Segmented
           aria-label="Insights"
           value={tab}
@@ -794,7 +794,7 @@ export const InsightsPage = () => {
           ]}
         />
       </div>
-      <div role="tabpanel" aria-label={tab === "duplicates" ? "Duplicates" : tab === "shared-paths" ? "Shared paths" : "Queries"}>
+      <div role="region" aria-label={tab === "duplicates" ? "Duplicates" : tab === "shared-paths" ? "Shared paths" : "Queries"}>
         {tab === "duplicates" ? <DuplicatesPanel /> : null}
         {tab === "shared-paths" ? <SharedPathsPanel /> : null}
         {tab === "queries" ? <QueriesPanel /> : null}
