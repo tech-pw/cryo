@@ -140,9 +140,8 @@ def step_diagnostics(core_api: Any, namespace: str, engine_ref: str) -> StepDiag
     except ApiException as exc:
         if exc.status != 404:
             raise
-    app_selector = ((getattr(driver, "metadata", None) and driver.metadata.labels) or {}).get(
-        "spark-app-selector"
-    )
+    driver_labels = getattr(getattr(driver, "metadata", None), "labels", None) or {}
+    app_selector = driver_labels.get("spark-app-selector")
     if app_selector:
         executors = core_api.list_namespaced_pod(
             namespace=namespace,
