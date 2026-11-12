@@ -119,13 +119,22 @@ const StepAction = ({ step, tableId }: { step: PathStepRead; tableId: string }) 
   );
 };
 
+const fixesText = (step: PathStepRead): string => {
+  const parts: string[] = [];
+  if (step.fixes.length) parts.push(`Clears: ${step.fixes.join(", ")}`);
+  if (step.fixes_with?.length) {
+    parts.push(`Clears ${step.fixes_with.join(", ")} together with ${(step.fixes_with_steps ?? []).map((t) => `“${t}”`).join(", ")}`);
+  }
+  return parts.length ? parts.join(" · ") : "Clears no deduction on its own";
+};
+
 const StepRow = ({ step, tableId }: { step: PathStepRead; tableId: string }) => (
   <li className="rounded-[var(--radius-default)] border border-border p-3" data-step={step.id}>
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
         <p className="text-sm font-medium text-foreground">{step.title}</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {step.fixes.length ? `Clears: ${step.fixes.join(", ")}` : "Clears no deduction on its own"}
+          {fixesText(step)}
           {" · "}
           {CONFIDENCE_LABEL[step.confidence]}
         </p>

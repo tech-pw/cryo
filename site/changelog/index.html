@@ -72,6 +72,7 @@
   <li>Table overview shows cooldown as a short local-time line linking to the eligibility checklist instead of the raw reason string (#522).</li>
   <li>Runs whose skipped operations had nothing to do are no longer partial; table runs are time-ordered and queue closes show as closed without running instead of failures (#521).</li>
   <li>Sort-order recommendations only offer columns present in the table's schema (schema spelling), and query parsing attributes join columns to their own table (#517).</li>
+  <li>Path to A counts property gaps with the scorer's own rule, so applying properties and a sort order projects the cleared deduction, and both steps say they clear it together (#520).</li>
   <li>Helm: a prod render fails when one image digest is pinned under two repositories, or a digest is malformed (#486).</li>
   <li>Spark on Kubernetes: a step whose pod is stuck in ImagePullBackOff/ErrImagePull/InvalidImageName/CreateContainerConfigError fails after a 3-minute grace and frees its Job, pod and Secret instead of waiting for the ~2h deadline (#485).</li>
   <li>Home's &quot;Latest nightly maintenance&quot; card follows the worker-path nightly run, not only batch-coordinator runs, and says when the newest nightly run is more than 36h old. <code>GET /runs</code> accepts <code>pipeline=nightly</code>, using the same rule as the Tables funnel (#492).</li>

@@ -163,4 +163,24 @@ describe("PathToAPanel", () => {
     renderPanel();
     expect(await screen.findByText("No deductions. This table is already at its best grade.")).toBeInTheDocument();
   });
+
+  it("says when a step clears a deduction only together with another step (#520)", async () => {
+    getPathToA.mockResolvedValue({
+      ...path,
+      steps: [
+        step({
+          id: "table_properties",
+          kind: "approval",
+          title: "Apply recommended table properties",
+          fixes: [],
+          fixes_with: ["Suboptimal properties"],
+          fixes_with_steps: ["Sort data by kind"]
+        })
+      ]
+    });
+    renderPanel();
+    expect(
+      await screen.findByText(/Clears Suboptimal properties together with “Sort data by kind”/)
+    ).toBeInTheDocument();
+  });
 });
