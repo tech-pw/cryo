@@ -54,6 +54,8 @@ spec:
             - name: http
               containerPort: {{ .Values.api.port }}
           env:
+            - name: CRYO_IMAGE
+              value: {{ include "cryo.imageRef" $.Values.image | quote }}
             {{- range $k, $v := .Values.global.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}

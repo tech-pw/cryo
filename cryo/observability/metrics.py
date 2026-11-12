@@ -31,6 +31,12 @@ spark_submit_throttle_wait_seconds = Histogram(
     buckets=(0, 0.5, 1, 2, 5, 10, 30, 60, 120, 300),
 )
 
+component_build_info = Gauge(
+    "cryo_component_build_info",
+    "Always 1; labels carry the build this process runs, for version-skew alerts.",
+    ["component", "commit", "version"],
+)
+
 api_requests_total = Counter(
     "cryo_api_requests_total",
     "API requests by bounded route template, method, and status class.",

@@ -1314,6 +1314,9 @@ def _scanner_scale_metric() -> int:
 def _run_with_signal(runner: DaemonRunner, *, service_name: str | None = None) -> NoReturn:
     settings = get_settings()
     init_tracing(settings, service_name=service_name or runner.name)
+    from cryo.component_builds import start_component_reporter
+
+    start_component_reporter(service_name or runner.name)
     if service_name and settings.health_port:
         from cryo.observability.health_server import start_health_server
 

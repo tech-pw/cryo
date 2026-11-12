@@ -43,6 +43,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/version/components": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Component Versions
+         * @description The build each running component reported in the last 10 minutes (#489).
+         */
+        get: operations["component_versions_api_v1_version_components_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/readyz": {
         parameters: {
             query?: never;
@@ -7191,6 +7211,34 @@ export interface components {
              * @default 0
              */
             protected_snapshot_count: number;
+        };
+        /** ComponentBuild */
+        ComponentBuild: {
+            /** Component */
+            component: string;
+            /** Instance */
+            instance: string;
+            /** Image */
+            image?: string | null;
+            /** Version */
+            version: string;
+            /** Git Sha */
+            git_sha?: string | null;
+            /** Built At */
+            built_at?: string | null;
+            /** Spark Image */
+            spark_image?: string | null;
+            /** Native Image */
+            native_image?: string | null;
+            /** Reported At */
+            reported_at: string;
+        };
+        /** ComponentBuildsResponse */
+        ComponentBuildsResponse: {
+            /** Components */
+            components: components["schemas"]["ComponentBuild"][];
+            /** Skew */
+            skew: boolean;
         };
         /** ConfigApplyRequest */
         ConfigApplyRequest: {
@@ -14767,6 +14815,26 @@ export interface operations {
                     "application/json": {
                         [key: string]: string | null;
                     };
+                };
+            };
+        };
+    };
+    component_versions_api_v1_version_components_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComponentBuildsResponse"];
                 };
             };
         };
