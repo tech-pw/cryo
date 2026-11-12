@@ -1161,6 +1161,28 @@ def test_list_runs_filters_by_pipeline(api_db: ApiDb) -> None:
     assert [item["id"] for item in response.json()] == [str(batch_run_id)]
 
 
+def test_list_runs_nightly_includes_worker_path_cron_runs(api_db: ApiDb) -> None:
+    """Home's nightly card reads ?pipeline=nightly: batch runs and the cron preset's runs (#492)."""
+    client = api_db.client
+    with api_db.session_factory() as session:
+        batch_run = MaintenanceRun(
+            id=uuid.uuid4(), kind="maintenance", status="succeeded", summary={"pipeline": "batch"}
+        )
+        cron_run = MaintenanceRun(
+            id=uuid.uuid4(), kind="scheduled", status="partial", trigger="cron", summary=None
+        )
+        manual_run = MaintenanceRun(
+            id=uuid.uuid4(), kind="scheduled", status="succeeded", trigger="manual"
+        )
+        session.add_all([batch_run, cron_run, manual_run])
+        session.commit()
+        expected = {str(batch_run.id), str(cron_run.id)}
+
+    response = client.get("/api/v1/runs?pipeline=nightly&limit=14", headers=VIEWER_HEADERS)
+    assert response.status_code == 200
+    assert {item["id"] for item in response.json()} == expected
+
+
 def test_compatible_presets_and_assign_requires_catalog_binding(api_db: ApiDb) -> None:
     client = api_db.client
     source_id, destination_id = _seed_source_destination(api_db.session_factory)

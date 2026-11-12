@@ -3,6 +3,7 @@ import type { RunRead } from "../api/types";
 import { formatGb } from "./format";
 import {
   latestBatchRun,
+  latestNightlyRun,
   nightlyRunView,
   reclaimInputFromImpact,
   reclaimYesterdayDisplay,
@@ -91,6 +92,8 @@ describe("nightlyRunView", () => {
       summary: { pipeline: "scan", selected: 1, succeeded: 1 }
     });
     expect(latestBatchRun([older, scan, newer])?.id).toBe("newer");
+    const cron = run({ id: "cron", kind: "scheduled", trigger: "cron", summary: null, created_at: "2026-09-29T18:00:00Z" });
+    expect(latestNightlyRun([older, scan, newer, cron])?.id).toBe("cron");
     expect(nightlyRunView(null).succeededSelected).toBe("Not measured");
     expect(nightlyRunView(null).succeededSelected).not.toBe("0/0");
     const view = nightlyRunView(run({ summary: { pipeline: "batch" } }));

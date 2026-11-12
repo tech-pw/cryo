@@ -15,6 +15,15 @@ describe("Nightly outcomes", () => {
     expect(screen.getByText(/2 needed no work/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Inspect run" })).toHaveAttribute("href", "/runs/run-1");
   });
+  it("says when the newest nightly run is days old", () => {
+    render(<MemoryRouter><MaintenanceCard run={run} loading={false} error={false} /></MemoryRouter>);
+    expect(screen.getByRole("status")).toHaveTextContent(/No nightly run in \d+d/);
+  });
+  it("shows no staleness note for a run from last night", () => {
+    const recent = new Date(Date.now() - 3 * 3_600_000).toISOString();
+    render(<MemoryRouter><MaintenanceCard run={{ ...run, created_at: recent, finished_at: recent }} loading={false} error={false} /></MemoryRouter>);
+    expect(screen.queryByRole("status")).toBeNull();
+  });
   it.each([{ selected: 0 }, { selected: 10, succeeded: 2 }, { ...run.summary, succeeded: 20 }, { ...run.summary, partial: -1 }])("does not draw a misleading progress bar for incomplete or invalid counters: %j", (summary) => {
     expect(maintenanceProgress({ ...run, summary }).percent).toBeNull();
   });

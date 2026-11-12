@@ -4,11 +4,12 @@ import type { RunRead } from "../../api/types";
 import { Skeleton } from "../../components/ui/skeleton";
 import { formatNumber, formatTime } from "../../lib/format";
 import { HomeCard } from "./HomeCard";
-import { maintenanceProgress, nightOutcome, type NightOutcome, type OffPeakState } from "./homeSignals";
+import { formatAgo, hoursSince, maintenanceProgress, nightOutcome, type NightOutcome, type OffPeakState } from "./homeSignals";
 
 export { maintenanceProgress };
 
 const HISTORY_SLOTS = 14;
+const STALE_AFTER_HOURS = 36;
 const OUTCOME_LABEL: Record<NightOutcome, string> = {
   succeeded: "Succeeded",
   partial: "Partial",
@@ -54,6 +55,8 @@ export const MaintenanceCard = ({ run, loading, error, history = [], offPeak = n
   const progress = run ? maintenanceProgress(run) : null;
   const status = run?.status?.replaceAll("_", " ") ?? "Unknown";
   const ended = Boolean(run?.finished_at);
+  const age = run ? hoursSince(run.finished_at ?? run.created_at) : null;
+  const stale = age != null && age > STALE_AFTER_HOURS;
   return (
     <HomeCard title="Latest nightly maintenance" description="What the nightly batch did, and how the last two weeks went." action={{ label: "All runs", href: "/runs" }} busy={loading} className="home-maintenance">
       {loading ? <Skeleton className="h-40 w-full" /> : error ? <p className="home-empty">Nightly run unavailable</p> : !run || !progress ? (
@@ -64,6 +67,7 @@ export const MaintenanceCard = ({ run, loading, error, history = [], offPeak = n
           <Link className="home-text-link" to="/runs">View maintenance runs <ArrowUpRight size={14} aria-hidden="true" /></Link>
         </div>
       ) : <>
+        {stale ? <p className="home-caption home-tone-danger" role="status">No nightly run in {formatAgo(run.finished_at ?? run.created_at)?.replace(" ago", "")}. This is the most recent one.</p> : null}
         <div className="home-run-headline">
           <div><span className="home-caption">Tables succeeded</span><p className="home-run-value">{progress.succeeded == null ? "Not reported" : <>{formatNumber(progress.succeeded)}<span> / {progress.selected == null ? "?" : formatNumber(progress.selected)} selected</span></>}</p></div>
           <div className="home-run-context"><span className={`home-run-status ${progress.failed ? "home-tone-danger" : ""}`}>{status}</span><span>{ended ? "Finished" : "Created"} {formatTime(run.finished_at ?? run.created_at)}</span></div>
