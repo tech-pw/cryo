@@ -1305,7 +1305,17 @@ def table_runs(
         session.scalars(
             select(MaintenanceJob)
             .where(*filters)
-            .order_by(MaintenanceJob.started_at.desc().nullslast(), MaintenanceJob.id.desc())
+            # A job closed without running has no started_at; its finish time places it (#521).
+            .order_by(
+                func.coalesce(
+                    MaintenanceJob.started_at,
+                    MaintenanceJob.finished_at,
+                    MaintenanceJob.admitted_at,
+                )
+                .desc()
+                .nullslast(),
+                MaintenanceJob.id.desc(),
+            )
             .offset(offset)
             .limit(limit)
         )

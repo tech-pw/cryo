@@ -97,6 +97,18 @@ export const toneFor = (status: string | null | undefined): CellTone => {
 
 const ACTIVE_TONES = new Set<CellTone>(["running", "queued", "scheduled", "deferred", "retry"]);
 
+/**
+ * A job the queue closed before any operation ran (e.g. "orphaned_deferred", "stuck_admitted_no_dispatch").
+ * It is bookkeeping, not a maintenance failure, so it isn't counted as one (#521).
+ */
+export const closedWithoutRunning = (run: Pick<TableRunRead, "status" | "started_at" | "steps">): boolean =>
+  toneFor(run.status) === "failed" && !run.started_at && !(run.steps ?? []).length;
+
+const runTime = (run: TableRunRead): number => {
+  const value = Date.parse(run.started_at ?? run.finished_at ?? "");
+  return Number.isFinite(value) ? value : 0;
+};
+
 export const isActiveTone = (tone: CellTone) => ACTIVE_TONES.has(tone);
 
 export interface OpCell {
@@ -157,7 +169,7 @@ export const buildRunColumns = (runs: TableRunRead[], audit: AuditEntry[]): RunC
     receiptsByJob.set(jobId, [...(receiptsByJob.get(jobId) ?? []), entry]);
   }
   return [...runs]
-    .sort((a, b) => Date.parse(a.started_at ?? "") - Date.parse(b.started_at ?? "") || 0)
+    .sort((a, b) => runTime(a) - runTime(b))
     .map((run) => {
       const receipts = (receiptsByJob.get(run.job_id) ?? []).sort(
         (a, b) => Date.parse(a.ts ?? a.created_at ?? "") - Date.parse(b.ts ?? b.created_at ?? "")
@@ -196,7 +208,7 @@ export const buildRunColumns = (runs: TableRunRead[], audit: AuditEntry[]): RunC
           filesOut: receipt.output_files_count ?? null
         });
       }
-      const tone = toneFor(run.status);
+      const tone = closedWithoutRunning(run) ? "removed" : toneFor(run.status);
       const placeholder = (op: string, cellTone: CellTone, status: string, detail: string | null): OpCell => ({
         op,
         tone: cellTone,

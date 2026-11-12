@@ -230,4 +230,24 @@ describe("runModel", () => {
       gradeChange(run({ before_stats: { scan_at: "a", grade: "F" }, after_stats: { scan_at: "b", grade: "B" } }))
     ).toEqual({ before: "F", after: "B" });
   });
+
+  it("orders runs by time and shows queue closes as closed without running, not failed (#521)", () => {
+    const columns = buildRunColumns(
+      [
+        run({ job_id: "ok", status: "succeeded", started_at: "2026-11-10T01:00:00Z", finished_at: "2026-11-10T01:10:00Z" }),
+        run({
+          job_id: "closed",
+          status: "failed",
+          started_at: null,
+          finished_at: "2026-10-01T00:00:00Z",
+          error: "orphaned_deferred: parent run already finalized",
+          steps: []
+        }),
+        run({ job_id: "real", status: "failed", started_at: "2026-11-01T01:00:00Z", finished_at: "2026-11-01T01:05:00Z" })
+      ],
+      []
+    );
+    expect(columns.map((column) => column.key)).toEqual(["closed", "real", "ok"]);
+    expect(columns.map((column) => column.tone)).toEqual(["removed", "failed", "success"]);
+  });
 });

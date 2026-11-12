@@ -46,6 +46,7 @@ from cryo.observability.metrics import (
 )
 from cryo.observability.tracing import trace_operation
 from cryo.planner.execution import build_execution_plan, skip_operations_from_preset
+from cryo.planner.planner import is_nothing_to_do_skip
 from cryo.planner.serialization import plan_from_dict, plan_to_dict
 from cryo.queue.async_spark import AsyncSparkEntry, AsyncSparkRegistry
 from cryo.queue.job_release import release_job_claims
@@ -1414,7 +1415,12 @@ class Worker:
                     )
             if had_skip and not had_success and final_status is JobStatus.SUCCEEDED:
                 final_status = JobStatus.SKIPPED
-            requested_skips = requested_operation_skips(plan_to_dict(plan))
+            all_skips = requested_operation_skips(plan_to_dict(plan))
+            requested_skips = tuple(r for r in all_skips if not is_nothing_to_do_skip(r))
+            if all_skips and not requested_skips and not had_success:
+                if final_status is JobStatus.SUCCEEDED:
+                    # Nothing to do anywhere. The reasons stay on the plan, not in error.
+                    final_status = JobStatus.SKIPPED
             if requested_skips and final_status is JobStatus.SUCCEEDED:
                 # The operator asked for an operation the plan did not run. Other
                 # statements may have succeeded; calling the job a plain success

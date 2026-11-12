@@ -638,6 +638,24 @@ def _chunk_bytes(chunk_size_gb: float) -> int:
     return max(1, int(chunk_size_gb * 1024 * 1024 * 1024))
 
 
+# Planner notes that mean the operation had nothing to do: running it would have been a no-op.
+# A skip for one of these reasons is a success, not a partial run (#521).
+_NOTHING_TO_DO_MARKERS = (
+    "below threshold",
+    "nothing can expire",
+    "nothing is old enough to expire",
+    "inside the ",  # expire_snapshots minimum interval since the last expiry
+    "already rewrites data files",
+    "no renderable partition candidates met the threshold",
+    "every data file is already written under the",
+)
+
+
+def is_nothing_to_do_skip(reason: str) -> bool:
+    """True when a skip note says the operation would have changed nothing."""
+    return any(marker in reason for marker in _NOTHING_TO_DO_MARKERS)
+
+
 def _skipped_requested_operations(
     params: Mapping[str, Any],
     operations: Sequence[Operation],
