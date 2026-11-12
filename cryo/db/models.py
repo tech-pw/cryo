@@ -264,6 +264,13 @@ class Table(Base):
     # without touching is_active or dropping the row.
     maintenance_missing_metadata_reason: Mapped[str | None] = mapped_column(Text)
     maintenance_retry_after: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    # #519: "active" or "archived". An archived table is read-only on purpose (a backup or a
+    # retired table): health skips the stale-commit deduction and plans drop the operations
+    # that rewrite data. Values live in cryo.domain.lifecycle.
+    lifecycle: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
+    lifecycle_changed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    lifecycle_changed_by: Mapped[str | None] = mapped_column(Text)
+    lifecycle_reason: Mapped[str | None] = mapped_column(Text)
 
     source: Mapped[Source] = relationship(back_populates="tables")
     stats: Mapped[TableStats | None] = relationship(

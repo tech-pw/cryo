@@ -56,6 +56,7 @@ export const TableDetailHeaderBar = () => {
         score={knownNumber(stats?.overall_score)}
         grade={stats?.grade ?? null}
         ownerEmail={row?.owner_email ?? null}
+        lifecycle={row?.lifecycle ?? "active"}
         partitionLabel={ctx.partitionColLabel}
         location={row?.location ?? null}
         scanAt={stats?.scan_at ?? null}

@@ -13,7 +13,7 @@ Step kinds:
   travel window, table properties, a larger rewrite), so a person approves it.
 * ``design`` -- a table layout change (partition spec, sort order). Admin only, typed
   confirmation; affects new writes, and existing data as it is rewritten.
-* ``external`` -- needs a change outside Cryo (the writer, or a decision to retire the table).
+* ``external`` -- needs a change outside Cryo (the writer's commit rate or file format).
 """
 
 from __future__ import annotations
@@ -27,6 +27,12 @@ from statistics import median
 from typing import Any, Literal
 
 from cryo.domain.enums import PartitionTransform
+from cryo.domain.lifecycle import (
+    ARCHIVE_CANDIDATE_NO_COMMIT_DAYS,
+    ARCHIVE_CANDIDATE_NO_READ_DAYS,
+    is_archive_candidate,
+    is_archived,
+)
 from cryo.planner.partitions import PartitionFieldSpec, is_open_time_partition, partition_date
 from cryo.planner.planner import _expire_params
 from cryo.scanner.health import (
@@ -113,6 +119,10 @@ class TableSnapshot:
     # byte counts. Empty when the scan predates it.
     spec_migration: Mapping[str, Any] = field(default_factory=dict)
     now: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # #519: "archived" tables get no compaction, layout or property steps, and their grade
+    # carries no stale-commit deduction. query_count_30d of None means reads aren't recorded.
+    lifecycle: str = "active"
+    query_count_30d: int | None = None
 
 
 @dataclass
@@ -353,18 +363,30 @@ def build_path_to_a(snapshot: TableSnapshot) -> PathToA:
         if step is not None:
             steps.append(step)
 
-    for builder in (_expire_step, _manifest_step, _orphan_step, _delete_step):
-        add(builder(snapshot, projection))
-    add(_compaction_step(snapshot, projection, parts, target, scale, routine=True))
-    add(_retention_step(snapshot, projection))
-    add(_properties_step(snapshot, projection))
-    add(_compaction_step(snapshot, projection, parts, target, scale, routine=False))
-    add(_spec_migration_step(snapshot, projection))
-    layout = _partition_step(snapshot, projection, parts, target, scale)
-    add(layout)
-    dropped = list(layout.action.get("dropped", [])) if layout and layout.action else []
-    add(_sort_step(snapshot, projection, dropped))
-    _mark_joint_property_fix(snapshot, steps)
+    archived = is_archived(snapshot.lifecycle)
+    if archived:
+        notes.append(
+            "This table is archived (read-only). Compaction, delete rewrites, layout and "
+            "table-property steps are skipped; snapshot expiry, orphan cleanup and manifest "
+            "rewrites still run."
+        )
+        for builder in (_expire_step, _manifest_step, _orphan_step):
+            add(builder(snapshot, projection))
+        add(_retention_step(snapshot, projection))
+    else:
+        for builder in (_expire_step, _manifest_step, _orphan_step, _delete_step):
+            add(builder(snapshot, projection))
+        add(_compaction_step(snapshot, projection, parts, target, scale, routine=True))
+        add(_retention_step(snapshot, projection))
+        add(_properties_step(snapshot, projection))
+        add(_compaction_step(snapshot, projection, parts, target, scale, routine=False))
+        add(_spec_migration_step(snapshot, projection))
+        layout = _partition_step(snapshot, projection, parts, target, scale)
+        add(layout)
+        dropped = list(layout.action.get("dropped", [])) if layout and layout.action else []
+        add(_sort_step(snapshot, projection, dropped))
+        _mark_joint_property_fix(snapshot, steps)
+    add(_archive_step(snapshot, projection))
     cryo_score = projection.score()
     steps.extend(_external_steps(snapshot, projection))
     return PathToA(
@@ -1128,6 +1150,61 @@ def _sort_step(
     )
 
 
+def _archive_step(snapshot: TableSnapshot, projection: _Projection) -> Step | None:
+    """Replace "write to it or retire it" with an in-app action (#519).
+
+    Archiving removes only the stale-commit deduction; the weights are unchanged.
+    """
+    if not projection.has("snapshot_age_days") or is_archived(snapshot.lifecycle):
+        return None
+    last = snapshot.last_commit_at
+    if last is not None and last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    days = (snapshot.now - last).days if last is not None else None
+    before = dict(projection.points)
+    projection.set("snapshot_age_days", 0)
+    evidence: list[str] = []
+    if days is not None:
+        evidence.append(f"Last commit {days} days ago.")
+    if snapshot.query_count_30d is not None:
+        evidence.append(f"{snapshot.query_count_30d:,} recorded reads in the last 30 days.")
+    candidate = is_archive_candidate(
+        lifecycle=snapshot.lifecycle,
+        days_since_commit=days,
+        query_count_30d=snapshot.query_count_30d,
+    )
+    lead = ""
+    if candidate:
+        reads = (
+            f" and no reads in {ARCHIVE_CANDIDATE_NO_READ_DAYS} days"
+            if snapshot.query_count_30d is not None
+            else ""
+        )
+        lead = (
+            f"Archive candidate: no commits for {ARCHIVE_CANDIDATE_NO_COMMIT_DAYS}+ days{reads}. "
+        )
+    return Step(
+        id="mark_archived",
+        kind="approval",
+        title="Mark as archived",
+        detail=(
+            f"{lead}If this is a backup or a retired table, mark it archived (read-only). "
+            "The stale-commit check stops applying, compaction and layout changes stop, and "
+            "snapshot expiry and orphan cleanup keep running. If the table is still written "
+            "to, leave it active: this clears on its next write. Return it to active from "
+            "the Config tab at any time."
+        ),
+        fixes=projection.fixed_since(before),
+        projected_score=projection.score(),
+        projected_grade=grade_for_score(projection.score()),
+        confidence="measured",
+        evidence=evidence,
+        action={"type": "set_lifecycle", "lifecycle": "archived", "suggested": candidate},
+        required_role="admin",
+        confirm_text=snapshot.table_name,
+    )
+
+
 def _external_steps(snapshot: TableSnapshot, projection: _Projection) -> list[Step]:
     steps: list[Step] = []
 
@@ -1169,16 +1246,6 @@ def _external_steps(snapshot: TableSnapshot, projection: _Projection) -> list[St
         "Slow the writer's commit rate",
         "The table is graded down for streaming-rate commits. A longer trigger interval on "
         "the writer removes this deduction; Cryo can't change the writer.",
-    )
-    age = ""
-    if snapshot.last_commit_at:
-        age = f" The last commit was {(snapshot.now - snapshot.last_commit_at).days} days ago."
-    add(
-        "snapshot_age_days",
-        "stale_table",
-        "Write to the table, or retire it",
-        f"The table hasn't been written to recently.{age} If it is no longer used, archive "
-        "or exclude it; if it is, this clears on its next write.",
     )
     add(
         "v3_upgrade",

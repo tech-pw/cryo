@@ -21,6 +21,7 @@ import { RiskPill } from "./RiskPopover";
 import { ScanSuggestions } from "./ScanSuggestions";
 import { SettingRow } from "./SettingRow";
 import { AllProperties, TableMetadataCard } from "./TableMetadataCard";
+import { TableLifecycleCard } from "./TableLifecycleCard";
 import {
   describeApplyError,
   matchesFilter,
@@ -205,6 +206,8 @@ export const TableConfigInventory = ({ tableId }: { tableId: string }) => {
           onStage={(setting, value) => stage(setting, value)}
         />
       ) : null}
+
+      <TableLifecycleCard tableId={tableId} access={adminAccess} />
 
       {stagedCount ? (
         <div className="tc-bar" role="region" aria-label="Staged configuration changes">

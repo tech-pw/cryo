@@ -8,6 +8,7 @@ Architecture and contracts:
 - [`design/hld.md`](./design/hld.md): components, data flow, deployment
 - [`design/lld.md`](./design/lld.md): schemas, interfaces, planner algorithm, rendered SQL
 - [`design/smart_schedule.md`](./design/smart_schedule.md): event-driven Smart Maintenance design
+- [`table-lifecycle.md`](./table-lifecycle.md): archived (read-only) tables, health and maintenance semantics (#519)
 - [`architecture.md`](./architecture.md): architecture and AI strategy
 - [`health-fragmented-partitions.md`](./health-fragmented-partitions.md): what the Fragmented partitions health check measures (#518)
 - [`../README.md`](../README.md): overview and quickstart

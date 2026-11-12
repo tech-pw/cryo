@@ -223,6 +223,8 @@ def load_snapshot(session: Session, table: Table) -> TableSnapshot | None:
             "is_streaming": bool(raw.get("is_streaming")),
         },
         spec_migration=dict(raw.get("spec_migration") or {}),
+        lifecycle=table.lifecycle or "active",
+        query_count_30d=stats.query_count_30d,
     )
 
 
@@ -279,6 +281,8 @@ def apply_path_step(
         return _apply_properties(table_id, step, session, principal)
     if kind in {"partition_spec", "sort_order"}:
         return _change_layout(table_id, step, session, principal)
+    if kind == "set_lifecycle":
+        return _set_lifecycle(table, step, session, principal)
     raise HTTPException(status_code=400, detail=f"Unknown step action: {kind}")
 
 
@@ -361,6 +365,32 @@ def _apply_properties(
         status="applied",
         message=result.message,
         audit_log_id=result.audit_log_id,
+    )
+
+
+def _set_lifecycle(
+    table: Table, step: Step, session: Session, principal: Principal
+) -> PathToAApplyResponse:
+    from cryo.db.repositories.table_lifecycle import set_table_lifecycle
+    from cryo.domain.lifecycle import TableLifecycle
+
+    assert step.action is not None
+    change = set_table_lifecycle(
+        session,
+        table,
+        TableLifecycle(step.action["lifecycle"]),
+        reason="Path to A: mark as archived",
+        actor=principal.subject,
+    )
+    session.commit()
+    return PathToAApplyResponse(
+        step_id=step.id,
+        status="applied",
+        message=(
+            "Marked as archived. The stale-commit check no longer applies; compaction and "
+            "layout changes stop. Return it to active from the Config tab."
+        ),
+        audit_log_id=change.audit_id,
     )
 
 

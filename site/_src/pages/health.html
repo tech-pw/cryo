@@ -42,6 +42,16 @@ updated: 2026-11-12
 <p>Open a table to see its score and how it got there. This one scores 28: it has lost 72 points to two critical findings and four warnings.</p>
 <screenshot name="table-detail" url="cryo.local/tables/analytics.events" alt="Table detail for analytics.events: 412.6 GB, 48,210 files, 41,930 compaction candidates, 1,284 snapshots, health score 28 of 100, grade F, Critical." caption="A grade F table. The score gauge, the compaction candidates and the snapshot count all come from the last scan." />
 
+<h2 id="archived">Archived tables</h2>
+<p>A table with no commit in 30 days loses 20 points for <b>Stale table commits</b>. That is right for a table that should be written to, and wrong for a backup, a snapshot copy or a retired table that is read-only on purpose. Mark those tables <b>archived</b>.</p>
+<ul>
+  <li><b>Where:</b> the table's Config tab (<b>Lifecycle</b>, admin only), or <b>Mark as archived</b> in Path to A. You type the table name and give a reason, and the change is audited. <b>Return to active</b> undoes it.</li>
+  <li><b>Health:</b> the stale-commit check stops applying to the table. Every other check still counts, at the same weight, and the stored grade updates at once.</li>
+  <li><b>Maintenance:</b> plans stop compaction, delete rewrites, data expiry, partition-spec migration and statistics, and Path to A stops proposing sort, layout and property changes. Snapshot expiry, orphan cleanup and manifest rewrites keep running, and cost reporting is unchanged.</li>
+  <li><b>Finding them:</b> archived tables carry an <b>Archived</b> badge on the Tables list and the table header. Filter by <b>Lifecycle</b> in the list's advanced filters.</li>
+  <li><b>Suggestions:</b> an active table with no commit for 90 days or more, and no recorded reads in 30 days, is shown as an archive candidate. Cryo never archives a table on its own.</li>
+</ul>
+
 <h2 id="projection">Projection: from scan to stored cost</h2>
 <p>The cost estimator turns the scanner's stored statistics into a projected byte count for each operation and stores it. Nothing is read from object storage to produce it. Orphan-file precision is an opt-in scanner tier. Without it, the number is flagged as last-known.</p>
 <diagram name="projection" caption="Object storage is not an input to the projection." />

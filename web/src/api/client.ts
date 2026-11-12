@@ -164,6 +164,7 @@ import type {
   TableOperationsRead,
   TableSettingRead
 } from "./types";
+import type { components } from "./openapi";
 import { serializePredicate, type Predicate } from "../lib/predicate";
 
 export const API_PREFIX = "/api/v1";
@@ -2048,7 +2049,13 @@ export const applyTableConfig = (
 export const putOperationExclusions = (api: ApiOptions, tableId: UUID, body: OperationExclusionsWrite) =>
   apiFetch<OperationExclusionsResponse>(`/tables/${tableId}/config/operations`, api, { method: "PUT", body });
 
-export const analyzeWairBoundaries = (api: ApiOptions, tableId: UUID, aggressiveness = 1) =>
+export type TableLifecycleWrite = components["schemas"]["TableLifecycleWrite"];
+export type TableLifecycleResponse = components["schemas"]["TableLifecycleResponse"];
+
+export const putTableLifecycle = (api: ApiOptions, tableId: UUID, body: TableLifecycleWrite) =>
+  apiFetch<TableLifecycleResponse>(`/tables/${tableId}/lifecycle`, api, { method: "PUT", body });
+
+export const analyzeWairBoundaries =(api: ApiOptions, tableId: UUID, aggressiveness = 1) =>
   apiFetch<WairBoundaryReport>(
     `/tables/${tableId}/wair/analyze?aggressiveness=${encodeURIComponent(aggressiveness)}`,
     api,

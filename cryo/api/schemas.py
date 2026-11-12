@@ -766,6 +766,14 @@ class TableRead(OrmModel):
     failure_category_guidance: str | None = None
     failure_category_actionable_from_cryo: bool = False
     owner_email: str | None = None
+    # #519: "active" or "archived" (read-only on purpose). Set via PUT /tables/{id}/lifecycle.
+    lifecycle: Literal["active", "archived"] = "active"
+    lifecycle_changed_at: datetime | None = None
+    lifecycle_changed_by: str | None = None
+    lifecycle_reason: str | None = None
+    # A suggestion only, never acted on: active, no commit for 90+ days, and no recorded
+    # reads in the last 30.
+    archive_candidate: bool = False
     stats: TableStatsRead | None = None
     # Populated by GET /tables only (bounded to the page); detail views leave it null.
     maintenance: TableMaintenanceRead | None = None
@@ -845,6 +853,27 @@ class TablesFunnelResponse(BaseModel):
     total_active: int
     nodes: list[FunnelNode]
     links: list[FunnelLink]
+
+
+class TableLifecycleWrite(BaseModel):
+    lifecycle: Literal["active", "archived"]
+    reason: str = Field(min_length=3, max_length=500)
+    # The table name, typed by the caller, like other admin design actions.
+    confirm: str
+
+
+class TableLifecycleResponse(BaseModel):
+    table_id: uuid.UUID
+    lifecycle: Literal["active", "archived"]
+    previous: Literal["active", "archived"]
+    changed: bool
+    lifecycle_changed_at: datetime | None = None
+    lifecycle_changed_by: str | None = None
+    lifecycle_reason: str | None = None
+    audit_log_id: int | None = None
+    score_before: int | None = None
+    score_after: int | None = None
+    message: str
 
 
 class TablePatch(BaseModel):

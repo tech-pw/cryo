@@ -24,6 +24,7 @@ FIELD_MAP = {
     "schema_name": Table.schema_name,
     "table_name": Table.table_name,
     "is_active": Table.is_active,
+    "lifecycle": Table.lifecycle,
     "consecutive_scan_failures": Table.consecutive_scan_failures,
     "last_scan_error_kind": Table.last_scan_error_kind,
     "last_snapshot_committed_at": TableStats.last_snapshot_committed_at,

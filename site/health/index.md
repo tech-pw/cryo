@@ -53,6 +53,16 @@ cryo.local/tables/analytics.events
 
 *A grade F table. The score gauge, the compaction candidates and the snapshot count all come from the last scan.*
 
+## Archived tables
+
+A table with no commit in 30 days loses 20 points for **Stale table commits**. That is right for a table that should be written to, and wrong for a backup, a snapshot copy or a retired table that is read-only on purpose. Mark those tables **archived**.
+
+- **Where:** the table's Config tab (**Lifecycle**, admin only), or **Mark as archived** in Path to A. You type the table name and give a reason, and the change is audited. **Return to active** undoes it.
+- **Health:** the stale-commit check stops applying to the table. Every other check still counts, at the same weight, and the stored grade updates at once.
+- **Maintenance:** plans stop compaction, delete rewrites, data expiry, partition-spec migration and statistics, and Path to A stops proposing sort, layout and property changes. Snapshot expiry, orphan cleanup and manifest rewrites keep running, and cost reporting is unchanged.
+- **Finding them:** archived tables carry an **Archived** badge on the Tables list and the table header. Filter by **Lifecycle** in the list's advanced filters.
+- **Suggestions:** an active table with no commit for 90 days or more, and no recorded reads in 30 days, is shown as an archive candidate. Cryo never archives a table on its own.
+
 ## Projection: from scan to stored cost
 
 The cost estimator turns the scanner's stored statistics into a projected byte count for each operation and stores it. Nothing is read from object storage to produce it. Orphan-file precision is an opt-in scanner tier. Without it, the number is flagged as last-known.

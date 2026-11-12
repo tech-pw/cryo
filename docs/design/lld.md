@@ -845,6 +845,20 @@ statements (as args/JSON) and executes them with the Iceberg-configured `SparkSe
   `rewrite_data_files` `min-file-size-bytes`. Thresholds (50 / 200, size-scaled) and weights are
   unchanged; only the measured quantity changed. Inputs are stored scan stats only. Path to A
   projects the same quantity. See `docs/health-fragmented-partitions.md`.
+  **Lifecycle (#519):** `cryo.tables.lifecycle` is `active` (default) or `archived`. For an
+  archived table the "Stale table commits" check does not apply; no weight or threshold changes,
+  and every other check is unchanged. The scanner scores every table as active, and
+  `persistence.analysis_for_lifecycle` drops that one deduction before storing an archived
+  table's grade; `PUT /api/v1/tables/{id}/lifecycle` (admin, typed table name, reason, audited as
+  `table_lifecycle` with before/after in `result_metrics`) re-grades the stored scan at once via
+  `health.apply_lifecycle`. Plans for archived tables drop
+  `cryo.domain.lifecycle.ARCHIVED_EXCLUDED_OPERATIONS` (convert_equality_deletes, convert_deletes,
+  rewrite_position_deletes, optimize, compute_statistics, expire_data, migrate_partition_spec)
+  through the per-table exclusion path (`operation_exclusions.excluded_operations*`), so the
+  planner stays pure. expire_snapshots, remove_orphan_files and optimize_manifests still run.
+  Path to A replaces "Write to the table, or retire it" with an in-app `mark_archived` step
+  (`set_lifecycle` action) and skips compaction/layout/property steps for archived tables. The
+  filter spec accepts `lifecycle`. Design and sources: `docs/table-lifecycle.md`.
 - `cost.py`: Tier-0 snapshot-overhead heuristic + `$0.023/GB-month` S3 estimate (parity, always set),
   **plus Tier-1 metadata byte accounting** — during the manifest stream it also walks retained
   snapshots' manifest lists (deduped, bounded by `cost_scan_max_snapshots/_manifests`) to split bytes

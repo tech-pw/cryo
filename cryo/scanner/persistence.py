@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import math
 import uuid
 from datetime import UTC, datetime, time, timedelta
@@ -21,8 +22,10 @@ from cryo.db.models import (
     TableStats,
     TableStatsHistory,
 )
+from cryo.domain.lifecycle import is_archived
 from cryo.scanner.analyze import PartitionAnalysis, TableAnalysis
 from cryo.scanner.detection_tiers import TierInputs, classify_detection_tier
+from cryo.scanner.health import apply_lifecycle
 
 
 def _json_safe(value: Any) -> Any:
@@ -342,6 +345,22 @@ def _history_snapshot_count(row: TableStatsHistory) -> int:
     return int(value or 0)
 
 
+def analysis_for_lifecycle(analysis: TableAnalysis, lifecycle: str | None) -> TableAnalysis:
+    """The scanner grades every table as active; an archived one drops the stale-commit
+    deduction before it is stored (#519)."""
+    raw = dict(analysis.raw or {})
+    if not is_archived(lifecycle) or not isinstance(raw.get("health_deductions"), list):
+        return analysis
+    score, grade, deductions = apply_lifecycle(
+        raw.get("health_deductions") or [],
+        lifecycle=lifecycle,
+        stats=raw,
+        now=analysis.scan_at,
+    )
+    raw["health_deductions"] = deductions
+    return dataclasses.replace(analysis, overall_score=score, grade=grade, raw=raw)
+
+
 def persist_table_analysis(
     session: Session,
     *,
@@ -357,6 +376,7 @@ def persist_table_analysis(
     )
     table_id = table_row.id
     _lock_table_for_persist(session, table_id)
+    analysis = analysis_for_lifecycle(analysis, table_row.lifecycle)
 
     location = (analysis.raw or {}).get("location")
     if location:
