@@ -35,6 +35,7 @@ from cryo.api.schemas import (
     SimilarityClusterRead,
     SimilarityClustersResponse,
     SimilarityPairRead,
+    SimilarityPairsQuery,
     SimilarityPipelineRunResponse,
     SimilarityVerifyRequest,
     SimilarityVerifyResponse,
@@ -280,9 +281,34 @@ def list_similarity_pairs(
     table view alongside the cluster graph, and (via ``table_ids``) by the frontend's
     per-cluster force-directed layout, which needs the real intra-cluster edge weights
     rather than a global top-N list that could miss pairs relevant to one specific
-    cluster. ``table_ids`` is always a small, caller-supplied set (one cluster's members,
-    typically single digits to low hundreds), never unbounded.
+    cluster. A large cluster's IDs overflow the URL limit; POST /dedup/pairs/query takes
+    them in the body.
     """
+    return _similarity_pairs(session, min_score=min_score, limit=limit, table_ids=table_ids)
+
+
+@router.post(
+    "/dedup/pairs/query",
+    response_model=list[SimilarityPairRead],
+    dependencies=[Depends(require_viewer)],
+)
+def query_similarity_pairs(
+    session: SessionDep, body: SimilarityPairsQuery
+) -> list[SimilarityPairRead]:
+    """GET /dedup/pairs with ``table_ids`` in the body: one cluster can hold hundreds of
+    tables, more IDs than fit in a URL (#493). Read-only, so viewers may call it."""
+    return _similarity_pairs(
+        session, min_score=body.min_score, limit=body.limit, table_ids=body.table_ids
+    )
+
+
+def _similarity_pairs(
+    session: SessionDep,
+    *,
+    min_score: float,
+    limit: int,
+    table_ids: list[UUID] | None,
+) -> list[SimilarityPairRead]:
     query = select(TableSimilarityPair).where(TableSimilarityPair.similarity_score >= min_score)
     if table_ids:
         table_id_set = set(table_ids)

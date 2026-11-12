@@ -22,7 +22,7 @@ vi.mock("../../lib/auth", () => ({
 
 vi.mock("../../api/client", () => ({
   getSimilarityClusters: vi.fn(),
-  getSimilarityPairs: vi.fn(),
+  querySimilarityPairs: vi.fn(),
   getSharedS3Anomalies: vi.fn(),
   getQueryPerformanceDashboard: vi.fn(),
   listDestinations: vi.fn(),
@@ -34,7 +34,7 @@ import {
   getQueryPerformanceDashboard,
   getSharedS3Anomalies,
   getSimilarityClusters,
-  getSimilarityPairs,
+  querySimilarityPairs,
   listDestinations,
   listSources
 } from "../../api/client";
@@ -124,7 +124,7 @@ const renderPage = (path = "/insights") => {
 describe("InsightsPage", () => {
   beforeEach(() => {
     vi.mocked(getSimilarityClusters).mockResolvedValue(EMPTY_CLUSTERS);
-    vi.mocked(getSimilarityPairs).mockResolvedValue([]);
+    vi.mocked(querySimilarityPairs).mockResolvedValue([]);
     vi.mocked(getSharedS3Anomalies).mockResolvedValue(EMPTY_REPORT);
     vi.mocked(getQueryPerformanceDashboard).mockResolvedValue(EMPTY_DASHBOARD);
     vi.mocked(listDestinations).mockResolvedValue([]);
@@ -153,11 +153,33 @@ describe("InsightsPage", () => {
     expect(container.querySelector("circle")).toBeNull();
     expect(screen.queryByRole("img", { name: /similarity layout/i })).not.toBeInTheDocument();
     expect(getSimilarityClusters).toHaveBeenCalledWith(expect.objectContaining({ token: "test-token" }));
-    expect(getSimilarityPairs).toHaveBeenCalledWith(expect.anything(), {
+    expect(querySimilarityPairs).toHaveBeenCalledWith(expect.anything(), {
       table_ids: ["t1", "t2"],
       min_score: 0,
       limit: 200
     });
+  });
+
+  it("keeps one group's pair-evidence failure inside that group (#493)", async () => {
+    const [first] = POPULATED_CLUSTERS.clusters;
+    const second = {
+      ...first,
+      cluster_id: "cluster-2",
+      reclaimable_gb: 10,
+      members: first.members.map((m) => ({ ...m, table_id: `${m.table_id}-b`, table_name: `${m.table_name}_b` }))
+    };
+    vi.mocked(getSimilarityClusters).mockResolvedValue({ ...POPULATED_CLUSTERS, clusters: [first, second] });
+    vi.mocked(querySimilarityPairs).mockImplementation(async (_api, args) => {
+      if (args.table_ids[0] === "t1-b") throw new Error("too large");
+      return [];
+    });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getAllByText("Pair evidence failed to load")).toHaveLength(2));
+    const groups = screen.getAllByRole("listitem").filter((li) => li.textContent?.includes("Rank"));
+    expect(groups[0]).not.toHaveTextContent("Pair evidence failed to load");
+    expect(groups[1]).toHaveTextContent("Pair evidence failed to load");
   });
 
   it("does not treat a missing query log as 0 queries", async () => {

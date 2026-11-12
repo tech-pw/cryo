@@ -6,7 +6,7 @@ import {
   getSharedS3Anomalies,
   refreshSharedS3Anomalies,
   getSimilarityClusters,
-  getSimilarityPairs,
+  querySimilarityPairs,
   runDedupPipeline,
   listDestinations,
   listSources,
@@ -154,21 +154,33 @@ const DuplicatesPanel = () => {
   const pairsQuery = useQuery({
     queryKey: ["similarity-pairs", clusters.map((cluster) => cluster.cluster_id).join(",")],
     queryFn: async () => {
-      const pages = await Promise.all(
+      // One group's failure must not blank the evidence of every other group.
+      const pages = await Promise.allSettled(
         clusters.map((cluster) =>
-          getSimilarityPairs(api, {
+          querySimilarityPairs(api, {
             table_ids: cluster.members.map((member) => member.table_id),
             min_score: 0,
             limit: 200
           })
         )
       );
-      return pages.flat();
+      const failed = new Set<string>();
+      const pairs: SimilarityPairRead[] = [];
+      pages.forEach((page, index) => {
+        if (page.status === "fulfilled") pairs.push(...page.value);
+        else failed.add(clusters[index].cluster_id);
+      });
+      return { pairs, failed };
     },
     enabled: clusters.length > 0
   });
 
-  const pairStatus = pairsQuery.isLoading ? "loading" : pairsQuery.isError ? "error" : "ready";
+  const pairStatusFor = (clusterId: string) =>
+    pairsQuery.isLoading
+      ? "loading"
+      : pairsQuery.isError || pairsQuery.data?.failed.has(clusterId)
+        ? "error"
+        : "ready";
   const asOf = clusters[0]?.computed_at;
 
   if (clustersQuery.isLoading) {
@@ -231,7 +243,8 @@ const DuplicatesPanel = () => {
       ) : (
         <ol className="flex flex-col gap-4">
           {clusters.map((cluster, index) => {
-            const matched = pairsForCluster(cluster, pairsQuery.data ?? []);
+            const matched = pairsForCluster(cluster, pairsQuery.data?.pairs ?? []);
+            const pairStatus = pairStatusFor(cluster.cluster_id);
             const members = cluster.members
               .slice()
               .sort(
