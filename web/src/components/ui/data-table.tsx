@@ -62,6 +62,8 @@ export interface DataTableProps<TData extends RowData> {
   onRowSelectionChange?: OnChangeFn<RowSelectionState>;
   enableRowSelection?: boolean | ((row: { original: TData }) => boolean);
   stickyFirstColumn?: boolean;
+  /** Pin the trailing column (row actions) so a wide table never hides it. */
+  stickyLastColumn?: boolean;
   toolbar?: ReactNode;
   className?: string;
   tableClassName?: string;
@@ -146,6 +148,14 @@ function stickyColumnClass(columnIndex: number, selectionEnabled: boolean, layer
       ? "z-20 bg-[var(--color-table-header)]"
       : "z-10 bg-card group-hover:bg-[var(--color-surface-sunken)] group-data-[state=selected]:bg-[var(--color-primary-soft)]";
   return cn("sticky", left, surface, edge);
+}
+
+function stickyLastColumnClass(layer: "header" | "body" | "footer"): string {
+  const surface =
+    layer === "header" || layer === "footer"
+      ? "z-20 bg-[var(--color-table-header)]"
+      : "z-10 bg-card group-hover:bg-[var(--color-surface-sunken)] group-data-[state=selected]:bg-[var(--color-primary-soft)]";
+  return cn("sticky right-0 shadow-[-1px_0_0_0_var(--color-border)]", surface);
 }
 
 function DensityToggle({
@@ -393,6 +403,7 @@ export function DataTable<TData extends RowData>({
   onRowSelectionChange,
   enableRowSelection = false,
   stickyFirstColumn = false,
+  stickyLastColumn = false,
   toolbar,
   className,
   tableClassName,
@@ -476,6 +487,7 @@ export function DataTable<TData extends RowData>({
       columnSizing
     }
   });
+  const lastColumnIndex = table.getVisibleLeafColumns().length - 1;
   const isResizing = Boolean(table.state.columnResizing.isResizingColumn);
 
   const showToolbar = Boolean(toolbar || (showDensityToggle && onDensityChange));
@@ -557,7 +569,8 @@ export function DataTable<TData extends RowData>({
                       key={header.id}
                       className={cn(
                         "relative border-b border-border px-3 py-2 text-left text-xs font-medium text-muted-foreground",
-                        stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "header")
+                        stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "header"),
+                            stickyLastColumn && columnIndex === lastColumnIndex && stickyLastColumnClass("header")
                       )}
                       style={
                         columnResizingEnabled
@@ -584,7 +597,8 @@ export function DataTable<TData extends RowData>({
                           className={cn(
                             "border-b border-border/70 px-3 py-2",
                             columnResizingEnabled && "overflow-hidden",
-                            stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "body")
+                            stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "body"),
+                            stickyLastColumn && columnIndex === lastColumnIndex && stickyLastColumnClass("body")
                           )}
                           style={columnResizingEnabled ? columnSizeStyle(column.getSize()) : undefined}
                         >
@@ -610,7 +624,8 @@ export function DataTable<TData extends RowData>({
                           className={cn(
                             "border-b border-border/70 px-3 py-2 align-middle text-foreground",
                             columnResizingEnabled && "overflow-hidden",
-                            stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "body")
+                            stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "body"),
+                            stickyLastColumn && columnIndex === lastColumnIndex && stickyLastColumnClass("body")
                           )}
                           style={columnResizingEnabled ? columnSizeStyle(cell.column.getSize()) : undefined}
                         >
@@ -630,7 +645,8 @@ export function DataTable<TData extends RowData>({
                         className={cn(
                           "border-t-2 border-border px-3 py-2 text-left text-xs font-semibold text-foreground [font-variant-numeric:tabular-nums]",
                           columnResizingEnabled && "overflow-hidden",
-                          stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "footer")
+                          stickyFirstColumn && stickyColumnClass(columnIndex, Boolean(enableRowSelection), "footer"),
+                            stickyLastColumn && columnIndex === lastColumnIndex && stickyLastColumnClass("footer")
                         )}
                         style={columnResizingEnabled ? columnSizeStyle(header.getSize()) : undefined}
                       >

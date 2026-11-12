@@ -108,10 +108,15 @@ const expectedEffect = (rec: SmartLayoutRecommendationRead): string => {
     return `${formatPercent(rec.observed_prune_improvement * 100, 0)} observed`;
   }
   if (rec.estimated_prune_improvement != null) {
+    if (rec.estimated_prune_improvement <= 0) return "No gain estimated";
     return `${formatPercent(rec.estimated_prune_improvement * 100, 0)} estimated`;
   }
   return "—";
 };
+
+/** Observed gain, else estimated gain, else -1: what the queue sorts on, largest first. */
+const effectRank = (rec: SmartLayoutRecommendationRead): number =>
+  rec.observed_prune_improvement ?? rec.estimated_prune_improvement ?? -1;
 
 const reviewStamp = (rec: SmartLayoutRecommendationRead): string | null => {
   if (rec.status === "applied" && rec.applied_at) return `Applied ${formatTime(rec.applied_at)}`;
@@ -316,7 +321,14 @@ export function DecisionsPage() {
     [recommendations.data]
   );
   const pending = useMemo(() => visible.filter((item) => item.status === "pending"), [visible]);
-  const shown = statusFilter === "pending" ? pending : visible;
+  const shown = useMemo(
+    () =>
+      [...(statusFilter === "pending" ? pending : visible)].sort(
+        (a, b) => effectRank(b) - effectRank(a) || b.confidence - a.confidence
+      ),
+    [statusFilter, pending, visible]
+  );
+  const readOnly = !approveAccess.allowed && !dismissAccess.allowed && !executeAccess.allowed;
   const pageCount = Math.max(1, Math.ceil(shown.length / QUEUE_PAGE_SIZE));
   const page = Math.min(queuePage, pageCount - 1);
   const pageRows = useMemo(() => shown.slice(page * QUEUE_PAGE_SIZE, (page + 1) * QUEUE_PAGE_SIZE), [shown, page]);
@@ -397,7 +409,11 @@ export function DecisionsPage() {
     {
       id: "change",
       header: "Proposed change",
-      cell: ({ row }) => <InternalText text={proposedChange(row.original)} />
+      cell: ({ row }) => (
+        <div className="max-w-[18rem] whitespace-normal">
+          <InternalText text={proposedChange(row.original)} />
+        </div>
+      )
     },
     {
       id: "effect",
@@ -426,7 +442,12 @@ export function DecisionsPage() {
     {
       id: "actions",
       header: "Actions",
-      cell: ({ row }) => (
+      cell: ({ row }) =>
+        readOnly ? (
+          <Button size="sm" variant="ghost" onClick={() => setReview(row.original.id)}>
+            Review
+          </Button>
+        ) : (
         <ProposalActions
           rec={row.original}
           approveAccess={approveAccess}
@@ -520,6 +541,7 @@ export function DecisionsPage() {
         columns={queueColumns}
         data={pageRows}
         getRowId={(row) => row.id}
+        stickyLastColumn
         pagination={
           shown.length > QUEUE_PAGE_SIZE
             ? { pageIndex: page, pageSize: QUEUE_PAGE_SIZE, totalRows: shown.length, onPageChange: setQueuePage }
