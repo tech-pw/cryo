@@ -49,6 +49,8 @@ class PathStepRead(BaseModel):
     required_role: str | None = None
     confirm_text: str | None = None
     in_schedule: bool = False
+    fixes_with: list[str] = Field(default_factory=list)
+    fixes_with_steps: list[str] = Field(default_factory=list)
 
 
 class PathToARead(BaseModel):

@@ -129,6 +129,9 @@ class Step:
     required_role: str | None = None
     confirm_text: str | None = None
     in_schedule: bool = False
+    # Deductions this step clears only together with the named steps (#520).
+    fixes_with: list[str] = field(default_factory=list)
+    fixes_with_steps: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -360,6 +363,7 @@ def build_path_to_a(snapshot: TableSnapshot) -> PathToA:
     add(layout)
     dropped = list(layout.action.get("dropped", [])) if layout and layout.action else []
     add(_sort_step(snapshot, projection, dropped))
+    _mark_joint_property_fix(snapshot, steps)
     cryo_score = projection.score()
     steps.extend(_external_steps(snapshot, projection))
     return PathToA(
@@ -738,12 +742,46 @@ def _retention_step(snapshot: TableSnapshot, projection: _Projection) -> Step | 
     )
 
 
-def _property_issues(snapshot: TableSnapshot, *, sort_order: bool | None = None) -> int:
-    props = snapshot.property_changes
-    distribution = props.get("write.distribution-mode") or snapshot.write_distribution_mode
-    target = props.get("write.target-file-size-bytes") or snapshot.table_target_bytes
-    has_sort = snapshot.has_sort_order if sort_order is None else sort_order
-    return sum((not distribution or distribution == "none", not has_sort, not target))
+def _property_issues(
+    snapshot: TableSnapshot, *, sort_order: bool | None = None, with_changes: bool = True
+) -> int:
+    """The scorer's property-gap count after the recommended changes (and a sort order).
+
+    Delegates to the scorer so the two can't disagree: an unrecorded distribution mode is not
+    a gap to the scorer, and counting it here kept the deduction in every projection (#520).
+    """
+    from cryo.scanner.property_recommendations import count_suboptimal_property_issues
+
+    props = snapshot.property_changes if with_changes else {}
+    return count_suboptimal_property_issues(
+        {
+            "write_distribution_mode": props.get("write.distribution-mode")
+            or snapshot.write_distribution_mode,
+            "has_sort_order": snapshot.has_sort_order if sort_order is None else sort_order,
+            "target_file_size_bytes": props.get("write.target-file-size-bytes")
+            or snapshot.table_target_bytes,
+        }
+    )
+
+
+def _mark_joint_property_fix(snapshot: TableSnapshot, steps: list[Step]) -> None:
+    """Say so when the property deduction clears only with both the properties and sort steps.
+
+    The projection is cumulative, so the later sort step gets the credit and the properties
+    step would otherwise read "clears no deduction" although it is half the fix.
+    """
+    by_id = {step.id: step for step in steps}
+    properties, sort = by_id.get("table_properties"), by_id.get("sort_order")
+    label = "Suboptimal properties"
+    if properties is None or sort is None or label not in sort.fixes:
+        return
+    if not _property_issues(snapshot, sort_order=True, with_changes=False):
+        return  # the sort order alone clears it
+    properties.fixes_with = [label]
+    properties.fixes_with_steps = [sort.title]
+    sort.fixes = [f for f in sort.fixes if f != label]
+    sort.fixes_with = [label]
+    sort.fixes_with_steps = [properties.title]
 
 
 def _properties_step(snapshot: TableSnapshot, projection: _Projection) -> Step | None:

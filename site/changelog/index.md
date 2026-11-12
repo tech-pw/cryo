@@ -52,9 +52,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Fixed
 
-- Table overview shows cooldown as a short local-time line linking to the eligibility checklist instead of the raw reason string (#522).
-- Runs whose skipped operations had nothing to do are no longer partial; table runs are time-ordered and queue closes show as closed without running instead of failures (#521).
-- Sort-order recommendations only offer columns present in the table's schema (schema spelling), and query parsing attributes join columns to their own table (#517).
+- Path to A counts property gaps with the scorer's own rule, so applying properties and a sort order projects the cleared deduction, and both steps say they clear it together (#520).
 - Helm: a prod render fails when one image digest is pinned under two repositories, or a digest is malformed (#486).
 - Spark on Kubernetes: a step whose pod is stuck in ImagePullBackOff/ErrImagePull/InvalidImageName/CreateContainerConfigError fails after a 3-minute grace and frees its Job, pod and Secret instead of waiting for the ~2h deadline (#485).
 - Home's "Latest nightly maintenance" card follows the worker-path nightly run, not only batch-coordinator runs, and says when the newest nightly run is more than 36h old. `GET /runs` accepts `pipeline=nightly`, using the same rule as the Tables funnel (#492).
@@ -88,7 +86,6 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Changed
 
-- Home, Cost and vitals read only the history inside their chart window (with new scan_at indexes) instead of ranking the whole fleet history on every load (#494).
 - `GET /sources/{id}/aws-integration` returns `200` with `null` instead of `404` when a source has no AWS integration, so Settings no longer logs a failed request per source. A non-admin on /settings/admin sees "Admin role required" instead of a silent redirect, and each Settings page has its own heading (#498).
 - Decisions loads fleet SLA status only on the Approvals tab (it took 16 s on a 12k-table fleet) and pages recommendations 50 at a time. Insights → Duplicates shows 20 groups at a time and fetches pair evidence only for those (#494).
 - Pausing a preset cancels its jobs that are not yet admitted (queued or deferred become skipped with `cancelled: preset paused`). Admitted and running jobs finish, and a run left with nothing active is marked cancelled. Before, queued jobs drained after a pause (#330).

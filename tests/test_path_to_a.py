@@ -782,3 +782,43 @@ def test_projected_score_matches_the_scorer_on_projected_stats() -> None:
         {**snapshot.stats, "total_snapshots": kept}, 0, now=NOW
     )
     assert retention.projected_score == expected
+
+
+def test_properties_and_sort_clear_the_property_deduction_together() -> None:
+    """#520: an unrecorded distribution mode is no gap to the scorer, so applying the target
+    size and a sort order clears 'Suboptimal properties', and each step says it needs the other."""
+    base = _over_partitioned()
+    stats = {
+        **base.stats,
+        "has_sort_order": False,
+        "write_distribution_mode": None,
+        "target_file_size_bytes": None,
+    }
+    score, grade, deductions = _deductions(stats)
+    assert "Suboptimal properties" in {d["label"] for d in deductions}
+    snapshot = TableSnapshot(
+        **{
+            **base.__dict__,
+            "stats": stats,
+            "deductions": deductions,
+            "score": score,
+            "grade": grade,
+            "has_sort_order": False,
+            "write_distribution_mode": None,
+            "table_target_bytes": None,
+            "property_changes": {"write.target-file-size-bytes": str(512 * MIB)},
+            "query_filters": {"kind": 5},
+        }
+    )
+    path = build_path_to_a(snapshot)
+    by_id = {step.id: step for step in path.steps}
+    properties, sort = by_id["table_properties"], by_id["sort_order"]
+    assert properties.fixes_with == ["Suboptimal properties"]
+    assert properties.fixes_with_steps == [sort.title]
+    assert sort.fixes_with_steps == [properties.title]
+    assert "Suboptimal properties" not in sort.fixes
+    after_both = compute_health_score(
+        {**stats, "has_sort_order": True, "target_file_size_bytes": 512 * MIB}, 0, now=NOW
+    )[2]
+    assert "Suboptimal properties" not in {d["label"] for d in after_both}
+    assert sort.projected_score > properties.projected_score

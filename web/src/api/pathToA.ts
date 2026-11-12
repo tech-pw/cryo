@@ -8,6 +8,9 @@ export interface PathStepRead {
   title: string;
   detail: string;
   fixes: string[];
+  /** Deductions this step clears only together with `fixes_with_steps`. */
+  fixes_with?: string[];
+  fixes_with_steps?: string[];
   projected_score: number;
   projected_grade: string;
   confidence: "measured" | "estimated" | "assumed";

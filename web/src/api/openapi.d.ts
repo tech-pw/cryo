@@ -10471,6 +10471,10 @@ export interface components {
              * @default false
              */
             in_schedule: boolean;
+            /** Fixes With */
+            fixes_with?: string[];
+            /** Fixes With Steps */
+            fixes_with_steps?: string[];
         };
         /** PathToAApplyRequest */
         PathToAApplyRequest: {
