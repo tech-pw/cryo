@@ -11,6 +11,7 @@ test.describe("Cryo smoke", () => {
     await page.goto("/");
 
     await page.getByLabel("Username").fill("e2e-operator");
+    await page.getByRole("radio", { name: "operator", exact: true }).click();
     await page.getByRole("button", { name: "Sign in" }).click();
 
     await expect(page.getByRole("heading", { name: "Home", exact: true })).toBeVisible({ timeout: 15_000 });

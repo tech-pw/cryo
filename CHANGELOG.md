@@ -218,6 +218,7 @@ All notable changes to Cryo will be documented in this file. The format is based
   with nothing active is marked cancelled. Before, queued jobs drained after a pause (#330).
 
 ### Security
+- Dev sign-in defaults to the viewer role with an empty username; the role picker is a radio group; a startup warning and the cryo_dev_token_in_prod_enabled gauge flag CRYO_ALLOW_DEV_TOKEN_IN_PROD in prod (#500).
 - CodeQL `init` and `analyze` move to v4.39.2 together; the two must share a version.
 - CI runs trufflehog alongside gitleaks: on every PR and push to `main` over the new commits,
   and weekly over the full history. It fails on verified credentials, and on credentials whose

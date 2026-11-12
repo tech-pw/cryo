@@ -20,6 +20,11 @@ auth_login_failures_total = Counter(
     ["method", "reason"],
 )
 
+dev_token_in_prod_enabled = Gauge(
+    "cryo_dev_token_in_prod_enabled",
+    "1 when CRYO_ALLOW_DEV_TOKEN_IN_PROD lets anyone mint a token for any role on a prod install.",
+)
+
 api_requests_total = Counter(
     "cryo_api_requests_total",
     "API requests by bounded route template, method, and status class.",

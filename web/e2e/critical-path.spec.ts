@@ -38,7 +38,7 @@ test.describe("Cryo critical-path", () => {
     await page.goto("/");
 
     await page.getByLabel("Username").fill("e2e-critical");
-    await page.getByRole("button", { name: "admin", exact: true }).click();
+    await page.getByRole("radio", { name: "admin", exact: true }).click();
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(
       page.getByRole("heading", { name: "Home", exact: true }),

@@ -108,6 +108,7 @@ export async function requireApi(request: APIRequestContext): Promise<void> {
 export async function signIn(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByLabel("Username").fill("visual-e2e");
+  await page.getByRole("radio", { name: "operator", exact: true }).click();
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "Home", exact: true })).toBeVisible({ timeout: 15_000 });
 }
