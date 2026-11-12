@@ -21,6 +21,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Added
 
+- Run grid uses Airflow status colours, animates running/queued work, shows queue reason and ETA, planner skips, and a post-maintenance stats scan row; successful maintenance now requests a stats rescan (#525).
 - Spark on Kubernetes: new submissions are spaced per destination across all workers (default 60/min plus jitter, spark.k8s.maxSubmitsPerMinute, 0 = off), with a cryo_spark_submit_throttle_wait_seconds metric (#487).
 - Settings → About lists every component's image, version and commit (reported through Redis) with a version-skew warning; GET /api/v1/version/components and a cryo_component_build_info gauge (#489).
 - Runs overview: the Engine load card shows busy workers, admitted jobs waiting for a worker with the oldest wait, and names whether workers or engine slots are the bottleneck (#490).

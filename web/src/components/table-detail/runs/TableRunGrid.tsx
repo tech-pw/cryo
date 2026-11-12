@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, CheckCircle2, Circle, Loader2, MinusCircle, Play, RefreshCw, SlidersHorizontal, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { getTableAudit, getTableRuns, getTableSkipEvaluations } from "../../../api/client";
+import { getJobQueueStatus, getTableAudit, getTableRuns, getTableSkipEvaluations } from "../../../api/client";
 import { useRunLiveEvents } from "../../../hooks/useRunLiveEvents";
 import { useAuth } from "../../../lib/auth";
 import { formatBytesGb, formatClock, formatNumber, formatTime } from "../../../lib/format";
@@ -43,17 +43,49 @@ const TONE_LABEL: Record<CellTone, string> = {
   failed: "Failed",
   attention: "Partial",
   running: "Running",
-  queued: "Waiting",
+  queued: "Queued",
+  scheduled: "Scheduled",
+  deferred: "Deferred",
+  retry: "Up for retry",
   skipped: "Skipped",
-  none: "Not in run"
+  removed: "Cancelled",
+  none: "No status"
 };
 
 const ToneIcon = ({ tone }: { tone: CellTone }) => {
   if (tone === "success") return <CheckCircle2 size={14} aria-hidden="true" />;
   if (tone === "failed") return <XCircle size={14} aria-hidden="true" />;
   if (tone === "running") return <Loader2 size={14} className="animate-spin" aria-hidden="true" />;
-  if (tone === "skipped") return <MinusCircle size={14} aria-hidden="true" />;
+  if (tone === "skipped" || tone === "removed") return <MinusCircle size={14} aria-hidden="true" />;
+  if (tone === "retry") return <RefreshCw size={14} aria-hidden="true" />;
   return <Circle size={14} aria-hidden="true" />;
+};
+
+const formatEta = (seconds: number) =>
+  seconds < 60 ? "under a minute" : seconds < 3600 ? `~${Math.round(seconds / 60)} min` : `~${(seconds / 3600).toFixed(1)} h`;
+
+const QueueStatus = ({ jobId }: { jobId: string }) => {
+  const { api } = useAuth();
+  const status = useQuery({
+    queryKey: ["job-queue-status", jobId],
+    queryFn: () => getJobQueueStatus(api, jobId),
+    refetchInterval: 5000
+  });
+  if (!status.data) return null;
+  const { reason, jobs_ahead: ahead, eta_seconds: eta, eta_basis: basis } = status.data;
+  return (
+    <p className="td-run-queue" role="status">
+      {reason}
+      {ahead != null && ahead > 0 ? ` ${ahead} job${ahead === 1 ? "" : "s"} ahead.` : ""}
+      {eta != null ? (
+        <>
+          {" "}
+          <strong>ETA {formatEta(eta)}</strong>
+          {basis ? <span className="td-run-queue-basis"> ({basis})</span> : null}
+        </>
+      ) : null}
+    </p>
+  );
 };
 
 const shortDate = (iso: string | null) =>
@@ -246,7 +278,7 @@ export const TableRunGrid = ({ tableId }: { tableId: string }) => {
             </div>
           </div>
           <ul className="td-grid-legend" aria-label="Legend">
-            {(["success", "failed", "running", "queued", "skipped", "none"] as CellTone[]).map((tone) => (
+            {(["success", "failed", "running", "queued", "scheduled", "deferred", "retry", "skipped", "removed", "none"] as CellTone[]).map((tone) => (
               <li key={tone} data-tone={tone}>
                 <i aria-hidden="true" />
                 {TONE_LABEL[tone]}
@@ -450,6 +482,7 @@ const RunDetailPanel = ({ column }: { column: RunColumn }) => {
         <p className="td-run-status" data-tone={column.tone}>
           <ToneIcon tone={column.tone} /> {TONE_LABEL[column.tone]}
         </p>
+        {isActiveTone(column.tone) ? <QueueStatus jobId={run.job_id} /> : null}
         <dl>
           <div>
             <dt>Started</dt>

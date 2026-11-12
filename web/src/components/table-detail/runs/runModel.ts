@@ -1,6 +1,23 @@
 import type { AuditEntry, SkipEvaluationRead, TableRunRead } from "../../../api/types";
 
-export type CellTone = "success" | "failed" | "attention" | "running" | "queued" | "skipped" | "none";
+/** Airflow task states: https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/tasks.html#task-instances */
+export type CellTone =
+  | "success"
+  | "failed"
+  | "attention"
+  | "running"
+  | "queued"
+  | "scheduled"
+  | "deferred"
+  | "retry"
+  | "skipped"
+  | "removed"
+  | "none";
+
+/** The post-maintenance stats scan, shown as the last row of every run. */
+export const STATS_SCAN_OP = "stats_scan";
+/** A finished run older than this with no after-stats never got its scan; leave the cell empty. */
+const STATS_SCAN_WAIT_MS = 6 * 60 * 60 * 1000;
 
 /** Grid rows, in execution order. Delete rewrites and stats only appear when a run used them. */
 export const GRID_OPERATIONS = [
@@ -13,10 +30,11 @@ export const GRID_OPERATIONS = [
   "optimize_manifests",
   "expire_data",
   "expire_snapshots",
-  "remove_orphan_files"
+  "remove_orphan_files",
+  STATS_SCAN_OP
 ] as const;
 
-export const CORE_GRID_OPERATIONS = new Set(["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"]);
+export const CORE_GRID_OPERATIONS = new Set(["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files", STATS_SCAN_OP]);
 
 /**
  * Audit actions that are operator changes, not engine work. They have no job, so the run
@@ -54,7 +72,8 @@ export const OPERATION_SHORT: Record<string, string> = {
   optimize_manifests: "Manifests",
   expire_data: "Expire data",
   expire_snapshots: "Expire snapshots",
-  remove_orphan_files: "Orphan files"
+  remove_orphan_files: "Orphan files",
+  [STATS_SCAN_OP]: "Stats scan"
 };
 
 export const toneFor = (status: string | null | undefined): CellTone => {
@@ -62,15 +81,23 @@ export const toneFor = (status: string | null | undefined): CellTone => {
   if (!key) return "none";
   if (["succeeded", "success", "ok", "completed", "done"].includes(key)) return "success";
   if (key === "partial" || key === "partial_failed") return "attention";
+  if (key === "upstream_failed") return "attention";
   if (key.includes("fail") || key.includes("error") || key === "timeout") return "failed";
+  // A job step is written as "started" when it begins and only changes when it ends.
+  if (["running", "started", "dispatched", "in_progress", "executing"].includes(key)) return "running";
+  if (["up_for_retry", "retrying", "retry"].includes(key)) return "retry";
+  if (key === "deferred") return "deferred";
+  if (["scheduled", "accepted"].includes(key)) return "scheduled";
   // "admitted"/"waiting" mean waiting for engine capacity in Cryo, not executing.
-  if (["running", "dispatched", "in_progress"].includes(key)) return "running";
-  if (["queued", "scheduled", "waiting", "admitted", "deferred", "pending", "accepted"].includes(key)) return "queued";
-  if (["skipped", "cancelled", "canceled", "noop", "not_needed"].includes(key)) return "skipped";
+  if (["queued", "waiting", "admitted", "pending"].includes(key)) return "queued";
+  if (["skipped", "noop", "not_needed"].includes(key)) return "skipped";
+  if (["cancelled", "canceled", "removed", "superseded"].includes(key)) return "removed";
   return "none";
 };
 
-export const isActiveTone = (tone: CellTone) => tone === "running" || tone === "queued";
+const ACTIVE_TONES = new Set<CellTone>(["running", "queued", "scheduled", "deferred", "retry"]);
+
+export const isActiveTone = (tone: CellTone) => ACTIVE_TONES.has(tone);
 
 export interface OpCell {
   op: string;
@@ -170,6 +197,36 @@ export const buildRunColumns = (runs: TableRunRead[], audit: AuditEntry[]): RunC
         });
       }
       const tone = toneFor(run.status);
+      const placeholder = (op: string, cellTone: CellTone, status: string, detail: string | null): OpCell => ({
+        op,
+        tone: cellTone,
+        status,
+        startedAt: null,
+        finishedAt: null,
+        durationMs: null,
+        detail,
+        engine: null,
+        bytesFreed: null,
+        filesIn: null,
+        filesOut: null
+      });
+      if (isActiveTone(tone)) {
+        for (const op of run.planned_operations ?? []) {
+          if (!cells.has(op)) cells.set(op, placeholder(op, tone === "running" ? "queued" : tone, "waiting", null));
+        }
+      }
+      for (const skipped of run.skipped_operations ?? []) {
+        if (!cells.has(skipped.operation)) {
+          cells.set(skipped.operation, placeholder(skipped.operation, "skipped", "skipped", skipped.reason ?? null));
+        }
+      }
+      if (run.after_stats) {
+        cells.set(STATS_SCAN_OP, placeholder(STATS_SCAN_OP, "success", "succeeded", "Stats scanned after this run."));
+      } else if ((tone === "success" || tone === "attention") && Date.now() - Date.parse(run.finished_at ?? "") < STATS_SCAN_WAIT_MS) {
+        cells.set(STATS_SCAN_OP, placeholder(STATS_SCAN_OP, "queued", "waiting", "Waiting for the post-maintenance stats scan."));
+      } else if (isActiveTone(tone)) {
+        cells.set(STATS_SCAN_OP, placeholder(STATS_SCAN_OP, "scheduled", "scheduled", "Runs once maintenance finishes."));
+      }
       return {
         kind: "run" as const,
         key: run.job_id,
