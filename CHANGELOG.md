@@ -111,6 +111,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 - The Runs page counts partial runs as runs with failures (**Runs with failures · 24h**, "2 failed, 9 partial"), so "No table failures" appears only when no table failed, and "Running now" says "runs waiting" instead of "Nothing queued" (#496).
 - On phones the top bar has one search control (the command palette) and no overlapping Batch/⌘K controls, the Settings tab strip fades at its edge and scrolls the current tab into view, the Runs timeline fits the screen, and the truncated Home engine-slots line shows every engine on hover (#497).
 - Accessibility: contrast fixes for success/warning/muted text, labelled selects, correct heading order and ARIA roles, keyboard-scrollable regions (#499).
+- Decisions keeps the Action column visible (new `DataTable` `stickyLastColumn`), shows viewers a single Review button, labels 0% estimates "No gain estimated", and sorts proposals by expected effect (#495).
 - Insights → Duplicates no longer shows "Pair evidence failed to load" on every group. Pairs are fetched with the new `POST /api/v1/dedup/pairs/query`, which takes table IDs in the body (a large group overflowed the URL limit with HTTP 414), and a failure is shown only on the group that failed (#493).
 - A scanner-worker running a long scan chunk is no longer restarted as hung. The
   `/healthz` stall check now measures time without progress, and each table the

@@ -143,13 +143,23 @@ describe("DecisionsPage", () => {
     expect(screen.queryByText("analytics.hidden")).not.toBeInTheDocument();
   });
 
-  it("does not enable Approve for a viewer", async () => {
+  it("gives a viewer a Review button instead of disabled write actions (#495)", async () => {
     renderPage();
-    const approveButtons = await screen.findAllByRole("button", { name: "Approve" });
-    expect(approveButtons).toHaveLength(1);
-    expect(approveButtons[0]).toBeDisabled();
-    expect(approveButtons[0]).toHaveAttribute("title", VIEWER_REASON);
+    expect(await screen.findByRole("button", { name: "Review" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(screen.getByText(VIEWER_REASON)).toBeInTheDocument();
+  });
+
+  it("sorts by expected effect and says when no gain is estimated (#495)", async () => {
+    const none = { ...pending, id: "rec-0", table_ref: "analytics.flat", estimated_prune_improvement: 0 };
+    const big = { ...pending, id: "rec-big", table_ref: "analytics.big", estimated_prune_improvement: 0.6 };
+    vi.mocked(listSmartLayoutRecommendations).mockResolvedValue({ items: [none, pending, big] });
+    renderPage();
+    await screen.findByText("analytics.big");
+    const order = screen.getAllByRole("link").map((a) => a.textContent).filter((t) => t?.startsWith("analytics."));
+    expect(order).toEqual(["analytics.big", "analytics.events", "analytics.flat"]);
+    expect(screen.getByText("No gain estimated")).toBeInTheDocument();
+    expect(screen.queryByText("0% estimated")).not.toBeInTheDocument();
   });
 
   it("loads fleet SLA status only on the Approvals tab (#494)", async () => {
