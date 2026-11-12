@@ -847,6 +847,15 @@ export const getSimilarityPairs = (
   if (qs) path += `?${qs}`;
   return apiFetch<SimilarityPairRead[]>(path, api);
 };
+/** getSimilarityPairs for a table set too large for a URL: one cluster can hold hundreds of tables. */
+export const querySimilarityPairs = (
+  api: ApiOptions,
+  args: { table_ids: UUID[]; min_score?: number; limit?: number }
+) =>
+  apiFetch<SimilarityPairRead[]>("/dedup/pairs/query", api, {
+    method: "POST",
+    body: { table_ids: args.table_ids, min_score: args.min_score ?? 0, limit: args.limit ?? 200 }
+  });
 export const verifySimilarityPair = (api: ApiOptions, body: SimilarityVerifyRequest) =>
   apiFetch<SimilarityVerifyResponse>("/dedup/verify", api, {
     method: "POST",

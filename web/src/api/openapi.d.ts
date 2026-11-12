@@ -5063,12 +5063,33 @@ export interface paths {
          *     table view alongside the cluster graph, and (via ``table_ids``) by the frontend's
          *     per-cluster force-directed layout, which needs the real intra-cluster edge weights
          *     rather than a global top-N list that could miss pairs relevant to one specific
-         *     cluster. ``table_ids`` is always a small, caller-supplied set (one cluster's members,
-         *     typically single digits to low hundreds), never unbounded.
+         *     cluster. A large cluster's IDs overflow the URL limit; POST /dedup/pairs/query takes
+         *     them in the body.
          */
         get: operations["list_similarity_pairs_api_v1_dedup_pairs_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dedup/pairs/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Query Similarity Pairs
+         * @description GET /dedup/pairs with ``table_ids`` in the body: one cluster can hold hundreds of
+         *     tables, more IDs than fit in a URL (#493). Read-only, so viewers may call it.
+         */
+        post: operations["query_similarity_pairs_api_v1_dedup_pairs_query_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -12547,6 +12568,24 @@ export interface components {
              * Format: date-time
              */
             computed_at: string;
+        };
+        /**
+         * SimilarityPairsQuery
+         * @description Body of POST /dedup/pairs/query: the table set travels in the body, not the URL.
+         */
+        SimilarityPairsQuery: {
+            /** Table Ids */
+            table_ids?: string[];
+            /**
+             * Min Score
+             * @default 0
+             */
+            min_score: number;
+            /**
+             * Limit
+             * @default 200
+             */
+            limit: number;
         };
         /** SimilarityPipelineRunResponse */
         SimilarityPipelineRunResponse: {
@@ -23981,6 +24020,39 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarityPairRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_similarity_pairs_api_v1_dedup_pairs_query_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SimilarityPairsQuery"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

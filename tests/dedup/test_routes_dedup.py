@@ -16,7 +16,12 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from cryo.api.routes_dedup import list_similarity_clusters, list_similarity_pairs
+from cryo.api.routes_dedup import (
+    list_similarity_clusters,
+    list_similarity_pairs,
+    query_similarity_pairs,
+)
+from cryo.api.schemas import SimilarityPairsQuery
 from cryo.db.models import (
     Source,
     Table,
@@ -378,3 +383,10 @@ def test_list_similarity_pairs_scopes_to_table_ids_when_given(session: Session) 
 
     assert len(results) == 1
     assert results[0].similarity_score == 0.9
+
+    # The POST form takes the set in the body: hundreds of IDs, more than fit in a URL (#493).
+    padding = [uuid.uuid4() for _ in range(400)]
+    posted = query_similarity_pairs(
+        session, SimilarityPairsQuery(table_ids=[a.id, b.id, *padding], min_score=0, limit=10)
+    )
+    assert [r.similarity_score for r in posted] == [0.9]

@@ -1883,6 +1883,14 @@ class SimilarityPipelineRunResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class SimilarityPairsQuery(BaseModel):
+    """Body of POST /dedup/pairs/query: the table set travels in the body, not the URL."""
+
+    table_ids: list[uuid.UUID] = Field(default_factory=list, max_length=5000)
+    min_score: float = Field(default=0.0, ge=0, le=1)
+    limit: int = Field(default=200, ge=1, le=1000)
+
+
 class SimilarityVerifyRequest(BaseModel):
     table_a_id: uuid.UUID
     table_b_id: uuid.UUID
