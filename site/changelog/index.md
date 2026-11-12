@@ -46,7 +46,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Fixed
 
-- Home's "Latest nightly maintenance" card follows the worker-path nightly run, not only batch-coordinator runs, and says when the newest nightly run is more than 36h old. `GET /runs` accepts `pipeline=nightly`, using the same rule as the Tables funnel (#492).
+- The Runs page counts partial runs as runs with failures (**Runs with failures · 24h**, "2 failed, 9 partial"), so "No table failures" appears only when no table failed, and "Running now" says "runs waiting" instead of "Nothing queued" (#496).
 - A scanner-worker running a long scan chunk is no longer restarted as hung. The `/healthz` stall check now measures time without progress, and each table the chunk starts or finishes counts as progress, so a healthy chunk that runs past `tickStallSeconds` keeps its pod (#432).
 - The governor now says when workers, not the engine, are the bottleneck. If admitted jobs wait unclaimed while a destination has free engine slots, it logs `N admitted job(s) waiting for a worker; X/Y engine slots in use` (at most every 5 minutes per destination) and sets the `cryo_admitted_waiting_for_worker` gauge. The Helm chart documents sizing `worker.replicas` / `native.keda.maxReplicas` to the engine `slot_cap`: a worker blocks on one engine job at a time, so low worker CPU does not mean over-provisioned (#435).
 - A Spark driver still `Running` after its dispatch Job is gone is removed once it is older than the driver TTL, and its credentials Secret with it. Its executors go with the driver. The Secret is no longer deleted while an executor of that driver has not finished. The governor Role gains `get` on Secrets, which the #423 check needs (#433).

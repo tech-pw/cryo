@@ -48,6 +48,13 @@ const isRunFilter = (value: string | null): value is "all" | "failed" | "active"
 
 type PulseTone = "neutral" | "active" | "danger" | "success";
 
+const failureContext = (runs: readonly RunRead[]): string => {
+  if (!runs.length) return "No table failures";
+  const failed = runs.filter((run) => run.status === "failed").length;
+  const partial = runs.length - failed;
+  return [failed ? `${failed} failed` : null, partial ? `${partial} partial` : null].filter(Boolean).join(", ");
+};
+
 const PulseTile = ({
   label,
   value,
@@ -235,7 +242,10 @@ export const OperationsHome = () => {
   const runs = allRuns.data ?? [];
   const failed24h = useMemo(() => {
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    return runs.filter((run) => run.status === "failed" && Date.parse(run.created_at) >= cutoff);
+    // A partial run had tables fail too.
+    return runs.filter(
+      (run) => (run.status === "failed" || run.status === "partial") && Date.parse(run.created_at) >= cutoff
+    );
   }, [runs]);
   const activeRuns = useMemo(() => runs.filter((run) => ACTIVE_RUN_STATUSES.has(run.status)), [runs]);
   const pulse = useMemo(() => {
@@ -576,15 +586,15 @@ export const OperationsHome = () => {
           tone={activeRuns.length ? "active" : "neutral"}
           selected={tab === "runs" && runFilter === "active"}
           value={allRuns.isError ? "—" : formatNumber(activeRuns.length)}
-          context={allRuns.isError ? "Runs unavailable" : pulse.queued ? `${formatNumber(pulse.queued)} waiting in queue` : "Nothing queued"}
+          context={allRuns.isError ? "Runs unavailable" : pulse.queued ? `${formatNumber(pulse.queued)} runs waiting` : "No runs waiting"}
           onClick={() => setRunFilter("active")}
         />
         <PulseTile
-          label="Failed runs · 24h"
+          label="Runs with failures · 24h"
           tone={failed24h.length ? "danger" : "neutral"}
           selected={tab === "runs" && runFilter === "failed"}
           value={allRuns.isError ? "—" : formatNumber(failed24h.length)}
-          context={failed24h[0] ? `Latest ${formatRelative(failed24h[0].created_at)}` : "No failures"}
+          context={failureContext(failed24h)}
           onClick={() => setRunFilter("failed")}
         />
         <PulseTile
@@ -680,7 +690,7 @@ export const OperationsHome = () => {
                   variant={runFilter === "failed" ? "primary" : "secondary"}
                   onClick={() => setRunFilter("failed")}
                 >
-                  Failed · 24h
+                  With failures · 24h
                   <FilterCount value={failed24h.length} />
                 </Button>
               </div>
