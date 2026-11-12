@@ -5581,6 +5581,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{job_id}/spark-pods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Spark Pods */
+        get: operations["get_spark_pods_api_v1_jobs__job_id__spark_pods_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}/skip-evaluations": {
         parameters: {
             query?: never;
@@ -13442,6 +13459,59 @@ export interface components {
             message: string;
             /** K8S Job Name */
             k8s_job_name?: string | null;
+        };
+        /** SparkPodEventRead */
+        SparkPodEventRead: {
+            /** Pod */
+            pod: string;
+            /** Reason */
+            reason: string | null;
+            /** Message */
+            message: string | null;
+            /** Count */
+            count: number;
+            /** Last Seen */
+            last_seen: string | null;
+        };
+        /** SparkPodRead */
+        SparkPodRead: {
+            /** Role */
+            role: string;
+            /** Name */
+            name: string;
+            /** Phase */
+            phase: string | null;
+            /** Waiting Reason */
+            waiting_reason: string | null;
+            /** Waiting Message */
+            waiting_message: string | null;
+            /** Waiting Seconds */
+            waiting_seconds: number | null;
+            /** Node */
+            node: string | null;
+            /** Stuck */
+            stuck: boolean;
+        };
+        /** SparkPodsResponse */
+        SparkPodsResponse: {
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason?: string | null;
+            /** Engine Ref */
+            engine_ref?: string | null;
+            /**
+             * Pods
+             * @default []
+             */
+            pods: components["schemas"]["SparkPodRead"][];
+            /**
+             * Events
+             * @default []
+             */
+            events: components["schemas"]["SparkPodEventRead"][];
+            /** Summary */
+            summary?: string | null;
         };
         /** SpecMigrationApprovalRead */
         SpecMigrationApprovalRead: {
@@ -25079,6 +25149,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SnapshotListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_spark_pods_api_v1_jobs__job_id__spark_pods_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SparkPodsResponse"];
                 };
             };
             /** @description Validation Error */
