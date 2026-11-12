@@ -199,6 +199,12 @@
   align-items: flex-end;
 }
 
+/* 60 bars at 3px plus 3px gaps need ~360px; a phone has less. */
+@media (max-width: 480px) {
+  .run-timeline__bars { gap: 1px; }
+  .run-timeline__slot { min-width: 2px; }
+}
+
 .run-timeline__bar {
   display: block;
   width: 100%;

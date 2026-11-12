@@ -105,7 +105,7 @@ export const Topbar = ({ onMenuClick, menuOpen = false }: TopbarProps) => {
               className="cryo-shell__batch-button"
             >
               <Layers size={14} aria-hidden className="cryo-shell__batch-icon" />
-              <span>Batch · {batchCount}</span>
+              <span className="cryo-shell__batch-label">Batch · {batchCount}</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent>{`Review batch: ${batchCount}`}</TooltipContent>

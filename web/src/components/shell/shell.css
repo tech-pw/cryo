@@ -341,6 +341,15 @@
   .cryo-shell__topbar-right { gap: 6px; }
   .cryo-shell__ask-label { display: none; }
   .cryo-shell__batch-icon { display: block; }
+  .cryo-shell__batch-label { display: none; }
+  /* One search control on a phone: the palette button, which also searches tables. */
+  .cryo-shell__topbar-center .cryo-shell__search-wrap { display: none; }
+  .cryo-shell__topbar-center { justify-content: flex-start; }
+}
+
+/* No keyboard shortcut to advertise on a touch screen. */
+@media (hover: none) and (pointer: coarse) {
+  .cryo-shell__kbd { display: none; }
 }
 
 .cryo-shell__menu-btn {
