@@ -63,6 +63,7 @@
 </ul>
 <h3 id="unreleased-fixed">Fixed<a class="anchor" href="#unreleased-fixed" aria-label="Link to Fixed">#</a></h3>
 <ul>
+  <li>Helm: a prod render fails when one image digest is pinned under two repositories, or a digest is malformed (#486).</li>
   <li>Home's &quot;Latest nightly maintenance&quot; card follows the worker-path nightly run, not only batch-coordinator runs, and says when the newest nightly run is more than 36h old. <code>GET /runs</code> accepts <code>pipeline=nightly</code>, using the same rule as the Tables funnel (#492).</li>
   <li>The Runs page counts partial runs as runs with failures (<strong>Runs with failures · 24h</strong>, &quot;2 failed, 9 partial&quot;), so &quot;No table failures&quot; appears only when no table failed, and &quot;Running now&quot; says &quot;runs waiting&quot; instead of &quot;Nothing queued&quot; (#496).</li>
   <li>On phones the top bar has one search control (the command palette) and no overlapping Batch/⌘K controls, the Settings tab strip fades at its edge and scrolls the current tab into view, the Runs timeline fits the screen, and the truncated Home engine-slots line shows every engine on hover (#497).</li>
