@@ -335,17 +335,39 @@ algorithm: [`docs/design/lld.md`](./docs/design/lld.md).
 ## Install on Kubernetes
 
 Each release tag publishes the Helm chart to GHCR as an OCI artifact, signed with cosign keyless.
-No clone needed. Chart versions equal the release tag without the `v` (tag `v0.1.6` is chart
-`0.1.6`), and the packaged defaults pin that release's `ghcr.io/tech-pw/cryo`, `cryo-web` and
-`cryo-spark` images by digest.
+No clone needed. Chart versions equal the release tag without the `v` (tag `v0.2.1` is chart
+`0.2.1`), and the packaged defaults pin that release's `ghcr.io/tech-pw/cryo`, `cryo-web` and
+`cryo-spark` images by digest. The chart is also listed on [Artifact Hub](https://artifacthub.io/packages/helm/cryo/cryo).
+
+The chart lives in an OCI registry, so there is no `helm repo add` step: every command takes the
+`oci://` address directly. Helm 3.8 or newer is required.
 
 ```bash
-helm install cryo oci://ghcr.io/tech-pw/charts/cryo --version <version> \
+export CRYO_CHART=oci://ghcr.io/tech-pw/charts/cryo
+export CRYO_CHART_VERSION=0.2.1   # newest release: https://github.com/tech-pw/cryo/releases
+
+# Look before you install
+helm show chart  "$CRYO_CHART" --version "$CRYO_CHART_VERSION"    # metadata
+helm show values "$CRYO_CHART" --version "$CRYO_CHART_VERSION" > cryo-defaults.yaml
+
+# Optional: download the packaged chart (cryo-0.2.1.tgz), or unpack it to read the templates
+helm pull "$CRYO_CHART" --version "$CRYO_CHART_VERSION"
+helm pull "$CRYO_CHART" --version "$CRYO_CHART_VERSION" --untar
+
+# Install (create the cryo-secrets Secret first; see the install guide)
+helm install cryo "$CRYO_CHART" --version "$CRYO_CHART_VERSION" \
   --namespace cryo --create-namespace \
   --set global.envFromSecret=cryo-secrets
+
+# Upgrade to a newer release, keeping your values
+helm upgrade cryo "$CRYO_CHART" --version <new-version> --namespace cryo --reuse-values
+
+# Remove it (the database and the Secret stay)
+helm uninstall cryo --namespace cryo
 ```
 
-The [chart README](deploy/helm/cryo/README.md) lists the values a production install must set.
+The [install guide](https://tech-pw.github.io/cryo/install/) walks through a production install step by step, and the
+[chart README](deploy/helm/cryo/README.md) lists the values it must set.
 
 > [!WARNING]
 > The chart default `CRYO_ENVIRONMENT=dev` leaves `POST /api/v1/auth/token` open, so anyone who can

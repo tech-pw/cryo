@@ -23,8 +23,21 @@ kubectl -n cryo create secret generic cryo-secrets \
   --from-literal=CRYO_SECRET_KEY="$(openssl rand -base64 48)"
 helm install cryo oci://ghcr.io/tech-pw/charts/cryo --version <version> \
   --namespace cryo --set global.envFromSecret=cryo-secrets
-helm show values oci://ghcr.io/tech-pw/charts/cryo --version <version>
 ```
+
+The chart is in an OCI registry, so there is no `helm repo add`; every command takes the `oci://` address:
+
+| Task | Command |
+|---|---|
+| Show chart metadata | `helm show chart oci://ghcr.io/tech-pw/charts/cryo --version <version>` |
+| Show default values | `helm show values oci://ghcr.io/tech-pw/charts/cryo --version <version>` |
+| Download the `.tgz` | `helm pull oci://ghcr.io/tech-pw/charts/cryo --version <version>` |
+| Download and unpack | `helm pull oci://ghcr.io/tech-pw/charts/cryo --version <version> --untar` |
+| Render without a cluster | `helm template cryo oci://ghcr.io/tech-pw/charts/cryo --version <version> -n cryo -f cryo-values.yaml` |
+| Upgrade | `helm upgrade cryo oci://ghcr.io/tech-pw/charts/cryo --version <new-version> -n cryo -f cryo-values.yaml` |
+| Uninstall | `helm uninstall cryo -n cryo` |
+
+Releases are listed at <https://github.com/tech-pw/cryo/releases>, and the chart is on [Artifact Hub](https://artifacthub.io/packages/helm/cryo/cryo).
 
 The pre-install migration Job reads that Secret and the install waits for it, so create the Secret first.
 

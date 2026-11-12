@@ -1,7 +1,7 @@
 ---
 title: Install on Kubernetes
 lede: Install a released Cryo with Helm, against your own PostgreSQL and Redis, with the dev token off and every image pinned by digest. Then sign in, add a source and run the first scan.
-description: Production Helm install for Cryo. Prerequisites, the Secret, a secure values file, helm upgrade --install, migrations, verification, upgrade and uninstall.
+description: Production Helm install for Cryo from oci://ghcr.io/tech-pw/charts/cryo. Prerequisites, helm show and pull, the Secret, a secure values file, helm upgrade --install, migrations, verification, upgrade and uninstall.
 updated: 2026-10-26
 ---
 <callout type="important" title="Read Security first">
@@ -13,7 +13,7 @@ updated: 2026-10-26
   <dt>Kubernetes</dt>
   <dd>Version 1.27 or newer (the chart's <code>kubeVersion</code> is <code>&gt;=1.27.0-0</code>), with <strong>amd64 nodes</strong>. The published images are amd64-only, so every Cryo pod gets a <code>kubernetes.io/arch: amd64</code> node selector.</dd>
   <dt>Tools</dt>
-  <dd>Helm 3, <code>kubectl</code>, <code>git</code>, <code>openssl</code>, and <a href="https://github.com/google/go-containerregistry/tree/main/cmd/crane"><code>crane</code></a> to look up image digests.</dd>
+  <dd>Helm 3.8 or newer (for <code>oci://</code> charts), <code>kubectl</code> and <code>openssl</code>. <a href="https://docs.sigstore.dev/cosign/system_config/installation/"><code>cosign</code></a> is optional, to verify the chart signature.</dd>
   <dt>PostgreSQL</dt>
   <dd>An external database and a user that owns it. Cryo keeps its tables in a schema called <code>cryo</code> in that database. The first migration runs <code>CREATE EXTENSION IF NOT EXISTS pgcrypto</code>, so either give the user that privilege or create the extension first. <code>pgvector</code> is optional. Without it, the migration logs a warning and AI search falls back to a slower path. The local stack runs PostgreSQL 16.</dd>
   <dt>Redis</dt>
@@ -26,22 +26,27 @@ updated: 2026-10-26
 
 <h2 id="install">Install</h2>
 <steps>
-  <step title="Pick a version and get its chart">
-    <p>The chart isn't in a Helm repository. Take it from the git tag that matches the image tag, so the chart and the images come from the same release. This page uses <code>v0.1.5</code>. Use the newest <code>v*</code> tag, and use it everywhere this page says <code>v0.1.5</code>.</p>
+  <step title="Pick a version and look at the chart">
+    <p>Each release publishes the chart to GHCR as an OCI artifact at <code>oci://ghcr.io/tech-pw/charts/cryo</code>. It isn't a classic Helm repository, so there is no <code>helm repo add</code>: every command takes the <code>oci://</code> address. You need Helm 3.8 or newer. The chart version is the release tag without its <code>v</code>: tag <code>v0.2.1</code> is chart <code>0.2.1</code>. Use the newest <a href="https://github.com/tech-pw/cryo/releases">release</a>.</p>
     <codeblock lang="bash" title="terminal">
-$ export CRYO_VERSION=v0.1.5
-$ git clone --depth 1 --branch "$CRYO_VERSION" https://github.com/tech-pw/cryo.git "cryo-$CRYO_VERSION"
-$ cd "cryo-$CRYO_VERSION"
+$ export CRYO_CHART=oci://ghcr.io/tech-pw/charts/cryo
+$ export CRYO_CHART_VERSION=0.2.1
+$ helm show chart "$CRYO_CHART" --version "$CRYO_CHART_VERSION"
+$ helm show values "$CRYO_CHART" --version "$CRYO_CHART_VERSION" > cryo-defaults.yaml
     </codeblock>
+    <p>The published chart already pins that release's <code>ghcr.io/tech-pw/cryo</code>, <code>cryo-web</code> and <code>cryo-spark</code> images by <code>sha256</code> digest, so you don't look them up yourself. With <code>CRYO_ENVIRONMENT=prod</code>, the chart refuses to render if an enabled image has no digest, so a moved tag can't change what runs.</p>
+    <p class="expect">Done when <code>helm show chart</code> prints <code>name: cryo</code> and the version you picked.</p>
   </step>
-  <step title="Look up the image digests">
-    <p>The release images are public on GHCR: <code>ghcr.io/tech-pw/cryo</code> runs the API, workers and migrations, and <code>ghcr.io/tech-pw/cryo-web</code> is the UI. With <code>CRYO_ENVIRONMENT=prod</code>, the chart won't render until every enabled image has a <code>sha256</code> digest, so a moved tag can't change what runs.</p>
+  <step title="Optional: download and verify the chart">
+    <p>To read the templates, keep a copy for an air-gapped cluster, or check the signature, pull the chart first. The release workflow signs it with cosign keyless.</p>
     <codeblock lang="bash" title="terminal">
-$ export CRYO_DIGEST=$(crane digest "ghcr.io/tech-pw/cryo:$CRYO_VERSION")
-$ export CRYO_WEB_DIGEST=$(crane digest "ghcr.io/tech-pw/cryo-web:$CRYO_VERSION")
-$ echo "$CRYO_DIGEST $CRYO_WEB_DIGEST"
+$ helm pull "$CRYO_CHART" --version "$CRYO_CHART_VERSION"           # writes cryo-0.2.1.tgz
+$ helm pull "$CRYO_CHART" --version "$CRYO_CHART_VERSION" --untar   # unpacks into ./cryo
+$ cosign verify "ghcr.io/tech-pw/charts/cryo:$CRYO_CHART_VERSION" \
+    --certificate-identity-regexp '^https://github.com/tech-pw/cryo/\.github/workflows/release-supply-chain\.yml@refs/tags/v' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
     </codeblock>
-    <p class="expect">Done when both values start with <code>sha256:</code>.</p>
+    <p>You can install from the downloaded <code>.tgz</code> by passing its path instead of <code>$CRYO_CHART</code>.</p>
   </step>
   <step title="Write the settings file">
     <p>Every Cryo process reads its <code>CRYO_*</code> settings from the Secret named by <code>global.envFromSecret</code>, and that includes the migration Job. Save the settings below as <code>cryo.env</code> and replace every placeholder. Keeping them in a file keeps them out of your shell history.</p>
@@ -67,34 +72,24 @@ $ rm cryo.env
     <p><strong>Keep <code>CRYO_SECRET_KEY</code>.</strong> It also encrypts the connection secrets Cryo stores, so back it up alongside the database. If you lose it or change it, those stored secrets can't be read. See <a href="@/security/#secret-key">Security</a>.</p>
   </step>
   <step title="Write the values file">
-    <p>Save this as <code>cryo-values.yaml</code>. It sets <code>prod</code>, takes both images from the release, turns on the UI and points every process at the Secret. The bundled Redis is off because <code>CRYO_REDIS_URL</code> points at your own. The digests are passed on the command line in the next step.</p>
+    <p>Save this as <code>cryo-values.yaml</code>. It sets <code>prod</code>, turns on the UI and points every process at the Secret. The images come from the chart, pinned by digest. The bundled Redis is off because <code>CRYO_REDIS_URL</code> points at your own.</p>
     <codeblock lang="yaml" title="cryo-values.yaml">
 global:
   envFromSecret: cryo-secrets
   env:
     CRYO_ENVIRONMENT: prod
-image:
-  repository: ghcr.io/tech-pw/cryo
-  tag: v0.1.5
-migration:
-  image:
-    repository: ghcr.io/tech-pw/cryo
-    tag: v0.1.5
 web:
   enabled: true
-  image:
-    repository: ghcr.io/tech-pw/cryo-web
-    tag: v0.1.5
 redis:
   enabled: false
     </codeblock>
-    <p>The native and Spark-on-Kubernetes lanes are off by default. If you turn on <code>native.enabled</code> or <code>spark.k8s.enabled</code>, pin those images by digest too. <code>deploy/helm/cryo/values.yaml</code> documents every other setting and its default.</p>
+    <p>The native and Spark-on-Kubernetes lanes are off by default; the chart pins their images by digest too. <code>cryo-defaults.yaml</code> from the first step documents every other setting and its default.</p>
   </step>
   <step title="Render, then install">
     <p>Render first. A missing digest or a typo fails at this point, before anything touches the cluster.</p>
     <codeblock lang="bash" title="terminal">
-$ helm template cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest="$CRYO_DIGEST" --set migration.image.digest="$CRYO_DIGEST" --set web.image.digest="$CRYO_WEB_DIGEST" > /dev/null
-$ helm upgrade --install cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest="$CRYO_DIGEST" --set migration.image.digest="$CRYO_DIGEST" --set web.image.digest="$CRYO_WEB_DIGEST" --wait --timeout 15m
+$ helm template cryo "$CRYO_CHART" --version "$CRYO_CHART_VERSION" --namespace cryo -f cryo-values.yaml > /dev/null
+$ helm upgrade --install cryo "$CRYO_CHART" --version "$CRYO_CHART_VERSION" --namespace cryo -f cryo-values.yaml --wait --timeout 15m
     </codeblock>
     <p class="expect">Done when Helm prints <code>STATUS: deployed</code>. With the release name <code>cryo</code>, the Services are <code>cryo-api</code> on port 8000 and <code>cryo-web</code> on port 80.</p>
   </step>
@@ -174,11 +169,17 @@ spec:
 <p>When <code>redis.enabled</code> is <code>true</code>, which is the chart default, the chart runs one Redis pod with no volume behind a ClusterIP Service called <code>cryo-redis</code>. The chart doesn't set <code>CRYO_REDIS_URL</code> for you, so put <code>CRYO_REDIS_URL=redis://cryo-redis:6379/0</code> in the Secret. In <code>prod</code>, the Redis image needs a digest too:</p>
 <codeblock lang="bash" title="terminal">
 $ export REDIS_DIGEST=$(crane digest redis:7-alpine)
-$ helm upgrade --install cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest="$CRYO_DIGEST" --set migration.image.digest="$CRYO_DIGEST" --set web.image.digest="$CRYO_WEB_DIGEST" --set redis.enabled=true --set redis.image.digest="$REDIS_DIGEST" --wait --timeout 15m
+$ helm upgrade --install cryo "$CRYO_CHART" --version "$CRYO_CHART_VERSION" --namespace cryo -f cryo-values.yaml --set redis.enabled=true --set redis.image.digest="$REDIS_DIGEST" --wait --timeout 15m
 </codeblock>
 
 <h2 id="upgrade">Upgrade</h2>
-<p>Back up the database first. Then repeat the install with the new tag: check out its chart, look up its digests, change the three <code>tag</code> values in <code>cryo-values.yaml</code>, render, and run <code>helm upgrade --install</code>. The migration hook runs before any pod changes. <a href="@/upgrade/">Upgrade and rollback</a> has the details and the limits of a rollback.</p>
+<p>Back up the database first. Then set <code>CRYO_CHART_VERSION</code> to the new release, render, and upgrade. The new chart brings that release's images, pinned by digest. The migration hook runs before any pod changes.</p>
+<codeblock lang="bash" title="terminal">
+$ export CRYO_CHART_VERSION=&lt;new-version&gt;
+$ helm template cryo "$CRYO_CHART" --version "$CRYO_CHART_VERSION" --namespace cryo -f cryo-values.yaml > /dev/null
+$ helm upgrade cryo "$CRYO_CHART" --version "$CRYO_CHART_VERSION" --namespace cryo -f cryo-values.yaml --wait --timeout 15m
+</codeblock>
+<p><a href="@/upgrade/">Upgrade and rollback</a> has the details and the limits of a rollback.</p>
 
 <h2 id="uninstall">Uninstall</h2>
 <codeblock lang="bash" title="terminal">
