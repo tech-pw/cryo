@@ -80,6 +80,9 @@ print.
 | `CRYO_MAINTENANCE_MAX_STATS_AGE_DAYS` | `int` | `3` | Skip tables whose last successful scan is older than this. |
 | `CRYO_MAINTENANCE_SHARED_SNAPSHOT_MAX_AGE_HOURS` | `int` | `72` | If the shared-S3-path snapshot cannot be refreshed and the last one is older than this, the run skips remove_orphan_files on every table. |
 | `CRYO_MAINTENANCE_MEASURE_ORPHAN_BYTES` | `bool` | `true` | Record bytes freed by remove_orphan_files from the scanner's last orphan listing (sizes and ages of unreferenced objects older than the action's cutoff), labelled bytes_source=scan_estimate and confirmed by the next listing. No extra Spark listing runs: the old dry-run probe that doubled the LIST and OOM'd Spark is gone (#538). False leaves orphan removals that deleted files unmeasured. |
+| `CRYO_ORPHAN_REMOVAL_CADENCE_DAYS` | `int` | `7` | Plan remove_orphan_files on a table at most once per this many days, counted from its last successful orphan removal, with tables staggered across the nights by a hash of their id. 0 plans it on every deep run. A preset can override it with params.orphan_cadence_days. |
+| `CRYO_ORPHAN_CATCHUP_MIN_BYTES` | `int` | `10737418240` | A table never cleaned whose last storage listing found at least this many orphan bytes skips the stagger wait once. 0 disables the catch-up. |
+| `CRYO_ORPHAN_MAX_LISTING_KEYS` | `int` | `5000000` | Skip remove_orphan_files when the table root holds more objects than this (referenced files plus estimated orphans): the listing runs on one driver. 0 disables the cap. |
 | `CRYO_MAINTENANCE_AUTOCOMP_W_FILE_REDUCTION` | `float` | `0.7` | - |
 | `CRYO_MAINTENANCE_AUTOCOMP_HEAT_WEIGHT` | `float` | `0.3` | Cryo extension: share of the score from Trino query heat; 0 = paper-only. |
 | `CRYO_MAINTENANCE_AUTOCOMP_REWRITE_GB_PER_HOUR` | `float` | `25.0` | RewriteBytesPerHour until a run has measured it; afterwards the median of recent runs' observed rewrite throughput is used. |

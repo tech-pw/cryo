@@ -589,7 +589,9 @@ class PresetCreate(BaseModel):
     name: str
     destination_id: uuid.UUID
     description: str | None = None
-    mode: Mode = Mode.STANDARD
+    # Deep, so a new preset also removes orphan files and rewrites manifests; the per-table
+    # orphan cadence keeps that cheap (cryo.planner.orphan_cadence).
+    mode: Mode = Mode.DEEP
     operations: list[str] = Field(default_factory=list)
     params: JsonDict = Field(default_factory=dict)
     schedule_cron: str | None = None

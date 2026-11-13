@@ -2,11 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
 from cryo.domain.enums import EngineType, Mode, OperationType
 from cryo.domain.models import MaintenancePlan, Operation
+from cryo.planner.orphan_cadence import (
+    DEFAULT_ORPHAN_CADENCE_DAYS,
+    DEFAULT_ORPHAN_CATCHUP_MIN_BYTES,
+    DEFAULT_ORPHAN_MAX_LISTING_KEYS,
+    ORPHAN_MIN_RETENTION_DAYS,
+    decide_orphan_cadence,
+    estimated_listing_keys,
+    orphan_backlog_bytes,
+)
 from cryo.planner.planner import build_plan
 from cryo.planner.schema_gates import gate_spark_time_columns
 
@@ -49,6 +59,7 @@ def build_execution_plan(
     has_shared_location: bool = False,
     shared_location_unverified: bool = False,
     excluded_operations: Collection[str] = (),
+    now: datetime | None = None,
 ) -> MaintenancePlan:
     plan_params = execution_plan_params(params, destination, stats)
     # Only an explicit request bounds the plan. A preset's operations list does not:
@@ -74,6 +85,7 @@ def build_execution_plan(
         protected_snapshot_ids=protected_snapshot_ids,
         excluded_operations=excluded_operations,
     )
+    plan = gate_scheduled_orphan_removal(plan, stats=stats, params=params, now=now)
     plan = gate_orphan_removal_on_shared_location(
         plan,
         has_shared_location=has_shared_location,
@@ -197,6 +209,122 @@ def skip_operations_from_preset(
     gate again, deliberately, not by accident this time).
     """
     return []
+
+
+def _int_setting(params: Mapping[str, Any], key: str, setting: str, default: int) -> int:
+    value = params.get(key)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(value)
+    try:
+        from cryo.config import get_settings
+
+        return int(getattr(get_settings(), setting, default))
+    except Exception:
+        return default
+
+
+def _without_orphan_removal(plan: MaintenancePlan, note: str) -> MaintenancePlan:
+    return replace(
+        plan,
+        operations=tuple(
+            op for op in plan.operations if op.type is not OperationType.REMOVE_ORPHAN_FILES
+        ),
+        notes=(*plan.notes, note),
+    )
+
+
+def gate_scheduled_orphan_removal(
+    plan: MaintenancePlan,
+    *,
+    stats: Mapping[str, Any],
+    params: Mapping[str, Any],
+    now: datetime | None = None,
+) -> MaintenancePlan:
+    """Cadence, listing-size and minimum-age rules for remove_orphan_files on unrequested runs.
+
+    The default preset is deep, so every nightly plan carries remove_orphan_files. Without
+    this gate each table would LIST its whole root every night. An explicit request
+    (requested_operations naming remove_orphan_files) is the operator asking for it now and
+    bypasses cadence and stagger, but not the listing cap or the minimum age.
+    """
+    orphan_ops = [op for op in plan.operations if op.type is OperationType.REMOVE_ORPHAN_FILES]
+    if not orphan_ops:
+        return plan
+    requested = params.get("requested_operations")
+    explicit = isinstance(requested, (list, tuple)) and (
+        OperationType.REMOVE_ORPHAN_FILES.value in {str(item) for item in requested}
+    )
+
+    max_keys = _int_setting(
+        params,
+        "orphan_max_listing_keys",
+        "orphan_max_listing_keys",
+        DEFAULT_ORPHAN_MAX_LISTING_KEYS,
+    )
+    keys = estimated_listing_keys(stats)
+    if max_keys > 0 and keys is not None and keys > max_keys:
+        return _without_orphan_removal(
+            plan,
+            f"Skipped remove_orphan_files: the table root holds an estimated {keys:,} objects, "
+            f"over the {max_keys:,}-object listing cap that keeps the driver from running out "
+            "of memory. Raise orphan_max_listing_keys with a larger driver, or clean the "
+            "table's prefix with a storage lifecycle rule.",
+        )
+
+    if not explicit:
+        table_id = stats.get("table_id")
+        cadence_days = _int_setting(
+            params,
+            "orphan_cadence_days",
+            "orphan_removal_cadence_days",
+            DEFAULT_ORPHAN_CADENCE_DAYS,
+        )
+        if isinstance(table_id, str) and table_id and cadence_days > 0:
+            decision = decide_orphan_cadence(
+                table_id=table_id,
+                last_success_at=stats.get("last_orphan_removal_at"),
+                now=now or datetime.now(UTC),
+                cadence_days=cadence_days,
+                orphan_backlog_bytes=orphan_backlog_bytes(stats),
+                catchup_min_bytes=_int_setting(
+                    params,
+                    "orphan_catchup_min_bytes",
+                    "orphan_catchup_min_bytes",
+                    DEFAULT_ORPHAN_CATCHUP_MIN_BYTES,
+                ),
+            )
+            if not decision.run:
+                return _without_orphan_removal(plan, decision.note or "")
+            if decision.note:
+                plan = replace(plan, notes=(*plan.notes, decision.note))
+
+    raised = False
+    operations: list[Operation] = []
+    for op in plan.operations:
+        if op.type is OperationType.REMOVE_ORPHAN_FILES:
+            days = int(op.params.get("retention_days", ORPHAN_MIN_RETENTION_DAYS) or 0)
+            if days < ORPHAN_MIN_RETENTION_DAYS:
+                raised = True
+                op = replace(
+                    op,
+                    params={
+                        **dict(op.params),
+                        "retention_days": ORPHAN_MIN_RETENTION_DAYS,
+                        "orphan_min_age_hours": ORPHAN_MIN_RETENTION_DAYS * 24,
+                    },
+                )
+        operations.append(op)
+    if not raised:
+        return plan
+    return replace(
+        plan,
+        operations=tuple(operations),
+        notes=(
+            *plan.notes,
+            f"remove_orphan_files retention raised to the {ORPHAN_MIN_RETENTION_DAYS}-day "
+            "minimum: younger files may belong to a write still in flight.",
+        ),
+    )
 
 
 _SHARED_LOCATION_NOTE = (

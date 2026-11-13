@@ -22,6 +22,7 @@ from cryo.db.models import (
     Source,
     Table,
     TableAssignment,
+    TableCost,
     TablePartition,
 )
 from cryo.db.repositories.job_dedupe import supersede_covered_jobs
@@ -81,6 +82,7 @@ class SQLJobStore:
                 session,
                 table.id,
             )
+            stats.update(orphan_cadence_stats(session, table.id))
             hours_since_expire = _hours_since_last_expire_snapshots(session, table.id)
             if hours_since_expire is not None:
                 stats["hours_since_last_expire_snapshots"] = hours_since_expire
@@ -836,6 +838,30 @@ def _hours_since_last_expire_snapshots(session: Session, table_id: uuid.UUID) ->
     return max(0.0, (datetime.now(UTC) - last).total_seconds() / 3600)
 
 
+def orphan_cadence_stats(session: Session, table_id: uuid.UUID) -> dict[str, Any]:
+    """Last successful remove_orphan_files and the last listing's orphan bytes, for the
+    per-table orphan cadence (cryo.planner.execution.gate_scheduled_orphan_removal)."""
+    out: dict[str, Any] = {}
+    last = session.scalar(
+        select(func.max(AuditLog.ts)).where(
+            AuditLog.table_id == table_id,
+            AuditLog.status.in_(("OK", "succeeded")),
+            AuditLog.action == OperationType.REMOVE_ORPHAN_FILES.value,
+        )
+    )
+    if last is not None:
+        if isinstance(last, str):
+            last = datetime.fromisoformat(last)
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        out["last_orphan_removal_at"] = last.isoformat()
+    cost = session.get(TableCost, table_id)
+    if cost is not None:
+        out["orphan_bytes"] = cost.orphan_bytes
+        out["reclaim_orphan_bytes"] = cost.reclaim_orphan_bytes
+    return out
+
+
 def _hours_since_first_snapshot(raw: Mapping[str, Any] | None) -> float | None:
     """Age of the oldest snapshot the last scan saw, for the planner's no-op expire gate.
 
@@ -896,6 +922,7 @@ def _stats_dict(table: Table) -> dict[str, Any]:
         "table_name": table.table_name,
         "table_ref": table_ref,
         "source_id": str(table.source_id) if table.source_id is not None else None,
+        "table_id": str(table.id),
     }
     if stats is None:
         return base
@@ -923,6 +950,7 @@ def _stats_dict(table: Table) -> dict[str, Any]:
         "partition_col_type": stats.partition_col_type,
         # The optimize target follows it (#265); the scanner judges small files against it.
         "target_file_size_bytes": stats.target_file_size_bytes,
+        "manifest_count": stats.manifest_count,
         "projected_savings_usd_month": stats.projected_savings_usd_month,
         "format_version": (stats.raw or {}).get("format_version"),
         "raw": dict(stats.raw or {}),

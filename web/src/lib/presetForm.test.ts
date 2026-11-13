@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PresetRead } from "../api/types";
 import {
+  buildDefaultPresetFormValues,
   CONTINUOUS_NEEDS_EXPIRE,
   CONTINUOUS_NEEDS_THRESHOLD,
   continuousToFormValues,
@@ -41,6 +42,13 @@ const baseFormValues = (): PresetFormValues => ({
   spark_min_gb: 100,
   native_min_gb: 50,
   latency_p99_ms: 500
+});
+
+describe("new preset defaults", () => {
+  it("starts in deep mode so the schedule removes orphan files", () => {
+    expect(buildDefaultPresetFormValues([]).mode).toBe("deep");
+    expect(presetToFormValues(null, []).mode).toBe("deep");
+  });
 });
 
 describe("presetToFormValues", () => {

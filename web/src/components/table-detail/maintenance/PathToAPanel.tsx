@@ -199,6 +199,12 @@ export const PathToAPanel = ({ tableId }: { tableId: string }) => {
   return (
     <section aria-label="Path to grade A" className="space-y-4">
       <Summary path={data} />
+      {data.next_orphan_cleanup_due ? (
+        <p className="text-xs text-muted-foreground" data-testid="next-orphan-cleanup">
+          Next orphan cleanup due {data.next_orphan_cleanup_due}. The schedule removes orphan files on a
+          per-table cadence, staggered across nights.
+        </p>
+      ) : null}
       {data.notes.map((note) => (
         <p key={note} className="text-xs text-muted-foreground">
           {note}

@@ -66,6 +66,7 @@ class PathToARead(BaseModel):
     notes: list[str]
     # Partition count and skew findings: reported beside the grade, never deducted (#285).
     design_findings: list[dict[str, Any]] = Field(default_factory=list)
+    next_orphan_cleanup_due: str | None = None
 
 
 class PathToAApplyRequest(BaseModel):
@@ -205,7 +206,7 @@ def load_snapshot(session: Session, table: Table) -> TableSnapshot | None:
         has_sort_order=bool(stats.has_sort_order),
         write_distribution_mode=stats.write_distribution_mode,
         params=params,
-        scheduled_operations=frozenset(str(op) for op in (preset.operations if preset else [])),
+        scheduled_operations=_scheduled_operations(preset),
         partition_fields=fields,
         partitions=_latest_partitions(session, table.id),
         partition_skew_ratio=float(stats.partition_skew_ratio or 0.0),
@@ -225,7 +226,46 @@ def load_snapshot(session: Session, table: Table) -> TableSnapshot | None:
         spec_migration=dict(raw.get("spec_migration") or {}),
         lifecycle=table.lifecycle or "active",
         query_count_30d=stats.query_count_30d,
+        next_orphan_cleanup_due=_next_orphan_cleanup_due(session, table, preset, params),
     )
+
+
+def _scheduled_operations(preset: Preset | None) -> frozenset[str]:
+    """What the preset's schedule can run: its mode's operations.
+
+    Preset.operations is not an allowlist (cryo.planner.execution), so the mode decides. A
+    preset whose mode is unknown falls back to its operations list.
+    """
+    if preset is None:
+        return frozenset()
+    from cryo.domain.enums import Mode
+    from cryo.planner.guardrails import MODE_OPERATIONS
+
+    try:
+        return frozenset(op.value for op in MODE_OPERATIONS[Mode(preset.mode)])
+    except (ValueError, KeyError):
+        return frozenset(str(op) for op in (preset.operations or []))
+
+
+def _next_orphan_cleanup_due(
+    session: Session, table: Table, preset: Preset | None, params: Mapping[str, Any]
+) -> str | None:
+    from datetime import UTC, datetime
+
+    from cryo.config import get_settings
+    from cryo.db.repositories.job_store import orphan_cadence_stats
+    from cryo.domain.enums import OperationType
+    from cryo.planner.orphan_cadence import next_orphan_cleanup_due
+
+    if preset is None or not preset.schedule_cron or preset.paused or not preset.enabled:
+        return None
+    if OperationType.REMOVE_ORPHAN_FILES.value not in _scheduled_operations(preset):
+        return None
+    cadence = params.get("orphan_cadence_days")
+    if not isinstance(cadence, int) or isinstance(cadence, bool):
+        cadence = get_settings().orphan_removal_cadence_days
+    last = orphan_cadence_stats(session, table.id).get("last_orphan_removal_at")
+    return next_orphan_cleanup_due(str(table.id), last, datetime.now(UTC), cadence).isoformat()
 
 
 def _path(session: Session, table_id: uuid.UUID) -> tuple[Table, Any]:

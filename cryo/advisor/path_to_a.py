@@ -123,6 +123,9 @@ class TableSnapshot:
     # carries no stale-commit deduction. query_count_30d of None means reads aren't recorded.
     lifecycle: str = "active"
     query_count_30d: int | None = None
+    # ISO date of the next scheduled remove_orphan_files under the per-table cadence
+    # (cryo.planner.orphan_cadence). None when the workflow does not schedule it.
+    next_orphan_cleanup_due: str | None = None
 
 
 @dataclass
@@ -157,6 +160,7 @@ class PathToA:
     reachable_grade: str
     notes: list[str]
     design_findings: list[dict[str, Any]] = field(default_factory=list)
+    next_orphan_cleanup_due: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -400,6 +404,7 @@ def build_path_to_a(snapshot: TableSnapshot) -> PathToA:
         reachable_grade=grade_for_score(projection.score()),
         notes=notes,
         design_findings=[dict(f) for f in compute_design_findings(_health_stats(snapshot))],
+        next_orphan_cleanup_due=snapshot.next_orphan_cleanup_due,
     )
 
 
@@ -612,7 +617,12 @@ def _orphan_step(snapshot: TableSnapshot, projection: _Projection) -> Step | Non
         step_id="remove_orphan_files",
         operation="remove_orphan_files",
         title="Remove orphan files",
-        detail="Deletes files no snapshot references, which shrinks metadata overhead.",
+        detail="Deletes files no snapshot references, which shrinks metadata overhead."
+        + (
+            f" Next orphan cleanup due {snapshot.next_orphan_cleanup_due}."
+            if snapshot.next_orphan_cleanup_due
+            else ""
+        ),
         confidence="assumed",
         evidence=[],
     )

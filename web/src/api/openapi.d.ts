@@ -10631,6 +10631,8 @@ export interface components {
             design_findings?: {
                 [key: string]: unknown;
             }[];
+            /** Next Orphan Cleanup Due */
+            next_orphan_cleanup_due?: string | null;
         };
         /** PermissionRead */
         PermissionRead: {
@@ -10722,7 +10724,7 @@ export interface components {
             destination_id: string;
             /** Description */
             description?: string | null;
-            /** @default standard */
+            /** @default deep */
             mode: components["schemas"]["Mode"];
             /** Operations */
             operations?: string[];
@@ -10803,7 +10805,7 @@ export interface components {
             destination_id: string;
             /** Description */
             description?: string | null;
-            /** @default standard */
+            /** @default deep */
             mode: components["schemas"]["Mode"];
             /** Operations */
             operations?: string[];

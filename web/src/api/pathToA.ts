@@ -40,6 +40,8 @@ export interface PathToARead {
   reachable_grade: string;
   notes: string[];
   design_findings?: PathDesignFinding[];
+  /** ISO date of the next scheduled orphan cleanup; null when the workflow doesn't run it. */
+  next_orphan_cleanup_due?: string | null;
 }
 
 export interface PathDesignFinding {

@@ -108,6 +108,20 @@ describe("PathToAPanel", () => {
     expect(screen.queryByRole("button", { name: /Slow the writer/ })).not.toBeInTheDocument();
   });
 
+  it("shows when the schedule next removes orphan files", async () => {
+    getPathToA.mockResolvedValue({ ...path, next_orphan_cleanup_due: "2026-11-18" });
+    renderPanel();
+    expect(await screen.findByTestId("next-orphan-cleanup")).toHaveTextContent(
+      "Next orphan cleanup due 2026-11-18."
+    );
+  });
+
+  it("hides the orphan cleanup date when the workflow doesn't schedule it", async () => {
+    renderPanel();
+    await screen.findByText("Cryo does this");
+    expect(screen.queryByTestId("next-orphan-cleanup")).not.toBeInTheDocument();
+  });
+
   it("runs an automatic step after confirmation", async () => {
     renderPanel();
     fireEvent.click(await screen.findByRole("button", { name: "Run now" }));
