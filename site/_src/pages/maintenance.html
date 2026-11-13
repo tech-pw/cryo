@@ -2,7 +2,7 @@
 title: Maintenance
 lede: A maintenance run compacts first, then cleans up, in one fixed order. The order is defined in code and no preset can change it.
 description: Why Iceberg tables need maintenance, the seven operations Cryo runs in a fixed order, how the planner chunks work, how admission works, and the guardrails that stay on.
-updated: 2026-10-16
+updated: 2026-11-13
 ---
 <h2 id="canonical-order">Canonical order</h2>
 <p>Seven operations, skipping the ones a table does not need. Expiry comes after compaction so one run reclaims the space its own compaction freed.</p>
@@ -89,7 +89,7 @@ updated: 2026-10-16
 </ul>
 
 <h2 id="admission">Admission: load-aware, never eager</h2>
-<p>A worker asks the governor for permission before it runs anything. The governor probes live load, from <code>system.runtime.queries</code> on Trino and from slots on Spark on EMR, and either admits the job or defers it. It also applies per-replica caps and round-robins across replicas.</p>
+<p>A worker asks the governor for permission before it runs anything. The governor probes live load, from <code>system.runtime.queries</code> on Trino, and checks slot caps on Spark and native Go, and either admits the job or defers it. It also applies per-replica caps and round-robins across replicas.</p>
 <diagram name="admission" caption="Scaling workers does not raise the number of parallel rewrites. The governor does." />
 <p>The Runs page shows what ran, what failed and what is held. It reads top to bottom:</p>
 <ul>

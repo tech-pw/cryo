@@ -109,7 +109,7 @@ updated: 2026-10-23
   <div class="bm-tradeoff"><b>Spark compute</b><p>Cryo used about twice the Spark compute of the scheduled DAG on small tables, and 1.67× hand-run SQL on the 100 GiB table. It starts one Spark application per operation and expires snapshots on every table. Compute is cheap next to engineer time, but Cryo is not a compute saver.</p></div>
   <div class="bm-tradeoff"><b>Point lookups</b><p>Bigger files make single-row lookups slower (1.8× at 256 MB). If your workload is mostly point reads, use a smaller target or skip compaction for that table.</p></div>
   <div class="bm-tradeoff"><b>Latency to start</b><p>Jobs waited a median of about 3 minutes in the queue before Spark started. Fine for maintenance; not built for second-level reaction.</p></div>
-  <div class="bm-tradeoff"><b>Rough edges</b><p>We filed what we hit: run status staying queued (<a href="https://github.com/tech-pw/cryo/issues/153">#153</a>), chunked scans skipping tables (<a href="https://github.com/tech-pw/cryo/issues/154">#154</a>), and missing file metrics on Spark-on-Kubernetes jobs (<a href="https://github.com/tech-pw/cryo/issues/155">#155</a>). None affected data integrity.</p></div>
+  <div class="bm-tradeoff"><b>Rough edges</b><p>We filed what we hit: run status staying queued (<a href="https://github.com/tech-pw/cryo/issues/153">#153</a>), chunked scans skipping tables (<a href="https://github.com/tech-pw/cryo/issues/154">#154</a>), and missing file metrics on Spark-on-Kubernetes jobs (<a href="https://github.com/tech-pw/cryo/issues/155">#155</a>). None affected data integrity, and all three were fixed on 2026-10-26, after the scored runs.</p></div>
 </div>
 
 <h2 id="method">How we measured</h2>

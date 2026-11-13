@@ -2,11 +2,11 @@
 title: Architecture
 lede: Cryo sits between Apache Iceberg catalogs on the read side and engines on the write side. Sources never reach destinations without going through the plan.
 description: Cryo's place in the lakehouse, system context, the scheduled maintenance sequence, the job lifecycle, assignment, and the job of each component.
-updated: 2026-10-06
+updated: 2026-11-13
 ---
 <h2 id="platform">Where Cryo sits</h2>
-<p>Cryo is a maintenance control plane for the lakehouse you already run. It does not replace the catalog, Trino, Spark or object storage. Operators, catalogs and engines sit on the left; Cryo is the middle; the lake stays on the right.</p>
-<diagram name="platform" caption="Select a Cryo service to open the page that explains it. Cryo is not a catalog: it reads metadata, plans work, and admits it to engines you already operate." />
+<p>Cryo is a maintenance control plane for the lakehouse you already run. It does not replace the catalog or object storage. It can run maintenance on its own Spark on Kubernetes and native Go engines, or on the Trino and Spark you already run. Operators, catalogs and engines sit on the left; Cryo is the middle; the lake stays on the right.</p>
+<diagram name="platform" caption="Select a Cryo service to open the page that explains it. Cryo is not a catalog: it reads metadata, plans work, and admits it to its own engines or to engines you operate." />
 
 <h2 id="system-context">System context</h2>
 <p>The scanner only reads sources. Workers only execute on destinations. PostgreSQL holds durable state, Redis holds the queue and the locks, and object storage holds the table data.</p>
@@ -33,7 +33,7 @@ updated: 2026-10-06
     <tr><td><strong>Scanner</strong></td><td>Reads sources and stores the shape of every table. Runs from a CronJob and from an ad-hoc scan queue.</td><td>Never reads data files. Never starts a rewrite.</td></tr>
     <tr><td><strong>Planner</strong></td><td>Turns stored table shape into ordered operations with partition predicates.</td><td>Engine-agnostic. Emits no SQL strings. Operation order is fixed in <code>cryo/planner/guardrails.py</code>.</td></tr>
     <tr><td><strong>Scheduler</strong></td><td>Finds due presets and enqueues jobs.</td><td>Leader-elected. Several replicas may start, one is active.</td></tr>
-    <tr><td><strong>Governor</strong></td><td>Decides whether and when a job may run. Probes live load (<code>system.runtime.queries</code> for Trino, slots for Spark on EMR), applies per-replica caps and round-robins across replicas.</td><td>Leader-elected. Honors cooldowns and off-peak windows. Bounds real concurrency, so more workers do not mean more parallel rewrites.</td></tr>
+    <tr><td><strong>Governor</strong></td><td>Decides whether and when a job may run. Probes live load (<code>system.runtime.queries</code> for Trino; slot caps for Spark and native Go), applies per-replica caps and round-robins across replicas.</td><td>Leader-elected. Honors cooldowns and off-peak windows. Bounds real concurrency, so more workers do not mean more parallel rewrites.</td></tr>
     <tr><td><strong>Worker</strong></td><td>Executes one table's maintenance on one destination engine.</td><td>Holds a per-table Redis lock for the job's lifetime. A failure is recorded and the run continues.</td></tr>
     <tr><td><strong>API and web UI</strong></td><td>The API serves tables, runs, presets, assignments and audit. The UI is a client of the API.</td><td>The UI talks only to the API.</td></tr>
   </tbody>

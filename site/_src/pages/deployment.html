@@ -1,11 +1,11 @@
 ---
 title: Deployment
-lede: Cryo does not replace Trino or Apache Spark. It plans maintenance and admits the work to the engines you already run. Deploy it as a Helm chart and keep your engines where they are.
+lede: Cryo deploys as one Helm chart. It can run maintenance on its own engines inside the cluster, Spark on Kubernetes and the beta native Go compactor, or admit the work to the Trino and Spark you already run.
 description: How Cryo deploys on Kubernetes with Helm, what it needs from you, and the committed CPU and memory request floor.
-updated: 2026-10-26
+updated: 2026-11-13
 ---
 <h2 id="kubernetes-services">Cryo on Kubernetes</h2>
-<diagram name="k8s" caption="The Helm release holds Cryo's services. PostgreSQL and Redis are yours, and so are the engines." />
+<diagram name="k8s" caption="The Helm release holds Cryo's services. PostgreSQL and Redis are yours. Cryo engines run as Jobs in the cluster; your engines stay where they are." />
 <p>The scheduler and the governor are leader-elected, so several replicas may start but only one is active. Scaling workers does not by itself raise <code>OPTIMIZE</code> concurrency, because the governor bounds real concurrency against engine load.</p>
 
 <h2 id="layout">Layout in three lines</h2>
@@ -15,7 +15,7 @@ updated: 2026-10-26
   <dt>Stores</dt>
   <dd>PostgreSQL and Redis are required. PostgreSQL is always external, so you can use a managed service. Redis can be external too, or you can use the chart's single in-namespace Redis, which has no volume.</dd>
   <dt>Engines</dt>
-  <dd>Engines stay outside the chart. Cryo reaches them through source and destination configs stored in the database.</dd>
+  <dd>Two kinds. Cryo engines ship with the chart: Spark on Kubernetes (<code>spark.k8s.enabled</code>, the <code>cryo-spark</code> image, one Job per statement) and the beta native Go compactor. Your engines, such as Trino or EMR Serverless, stay outside the chart, and Cryo reaches them through destination configs stored in the database.</dd>
 </dl>
 
 <h2 id="install">Install the chart</h2>
@@ -59,7 +59,7 @@ $ make deployment-footprint
   <linkcard href="@/upgrade/" title="Upgrade and rollback">Move between releases, and what a rollback undoes.</linkcard>
   <linkcard href="@/backup/" title="Backup and restore">What to back up, and a restore you can practise.</linkcard>
   <linkcard href="@/architecture/" title="Architecture">The system context these workloads implement.</linkcard>
-  <linkcard href="@/engines/" title="Engines">How the same plan renders as Trino or Spark SQL.</linkcard>
+  <linkcard href="@/engines/" title="Engines">Cryo engines and your engines, and how one plan renders for each.</linkcard>
   <linkcard href="@/quickstart/" title="Quickstart">Run the same components locally with Docker first.</linkcard>
   <linkcard href="@/reference/" title="Reference">Public API surfaces and what is in the box.</linkcard>
 </linkcards>

@@ -11,7 +11,7 @@ What changed in Cryo, generated from CHANGELOG.md at build time. Releases are ta
 
 Versions and support
 
-Cryo is pre-1.0. The latest release is [v0.2.0](https://github.com/tech-pw/cryo/releases/tag/v0.2.0), and fixes go to the newest release line only; older tags aren't patched. How version numbers move is in [docs/VERSIONING.md](https://github.com/tech-pw/cryo/blob/main/docs/VERSIONING.md); what support covers is in [docs/SUPPORT_POLICY.md](https://github.com/tech-pw/cryo/blob/main/docs/SUPPORT_POLICY.md). All tags are on the [tags page](https://github.com/tech-pw/cryo/tags).
+Cryo is pre-1.0. The latest release is [v0.2.1](https://github.com/tech-pw/cryo/releases/tag/v0.2.1), and fixes go to the newest release line only; older tags aren't patched. How version numbers move is in [docs/VERSIONING.md](https://github.com/tech-pw/cryo/blob/main/docs/VERSIONING.md); what support covers is in [docs/SUPPORT_POLICY.md](https://github.com/tech-pw/cryo/blob/main/docs/SUPPORT_POLICY.md). All tags are on the [tags page](https://github.com/tech-pw/cryo/tags).
 
 The `v0.1.x` tags were cut before the changelog had per-release sections, so their changes are still listed under Unreleased. Compare two tags on GitHub, for example [v0.1.4...v0.1.5](https://github.com/tech-pw/cryo/compare/v0.1.4...v0.1.5), to see exactly what shipped between them.
 

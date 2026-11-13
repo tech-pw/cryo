@@ -1,9 +1,13 @@
 ---
 title: Engines
 lede: The planner is engine-agnostic. Trino SQL and Spark SQL are rendered apart, so the same plan produces different SQL and never different intent.
-description: Which maintenance operations Cryo renders for Trino and Spark, how plans become SQL, and where native compaction fits.
-updated: 2026-10-16
+description: The engines Cryo ships and the ones you connect, which operations each renders, how plans become SQL, and where native compaction fits.
+updated: 2026-11-13
 ---
+<callout type="note" title="Cryo brings its own engines">
+  <p>You do not need a Spark cluster or EMR. Cryo ships Spark on Kubernetes (GA, the <code>cryo-spark</code> image, enabled with <code>spark.k8s.enabled</code>) and a beta native Go compactor, both running inside your cluster. The nightly batch (<code>maintenance.enabled</code>) runs many tables in each long-lived Spark lane, instead of one Spark application per statement. Connecting your own Trino, EMR Serverless or Spark is the other option. See <a href="#engines-tab">Cryo engines and your engines</a>.</p>
+</callout>
+
 <h2 id="rendered-operations">Rendered operations</h2>
 <p>Every operation in the canonical order has a renderer for each engine, with one exception: <code>rewrite_position_deletes</code> is Spark only today.</p>
 <div class="tbl">
@@ -78,6 +82,6 @@ CALL prod.system.rewrite_data_files(
 <linkcards>
   <linkcard href="@/maintenance/" title="Maintenance">The plan these renderers execute, and the order behind it.</linkcard>
   <linkcard href="@/architecture/" title="Architecture">Where the planner and workers sit relative to Trino and Spark.</linkcard>
-  <linkcard href="@/deployment/" title="Deployment">Engines stay outside the Helm chart. See how they connect.</linkcard>
+  <linkcard href="@/deployment/" title="Deployment">Which engines ship in the Helm chart, and how your own connect.</linkcard>
   <linkcard href="@/reference/" title="Reference">Feature presence across engines and adjacent tools.</linkcard>
 </linkcards>
