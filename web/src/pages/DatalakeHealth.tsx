@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -12,6 +13,7 @@ import {
   listRuns
 } from "../api/client";
 import { getEngineLoad } from "../api/engineLoad";
+import { getImpactHistory } from "../api/impact";
 import { getCryoVitals } from "../api/vitals";
 import { Alert } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
@@ -22,15 +24,19 @@ import { optionalNumber } from "../lib/batchSummary";
 import { formatNumber } from "../lib/format";
 import { freshnessCatalogHref } from "../lib/freshness";
 import { latestNightlyRun } from "../lib/nowStrip";
+import { useTablesFunnel } from "./catalog/tablesTriage";
 import { AttentionCard } from "./home/AttentionCard";
+import { changesSince, lakeScore, milestones, nextBestAction } from "./home/briefing";
+import { DailyBriefing, useMilestone, useVisitBaseline } from "./home/DailyBriefing";
+import { FixFirstMap } from "./home/FixFirstMap";
+import { FlowCard } from "./home/FlowCard";
+import { WinsSlope } from "./home/WinsSlope";
+import { WORK_WEEKS, WorkCalendar } from "./home/WorkCalendar";
 import { DiscoveredList } from "./home/DiscoveredList";
 import { FreshnessCard } from "./home/FreshnessCard";
-import { HotTablesCard } from "./home/HotTablesCard";
 import { StorageCard } from "./home/StorageCard";
 import { getStorageOverview } from "../api/storageOverview";
-import { ImprovedCard } from "./home/ImprovedCard";
 import { LakeZone } from "./home/LakeZone";
-import { MaintenanceCard } from "./home/MaintenanceCard";
 import { NowStrip } from "./home/NowStrip";
 import { StatusZone, platformReason } from "./home/StatusZone";
 import {
@@ -45,7 +51,7 @@ import {
 } from "./home/homeSignals";
 import "./home/home.css";
 
-const HOT_LIMIT = 5;
+const HOT_LIMIT = 20;
 const NIGHTS = 14;
 const LIVE_MS = 60_000;
 const SLOW_MS = 300_000;
@@ -134,6 +140,16 @@ export const DatalakeHealth = () => {
     retry: 1,
     refetchInterval: SLOW_MS
   });
+  const today = new Date().toISOString().slice(0, 10);
+  const impactSince = new Date(Date.now() - (WORK_WEEKS * 7 + 6) * 86_400_000).toISOString().slice(0, 10);
+  const impactHistory = useQuery({
+    queryKey: ["home-impact-history", token, impactSince, today],
+    queryFn: () => getImpactHistory(api, impactSince, today),
+    retry: 1,
+    refetchInterval: SLOW_MS
+  });
+  const funnel = useTablesFunnel();
+  const baseline = useVisitBaseline();
   const offPeakWindow = useQuery({
     queryKey: ["governor-offpeak-window", token],
     queryFn: () => getGovernorOffPeakWindow(api),
@@ -186,9 +202,39 @@ export const DatalakeHealth = () => {
   const trend = fleetTrends.data?.health_trend;
   const vitalsReason = vitals.data?.status === "CRITICAL" ? platformReason(vitals.data)?.text ?? "Open the platform card for details." : null;
   const dataAge = formatAgo(freshnessAsOf);
-  const queries = [dashboard, scannerStatus, engineLoad, fastPathFindings, vitals, nightlyRuns, pendingApprovals, controls, fleetTrends, offPeakWindow, storageOverview];
+  const queries = [dashboard, scannerStatus, engineLoad, fastPathFindings, vitals, nightlyRuns, pendingApprovals, controls, fleetTrends, offPeakWindow, impactHistory, funnel, storageOverview];
   const refreshing = queries.some((query) => query.isFetching);
   const flagged = fastPathFindings.data?.length ?? 0;
+  const impactDays = impactHistory.data?.rows ?? null;
+  const score = useMemo(() => lakeScore(trend), [trend]);
+  const changes = useMemo(
+    () => changesSince(baseline.since, {
+      improved: data?.recently_improved ?? null,
+      improvedTotal: data?.recently_improved_count ?? null,
+      trend,
+      currentDf,
+      impact: impactDays
+    }),
+    [baseline.since, data, trend, currentDf, impactDays]
+  );
+  const action = dashboard.isLoading && pendingApprovals.isLoading ? null : nextBestAction({
+    pauses,
+    platformCritical: vitalsReason,
+    approvals: approvalCount,
+    failed: failedCount,
+    runHref: latest ? `/runs/${latest.id}` : null,
+    hotAtRisk: dashboard.isError ? null : data?.hot_at_risk_count ?? null,
+    needsCompaction: dashboard.isError ? null : data?.totals?.needs_compaction ?? null
+  });
+  const windowFreed = impactDays?.reduce((sum, day) => sum + (day.measurement_state === "complete" || day.measurement_state === "partial" ? day.bytes_freed : 0), 0) ?? null;
+  const milestone = useMilestone(useMemo(() => milestones({
+    windowFreedBytes: windowFreed,
+    windowDays: WORK_WEEKS * 7,
+    gradeF: data?.grade_distribution ? data.grade_distribution.filter((row) => row.grade === "F").reduce((sum, row) => sum + row.count, 0) : null,
+    graded: gradedTables(data?.grade_distribution),
+    score,
+    dfSeries: dfSeries(trend)
+  }), [windowFreed, data, score, trend]));
 
   return (
     <div className="home-overview">
@@ -244,6 +290,14 @@ export const DatalakeHealth = () => {
               }`}
         </p>
       ) : null}
+      <DailyBriefing
+        baseline={baseline}
+        score={score}
+        changes={changes}
+        action={action}
+        milestone={milestone}
+        loading={fleetTrends.isLoading || dashboard.isLoading}
+      />
       <NowStrip
         pauses={pauses}
         activeRun={activeRun}
@@ -258,8 +312,18 @@ export const DatalakeHealth = () => {
         scanStale={scanStale}
       />
       <div className="home-grid">
-        <StorageCard data={storageOverview.data} loading={storageOverview.isLoading} error={storageOverview.isError} />
-        <MaintenanceCard run={latest} loading={nightlyRuns.isLoading} error={nightlyRuns.isError} history={runs} offPeak={offPeak} />
+        <FlowCard funnel={funnel.data} loading={funnel.isLoading} error={funnel.isError} />
+        <LakeZone
+          tracked={data?.totals?.tables ?? null}
+          distribution={data?.grade_distribution ?? null}
+          loading={dashboard.isLoading}
+          error={dashboard.isError}
+          sizeGb={data?.totals?.size_gb ?? null}
+          smallFiles={data?.totals?.small_files ?? null}
+          totalFiles={data?.totals?.total_files ?? null}
+          dfDelta={dfDelta(trend, currentDf, gradedTables(data?.grade_distribution))}
+          dfSeries={dfSeries(trend)}
+        />
         <AttentionCard
           pauses={pauses}
           platformCritical={vitalsReason}
@@ -274,23 +338,15 @@ export const DatalakeHealth = () => {
           scannerProblem={scannerProblem}
           flaggedTables={flagged}
         />
-        <LakeZone
-          tracked={data?.totals?.tables ?? null}
-          distribution={data?.grade_distribution ?? null}
-          loading={dashboard.isLoading}
-          error={dashboard.isError}
-          sizeGb={data?.totals?.size_gb ?? null}
-          smallFiles={data?.totals?.small_files ?? null}
-          totalFiles={data?.totals?.total_files ?? null}
-          dfDelta={dfDelta(trend, currentDf, gradedTables(data?.grade_distribution))}
-          dfSeries={dfSeries(trend)}
-        />
-        <HotTablesCard tables={data?.hot_at_risk ?? null} total={data?.hot_at_risk_count ?? null} loading={dashboard.isLoading} error={dashboard.isError} />
-        <ImprovedCard tables={data?.recently_improved ?? null} total={data?.recently_improved_count ?? null} loading={dashboard.isLoading} error={dashboard.isError} />
+        <StorageCard data={storageOverview.data} loading={storageOverview.isLoading} error={storageOverview.isError} />
+        <WorkCalendar days={impactDays} today={today} loading={impactHistory.isLoading} error={impactHistory.isError} />
+        <FixFirstMap tables={data?.hot_at_risk ?? null} total={data?.hot_at_risk_count ?? null} loading={dashboard.isLoading} error={dashboard.isError} />
+        <WinsSlope tables={data?.recently_improved ?? null} total={data?.recently_improved_count ?? null} loading={dashboard.isLoading} error={dashboard.isError} />
         {dashboard.isError ? null : (
           <FreshnessCard rows={dashboard.isLoading ? [] : freshnessRows} asOf={freshnessAsOf} loading={dashboard.isLoading} />
         )}
         <StatusZone vitals={vitals.data} vitalsLoading={vitals.isLoading} vitalsError={vitals.isError} />
+
         <div className="home-discoveries" id="home-discovered">
           <DiscoveredList
             findings={fastPathFindings.data ?? []}

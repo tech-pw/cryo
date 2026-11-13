@@ -17,7 +17,7 @@ const NODE_TONE: Record<string, string> = {
   in_progress: "var(--color-primary)"
 };
 
-const nodeColor = (id: string): string =>
+export const nodeColor = (id: string): string =>
   NODE_TONE[id] ?? (id.startsWith("skip_") ? "var(--color-status-warning)" : "var(--color-primary)");
 
 export const MaintenanceFunnelSankey = ({
