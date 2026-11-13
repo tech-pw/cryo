@@ -2,18 +2,18 @@
 title: Deployment
 description: How Cryo deploys on Kubernetes with Helm, what it needs from you, and the committed CPU and memory request floor.
 canonical: https://tech-pw.github.io/cryo/deployment/
-updated: 2026-10-26
+updated: 2026-11-13
 ---
 
 # Deployment
 
-Cryo does not replace Trino or Apache Spark. It plans maintenance and admits the work to the engines you already run. Deploy it as a Helm chart and keep your engines where they are.
+Cryo deploys as one Helm chart. It can run maintenance on its own engines inside the cluster, Spark on Kubernetes and the beta native Go compactor, or admit the work to the Trino and Spark you already run.
 
 ## Cryo on Kubernetes
 
 Figure 1Helm installs Cryo; PostgreSQL, Redis and the engines stay yours
 
-*The Helm release holds Cryo's services. PostgreSQL and Redis are yours, and so are the engines.*
+*The Helm release holds Cryo's services. PostgreSQL and Redis are yours. Cryo engines run as Jobs in the cluster; your engines stay where they are.*
 
 - **Write or execute
 Text description
@@ -34,7 +34,7 @@ PostgreSQL and Redis are required. PostgreSQL is always external, so you can use
 
 **Engines**
 
-Engines stay outside the chart. Cryo reaches them through source and destination configs stored in the database.
+Two kinds. Cryo engines ship with the chart: Spark on Kubernetes (`spark.k8s.enabled`, the `cryo-spark` image, one Job per statement) and the beta native Go compactor. Your engines, such as Trino or EMR Serverless, stay outside the chart, and Cryo reaches them through destination configs stored in the database.
 
 ## Install the chart
 
@@ -79,7 +79,7 @@ This page describes the shape of a deployment. The chart's defaults and the loca
 
 ## Where to go next
 
-Install on KubernetesA pinned, production Helm install, step by step.SecuritySign-in, roles, secrets and a hardening checklist.Upgrade and rollbackMove between releases, and what a rollback undoes.Backup and restoreWhat to back up, and a restore you can practise.ArchitectureThe system context these workloads implement.EnginesHow the same plan renders as Trino or Spark SQL.QuickstartRun the same components locally with Docker first.ReferencePublic API surfaces and what is in the box.
+Install on KubernetesA pinned, production Helm install, step by step.SecuritySign-in, roles, secrets and a hardening checklist.Upgrade and rollbackMove between releases, and what a rollback undoes.Backup and restoreWhat to back up, and a restore you can practise.ArchitectureThe system context these workloads implement.EnginesCryo engines and your engines, and how one plan renders for each.QuickstartRun the same components locally with Docker first.ReferencePublic API surfaces and what is in the box.
 
 Source: https://tech-pw.github.io/cryo/deployment/
 Markdown: https://tech-pw.github.io/cryo/deployment/index.md

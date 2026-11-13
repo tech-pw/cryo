@@ -1,13 +1,17 @@
 ---
 title: Engines
-description: Which maintenance operations Cryo renders for Trino and Spark, how plans become SQL, and where native compaction fits.
+description: The engines Cryo ships and the ones you connect, which operations each renders, how plans become SQL, and where native compaction fits.
 canonical: https://tech-pw.github.io/cryo/engines/
-updated: 2026-10-16
+updated: 2026-11-13
 ---
 
 # Engines
 
 The planner is engine-agnostic. Trino SQL and Spark SQL are rendered apart, so the same plan produces different SQL and never different intent.
+
+Cryo brings its own engines
+
+You do not need a Spark cluster or EMR. Cryo ships Spark on Kubernetes (GA, the `cryo-spark` image, enabled with `spark.k8s.enabled`) and a beta native Go compactor, both running inside your cluster. The nightly batch (`maintenance.enabled`) runs many tables in each long-lived Spark lane, instead of one Spark application per statement. Connecting your own Trino, EMR Serverless or Spark is the other option. See [Cryo engines and your engines](#engines-tab).
 
 ## Rendered operations
 
@@ -100,7 +104,7 @@ The **Default preset** badge marks the engine the enabled default preset targets
 
 ## Where to go next
 
-MaintenanceThe plan these renderers execute, and the order behind it.ArchitectureWhere the planner and workers sit relative to Trino and Spark.DeploymentEngines stay outside the Helm chart. See how they connect.ReferenceFeature presence across engines and adjacent tools.
+MaintenanceThe plan these renderers execute, and the order behind it.ArchitectureWhere the planner and workers sit relative to Trino and Spark.DeploymentWhich engines ship in the Helm chart, and how your own connect.ReferenceFeature presence across engines and adjacent tools.
 
 Source: https://tech-pw.github.io/cryo/engines/
 Markdown: https://tech-pw.github.io/cryo/engines/index.md

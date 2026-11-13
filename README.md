@@ -5,13 +5,13 @@
   <img src="docs/img/hero-light.png" alt="Cryo: self-hosted Apache Iceberg maintenance, with a receipt for every decision. Small ice cubes fuse into one solid cube, beside the steps scan, plan, admit, rewrite, receipt." width="100%">
 </picture>
 
-### Self-hosted Apache Iceberg maintenance that grades every table, plans the work each one needs, runs it on the Trino or Spark you already have, and leaves a receipt for every decision.
+### Self-hosted Apache Iceberg maintenance that grades every table, plans the work each one needs, runs it on Cryo's own Spark on Kubernetes or the Trino and Spark you already have, and leaves a receipt for every decision.
 
 [![CI](https://github.com/tech-pw/cryo/actions/workflows/ci.yml/badge.svg)](https://github.com/tech-pw/cryo/actions/workflows/ci.yml) [![GitHub stars](https://img.shields.io/github/stars/tech-pw/cryo?style=flat&color=277ABE)](https://github.com/tech-pw/cryo/stargazers) [![Latest tag](https://img.shields.io/github/v/tag/tech-pw/cryo?sort=semver&label=version&color=277ABE)](https://github.com/tech-pw/cryo/tags) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-143E60)](./LICENSE) [![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-277ABE)](./docs/VERSIONING.md) [![Docs](https://img.shields.io/badge/docs-tech--pw.github.io%2Fcryo-68C1EA)](https://tech-pw.github.io/cryo/)
 
 **[Docs](https://tech-pw.github.io/cryo/)** · **[Quickstart](https://tech-pw.github.io/cryo/quickstart/)** · **[Architecture](./docs/design/hld.md)** · **[What ships today](./docs/CAPABILITIES.md)** · **[Contributing](./CONTRIBUTING.md)**
 
-Free and self-hosted. Runs on the Trino or Spark you already have. **[Try it locally in one command ↓](#quick-start)**
+Free and self-hosted. Brings its own Spark on Kubernetes, or runs on the Trino and Spark you already have. **[Try it locally in one command ↓](#quick-start)**
 
 ⭐ If Cryo saves you from writing another maintenance DAG, a star helps other Iceberg teams find it.
 
@@ -30,7 +30,7 @@ Free and self-hosted. Runs on the Trino or Spark you already have. **[Try it loc
 > - Live-query **p95 stayed within 0.88× to 1.04× of idle** during compaction, with zero query failures.
 > - The trade-off: Cryo used **about twice the Spark compute** of the scheduled DAG on small tables. It is not a compute saver.
 >
-> [Full results, method and trade-offs →](https://tech-pw.github.io/cryo/benchmark/)
+> [Full results, method and trade-offs →](https://tech-pw.github.io/cryo/benchmark/) · [Harness and raw data in this repo ↓](#benchmarks)
 
 <p align="center">If Cryo looks useful, <a href="https://github.com/tech-pw/cryo/stargazers">star the repo</a> so others can find it, and <a href="https://github.com/tech-pw/cryo/issues/new/choose">tell us what broke or what is missing</a>. Feedback from real lakes shapes what ships next.</p>
 
@@ -53,9 +53,16 @@ it has a UI, and running maintenance on one table right now means hand-editing a
 the flags are right.
 
 **Cryo is that whole pile, as one product you run yourself.** It scans every table in your lake,
-grades it A to F, works out what maintenance would cost and save, and runs that maintenance on the
-Trino or Spark you already have. It only starts work when those engines have room, and it writes
+grades it A to F, works out what maintenance would cost and save, and runs that maintenance on its own
+engines (Spark on Kubernetes, plus a beta native Go compactor) or on the Trino and Spark you
+already have. It only starts work when those engines have room, and it writes
 down everything it did.
+
+Cryo is a control plane for table health, cluster safety and storage. It does not reduce vCPU
+compared with one hand-tuned Spark job. A team that already runs a well-tuned, threshold-gated
+Spark job will spend less compute than Cryo does (see [Benchmarks](#benchmarks)). What Cryo adds
+is per-table decisions with no hand-written thresholds, rewrites that can't swamp a shared
+cluster, a receipt for every action, and snapshot and orphan cleanup that runs on its own.
 
 > *Fresh snow lands as loose grains. Under steady pressure it packs into solid ice. Cryo is that
 > pressure for your lake: applied on schedule, only when your engines have headroom, and logged
@@ -169,16 +176,23 @@ Expand any group for the details.
 
 - **Sources (read)** connect Iceberg catalogs (REST, Hive Metastore, Glue, Apache Polaris and
   Project Nessie) and discover tables through PyIceberg, configured separately from write engines.
-- **Destinations (write)** submit maintenance to **Trino**, **Spark on EMR**, or the **native Go**
-  compactor when it is enabled. Each SQL engine has its own renderer.
+- **Destinations (write)** come in two groups. **Cryo engines** ship with the Helm chart and run
+  inside your Kubernetes cluster: **Spark on Kubernetes** (the `cryo-spark` image, launched per
+  job, no EMR or Spark cluster needed) and the beta **native Go** compactor. **Your engines** are
+  clusters you connect: **Trino**, **EMR Serverless** or your own Spark. Each SQL engine has its
+  own renderer.
 - **Planner** walks pre-computed scan data, GB-budgets chunks, caps partitions per chunk to avoid
   Trino `FilterNode` blowups, runs oversize partitions alone, bypasses chunking for small tables,
   and applies cooldowns, off-peak windows, adaptive budgets and deadlines.
-- **Governor** is the global admission controller. It reads Trino `system.runtime.queries` to
+- **AutoComp ranking with query affinity.** When query-log ingestion is on, a partition's
+  compaction priority is weighted by how often queries actually hit it, so a hot partition
+  outranks a cold one with more small files (`cryo/planner/partition_query_affinity.py`).
+- **Governor** is the global admission controller. On Trino it reads `system.runtime.queries` to
   bound real concurrency, applies per-replica caps with round-robin, and tunes thresholds per
-  destination with a contextual-bandit policy.
+  destination with a contextual-bandit policy. Other engines use slot caps; see the
+  [engine matrix](#status).
 - **Presets** bind *operations + params + target engine + schedule + selection rules* into a named
-  profile, such as `spark-large`: "tables over 100 GB → Spark/EMR, deep maintenance weekly".
+  profile, such as `spark-large`: "tables over 100 GB → Spark, deep maintenance weekly".
 - **Continuous maintenance** (opt-in, experimental): a preset can also run a table as soon as
   writers push it past a threshold (commits, small files, delete-file share or score drop). The
   commit watcher reads new snapshots from the live catalog. Debounce, a minimum interval,
@@ -206,8 +220,11 @@ Expand any group for the details.
   cleanup never delete another table's live files.
 - **Partition access.** Per-partition request counts from S3 request logs, with days since last
   access, on each table's Usage tab.
-- **Settings advisor.** Recommends Iceberg table properties from the table's own scan signals and
-  explains each one. Nothing is written until you stage and approve it.
+- **Settings advisor.** Recommends Iceberg table properties from the table's own scan signals,
+  such as `write.target-file-size-bytes` from its file sizes and small-file count, and explains
+  each one (`cryo/scanner/property_recommendations.py`). Nothing is written until you stage and
+  approve it. Cryo does not change table properties on its own; closed-loop tuning is on the
+  backlog.
 - **Maintenance batch.** Collect tables while you investigate, review one exact plan, then submit
   it. What you reviewed is what runs, or the submit is refused.
 - **Ask Cryo and MCP.** A plain-English assistant over your scanned fleet, also exposed as an MCP
@@ -268,9 +285,21 @@ A table is **discovered** from a source (a catalog Cryo reads) and **maintained*
 1. **Scanner** reads catalog metadata into PostgreSQL: stats, grade, cost.
 2. **Scheduler** finds the presets that are due and enqueues jobs.
 3. **Governor** probes live engine load and admits a job only when there's room.
-4. **Worker** asks the **planner** for a partition-aware plan, renders it for Trino or Spark,
+4. **Worker** asks the **planner** for a partition-aware plan, renders it for Trino, Spark or
+   native Go,
    and executes it, one table at a time, under a per-table lock.
 5. **Audit log** records the result. A failure on one table never fails the run.
+
+### Commit watching for hot tables
+
+Scheduled catalog sweeps are not the only way Cryo learns about a table. The `events` process
+(Helm `events.enabled`, off by default) runs `TableCommitWatcher`, which reads each watched
+table's new snapshots from the live catalog. It takes file and byte deltas from the snapshot
+summaries, with no manifest or data-file reads, and publishes them to a Redis Stream
+(`cryo/events/`). The consumer applies each commit (`apply_commit_delta`), accumulates per-table
+drift, and enqueues a maintenance evaluation for that one table, which is what drives continuous
+presets. Grades are still re-measured by the next scan. Push webhooks from REST catalogs such as
+Apache Polaris are on the roadmap.
 
 ### Scan: every table gets a grade
 
@@ -385,15 +414,23 @@ The [install guide](https://tech-pw.github.io/cryo/install/) walks through a pro
 > ingestion is on. [`docs/CAPABILITIES.md`](./docs/CAPABILITIES.md) lists exactly what each engine
 > can do today.
 
-| Engine | Maturity | What it does |
-|---|---|---|
-| **Trino** | GA | Iceberg maintenance through Trino SQL procedures |
-| **Spark / EMR** | GA | The full surface through Iceberg Spark procedures |
-| **Native (Go)** | Beta | Low-overhead compaction for simple table shapes, with SQL fallbacks |
-| **Flink** | Experimental | Generates Flink job config; Cryo does not submit it |
+| Engine | Maturity | Execution model | Admission control |
+|---|---|---|---|
+| **Trino** | GA | SQL procedures (`ALTER TABLE … EXECUTE`) on your existing cluster | Live load: running queries from `system.runtime.queries`, per-replica caps, round-robin |
+| **Spark** (Cryo-managed on Kubernetes, or EMR Serverless) | GA | Full surface through Iceberg Spark procedures. Cryo-managed Spark needs no Spark cluster. The per-job worker path starts one Spark application per statement (lightweight operations run inside the driver pod). The nightly batch CronJob (`maintenance.enabled`) instead runs many tables in each of up to 4 long-lived lanes, and the expiry pass batches 25 tables per application | Governor counts live Spark Jobs against the slot cap and refuses dispatch if that read fails; batch lanes are bounded by `maxLanes`. No probe of wider cluster load |
+| **Native (Go)** | Beta | Go subprocess or Kubernetes Job. Does data-file optimize (no delete files, no z-order), snapshot expiry and orphan removal; other operations need a Trino or Spark fallback | Slot cap counted against its own active Kubernetes Jobs; refuses new dispatches if that read fails |
+| **Flink** | Experimental | Generates Flink job config only; Cryo does not submit or observe the job | None |
 
-Catalogs: Iceberg REST, Apache Polaris, Project Nessie, Hive Metastore and AWS Glue. Unity
-Catalog and JDBC catalogs are rejected.
+Per-operation detail is in [`docs/CAPABILITIES.md`](./docs/CAPABILITIES.md).
+
+Catalogs: Iceberg REST, Apache Polaris and Project Nessie (all three through the Iceberg REST
+adapter), Hive Metastore and AWS Glue. Unity Catalog and JDBC catalogs are rejected.
+
+> [!NOTE]
+> **Iceberg v3.** Cryo detects v3 tables and deletion vectors (`cryo/iceberg/v3_detector.py`).
+> Native Go optimize is skipped for partitioned v3 tables with deletion vectors, and for any
+> table with delete files; that work goes to the configured Trino or Spark fallback
+> (`cryo/engines/native/routing.py`).
 
 <details>
 <summary><b>Who this isn't for (yet)</b></summary>
@@ -414,15 +451,45 @@ Catalog and JDBC catalogs are rejected.
 
 </details>
 
+## Benchmarks
+
+CryoBench V2 compared Cryo against a naive scheduled Spark DAG, a threshold-gated Spark DAG and
+a manual run of Cryo's own SQL, on Spark 4.1 and Iceberg 1.11 on Kubernetes. The frozen protocol,
+harness and claims register are in [`benchmarks/cryobench-v2/`](./benchmarks/cryobench-v2/); the
+parsed results, charts and cost model are in
+[`benchmarks/eks/results/v2/`](./benchmarks/eks/results/v2/RESULTS.md).
+
+| | Cryo | Naive DAG | Threshold-gated DAG | Manual, same SQL |
+|---|---|---|---|---|
+| Compute per trial, small-table fleet | 1.63 vCPU-h | 0.80 | **0.49** | — |
+| 100 GiB compaction | 3.14 vCPU-h | — | — | **1.88 vCPU-h** |
+| 100 GiB query speedup | 1.76× | — | — | 1.77× |
+| Unnecessary operations per trial, excluding expiry | 10 | 48 | **0** | — |
+| CDC, MERGE every 200 s (one trial) | **delete files held near 5** | 0 / 3 compactions committed; delete files rose to 39 | not run | — |
+
+Cryo costs more compute. Most of that is per-application startup: the benchmark ran Cryo's
+per-job worker path, where each statement is its own Spark application, and on 0.5–1 GB tables
+JVM start and governor admission take longer than the rewrite. The batch lanes and the batched
+expiry pass, which share one Spark application across many tables, were not part of the
+scored runs. What you get for it: bounded blast radius on shared clusters,
+no thresholds to write, an audit receipt for every action, and snapshot and orphan cleanup that
+runs on its own. For a small fleet of small tables and a team that will own a reviewed
+threshold-gated job, that job is cheaper
+([competitive analysis](./benchmarks/eks/results/v2/COMPETITIVE_ANALYSIS.md)).
+
+Cryo has not been benchmarked against Apache Amoro or Floe. The comparison below is built from
+their documentation and source, not from measurements.
+
 ## How it compares
 
-Cryo is a self-hosted control plane over engines you already own. It is not a managed platform,
-and it does not bring its own compute.
+Cryo is a self-hosted control plane. It is not a managed platform. It can run maintenance on its
+own engines inside your Kubernetes cluster (Spark on Kubernetes, and native Go in beta) or submit
+it to the Trino and Spark you already run. Either way, the compute stays in your account.
 
 | | Cryo | DIY (Airflow + dbt) | Apache Amoro | LakeOps | Managed clouds |
 |---|---|---|---|---|---|
 | Deployment | Self-hosted (Kubernetes) | Hand-rolled | Self-hosted | SaaS | Fully managed |
-| Engines | Trino, Spark/EMR, native Go (beta) | Whatever you wired | Own optimizers (local, Kubernetes, Flink, Spark, external). Trino is query-only | Own Rust engine | Locked to platform |
+| Engines | Own Spark on Kubernetes and native Go (beta); or your Trino, EMR, Spark | Whatever you wired | Own optimizers (local, Kubernetes, Flink, Spark, external). Trino is query-only | Own Rust engine | Locked to platform |
 | Load-aware admission | Yes, live engine load | If you built it | No (quota and optimizer groups) | Yes | N/A |
 | A–F health grade + cost projection | Built in | Usually a script | Numeric score only; no A–F grade or cost projection | Partial | Varies |
 | Data leaves your infra | No | No | No | Telemetry does | Yes |
@@ -434,7 +501,7 @@ and it does not bring its own compute.
 | | Cryo | DIY (Airflow + dbt) | Apache Amoro | LakeOps | Granica Crunch | Managed cloud (Databricks / S3 Tables / Snowflake) |
 |---|---|---|---|---|---|---|
 | Deployment | Self-hosted (Kubernetes) | Self-hosted, hand-rolled | Self-hosted | SaaS | SaaS, hybrid, or on-prem/air-gapped | Fully managed |
-| Engines | Trino, Spark/EMR, and a beta native Go compactor | Whatever you wired up | Own optimizer processes (local, Kubernetes, Flink, Spark, external). Trino is query-only. Mixed-Iceberg is a format, not an engine | Own Rust engine + telemetry from Trino/Spark/Snowflake/DuckDB/Flink | Own engine; coexists with Trino/Spark/Airflow/dbt | Locked to the platform |
+| Engines | Its own Spark on Kubernetes and a beta native Go compactor, or your Trino, EMR Serverless or Spark | Whatever you wired up | Own optimizer processes (local, Kubernetes, Flink, Spark, external). Trino is query-only. Mixed-Iceberg is a format, not an engine | Own Rust engine + telemetry from Trino/Spark/Snowflake/DuckDB/Flink | Own engine; coexists with Trino/Spark/Airflow/dbt | Locked to the platform |
 | Table formats | Iceberg | Whatever you wired up | Iceberg, Mixed-Iceberg | Iceberg, Delta | Iceberg, Delta, Hive | Varies by platform |
 | Maintenance ops (compaction, snapshot expiry, orphan cleanup) | Yes | Only if you built it | Yes | Yes | Yes | Yes |
 | Sorting / curve clustering | Sort + Z-order (Spark only; Hilbert capability-gated) | Only if you built it | Partial: honours table sort order; no Z-order | Yes | Sort, Z-order, Hilbert | Varies by platform |
@@ -448,7 +515,7 @@ and it does not bring its own compute.
 Cryo sits where **LakeOps** does, as a dedicated control plane rather than a managed platform, but
 keeps telemetry on your infrastructure and treats Trino as a first-class engine. Against **Apache
 Amoro**, Cryo is lighter to operate (no optimizer fleet, no Mixed-Iceberg coupling) and maintains
-through the Trino or Spark you already run. Amoro never maintains a table via Trino. Maintenance
+through the Trino you already run or its own Spark on Kubernetes. Amoro never maintains a table via Trino. Maintenance
 runs on Amoro's own optimizer processes. Cryo's committed Helm defaults request 3.35 CPU cores and 6.00 GiB of
 memory at idle across the always-on control plane; reproduce it with `make deployment-footprint`,
 which reads `deploy/helm/cryo/values.yaml` live. No document here cites an Amoro figure, so none is
@@ -459,7 +526,7 @@ consolidating onto one vendor's compute.
 **Granica Crunch** is the closest commercial product on operations, across more formats (Delta,
 Hive) and catalogs (Unity, Polaris, BigLake). Crunch's differentiator is compression: it rewrites
 Parquet smaller than ZSTD alone, which Cryo does not attempt. Cryo optimizes file *layout* and
-submits SQL to your Trino or Spark. Choose Crunch if storage-byte reduction is the goal; choose
+runs SQL on its own Spark or your Trino. Choose Crunch if storage-byte reduction is the goal; choose
 Cryo for a free, self-hosted control plane with fleet-wide grading and load-aware admission.
 
 Two qualifications. Curve clustering runs on **Spark only**, because Trino's `OPTIMIZE` binpacks
@@ -531,7 +598,7 @@ contribution.
 Three trees: Python `cryo/`, Go `engine-go/` (the native compactor) and TypeScript `web/`.
 
 **Engines in this repo.** The Python control plane (`cryo/`) scans, grades, plans and admits all
-work, and runs it on the Trino or Spark you already have (both GA). The Go native compactor
+work, and runs it on Cryo-managed Spark on Kubernetes or the Trino and Spark you already have (all GA). The Go native compactor
 (`engine-go/`) is beta, opt-in per destination (`engine_impl=go`) and not the default. Flink is
 config generation only. There is no Rust engine: Cryo's native path is the Go binary.
 

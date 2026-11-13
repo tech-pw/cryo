@@ -1,13 +1,13 @@
 ---
 title: Cryo
-description: Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Connect your lake and keep every table healthy without deciding when or how to optimize it — Cryo grades every table, runs the work on your Trino or Spark, and explains every decision.
+description: Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Connect your lake and keep every table healthy without deciding when or how to optimize it — Cryo grades every table, runs the work on its own Spark on Kubernetes or your Trino and Spark, and explains every decision.
 canonical: https://tech-pw.github.io/cryo/
-updated: 2026-10-06
+updated: 2026-11-13
 ---
 
 # Cryo
 
-Cryo reads your Apache Iceberg catalogs, grades every table from its metadata, and runs the maintenance it needs on the Trino or Spark you already have, when they have headroom. Ranking by real query workload turns on once query-log ingestion is enabled. Reading and writing never share a code path, and every run leaves a receipt.
+Cryo reads your Apache Iceberg catalogs, grades every table from its metadata, and runs the maintenance it needs on its own Spark on Kubernetes or the Trino and Spark you already have, when they have headroom. Ranking by real query workload turns on once query-log ingestion is enabled. Reading and writing never share a code path, and every run leaves a receipt.
 
 0:00
 
@@ -15,11 +15,11 @@ Cryo reads your Apache Iceberg catalogs, grades every table from its metadata, a
 
 *The real UI on demo data: tables, a health grade, a run, and its receipt.*
 
-v0.2.0 · Pre-1.0 · Apache-2.0→
+v0.2.1 · Pre-1.0 · Apache-2.0→
 
 # Keep every table healthy without deciding when or how.
 
-Cryo reads your catalogs, plans compaction and cleanup, and runs it on the Trino or Spark you already have when they have headroom — every decision explained.
+Cryo reads your catalogs, plans compaction and cleanup, and runs it on its own Spark or the Trino and Spark you already have, when they have headroom — every decision explained.
 
 **Operations**
 
@@ -27,7 +27,7 @@ Cryo reads your catalogs, plans compaction and cleanup, and runs it on the Trino
 
 **Engines**
 
-2
+3
 
 **SQL in planner**
 
@@ -40,14 +40,17 @@ Cryo reads your catalogs, plans compaction and cleanup, and runs it on the Trino
 Start with the quickstart
 See how it fits together
 
-Runs against the stack you already have:
+Runs on its own Spark, or against the stack you already have:
 
 - Apache Iceberg
 - Iceberg REST
+- Apache Polaris
+- Project Nessie
 - Hive Metastore
 - AWS Glue
 - Trino
-- Spark on EMR
+- Spark on Kubernetes
+- EMR Serverless
 - PostgreSQL
 - Redis
 - Helm
@@ -55,10 +58,13 @@ Runs against the stack you already have:
 - Amazon S3
 - Apache Iceberg
 - Iceberg REST
+- Apache Polaris
+- Project Nessie
 - Hive Metastore
 - AWS Glue
 - Trino
-- Spark on EMR
+- Spark on Kubernetes
+- EMR Serverless
 - PostgreSQL
 - Redis
 - Helm

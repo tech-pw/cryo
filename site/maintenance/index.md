@@ -2,7 +2,7 @@
 title: Maintenance
 description: Why Iceberg tables need maintenance, the seven operations Cryo runs in a fixed order, how the planner chunks work, how admission works, and the guardrails that stay on.
 canonical: https://tech-pw.github.io/cryo/maintenance/
-updated: 2026-10-16
+updated: 2026-11-13
 ---
 
 # Maintenance
@@ -109,7 +109,7 @@ Text description
 
 ## Admission: load-aware, never eager
 
-A worker asks the governor for permission before it runs anything. The governor probes live load, from `system.runtime.queries` on Trino and from slots on Spark on EMR, and either admits the job or defers it. It also applies per-replica caps and round-robins across replicas.
+A worker asks the governor for permission before it runs anything. The governor probes live load, from `system.runtime.queries` on Trino, and checks slot caps on Spark and native Go, and either admits the job or defers it. It also applies per-replica caps and round-robins across replicas.
 
 Figure 2A job starts only when the engine has room for it
 

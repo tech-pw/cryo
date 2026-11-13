@@ -2,7 +2,7 @@
 title: Upgrade and rollback
 description: How to upgrade a Cryo Helm release, how the migration hook behaves, and what a rollback can and can't undo.
 canonical: https://tech-pw.github.io/cryo/upgrade/
-updated: 2026-10-26
+updated: 2026-11-13
 ---
 
 # Upgrade and rollback
@@ -11,7 +11,7 @@ Upgrade one released version at a time, with a database backup taken first. Migr
 
 ## Before you upgrade
 
-- **Pick a released tag.** Upgrade to a `v*` tag, never to `main` or `latest`. The chart and both images come from that same tag. See [tags](https://github.com/tech-pw/cryo/tags) and [CHANGELOG.md](https://github.com/tech-pw/cryo/blob/main/CHANGELOG.md).
+- **Pick a released tag.** Upgrade to a `v*` tag, never to `main` or `latest`. The chart pins that release's images by digest. See [tags](https://github.com/tech-pw/cryo/tags) and [CHANGELOG.md](https://github.com/tech-pw/cryo/blob/main/CHANGELOG.md).
 - **Back up the database.** This is the only complete way back. See [Backup and restore](https://tech-pw.github.io/cryo/backup/).
 - **Record the schema revision** you're on now, so you know where a schema downgrade would have to go:
 
@@ -23,31 +23,29 @@ $ kubectl -n cryo exec deploy/cryo-api -- alembic current
 
 ## Upgrade
 
-### Get the new chart and digests
+### Pick the new chart version
 
-These are the same commands as [Install](https://tech-pw.github.io/cryo/install/#install), with the new tag.
+These are the same variables as [Install](https://tech-pw.github.io/cryo/install/#install), with the new release. The chart pins that release's images by digest, so there are no digests to look up.
 
 **terminal**
 
 ```
-$ export CRYO_VERSION=v0.1.5
-$ git clone --depth 1 --branch "$CRYO_VERSION" https://github.com/tech-pw/cryo.git "cryo-$CRYO_VERSION"
-$ cd "cryo-$CRYO_VERSION"
-$ export CRYO_DIGEST=$(crane digest "ghcr.io/tech-pw/cryo:$CRYO_VERSION")
-$ export CRYO_WEB_DIGEST=$(crane digest "ghcr.io/tech-pw/cryo-web:$CRYO_VERSION")
+$ export CRYO_CHART=oci://ghcr.io/tech-pw/charts/cryo
+$ export CRYO_CHART_VERSION=&lt;new-version&gt;
+$ helm show values "$CRYO_CHART" --version "$CRYO_CHART_VERSION" > cryo-defaults.yaml
 ```
 
 ### Update the values file
 
-Set the three `tag` values in your `cryo-values.yaml` to the new version. Compare your file with the new chart's `deploy/helm/cryo/values.yaml` for renamed or added settings.
+Compare your `cryo-values.yaml` with the new `cryo-defaults.yaml` for renamed or added settings. If you pinned image tags or digests yourself, update them to the new release.
 
 ### Render, then upgrade
 
 **terminal**
 
 ```
-$ helm template cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest="$CRYO_DIGEST" --set migration.image.digest="$CRYO_DIGEST" --set web.image.digest="$CRYO_WEB_DIGEST" > /dev/null
-$ helm upgrade cryo ./deploy/helm/cryo --namespace cryo -f cryo-values.yaml --set image.digest="$CRYO_DIGEST" --set migration.image.digest="$CRYO_DIGEST" --set web.image.digest="$CRYO_WEB_DIGEST" --wait --timeout 15m
+$ helm template cryo "$CRYO_CHART" --version "$CRYO_CHART_VERSION" --namespace cryo -f cryo-values.yaml > /dev/null
+$ helm upgrade cryo "$CRYO_CHART" --version "$CRYO_CHART_VERSION" --namespace cryo -f cryo-values.yaml --wait --timeout 15m
 ```
 
 Done when Helm prints `STATUS: deployed` and `alembic current` shows a revision ending in `(head)`.

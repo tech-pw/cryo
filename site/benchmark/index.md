@@ -154,7 +154,7 @@ Jobs waited a median of about 3 minutes in the queue before Spark started. Fine 
 
 Rough edges
 
-We filed what we hit: run status staying queued ([#153](https://github.com/tech-pw/cryo/issues/153)), chunked scans skipping tables ([#154](https://github.com/tech-pw/cryo/issues/154)), and missing file metrics on Spark-on-Kubernetes jobs ([#155](https://github.com/tech-pw/cryo/issues/155)). None affected data integrity.
+We filed what we hit: run status staying queued ([#153](https://github.com/tech-pw/cryo/issues/153)), chunked scans skipping tables ([#154](https://github.com/tech-pw/cryo/issues/154)), and missing file metrics on Spark-on-Kubernetes jobs ([#155](https://github.com/tech-pw/cryo/issues/155)). None affected data integrity, and all three were fixed on 2026-10-26, after the scored runs.
 
 ## How we measured
 

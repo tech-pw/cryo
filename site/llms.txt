@@ -1,6 +1,6 @@
 # Cryo
 
-> Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Connect your lake and keep every table healthy without deciding when or how to optimize it — Cryo grades every table, runs the work on your Trino or Spark, and explains every decision.
+> Cryo is an Apache-2.0, self-hosted Apache Iceberg maintenance control plane. Connect your lake and keep every table healthy without deciding when or how to optimize it — Cryo grades every table, runs the work on its own Spark on Kubernetes or your Trino and Spark, and explains every decision.
 
 Cryo reads Apache Iceberg catalogs, grades every table from its metadata, and runs the maintenance on the Trino or Spark you already have when they have headroom (both GA; a native Go compactor is beta and opt-in). Ranking by real query workload needs query-log ingestion. Sources and engines stay separate. The planner emits no SQL. Every decision is explained. These pages are the public docs.
 

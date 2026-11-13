@@ -42,11 +42,11 @@ The API groups its resources as `tables`, `runs`, `presets`, `assignments`, `aud
 
 ## Launch tier
 
-Cryo is pre-1.0. The launch-tier surface is the scanner, planner, governor, Trino and Spark engines, presets, audit, and the run console. Native Go compaction is a configured path, not assumed on.
+Cryo is pre-1.0. The launch-tier surface is the scanner, planner, governor, Trino and Spark engines, presets, audit, and the run console. Cryo ships its own Spark on Kubernetes, so a Spark cluster or EMR is optional. Native Go compaction is beta: a configured path, not assumed on.
 
 ## Where to go next
 
-ArchitectureCatalogs on the read side, engines on the write side, Cryo in the middle.MaintenanceThe planner emits a plan with no SQL strings. The order is fixed in code.DeploymentSelf-hosted on Kubernetes with your engines where they are.GitHubThe Apache-2.0 source is public. Issues and pull requests are open.
+ArchitectureCatalogs on the read side, engines on the write side, Cryo in the middle.MaintenanceThe planner emits a plan with no SQL strings. The order is fixed in code.DeploymentSelf-hosted on Kubernetes, with Cryo's own engines or yours.GitHubThe Apache-2.0 source is public. Issues and pull requests are open.
 
 Source: https://tech-pw.github.io/cryo/reference/
 Markdown: https://tech-pw.github.io/cryo/reference/index.md
