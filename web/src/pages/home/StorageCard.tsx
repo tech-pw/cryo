@@ -29,7 +29,7 @@ const Hero = ({ data }: { data: StorageOverview }) => {
   const cumulative = data.cumulative;
   return (
     <section className="home-storage-hero" aria-label="Last 24 hours">
-      <div className="home-storage-eyebrow"><span className="home-caption">Last 24 hours</span><Kind measured={view.state === "measured"} /></div>
+      <div className="home-storage-eyebrow"><span className="home-caption">Last 24 hours</span>{view.state === "measured" ? <Kind measured /> : null}</div>
       {view.state === "idle" ? (
         <>
           <p className="home-storage-headline">No cleanup ran in the last 24 hours</p>
