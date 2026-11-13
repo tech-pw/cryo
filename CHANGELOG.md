@@ -107,6 +107,7 @@ All notable changes to Cryo will be documented in this file. The format is based
   validated outside the transaction. Nothing is deleted unless you turn the purge on (#330).
 
 ### Fixed
+- Health scoring: *Fragmented partitions* now measures excess files per partition beyond what target-size compaction would leave, instead of raw average file count (#518).
 - Table overview shows cooldown as a short local-time line linking to the eligibility checklist instead of the raw reason string (#522).
 - Runs whose skipped operations had nothing to do are no longer partial; table runs are time-ordered and queue closes show as closed without running instead of failures (#521).
 - Sort-order recommendations only offer columns present in the table's schema (schema spelling), and query parsing attributes join columns to their own table (#517).

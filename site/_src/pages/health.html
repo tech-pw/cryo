@@ -2,7 +2,7 @@
 title: Health and cost
 lede: The scanner grades a table from stored metadata. It does not scan data files on the request path, and object storage is not an input.
 description: How Cryo grades tables from A to F, how deductions work with a worked example, and what each maintenance operation projects.
-updated: 2026-10-06
+updated: 2026-11-12
 ---
 <h2 id="grades">Grades</h2>
 <p>Every table starts at 100 points and loses points for each problem the scan finds. The grade is the letter for the final score. The home chart counts tables per grade. It is not a size-weighted median. UI words map to letters: A Excellent, B Good, C Fair, D Poor, F Critical.</p>
@@ -35,6 +35,8 @@ updated: 2026-10-06
   <tfoot><tr><td>Final score and grade</td><td class="num"></td><td class="num"><span class="grade grade-c"><b>C</b>&nbsp;64</span></td></tr></tfoot>
 </table>
 </div>
+<h3 id="fragmented-partitions">Fragmented partitions</h3>
+<p>This check counts files a partition holds beyond what its data needs, not the raw file count. A partition needs one file per 75% of the target file size (<code>write.target-file-size-bytes</code>, or 256 MB when unset), because Iceberg compaction leaves files above that size alone. A 150 GB unpartitioned table in 448 files of 345 MB needs about 600 files, so it has no excess and loses no points. A partition of 448 files of 2 MB needs 5, so it has 443 extra files and loses 20. The warning and critical limits are 50 and 200 extra files per partition, scaled up for tables over 100 GB. When the table has no compaction candidates, the Overview shows no Compact files button for this check.</p>
 <p>On the <a href="@/tables/">Tables page</a>, every row carries its grade, its score change over 7 days and the evidence behind it: small files out of total files, size and reads. The <b>Health triage</b> view lists grade D and F tables first.</p>
 <screenshot name="tables" url="cryo.local/tables" alt="Tables page. Last nightly run partial. Triage cards: 1 failed last run, 2 queued or running, 2 skipped with work, 2 health dropped, 1 scan issue. A Sankey shows 14 active tables, 13 scanned, 7 needing work and 4 selected, of which 2 succeeded, 1 failed and 1 is in progress. Below, the table list sorted by small files: analytics.events at grade F, score 28, down 14 in 7 days, last run failed, 87% of 48.2K files small." caption="The Tables page. A grade is never shown without the counts that produced it, and every row says what maintenance last did." />
 <p>Open a table to see its score and how it got there. This one scores 28: it has lost 72 points to two critical findings and four warnings.</p>

@@ -70,6 +70,7 @@
 </ul>
 <h3 id="unreleased-fixed">Fixed<a class="anchor" href="#unreleased-fixed" aria-label="Link to Fixed">#</a></h3>
 <ul>
+  <li>Health scoring: *Fragmented partitions* now measures excess files per partition beyond what target-size compaction would leave, instead of raw average file count (#518).</li>
   <li>Table overview shows cooldown as a short local-time line linking to the eligibility checklist instead of the raw reason string (#522).</li>
   <li>Runs whose skipped operations had nothing to do are no longer partial; table runs are time-ordered and queue closes show as closed without running instead of failures (#521).</li>
   <li>Sort-order recommendations only offer columns present in the table's schema (schema spelling), and query parsing attributes join columns to their own table (#517).</li>

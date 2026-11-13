@@ -73,8 +73,15 @@ export type DeductionRemedy =
  * Which action addresses a persisted health deduction. Labels come from
  * cryo/scanner/health.py::compute_health_score, so matching is on their stable wording.
  */
-export const remedyForDeduction = (label: string, tableId: string): DeductionRemedy => {
+export const remedyForDeduction = (
+  label: string,
+  tableId: string,
+  compactableFiles?: number | null
+): DeductionRemedy => {
   const text = label.toLowerCase();
+  if (text.includes("fragment") && compactableFiles === 0) {
+    return { kind: "none", note: "Files are already near target size. Compaction can't reduce them." };
+  }
   if (text.includes("snapshot")) return { kind: "operation", op: "expire_snapshots" };
   if (text.includes("metadata") || text.includes("manifest")) return { kind: "operation", op: "optimize_manifests" };
   if (text.includes("orphan")) return { kind: "operation", op: "remove_orphan_files" };
@@ -107,10 +114,14 @@ export const readDeductionList = (raw: unknown): Deduction[] => {
 };
 
 /** Points recoverable per operation, summed from the deductions it addresses. */
-export const pointsByOperation = (deductions: Deduction[], tableId: string): Map<RunnableOperation, number> => {
+export const pointsByOperation = (
+  deductions: Deduction[],
+  tableId: string,
+  compactableFiles?: number | null
+): Map<RunnableOperation, number> => {
   const totals = new Map<RunnableOperation, number>();
   for (const item of deductions) {
-    const remedy = remedyForDeduction(item.label, tableId);
+    const remedy = remedyForDeduction(item.label, tableId, compactableFiles);
     if (remedy.kind !== "operation") continue;
     totals.set(remedy.op, (totals.get(remedy.op) ?? 0) + item.deduction);
   }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, TypedDict
@@ -95,8 +96,51 @@ def _delete_reason(pct: float, count: int, limit_pct: float, limit_count: float)
     )
 
 
-def _avg_files_per_partition_reason(value: float, limit: float) -> str:
-    return f"Average files/partition is {value:.1f} (exceeds limit of {limit:.0f})"
+# Iceberg's rewrite_data_files only considers files below min-file-size-bytes (75% of the
+# target) for bin-packing, so data in files at or above that size needs no more compaction.
+MIN_FILE_SIZE_TARGET_RATIO = 0.75
+
+
+def needed_files_per_partition(stats: Mapping[str, Any]) -> int:
+    """Files an average partition needs for its data at the compaction threshold (#518)."""
+    total_files = int(stats.get("total_files") or 0)
+    partitions = max(int(stats.get("total_partitions") or 0), 1)
+    total_bytes = float(stats.get("avg_file_size_mb") or 0.0) * _MB * total_files
+    if total_bytes <= 0:
+        total_bytes = float(stats.get("total_size_gb") or 0.0) * 1024 * _MB
+    target = int(stats.get("target_file_size_bytes") or 0) or DEFAULT_TARGET_FILE_SIZE_BYTES
+    per_file = target * MIN_FILE_SIZE_TARGET_RATIO
+    return max(1, math.ceil(total_bytes / partitions / per_file)) if total_bytes > 0 else 1
+
+
+def excess_files_per_partition(stats: Mapping[str, Any]) -> float:
+    """Average files per partition beyond what the partition's data needs (#518).
+
+    A raw file count graded a 150 GB unpartitioned table of 345 MiB files critical, though
+    no compaction could lower it. Excess counts only the files compaction could remove.
+    """
+    return max(0.0, _avg_files(stats) - needed_files_per_partition(stats))
+
+
+def _avg_files(stats: Mapping[str, Any]) -> float:
+    avg = stats.get("avg_files_per_partition")
+    if avg is None:
+        partitions = max(int(stats.get("total_partitions") or 0), 1)
+        return int(stats.get("total_files") or 0) / partitions
+    return float(avg)
+
+
+def _avg_files_per_partition_reason(stats: Mapping[str, Any]) -> Any:
+    avg = _avg_files(stats)
+    needed = needed_files_per_partition(stats)
+
+    def reason(value: float, limit: float) -> str:
+        return (
+            f"Average {avg:.1f} files/partition, {value:.1f} more than the {needed:,} its data "
+            f"needs (exceeds limit of {limit:.0f} extra)"
+        )
+
+    return reason
 
 
 def _metadata_ratio_reason(value: float, limit: float) -> str:
@@ -363,11 +407,11 @@ def compute_health_score(
     score = _deduct(
         score,
         deductions,
-        float(stats.get("avg_files_per_partition") or 0),
+        excess_files_per_partition(stats),
         "avg_files_per_partition",
         "Fragmented partitions",
         thresholds,
-        _avg_files_per_partition_reason,
+        _avg_files_per_partition_reason(stats),
     )
     score = _deduct(
         score,
