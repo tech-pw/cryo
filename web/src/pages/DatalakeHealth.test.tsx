@@ -155,10 +155,16 @@ describe("Home overview", () => {
     expect(await within(steps).findByText("All clear")).toBeInTheDocument();
     expect(within(steps).queryByText(/0 tables/)).not.toBeInTheDocument();
   });
-  it("reads only the last fourteen batch runs", async () => {
+  it("reads only the last fourteen batch runs and skips unused dashboard series (#494)", async () => {
     renderHome();
     await waitFor(() => expect(listRuns).toHaveBeenCalledWith(expect.anything(), { pipeline: "nightly", limit: 14 }));
-    expect(getDatalakeDashboard).toHaveBeenCalledWith(expect.anything(), { top_limit: 1, hot_limit: 5 });
+    expect(getDatalakeDashboard).toHaveBeenCalledWith(expect.anything(), {
+      top_limit: 0,
+      drift_limit: 0,
+      hot_limit: 5,
+      include_schema_cost: false
+    });
+    expect(getFleetTrends).toHaveBeenCalledWith(expect.anything(), { days: 14, include_cost: false });
   });
   it("refreshes read models without starting maintenance", async () => {
     renderHome();

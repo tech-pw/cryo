@@ -299,7 +299,8 @@ export function DecisionsPage() {
   });
   const tiers = useQuery({
     queryKey: ["smart-maintenance-detection-tiers", token],
-    queryFn: () => getDetectionTiers(api, 500)
+    queryFn: () => getDetectionTiers(api, 500),
+    enabled: Boolean(reviewId)
   });
   const recommendations = useQuery({
     queryKey: ["smart-maintenance-layout-recommendations", token],

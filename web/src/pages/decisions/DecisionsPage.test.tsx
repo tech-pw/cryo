@@ -162,10 +162,11 @@ describe("DecisionsPage", () => {
     expect(screen.queryByText("0% estimated")).not.toBeInTheDocument();
   });
 
-  it("loads fleet SLA status only on the Approvals tab (#494)", async () => {
+  it("loads fleet SLA status only on the Approvals tab and defers detection tiers until Review (#494)", async () => {
     renderPage();
     await screen.findByText("analytics.events");
     expect(getSlaStatusDashboard).not.toHaveBeenCalled();
+    expect(getDetectionTiers).not.toHaveBeenCalled();
   });
 
   it("pages a long recommendation list instead of rendering every row (#494)", async () => {

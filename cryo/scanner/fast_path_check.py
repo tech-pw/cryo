@@ -15,10 +15,10 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import literal, not_, or_, select
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import Subquery
 
 from cryo.db.models import AuditLog, Table, TableStatsHistory
 from cryo.scanner.property_recommendations import compute_property_recommendations
@@ -49,14 +49,16 @@ class FastPathFinding:
     detected_at: datetime
 
 
-def _history_counts_subquery() -> Subquery:
+def _has_two_history_rows() -> Any:
+    """Correlated EXISTS probe via ix_table_stats_history_table_scan instead of full GROUP BY."""
     return (
-        select(
-            TableStatsHistory.table_id.label("table_id"),
-            func.count().label("n"),
-        )
-        .group_by(TableStatsHistory.table_id)
-        .subquery()
+        select(literal(1))
+        .select_from(TableStatsHistory)
+        .where(TableStatsHistory.table_id == Table.id)
+        .offset(1)
+        .limit(1)
+        .correlate(Table)
+        .exists()
     )
 
 
@@ -68,15 +70,13 @@ def select_new_tables(
 ) -> list[Table]:
     """Active tables first seen in the last 7 days and/or with ≤1 stats-history row."""
     cutoff = now - NEW_TABLE_WINDOW
-    history = _history_counts_subquery()
     stmt = (
         select(Table)
-        .outerjoin(history, history.c.table_id == Table.id)
         .where(Table.is_active.is_(True))
         .where(
             or_(
                 Table.first_seen_at >= cutoff,
-                func.coalesce(history.c.n, 0) <= 1,
+                not_(_has_two_history_rows()),
             )
         )
         .order_by(Table.first_seen_at.desc())

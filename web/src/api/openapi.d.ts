@@ -15179,6 +15179,7 @@ export interface operations {
                 top_limit?: number;
                 drift_limit?: number;
                 hot_limit?: number;
+                include_schema_cost?: boolean;
             };
             header?: never;
             path?: never;
@@ -21772,6 +21773,7 @@ export interface operations {
             query?: {
                 /** @description Days of history to fetch */
                 days?: number;
+                include_cost?: boolean;
             };
             header?: never;
             path?: never;

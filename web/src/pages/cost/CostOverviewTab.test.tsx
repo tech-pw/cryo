@@ -212,9 +212,24 @@ describe("CostOverviewTab", () => {
     vi.mocked(listTables).mockResolvedValue({ items: [], total: null as unknown as number, limit: 50, offset: 0 });
     renderTab();
 
-    expect(await screen.findByText("Not measured")).toBeInTheDocument();
+    const opportunities = (await screen.findByText("Savings opportunities")).closest("div")?.parentElement as HTMLElement;
+    expect(await within(opportunities).findByText("Not measured")).toBeInTheDocument();
     expect(screen.queryByText("0 candidates")).not.toBeInTheDocument();
     expect(screen.queryByText(/^0$/)).not.toBeInTheDocument();
+  });
+
+  it("renders independent cards while getCostDashboard is still pending (#494)", async () => {
+    vi.mocked(getCostDashboard).mockReturnValue(new Promise(() => {}));
+    vi.mocked(listTables).mockResolvedValue({
+      items: [opportunityRow("t-orders", "orders", 2 * 1024 ** 3)],
+      total: 1,
+      limit: 50,
+      offset: 0
+    });
+    renderTab();
+
+    expect(await screen.findByRole("link", { name: "gold.orders" })).toBeInTheDocument();
+    expect(getCostDashboard).toHaveBeenCalledWith(expect.anything(), { top_limit: 0 });
   });
 
   it("pages opportunities from oppOffset without downloading the fleet", async () => {
