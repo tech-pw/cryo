@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from cryo.anomalies.report import (
@@ -71,13 +71,26 @@ def _parse_report(payload: dict[str, Any]) -> SharedS3ReportRead:
 
 @router.get("/shared-s3", response_model=SharedS3ReportRead)
 def get_shared_s3_report(
+    request: Request,
     session: SessionDep,
-    _principal: Annotated[Principal, Depends(require_viewer)],
-) -> SharedS3ReportRead:
-    report = latest_shared_s3_report(session)
-    if report is None:
-        return _parse_report(empty_report_payload())
-    return _parse_report(report_to_payload(report))
+    principal: Annotated[Principal, Depends(require_viewer)],
+) -> Any:
+    from cryo.api.conditional_cache import conditional_cache, shared_s3_report_stamps
+
+    def _compute() -> SharedS3ReportRead:
+        report = latest_shared_s3_report(session)
+        if report is None:
+            return _parse_report(empty_report_payload())
+        return _parse_report(report_to_payload(report))
+
+    return conditional_cache.serve(
+        request=request,
+        route="/api/v1/anomalies/shared-s3",
+        principal=principal,
+        params={},
+        stamps=shared_s3_report_stamps(session),
+        compute=_compute,
+    )
 
 
 @router.post("/shared-s3/refresh", response_model=SharedS3ReportRead)

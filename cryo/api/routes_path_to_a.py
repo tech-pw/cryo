@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -241,9 +241,34 @@ def _path(session: Session, table_id: uuid.UUID) -> tuple[Table, Any]:
     response_model=PathToARead,
     dependencies=[Depends(require_viewer)],
 )
-def get_path_to_a(table_id: uuid.UUID, session: SessionDep) -> PathToARead:
-    _, path = _path(session, table_id)
-    return PathToARead(table_id=table_id, **path.to_dict())
+def get_path_to_a(
+    table_id: uuid.UUID,
+    request: Request,
+    session: SessionDep,
+    principal: CurrentPrincipal,
+) -> Any:
+    from cryo.api.conditional_cache import conditional_cache, path_to_a_stamps
+    from cryo.db.models import TableStats
+
+    table = get_scoped_resource(session, Table, table_id, resource_type="Table")
+    if session.get(TableStats, table.id) is None:
+        raise HTTPException(status_code=409, detail="Scan the table first")
+
+    def _compute() -> PathToARead:
+        snapshot = load_snapshot(session, table)
+        if snapshot is None:
+            raise HTTPException(status_code=409, detail="Scan the table first")
+        path = build_path_to_a(snapshot)
+        return PathToARead(table_id=table_id, **path.to_dict())
+
+    return conditional_cache.serve(
+        request=request,
+        route="/api/v1/tables/{table_id}/path-to-a",
+        principal=principal,
+        params={"table_id": str(table_id)},
+        stamps=path_to_a_stamps(session, table),
+        compute=_compute,
+    )
 
 
 @router.post(

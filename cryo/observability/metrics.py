@@ -50,6 +50,24 @@ api_request_duration_seconds = Histogram(
     buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
 )
 
+api_coalesced_requests_total = Counter(
+    "cryo_api_coalesced_requests_total",
+    "Concurrent identical heavy API requests coalesced behind an in-flight leader (#533).",
+    ["route"],
+)
+
+api_not_modified_total = Counter(
+    "cryo_api_not_modified_total",
+    "Conditional GET requests answered with 304 Not Modified via ETag (#533).",
+    ["route"],
+)
+
+api_response_cache_requests_total = Counter(
+    "cryo_api_response_cache_requests_total",
+    "Short-lived ETag response cache lookups by bounded route and outcome (hit, miss) (#533).",
+    ["route", "outcome"],
+)
+
 # ==================== Governor Metrics ====================
 
 governor_admission_decisions = Counter(
