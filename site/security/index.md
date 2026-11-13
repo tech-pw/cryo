@@ -2,7 +2,7 @@
 title: Security
 description: Cryo authentication and production hardening. OIDC setup and role claims, the viewer, operator and admin roles, the dev token, CRYO_SECRET_KEY, stored credentials, egress, and a hardening checklist.
 canonical: https://tech-pw.github.io/cryo/security/
-updated: 2026-10-26
+updated: 2026-11-13
 ---
 
 # Security
@@ -64,12 +64,10 @@ The first admin has to come from your identity provider, because only an admin c
 | Setting | Dev token |
 | --- | --- |
 | `CRYO_ENVIRONMENT=prod` | Off |
-| `dev`, `test` or `staging` | On, even when OIDC is configured |
+| `staging` | Off |
+| `dev` or `test` with an OIDC issuer set | Off |
+| `dev` or `test` with no OIDC issuer | On |
 | `CRYO_ALLOW_DEV_TOKEN_IN_PROD=true` | On in every environment |
-
-Stricter defaults are on the way
-
-A pending change ([#213](https://github.com/tech-pw/cryo/pull/213)) turns the dev token on only in `dev` or `test` with no OIDC issuer set, makes `prod` the chart default, and stops every process in `staging` or `prod` from starting when `CRYO_SECRET_KEY` or `CRYO_JWT_SECRET` is the default or shorter than 32 characters. The checklist below is already safe under both the current and the new rules.
 
 To confirm it's off, `GET /api/v1/auth/config` should report `"dev_token_enabled":false`, and a `POST` to the token route should return 503.
 
@@ -80,7 +78,7 @@ To confirm it's off, `GET /api/v1/auth/config` should report `"dev_token_enabled
 - It signs Cryo's own HS256 tokens, unless `CRYO_JWT_SECRET` is set.
 - It's the encryption key for the connection secrets Cryo stores. Cryo derives a Fernet key from its SHA-256 hash.
 
-The code default is `dev-only-change-me`. Because that value is published, a deployment that keeps it accepts tokens anyone can forge, and anyone with a copy of the database can decrypt its stored secrets. Generate a random value of at least 32 characters, for example with `openssl rand -hex 32`.
+The code default is `dev-only-change-me`. In `staging` and `prod`, every process refuses to start when `CRYO_SECRET_KEY` or `CRYO_JWT_SECRET` is that default or shorter than 32 characters. Elsewhere it is accepted, and because the value is published, such a deployment accepts tokens anyone can forge, and anyone with a copy of the database can decrypt its stored secrets. Generate a random value of at least 32 characters, for example with `openssl rand -hex 32`.
 
 Set `CRYO_JWT_SECRET` to a separate random value, so you can rotate token signing without touching stored secrets.
 

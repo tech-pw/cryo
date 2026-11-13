@@ -2,7 +2,7 @@
 title: Security
 lede: How people sign in to Cryo, what each role can do, which secrets Cryo keeps and how they're protected, and what to check before an install is reachable.
 description: Cryo authentication and production hardening. OIDC setup and role claims, the viewer, operator and admin roles, the dev token, CRYO_SECRET_KEY, stored credentials, egress, and a hardening checklist.
-updated: 2026-10-26
+updated: 2026-11-13
 ---
 <callout type="caution" title="Local defaults are for development only">
   <p>The local stack and an unconfigured install run with <code>CRYO_ENVIRONMENT=dev</code> and the published default <code>CRYO_SECRET_KEY</code>. In that state anyone who can reach the API can mint an admin token. Use the <a href="#checklist">hardening checklist</a> before an install is reachable by anyone else.</p>
@@ -59,14 +59,13 @@ updated: 2026-10-26
   <thead><tr><th>Setting</th><th>Dev token</th></tr></thead>
   <tbody>
     <tr><td><code>CRYO_ENVIRONMENT=prod</code></td><td>Off</td></tr>
-    <tr><td><code>dev</code>, <code>test</code> or <code>staging</code></td><td>On, even when OIDC is configured</td></tr>
+    <tr><td><code>staging</code></td><td>Off</td></tr>
+    <tr><td><code>dev</code> or <code>test</code> with an OIDC issuer set</td><td>Off</td></tr>
+    <tr><td><code>dev</code> or <code>test</code> with no OIDC issuer</td><td>On</td></tr>
     <tr><td><code>CRYO_ALLOW_DEV_TOKEN_IN_PROD=true</code></td><td>On in every environment</td></tr>
   </tbody>
 </table>
 </div>
-<callout type="note" title="Stricter defaults are on the way">
-  <p>A pending change (<a href="https://github.com/tech-pw/cryo/pull/213">#213</a>) turns the dev token on only in <code>dev</code> or <code>test</code> with no OIDC issuer set, makes <code>prod</code> the chart default, and stops every process in <code>staging</code> or <code>prod</code> from starting when <code>CRYO_SECRET_KEY</code> or <code>CRYO_JWT_SECRET</code> is the default or shorter than 32 characters. The checklist below is already safe under both the current and the new rules.</p>
-</callout>
 <p>To confirm it's off, <code>GET /api/v1/auth/config</code> should report <code>"dev_token_enabled":false</code>, and a <code>POST</code> to the token route should return 503.</p>
 
 <h2 id="secret-key">CRYO_SECRET_KEY and token lifetime</h2>
@@ -75,7 +74,7 @@ updated: 2026-10-26
   <li>It signs Cryo's own HS256 tokens, unless <code>CRYO_JWT_SECRET</code> is set.</li>
   <li>It's the encryption key for the connection secrets Cryo stores. Cryo derives a Fernet key from its SHA-256 hash.</li>
 </ul>
-<p>The code default is <code>dev-only-change-me</code>. Because that value is published, a deployment that keeps it accepts tokens anyone can forge, and anyone with a copy of the database can decrypt its stored secrets. Generate a random value of at least 32 characters, for example with <code>openssl rand -hex 32</code>.</p>
+<p>The code default is <code>dev-only-change-me</code>. In <code>staging</code> and <code>prod</code>, every process refuses to start when <code>CRYO_SECRET_KEY</code> or <code>CRYO_JWT_SECRET</code> is that default or shorter than 32 characters. Elsewhere it is accepted, and because the value is published, such a deployment accepts tokens anyone can forge, and anyone with a copy of the database can decrypt its stored secrets. Generate a random value of at least 32 characters, for example with <code>openssl rand -hex 32</code>.</p>
 <p>Set <code>CRYO_JWT_SECRET</code> to a separate random value, so you can rotate token signing without touching stored secrets.</p>
 <dl>
   <dt>Rotating <code>CRYO_JWT_SECRET</code></dt>

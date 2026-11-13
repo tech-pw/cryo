@@ -223,8 +223,9 @@ Expand any group for the details.
 - **Settings advisor.** Recommends Iceberg table properties from the table's own scan signals,
   such as `write.target-file-size-bytes` from its file sizes and small-file count, and explains
   each one (`cryo/scanner/property_recommendations.py`). Nothing is written until you stage and
-  approve it. Cryo does not change table properties on its own; closed-loop tuning is on the
-  backlog.
+  approve it. The opt-in property autopilot (`property_autopilot_enabled`, off by default) applies
+  only allowlisted, metadata-only recommendations by itself, and audits each change under its own
+  actor (`cryo/scanner/property_autopilot.py`).
 - **Maintenance batch.** Collect tables while you investigate, review one exact plan, then submit
   it. What you reviewed is what runs, or the submit is refused.
 - **Ask Cryo and MCP.** A plain-English assistant over your scanned fleet, also exposed as an MCP
@@ -399,10 +400,10 @@ The [install guide](https://tech-pw.github.io/cryo/install/) walks through a pro
 [chart README](deploy/helm/cryo/README.md) lists the values it must set.
 
 > [!WARNING]
-> The chart default `CRYO_ENVIRONMENT=dev` leaves `POST /api/v1/auth/token` open, so anyone who can
-> reach the API can issue themselves a role. In production, set `CRYO_ENVIRONMENT=prod`, keep the
-> dev token off, and configure OIDC before the API is reachable. OIDC alone does not close the dev
-> token. See [SECURITY.md](./SECURITY.md).
+> The chart defaults to `CRYO_ENVIRONMENT=prod`. Don't override it to `dev` or `test` on a reachable
+> install: with no OIDC issuer set, `POST /api/v1/auth/token` lets anyone who can reach the API
+> issue themselves a role. In production, configure OIDC and leave `CRYO_ALLOW_DEV_TOKEN_IN_PROD`
+> unset. See [SECURITY.md](./SECURITY.md).
 
 ## Status
 
