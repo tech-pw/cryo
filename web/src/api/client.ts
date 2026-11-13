@@ -216,39 +216,101 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+const MAX_ETAG_ENTRIES = 128;
+const etagCache = new Map<string, { etag: string; payload: unknown }>();
+const inflightGets = new Map<string, Promise<unknown>>();
+
+export const clearApiEtagCache = (): void => {
+  etagCache.clear();
+  inflightGets.clear();
+};
+
+const tokenScopeFingerprint = (token: string): string => {
+  // Hash/fingerprint in-memory key only; never stores raw token alongside payload values.
+  let h = 2166136261;
+  for (let i = 0; i < token.length; i += 1) {
+    h ^= token.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return `${token.length}:${(h >>> 0).toString(16)}`;
+};
+
 export const apiFetch = async <T>(
   path: string,
   { token }: ApiOptions,
   options: RequestOptions = {}
 ): Promise<T> => {
+  const method = options.method ?? "GET";
   const url = new URL(`${API_PREFIX}${path}`, window.location.origin);
   Object.entries(options.query ?? {}).forEach(([key, value]) => {
     if (Array.isArray(value)) value.forEach((item) => url.searchParams.append(key, item));
     else if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   });
+  url.searchParams.sort();
+  const fullPath = `${url.pathname}${url.search}`;
+  const isCacheableGet = method === "GET" && options.body === undefined;
+  const cacheKey = `${tokenScopeFingerprint(token)}|${fullPath}`;
 
-  const response = await fetch(`${url.pathname}${url.search}`, {
-    method: options.method ?? "GET",
-    headers: {
-      "X-Correlation-ID": crypto.randomUUID(),
-      Authorization: `Bearer ${token}`,
-      ...(options.body === undefined ? {} : { "Content-Type": "application/json" })
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    signal: options.signal
-  });
-
-  if (response.status === 204) return undefined as T;
-
-  const contentType = response.headers.get("content-type") ?? "";
-  const payload = contentType.includes("application/json") ? await response.json() : await response.text();
-
-  if (!response.ok) {
-    const detail = typeof payload === "object" && payload !== null ? (payload as JsonObject).detail : payload;
-    throw responseError(response, formatApiDetail(detail) || response.statusText, detail);
+  // Coalesce concurrent un-aborted GET calls for the exact same scoped URL (#533).
+  if (isCacheableGet && !options.signal) {
+    const existing = inflightGets.get(cacheKey);
+    if (existing) return existing as Promise<T>;
   }
 
-  return payload as T;
+  const run = async (): Promise<T> => {
+    const cached = isCacheableGet ? etagCache.get(cacheKey) : undefined;
+    const response = await fetch(fullPath, {
+      method,
+      headers: {
+        "X-Correlation-ID": crypto.randomUUID(),
+        Authorization: `Bearer ${token}`,
+        ...(cached ? { "If-None-Match": cached.etag } : {}),
+        ...(options.body === undefined ? {} : { "Content-Type": "application/json" })
+      },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      signal: options.signal
+    });
+
+    if (response.status === 304 && cached) {
+      etagCache.delete(cacheKey);
+      etagCache.set(cacheKey, cached);
+      return cached.payload as T;
+    }
+
+    if (response.status === 204) return undefined as T;
+
+    const contentType = response.headers.get("content-type") ?? "";
+    const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+
+    if (!response.ok) {
+      const detail = typeof payload === "object" && payload !== null ? (payload as JsonObject).detail : payload;
+      throw responseError(response, formatApiDetail(detail) || response.statusText, detail);
+    }
+
+    const etag = response.headers.get("etag");
+    if (isCacheableGet && etag) {
+      etagCache.delete(cacheKey);
+      if (etagCache.size >= MAX_ETAG_ENTRIES) {
+        const oldest = etagCache.keys().next().value;
+        if (oldest !== undefined) etagCache.delete(oldest);
+      }
+      etagCache.set(cacheKey, { etag, payload });
+    } else if (method !== "GET") {
+      // Any mutation clears conditional GET entries so subsequent reads revalidate freshly.
+      etagCache.clear();
+    }
+
+    return payload as T;
+  };
+
+  if (isCacheableGet && !options.signal) {
+    const promise = run().finally(() => {
+      inflightGets.delete(cacheKey);
+    });
+    inflightGets.set(cacheKey, promise);
+    return promise;
+  }
+  return run();
 };
 
 export interface TableViewQuery {

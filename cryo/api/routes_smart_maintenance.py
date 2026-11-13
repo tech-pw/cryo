@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, joinedload, sessionmaker
@@ -150,11 +150,7 @@ class ExecuteLayoutRecommendationRequest(BaseModel):
     mode: Literal["light", "standard", "deep"] = "standard"
 
 
-@router.get("/overview", response_model=SmartMaintenanceOverview)
-def smart_maintenance_overview(
-    session: SessionDep,
-    _principal: ViewerPrincipalDep,
-) -> SmartMaintenanceOverview:
+def _compute_smart_maintenance_overview(session: Session) -> SmartMaintenanceOverview:
     # Aggregated in SQL rather than `select(TableStats)).all()` -- materializing every table's
     # full row (including the `raw` JSONB blob) into Python OOM'd the api pod once the catalog
     # grew past a few thousand tables (see the memory comment on api.resources in values.yaml).
@@ -214,6 +210,31 @@ def smart_maintenance_overview(
         roi_shadow_decisions_30d=int(roi_shadow),
         roi_enforced=settings.roi_gate_enabled and not settings.roi_gate_shadow_mode,
         pending_layout_recommendations=int(pending_layout),
+    )
+
+
+@router.get("/overview", response_model=SmartMaintenanceOverview)
+def smart_maintenance_overview(
+    request: Request,
+    session: SessionDep,
+    principal: ViewerPrincipalDep,
+) -> Any:
+    from cryo.api.conditional_cache import conditional_cache, decisions_recommendations_stamps
+
+    settings = get_settings()
+    base_stamps = decisions_recommendations_stamps(session)
+    stamps = (
+        (*base_stamps, settings.roi_gate_enabled, settings.roi_gate_shadow_mode)
+        if base_stamps is not None
+        else None
+    )
+    return conditional_cache.serve(
+        request=request,
+        route="/api/v1/smart-maintenance/overview",
+        principal=principal,
+        params={},
+        stamps=stamps,
+        compute=lambda: _compute_smart_maintenance_overview(session),
     )
 
 
@@ -363,11 +384,8 @@ def table_workload_forecast(
     )
 
 
-@router.get("/layout-recommendations", response_model=LayoutRecommendationListRead)
-def list_layout_recommendations(
-    session: SessionDep,
-    _principal: ViewerPrincipalDep,
-    status: str | None = None,
+def _compute_layout_recommendations(
+    session: Session, status: str | None = None
 ) -> LayoutRecommendationListRead:
     stmt = select(LayoutRecommendation, Table).join(
         Table, Table.id == LayoutRecommendation.table_id
@@ -399,6 +417,25 @@ def list_layout_recommendations(
         for rec, table in rows
     ]
     return LayoutRecommendationListRead(items=items, truncated=truncated, limit=500)
+
+
+@router.get("/layout-recommendations", response_model=LayoutRecommendationListRead)
+def list_layout_recommendations(
+    request: Request,
+    session: SessionDep,
+    principal: ViewerPrincipalDep,
+    status: str | None = None,
+) -> Any:
+    from cryo.api.conditional_cache import conditional_cache, decisions_recommendations_stamps
+
+    return conditional_cache.serve(
+        request=request,
+        route="/api/v1/smart-maintenance/layout-recommendations",
+        principal=principal,
+        params={"status": status or ""},
+        stamps=decisions_recommendations_stamps(session),
+        compute=lambda: _compute_layout_recommendations(session, status),
+    )
 
 
 @router.post(

@@ -19,6 +19,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Request,
     Response,
     WebSocket,
     WebSocketDisconnect,
@@ -250,22 +251,47 @@ COMPUTED_SORT_FIELDS = {"score_delta_7d": score_delta_expr}
     tags=["dashboards"],
 )
 def get_datalake_dashboard(
+    request: Request,
     session: SessionDep,
+    principal: CurrentPrincipal,
     top_limit: Annotated[int, Query(ge=0, le=50)] = 10,
     drift_limit: Annotated[int, Query(ge=0, le=365)] = 30,
     hot_limit: Annotated[int, Query(ge=0, le=20)] = 5,
     include_schema_cost: Annotated[bool, Query()] = True,
-) -> dict[str, object]:
-    extra: dict[str, Any] = {}
-    if not include_schema_cost:
-        extra["include_schema_cost"] = False
-    return datalake.dashboard_datalake(
+) -> Any:
+    from cryo.api.conditional_cache import conditional_cache, fleet_dashboard_stamps
+
+    settings = Settings()
+    stamps = fleet_dashboard_stamps(
         session,
-        top_limit=top_limit,
-        drift_limit=drift_limit,
-        hot_limit=hot_limit,
-        settings=Settings(),
-        **extra,
+        settings_fingerprint=f"{settings.cost_price_per_gb_month}:{settings.cost_use_gib}",
+    )
+
+    def _compute() -> dict[str, object]:
+        extra: dict[str, Any] = {}
+        if not include_schema_cost:
+            extra["include_schema_cost"] = False
+        return datalake.dashboard_datalake(
+            session,
+            top_limit=top_limit,
+            drift_limit=drift_limit,
+            hot_limit=hot_limit,
+            settings=settings,
+            **extra,
+        )
+
+    return conditional_cache.serve(
+        request=request,
+        route="/api/v1/dashboards/datalake",
+        principal=principal,
+        params={
+            "top_limit": top_limit,
+            "drift_limit": drift_limit,
+            "hot_limit": hot_limit,
+            "include_schema_cost": include_schema_cost,
+        },
+        stamps=stamps,
+        compute=_compute,
     )
 
 
@@ -313,15 +339,31 @@ def get_schema_cost_dashboard(
     tags=["dashboards"],
 )
 def get_cost_dashboard(
+    request: Request,
     session: SessionDep,
+    principal: CurrentPrincipal,
     top_limit: Annotated[int, Query(ge=0, le=50)] = 10,
     trend_limit: Annotated[int, Query(ge=1, le=365)] = 30,
-) -> dict[str, object]:
-    return datalake.dashboard_cost(
+) -> Any:
+    from cryo.api.conditional_cache import conditional_cache, fleet_dashboard_stamps
+
+    settings = Settings()
+    stamps = fleet_dashboard_stamps(
         session,
-        top_limit=top_limit,
-        trend_limit=trend_limit,
-        settings=Settings(),
+        settings_fingerprint=f"{settings.cost_price_per_gb_month}:{settings.cost_use_gib}",
+    )
+    return conditional_cache.serve(
+        request=request,
+        route="/api/v1/dashboards/cost",
+        principal=principal,
+        params={"top_limit": top_limit, "trend_limit": trend_limit},
+        stamps=stamps,
+        compute=lambda: datalake.dashboard_cost(
+            session,
+            top_limit=top_limit,
+            trend_limit=trend_limit,
+            settings=settings,
+        ),
     )
 
 
