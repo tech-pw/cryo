@@ -9,6 +9,7 @@ on:
       - "site/**"
   # No paths-ignore on pull requests: these jobs are required status checks on main, and a
   # skipped workflow never reports them, which would leave docs-only PRs unmergeable.
+  # The `changes` job skips the heavy jobs instead; a job skipped by `if:` still reports.
   pull_request:
     branches: [main]
   # Manual trigger: re-run CI against current main without needing an unrelated push.
@@ -25,6 +26,42 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect docs-only change
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      # code=false only when every file in the PR is prose or the generated site. Tests read
+      # docs/CAPABILITIES.md, docs/CONFIGURATION.md and docs/schemas/, so those count as code.
+      # Lint and the secret scan run either way.
+      - name: Classify changed files
+        id: diff
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only HEAD^1 HEAD > /tmp/changed
+          echo "changed files: $(wc -l < /tmp/changed)"
+          code_files=$(grep -Ev '^(site/.*|docs/img/.*|.*\.md)$' /tmp/changed \
+            | cat - <(grep -E '^docs/(CAPABILITIES|CONFIGURATION)\.md$' /tmp/changed) || true)
+          if [ -n "${code_files}" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "code changes:"; echo "${code_files}" | head -20
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "docs-only change: skipping build, test and e2e jobs"
+          fi
+
   gitleaks:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
@@ -78,7 +115,8 @@ jobs:
     name: Image vulnerability scan & SBOM
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [lint]
+    needs: [changes, lint]
+    if: needs.changes.outputs.code == 'true'
     permissions:
       contents: read
     steps:
@@ -122,8 +160,16 @@ jobs:
 
   lint:
     name: Lint & Format
+    # Skipped jobs count as passing, so a failed `changes` job must fail a required check.
+    if: always()
+    needs: [changes]
     runs-on: ubuntu-latest
     steps:
+      - name: Change detection succeeded
+        env:
+          CHANGES: ${{ needs.changes.result }}
+        run: test "${CHANGES}" = "success"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -148,6 +194,8 @@ jobs:
 
   typecheck:
     name: Type Check
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -165,6 +213,8 @@ jobs:
 
   test-shard:
     name: Test shard ${{ matrix.shard }}/4
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -231,18 +281,26 @@ jobs:
           echo "shard $SHARD: $(wc -l < /tmp/shard-files) files"
           pytest $(cat /tmp/shard-files) -v --tb=short
 
-  # Branch protection requires a check named "Test"; it passes only when every shard passed.
+  # Branch protection requires a check named "Test"; it passes only when every shard passed,
+  # or when a docs-only change skipped them.
   test:
     name: Test
     if: always()
-    needs: [test-shard]
+    needs: [changes, test-shard]
     runs-on: ubuntu-latest
     steps:
       - name: All test shards passed
-        run: test "${{ needs.test-shard.result }}" = "success"
+        env:
+          CODE: ${{ needs.changes.outputs.code }}
+          SHARDS: ${{ needs.test-shard.result }}
+        run: |
+          if [ "${CODE}" = "false" ] && [ "${SHARDS}" = "skipped" ]; then exit 0; fi
+          test "${SHARDS}" = "success"
 
   cryo-engine-go:
     name: cryo-engine-go (Go)
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -292,7 +350,8 @@ jobs:
     name: native-e2e-go (REST + MinIO)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [lint]
+    needs: [changes, lint]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Python
@@ -337,7 +396,8 @@ jobs:
     name: native-compaction-e2e-go (REST + MinIO)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [lint]
+    needs: [changes, lint]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Python
@@ -407,6 +467,8 @@ jobs:
         run: pytest tests/integration/native/test_native_differential_e2e.py tests/integration/native/test_native_mor_differential_e2e.py -v
   build:
     name: Build Check
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -429,6 +491,8 @@ jobs:
 
   web:
     name: Frontend (typecheck + test + build)
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -466,7 +530,8 @@ jobs:
     name: Web E2E (critical path + axe-core WCAG gate)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [lint, web]
+    needs: [changes, lint, web]
+    if: needs.changes.outputs.code == 'true'
     defaults:
       run:
         working-directory: web
@@ -570,7 +635,8 @@ jobs:
     name: Web visual regression (Playwright snapshots)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [lint, web]
+    needs: [changes, lint, web]
+    if: needs.changes.outputs.code == 'true'
     defaults:
       run:
         working-directory: web
