@@ -17,10 +17,13 @@ Roles in code are `evidence_collector`, `viewer`, `operator`, and `admin`. `edit
 
 ## Defaults that are not safe to expose
 
-- `CRYO_ENVIRONMENT` defaults to `dev` in the chart. `POST /api/v1/auth/token` then self-issues a role with no identity check. OIDC does not disable that route.
-- `CRYO_ALLOW_DEV_TOKEN_IN_PROD` reopens the dev token when `environment=prod`.
-- Omitting `CRYO_SECRET_KEY` falls back to the published default `dev-only-change-me`. Tokens signed with that default are accepted.
-- FastAPI `/docs` and `/openapi.json` are on unless the app disables them. The WebSocket accepts `?token=`.
+The chart defaults to `CRYO_ENVIRONMENT=prod`. These remain exposed when an operator changes that or opts in:
+
+- In `dev` or `test` with no OIDC issuer, `POST /api/v1/auth/token` self-issues a role with no identity check. Setting an OIDC issuer closes it.
+- `CRYO_ALLOW_DEV_TOKEN_IN_PROD` reopens the dev token in every environment, including `prod`.
+- Outside `staging` and `prod`, omitting `CRYO_SECRET_KEY` falls back to the published default `dev-only-change-me`, and tokens signed with it are accepted. `staging` and `prod` refuse to start with the default or a key shorter than 32 characters.
+- FastAPI `/docs` and `/openapi.json` are served outside `prod`, and in `prod` when `CRYO_API_DOCS_ENABLED` is set.
+- The run console WebSocket accepts the token as `?token=`, so it can reach proxy and access logs (#551).
 
 ## Data plane
 
