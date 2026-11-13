@@ -21,6 +21,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Added
 
+- Scanner unchanged-snapshot fast path (skips manifest walks when current_snapshot_id matches snapshot_watermark, with 7-day full reconcile) and shared Python/Go immutable Iceberg manifest summary LRU disk cache, plus scan/cache/object-store Prometheus metrics (#532).
 - API request coalescing (single-flight), input-version ETags with 304 Not Modified, short-lived response caching, and Prometheus metrics on heavy fleet and Path-to-A endpoints, paired with conditional If-None-Match revalidation in apiFetch (#533).
 - Per-table `archived` lifecycle for read-only/backup tables (`PUT /api/v1/tables/{id}/lifecycle`, Config tab card, Lifecycle filter and Path-to-A step): skips *Stale table commits* health penalty and data-rewrite operations while keeping snapshot expiry, orphan cleanup and manifest rewrites (#519).
 - Run grid uses Airflow status colours, animates running/queued work, shows queue reason and ETA, planner skips, and a post-maintenance stats scan row; successful maintenance now requests a stats rescan (#525).
