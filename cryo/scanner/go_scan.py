@@ -15,6 +15,11 @@ from cryo.config import Settings, get_settings
 from cryo.cost.model import CostStatsInput
 from cryo.engines.native.payload import source_catalog_config
 from cryo.engines.native.runner import resolve_binary_path
+from cryo.observability.metrics import (
+    scan_manifest_cache_hits_total,
+    scan_manifest_cache_misses_total,
+    scan_object_store_requests_total,
+)
 from cryo.scanner.analyze import (
     FILE_SIZE_BIN_COUNT,
     HEALTH_SMALL_FILE_BYTES,
@@ -79,6 +84,15 @@ def analyze_catalog_table_go(
         wair_columns=wair_columns,
     )
     payload = run_scan_stats(request, settings=settings)
+    hits = int(payload.get("manifest_cache_hits") or 0)
+    misses = int(payload.get("manifest_cache_misses") or 0)
+    obj_reqs = int(payload.get("object_store_requests") or 0)
+    if hits > 0:
+        scan_manifest_cache_hits_total.inc(hits)
+    if misses > 0:
+        scan_manifest_cache_misses_total.inc(misses)
+    if obj_reqs > 0:
+        scan_object_store_requests_total.inc(obj_reqs)
     return table_analysis_from_go_payload(
         payload,
         schema_name=schema_name,
@@ -458,6 +472,7 @@ def table_analysis_from_go_payload(
         "manifest_stats": manifest_stats(manifest_count, manifest_total_bytes, total_files),
         "spec_migration": _spec_migration_from_go(payload),
         "scan_engine": "go",
+        "scan_kind": "full",
         "wair_file_sample": list(payload.get("wair_file_sample") or []),
         "wair_file_sample_complete": total_files == 0
         or bool(payload.get("wair_file_sample_complete")),
@@ -610,6 +625,11 @@ def _build_scan_stats_request(
     }
     if sampling:
         request["sample_columns"] = list(wair_columns)
+    cache_dir = settings.scan_manifest_cache_dir.strip()
+    cache_max_bytes = int(settings.scan_manifest_cache_max_mb) * MB
+    if cache_dir and cache_max_bytes > 0:
+        request["manifest_cache_dir"] = cache_dir
+        request["manifest_cache_max_bytes"] = cache_max_bytes
     return request
 
 

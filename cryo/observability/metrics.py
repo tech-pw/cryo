@@ -266,6 +266,27 @@ scanner_errors_total = Counter(
     ["source", "error_type"],
 )
 
+scan_tables_total = Counter(
+    "cryo_scan_tables_total",
+    "Tables scanned by scan kind (full or unchanged snapshot fast path) (#532).",
+    ["kind"],
+)
+
+scan_manifest_cache_hits_total = Counter(
+    "cryo_scan_manifest_cache_hits_total",
+    "Immutable Iceberg manifest summary cache hits (#532).",
+)
+
+scan_manifest_cache_misses_total = Counter(
+    "cryo_scan_manifest_cache_misses_total",
+    "Immutable Iceberg manifest summary cache misses (#532).",
+)
+
+scan_object_store_requests_total = Counter(
+    "cryo_scan_object_store_requests_total",
+    "Object-store metadata/manifest GET requests issued by the scanner (#532).",
+)
+
 # ==================== Planner Metrics ====================
 
 planner_plans_generated_total = Counter(
