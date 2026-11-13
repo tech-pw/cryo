@@ -1,0 +1,22 @@
+.flow-sankey { width: 100%; min-width: 0; }
+.flow-sankey-summary { margin-bottom: 10px; color: var(--color-text-secondary); font-size: 13px; line-height: 19px; }
+.flow-sankey-canvas { position: relative; width: 100%; }
+.flow-sankey-node:focus-visible .flow-sankey-label { outline: none; text-decoration: underline solid; }
+.flow-sankey-node:focus-visible rect:first-child { stroke: var(--focus-ring-color); stroke-width: 2; }
+.flow-sankey-tip { position: absolute; z-index: 5; display: flex; flex-direction: column; gap: 2px; max-width: 220px; padding: 7px 10px; border: 1px solid var(--color-border-default); border-radius: 8px; background: var(--primitive-surface); box-shadow: 0 6px 20px rgb(0 0 0 / 0.12); color: var(--color-text-primary); font-size: 12px; line-height: 17px; pointer-events: none; }
+.flow-sankey-tip span { color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+.flow-sankey-table { margin-top: 8px; font-size: 12px; }
+.flow-sankey-table summary { width: fit-content; cursor: pointer; color: var(--color-link); }
+.flow-sankey-table table { width: 100%; margin-top: 8px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.flow-sankey-table th, .flow-sankey-table td { padding: 5px 8px; border-bottom: 1px solid var(--color-border-default); text-align: left; }
+.flow-sankey-table th { color: var(--color-text-secondary); font-weight: 500; }
+.flow-sankey-table td:nth-child(n+3), .flow-sankey-table th:nth-child(n+3) { text-align: right; }
+.flow-sankey-narrow ul { margin: 10px 0 0; padding: 0; list-style: none; }
+.flow-sankey-bar { display: flex; height: 14px; overflow: hidden; border-radius: 4px; background: var(--color-chart-grid); }
+.flow-sankey-narrow button, .flow-sankey-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto 40px; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 0 4px; border-radius: 4px; font-size: 13px; text-align: left; }
+.flow-sankey-narrow button:hover { background: var(--color-primary-soft); }
+.flow-sankey-swatch { width: 10px; height: 10px; border-radius: 3px; }
+.flow-sankey-share { color: var(--color-text-secondary); font-size: 12px; text-align: right; }
+@media (prefers-reduced-motion: reduce) {
+  .flow-sankey path, .flow-sankey rect, .flow-sankey g { transition: none !important; }
+}

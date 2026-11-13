@@ -54,15 +54,15 @@ const pause = (scope_type: "global" | "tenant" | "destination", reason: string |
 const renderHome = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } })}><MemoryRouter><DatalakeHealth /></MemoryRouter></QueryClientProvider>);
 
 describe("Home overview", () => {
-  it("separates lake condition, platform health, maintenance and impact", async () => {
+  it("separates lake condition, platform health, flow, work and impact", async () => {
     renderHome();
     expect(await screen.findByRole("link", { name: /1 of 5 tables at D or F/ })).toBeInTheDocument();
-    for (const name of ["Lake health", "Cryo platform", "Latest nightly maintenance", "Storage impact", "Table freshness", "Your next steps", "Worst tables people query", "Fixed by Cryo"]) {
+    for (const name of ["Lake health", "Cryo platform", "Last night, table by table", "Storage impact", "Cryo's work, day by day", "Table freshness", "Your next steps", "Fix-first map", "Fixed by Cryo"]) {
       expect(screen.getByRole("region", { name })).toBeInTheDocument();
     }
     expect(screen.getByRole("img", { name: /Cryo platform health: 91 out of 100/ })).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Lake health" })).queryByText("/ 100")).not.toBeInTheDocument();
-    expect(screen.getByText("No nightly run yet")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Latest nightly maintenance" })).not.toBeInTheDocument();
   });
   it("uses precise table filters and preserves freshness time boundaries", async () => {
     renderHome();
@@ -162,7 +162,7 @@ describe("Home overview", () => {
     expect(getDatalakeDashboard).toHaveBeenCalledWith(expect.anything(), {
       top_limit: 0,
       drift_limit: 0,
-      hot_limit: 5,
+      hot_limit: 20,
       include_schema_cost: false
     });
     expect(getFleetTrends).toHaveBeenCalledWith(expect.anything(), { days: 14, include_cost: false });

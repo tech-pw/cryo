@@ -232,6 +232,7 @@ All notable changes to Cryo will be documented in this file. The format is based
   that removes nothing (#381).
 
 ### Changed
+- Home page revamp: a daily briefing with lake score and next best action, the maintenance flow Sankey, a calendar heatmap of Cryo's daily work, a fix-first map, a before-and-after chart for improved tables, and a redesigned Storage impact card. The latest nightly maintenance card moves off Home.
 - Cost renders each card as its data arrives without gating behind /dashboards/cost; Home, Cost and Decisions skip unrendered fleet queries, aggregate per-operation savings in SQL, and avoid full history GROUP BY on fast-path checks (#494).
 - Home, Cost and vitals read only the history inside their chart window (with new scan_at indexes) instead of ranking the whole fleet history on every load (#494).
 - `GET /sources/{id}/aws-integration` returns `200` with `null` instead of `404` when a source has no AWS integration, so Settings no longer logs a failed request per source. A non-admin on /settings/admin sees "Admin role required" instead of a silent redirect, and each Settings page has its own heading (#498).

@@ -1,19 +1,20 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 import { CryoTooltipProvider } from "../../components/ui/tooltip";
 import { formatStorage, heroView, listingCoverage, storageSegments } from "../../lib/storageOverview";
 import { StorageCard } from "./StorageCard";
 import { storageFixture } from "./storageFixture";
+import { waffleCells } from "./storageStory";
 
 const renderCard = (data = storageFixture()) =>
   render(<CryoTooltipProvider><MemoryRouter><StorageCard data={data} loading={false} error={false} /></MemoryRouter></CryoTooltipProvider>);
 
 describe("StorageCard", () => {
-  it("shows the measured hero, coverage and cumulative total", () => {
+  it("shows the measured hero, coverage and cumulative total", async () => {
     renderCard();
     const hero = screen.getByRole("region", { name: "Last 24 hours" });
-    expect(hero).toHaveTextContent("Cryo freed 1.5 TB");
+    await waitFor(() => expect(hero).toHaveTextContent("Cryo freed 1.5 TB"));
     expect(hero).toHaveTextContent("212 tables cleaned");
     expect(hero).toHaveTextContent("≈ $35");
     expect(hero).toHaveTextContent("Measured on 75% of actions (300 of 400)");
@@ -38,7 +39,7 @@ describe("StorageCard", () => {
     const { unmount } = renderCard(storageFixture({ freed_24h: { ...base.freed_24h, actions_measured: 0, bytes_freed: 0 } }));
     expect(screen.getByText(/Cryo cleaned/)).toHaveTextContent("Cryo cleaned 212 tables");
     expect(screen.getByText(/none reported a byte count/)).toBeInTheDocument();
-    expect(screen.queryByText(/0 GB/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/(^|\s)0 GB/)).not.toBeInTheDocument();
     unmount();
     renderCard(storageFixture({ freed_24h: { ...base.freed_24h, actions_succeeded: 0, actions_measured: 0, tables_cleaned: 0, bytes_freed: 0 } }));
     expect(screen.getByText("No cleanup ran in the last 24 hours")).toBeInTheDocument();
@@ -68,5 +69,19 @@ describe("storage helpers", () => {
     expect(Math.round(segments.reduce((sum, s) => sum + s.pct, 0))).toBe(100);
     expect(listingCoverage(storageFixture().breakdown)).toBe("partial");
     expect(heroView({ ...storageFixture().freed_24h, actions_succeeded: 0 }).state).toBe("idle");
+  });
+
+  it("shows the reclaim ring, the what-if line and the trend change", () => {
+    renderCard();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "64");
+    expect(screen.getByText(/the lake would weigh/)).toHaveTextContent("201 TB (10% lighter)");
+    expect(screen.getByText(/Total storage down/)).toBeInTheDocument();
+  });
+
+  it("splits a hundred waffle squares and keeps small slices visible", () => {
+    const cells = waffleCells([{ key: "a", bytes: 990 }, { key: "b", bytes: 1 }, { key: "c", bytes: 9 }]);
+    expect(cells).toHaveLength(100);
+    expect(cells.filter((k) => k === "b")).toHaveLength(1);
+    expect(waffleCells([{ key: "a", bytes: 0 }])).toEqual([]);
   });
 });

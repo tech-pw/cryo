@@ -19,8 +19,8 @@ for (const theme of ["light", "dark"] as const) {
     await page.setViewportSize({ width: 1440, height: 1100 });
     await home(page, theme);
     await expect(page.getByRole("region", { name: "Storage impact" })).toContainText("Measured on 75% of actions");
-    await expect(page.getByRole("region", { name: "Latest nightly maintenance" })).toContainText("462 / 500 selected");
-    await expect(page.getByRole("region", { name: "Latest nightly maintenance" })).toContainText("Partial");
+    await expect(page.getByRole("region", { name: "Latest nightly maintenance" })).toHaveCount(0);
+    await expect(page.getByRole("progressbar", { name: /reclaimed/ })).toBeVisible();
     await expect(page.getByRole("img", { name: /Cryo platform health/ })).toBeVisible();
     await expect(page.getByRole("link", { name: /Grade F, Critical/ })).toHaveAttribute("href", "/tables?grade=F");
     await expect(page.getByRole("link", { name: /76 tables need compaction/ })).toHaveAttribute("href", "/tables?needs=compaction");
