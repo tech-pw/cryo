@@ -39,6 +39,25 @@ The chart is in an OCI registry, so there is no `helm repo add`; every command t
 
 Releases are listed at <https://github.com/tech-pw/cryo/releases>, and the chart is on [Artifact Hub](https://artifacthub.io/packages/helm/cryo/cryo).
 
+### Pinning images yourself
+
+The published chart already pins its images. If you keep your own values file with
+`image.digest`, `migration.image.digest`, `spark.k8s.image.digest` and `web.image.digest`
+(for example, to deploy a commit from `main` between releases), don't copy digests by hand.
+A digest only exists in the repository that built it, so a `cryo` digest in the `cryo-spark`
+field renders fine and then fails to pull. Use the helper:
+
+```sh
+# Write the cryo, cryo-spark and cryo-web digests for one commit or tag, each under its own repository
+python deploy/pin_release_images.py pin --ref <commit-sha-or-tag> --file my-values.yaml
+
+# Before deploying: every repository + digest pair in the file must exist (run it in CI)
+python deploy/pin_release_images.py check --file my-values.yaml
+```
+
+`pin` leaves images Cryo doesn't build (Redis, your own mirrors) alone. `check` covers every
+block that has both `repository:` and `digest:`, Redis included.
+
 The pre-install migration Job reads that Secret and the install waits for it, so create the Secret first.
 
 The chart version is the release tag without its `v`: tag `v0.1.6` is chart `0.1.6`, and `appVersion` matches. The release workflow stamps the packaged `values.yaml` so `image`, `migration.image`, `native.image`, `web.image` and `spark.k8s.image` point at `ghcr.io/tech-pw/cryo`, `cryo-web` and `cryo-spark` for that tag, pinned by digest. The committed `values.yaml` in this repo still uses the local `cryo:latest` placeholders. See `scripts/stamp_helm_chart_release.sh`.
