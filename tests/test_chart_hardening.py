@@ -145,3 +145,53 @@ def test_ingress_routes_to_api_without_web() -> None:
     ingress = _kind(render("--set", "ingress.enabled=true"), "Ingress")[0]
     backend = ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]
     assert backend == {"name": "cryo-api", "port": {"number": 8000}}
+
+
+def test_maintenance_cronjob_gets_dedicated_spark_pool_placement() -> None:
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+    import yaml
+
+    if shutil.which("helm") is None:
+        pytest.skip("helm is required for chart rendering")
+    chart = Path(__file__).resolve().parents[1] / "deploy" / "helm" / "cryo"
+    d = "sha256:" + "0" * 64
+    out = subprocess.run(
+        [
+            "helm",
+            "template",
+            "cryo",
+            str(chart),
+            "--set",
+            f"image.digest={d}",
+            "--set",
+            f"migration.image.digest={d}",
+            "--set",
+            "redis.image.digest=sha256:" + "2" * 64,
+            "--set",
+            "maintenance.enabled=true",
+            "--set",
+            "spark.k8s.enabled=true",
+            "--set",
+            "spark.k8s.image.digest=sha256:" + "1" * 64,
+            "--set",
+            "spark.k8s.karpenter.installNodePool=true",
+            "--set",
+            "spark.k8s.karpenter.nodeClassName=pool",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    cron = next(
+        doc
+        for doc in yaml.safe_load_all(out)
+        if doc and doc.get("kind") == "CronJob" and "maintenance" in doc["metadata"]["name"]
+    )
+    container = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
+    env = {e["name"]: e.get("value") for e in container["env"]}
+    assert env["CRYO_SPARK_K8S_TOLERATIONS"] == "cryo.io/workload=spark:NoSchedule"
+    assert env["CRYO_SPARK_K8S_NODE_SELECTOR"].endswith("cryo.io/workload=spark")

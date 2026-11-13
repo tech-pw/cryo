@@ -107,8 +107,7 @@ spec:
                 {{- end }}
                 - name: CRYO_SPARK_K8S_SERVICE_ACCOUNT
                   value: {{ include "cryo.fullname" . }}-spark
-                - name: CRYO_SPARK_K8S_NODE_SELECTOR
-                  value: {{ .Values.spark.k8s.nodeSelector | quote }}
+                {{- include "cryo.sparkPlacementEnv" . | nindent 16 }}
               envFrom:
                 {{- include "cryo.envFrom" . | nindent 16 }}
               resources:
