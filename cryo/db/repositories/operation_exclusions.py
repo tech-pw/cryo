@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import AuditLog, TableOperationExclusion
+from cryo.db.models import AuditLog, Table, TableOperationExclusion
+from cryo.domain.lifecycle import TableLifecycle, lifecycle_excluded_operations
 from cryo.planner.guardrails import CORRECT_ORDER
 
 _EXCLUDABLE_VALUES = frozenset(op.value for op in CORRECT_ORDER)
@@ -21,16 +22,19 @@ class OperationExclusionChange:
 
 
 def excluded_operations(session: Session, table_id: uuid.UUID | str) -> tuple[str, ...]:
+    """Operations no plan may include for this table: the operator's exclusions plus the
+    ones an archived lifecycle drops (#519)."""
     table_uuid = table_id if isinstance(table_id, uuid.UUID) else uuid.UUID(str(table_id))
-    return tuple(
-        sorted(
-            session.scalars(
-                select(TableOperationExclusion.operation).where(
-                    TableOperationExclusion.table_id == table_uuid
-                )
+    operations = set(
+        session.scalars(
+            select(TableOperationExclusion.operation).where(
+                TableOperationExclusion.table_id == table_uuid
             )
         )
     )
+    lifecycle = session.scalar(select(Table.lifecycle).where(Table.id == table_uuid))
+    operations.update(lifecycle_excluded_operations(lifecycle))
+    return tuple(sorted(operations))
 
 
 def excluded_operations_by_table(
@@ -46,7 +50,16 @@ def excluded_operations_by_table(
     )
     for table_id, operation in rows:
         grouped.setdefault(table_id, []).append(operation)
-    return {table_id: tuple(sorted(ops)) for table_id, ops in grouped.items()}
+    archived = session.scalars(
+        select(Table.id).where(
+            Table.id.in_(list(table_ids)), Table.lifecycle == TableLifecycle.ARCHIVED.value
+        )
+    )
+    for table_id in archived:
+        grouped.setdefault(table_id, []).extend(
+            lifecycle_excluded_operations(TableLifecycle.ARCHIVED)
+        )
+    return {table_id: tuple(sorted(set(ops))) for table_id, ops in grouped.items()}
 
 
 def list_operation_exclusions(

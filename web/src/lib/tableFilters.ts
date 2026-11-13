@@ -99,6 +99,7 @@ const CANONICAL_FILTER_KEYS = [
   "coverage",
   "minMonthlySavings",
   "precision",
+  "lifecycle",
   "freshnessAsOf"
 ] as const;
 
@@ -163,6 +164,9 @@ export const needsFromSearchParams = (params: URLSearchParams): boolean | undefi
   return boolParam(params.get("needsCompaction"));
 };
 
+const lifecycleParam = (value: string | null): TableFilterState["lifecycle"] =>
+  value === "active" || value === "archived" ? value : null;
+
 export const filtersFromSearchParams = (params: URLSearchParams): TableFilterState => {
   const activeOnly = boolParam(params.get("activeOnly"));
   const grades = csvParam(firstParam(params, "grade", "grades"))?.map((grade) => grade.toUpperCase());
@@ -181,6 +185,7 @@ export const filtersFromSearchParams = (params: URLSearchParams): TableFilterSta
     minMonthlySavings: numberParam(params.get("minMonthlySavings")) ?? null,
     minReclaimableGb: numberParam(firstParam(params, "delete", "minReclaimableGb")) ?? null,
     costPrecision: (params.get("precision") as TableFilterState["costPrecision"]) ?? null,
+    lifecycle: lifecycleParam(params.get("lifecycle")),
     freshnessBucket: isFreshnessBucketKey(freshness)
       ? (freshness as TableFilterState["freshnessBucket"])
       : null,
@@ -240,6 +245,7 @@ export const filtersToSearchParamEntries = (
     entries.push(["delete", String(filters.minReclaimableGb)]);
   }
   if (filters.costPrecision) entries.push(["precision", filters.costPrecision]);
+  if (filters.lifecycle) entries.push(["lifecycle", filters.lifecycle]);
   if (filters.freshnessBucket) entries.push(["freshness", filters.freshnessBucket]);
   if (filters.freshnessAsOf) entries.push(["freshnessAsOf", filters.freshnessAsOf]);
   return entries;

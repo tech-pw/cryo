@@ -47,6 +47,7 @@ import { Input } from "../../components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { TruncationTooltip } from "../../components/ui/tooltip";
 import { Select } from "../../components/ui/select";
+import { LifecycleBadge } from "../../components/LifecycleBadge";
 import { useAuth } from "../../lib/auth";
 import { cn } from "../../lib/cn";
 import { filterPresetsForSources } from "../../lib/catalogBindings";
@@ -377,6 +378,7 @@ export const HealthCell = ({ table }: { table: TableRead }) => {
     <span className="inline-flex items-center gap-2 whitespace-nowrap">
       <GradePill grade={table.stats?.grade} />
       <span className="text-sm tabular-nums">{Math.round(score)}</span>
+      <LifecycleBadge lifecycle={table.lifecycle} />
       {delta != null && Math.abs(delta) >= 1 ? (
         <span
           className={cn(

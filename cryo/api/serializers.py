@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from cryo.api.schemas import TableRead
 from cryo.db.model_utils import catalog_name_for_table, qualified_table_name
 from cryo.db.models import Table
 from cryo.domain.enums import CostPrecision
+from cryo.domain.lifecycle import is_archive_candidate
 from cryo.scanner.failure_classifier import (
     classify_scan_failure,
     failure_category_actionable_from_cryo,
@@ -44,6 +47,17 @@ def table_to_read(table: Table, *, include_raw: bool = True) -> TableRead:
         updates["failure_category_actionable_from_cryo"] = failure_category_actionable_from_cryo(
             category
         )
+    if read.stats is not None:
+        committed = read.stats.last_snapshot_committed_at
+        if committed is not None and committed.tzinfo is None:
+            committed = committed.replace(tzinfo=UTC)
+        days = (datetime.now(UTC) - committed).days if committed is not None else None
+        if is_archive_candidate(
+            lifecycle=table.lifecycle,
+            days_since_commit=days,
+            query_count_30d=read.stats.query_count_30d,
+        ):
+            updates["archive_candidate"] = True
     if table.source is not None:
         updates["catalog_name"] = catalog_name_for_table(table)
         updates["source_name"] = table.source.name

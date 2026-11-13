@@ -47,6 +47,8 @@ const actionLabel = (step: PathStepRead): string => {
       return "Change partition spec";
     case "sort_order":
       return "Set sort order";
+    case "set_lifecycle":
+      return "Mark as archived";
     default:
       return "Apply";
   }

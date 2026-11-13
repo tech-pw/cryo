@@ -214,6 +214,11 @@ export interface TableRead {
   failure_category_guidance?: string | null;
   failure_category_actionable_from_cryo?: boolean;
   owner_email?: string | null;
+  lifecycle?: components["schemas"]["TableRead"]["lifecycle"];
+  lifecycle_changed_at?: string | null;
+  lifecycle_changed_by?: string | null;
+  lifecycle_reason?: string | null;
+  archive_candidate?: boolean;
   stats?: TableStatsRead | null;
   effective_preset?: TableEffectivePreset | null;
   maintenance?: TableMaintenance | null;

@@ -5,11 +5,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from cryo.api.deps import SessionDep, require_operator, require_viewer
+from cryo.api.deps import SessionDep, require_admin, require_operator, require_viewer
+from cryo.api.schemas import TableLifecycleResponse, TableLifecycleWrite
 from cryo.api.security import Principal, Role
 from cryo.db.models import Table
 from cryo.db.repositories.operation_exclusions import set_excluded_operations
+from cryo.db.repositories.table_lifecycle import set_table_lifecycle
 from cryo.db.tenant_scope import get_scoped_resource
+from cryo.domain.lifecycle import TableLifecycle
 from cryo.table_config import service
 from cryo.table_config.live import CatalogReadError
 from cryo.table_config.models import (
@@ -27,6 +30,54 @@ from cryo.table_config.risk import max_risk
 router = APIRouter(prefix="/api/v1", tags=["tables"])
 ViewerPrincipalDep = Annotated[Principal, Depends(require_viewer)]
 OperatorPrincipalDep = Annotated[Principal, Depends(require_operator)]
+AdminPrincipalDep = Annotated[Principal, Depends(require_admin)]
+
+
+@router.put("/tables/{table_id}/lifecycle", response_model=TableLifecycleResponse)
+def put_table_lifecycle(
+    table_id: uuid.UUID,
+    payload: TableLifecycleWrite,
+    session: SessionDep,
+    principal: AdminPrincipalDep,
+) -> TableLifecycleResponse:
+    """Mark a table archived (read-only on purpose) or return it to active (#519).
+
+    Archived tables skip the stale-commit health check, and every plan drops the operations
+    that rewrite data; snapshot expiry, orphan cleanup and manifest rewrites keep running.
+    Admin only; the caller types the table name to confirm, and every change is audited.
+    """
+    table = get_scoped_resource(session, Table, table_id, resource_type="Table")
+    if payload.confirm.strip() != table.table_name:
+        raise HTTPException(status_code=400, detail=f"Type {table.table_name} to confirm")
+    change = set_table_lifecycle(
+        session,
+        table,
+        TableLifecycle(payload.lifecycle),
+        reason=payload.reason.strip(),
+        actor=principal.subject,
+    )
+    session.commit()
+    session.refresh(table)
+    changed = change.before != change.after
+    if not changed:
+        message = f"Already {change.after}."
+    elif change.after == TableLifecycle.ARCHIVED:
+        message = "Marked as archived. Compaction and layout changes stop for this table."
+    else:
+        message = "Returned to active. Compaction and the stale-commit check apply again."
+    return TableLifecycleResponse(
+        table_id=table.id,
+        lifecycle=payload.lifecycle,
+        previous="archived" if change.before == TableLifecycle.ARCHIVED else "active",
+        changed=changed,
+        lifecycle_changed_at=table.lifecycle_changed_at,
+        lifecycle_changed_by=table.lifecycle_changed_by,
+        lifecycle_reason=table.lifecycle_reason,
+        audit_log_id=change.audit_id,
+        score_before=change.score_before,
+        score_after=change.score_after,
+        message=message,
+    )
 
 
 def _inputs(session: SessionDep, table_id: uuid.UUID) -> service.TableInputs:

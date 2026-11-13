@@ -139,6 +139,14 @@ export const buildFilterChips = (
     });
   }
 
+  if (filters.lifecycle) {
+    chips.push({
+      key: "lifecycle",
+      label: filters.lifecycle === "archived" ? "Archived only" : "Not archived",
+      onRemove: () => onPatch({ lifecycle: null })
+    });
+  }
+
   return chips;
 };
 

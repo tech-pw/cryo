@@ -67,6 +67,8 @@ export interface TableFilterState {
   freshnessBucket?: FreshnessBucketKey | null;
   freshnessAsOf?: string | null;
   activeOnly?: boolean;
+  /** Table lifecycle (issue 519); null or undefined matches both. */
+  lifecycle?: "active" | "archived" | null;
 }
 
 export const leaf = (
@@ -118,6 +120,7 @@ export const tableFiltersToPredicate = (filters: TableFilterState): Predicate | 
       ? leaf("reclaimable_bytes", ">=", Math.round(filters.minReclaimableGb * 1024 ** 3))
       : null,
     filters.costPrecision ? leaf("cost_precision", "=", filters.costPrecision) : null,
+    filters.lifecycle ? leaf("lifecycle", "=", filters.lifecycle) : null,
     freshnessPredicate(filters.freshnessBucket, filters.freshnessAsOf)
   ]);
 

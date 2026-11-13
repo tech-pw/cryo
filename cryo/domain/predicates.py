@@ -11,6 +11,7 @@ SUPPORTED_FIELDS = frozenset(
         "schema_name",
         "table_name",
         "is_active",
+        "lifecycle",
         "consecutive_scan_failures",
         "last_snapshot_committed_at",
         "needs_compaction",

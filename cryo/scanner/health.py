@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
+from cryo.domain.lifecycle import is_archived
 from cryo.scanner.property_recommendations import count_suboptimal_property_issues
+
+STALE_COMMITS_LABEL = "Stale table commits"
 
 # Must match cryo/planner/planner.py's own `min_small_files` default (the count below which
 # the planner decides OPTIMIZE isn't worth scheduling at all -- see planner.py:180). Grading a
@@ -289,11 +292,14 @@ def compute_health_score(
     health_small_file_count: int,
     *,
     now: datetime | None = None,
+    lifecycle: str | None = None,
 ) -> tuple[int, str, list[HealthDeduction]]:
     """Grade a table on what maintenance can fix.
 
     Structural findings (partition count, partition skew) are excluded from the score and
-    reported by :func:`compute_design_findings` instead (#264).
+    reported by :func:`compute_design_findings` instead (#264). An archived table (#519) is
+    read-only on purpose, so the stale-commit check does not apply to it; its weight is
+    unchanged for every other table.
     """
     thresholds = health_thresholds_for(stats)
     deductions: list[HealthDeduction] = []
@@ -394,7 +400,8 @@ def compute_health_score(
         lambda value, limit: f"{int(value)} snapshots (exceeds limit of {int(limit)})",
     )
     last_commit = stats.get("last_snapshot_committed_at") or stats.get("first_updated_at")
-    score = _deduct_snapshot_age(score, deductions, last_commit, now=now, thresholds=thresholds)
+    if not is_archived(lifecycle):
+        score = _deduct_snapshot_age(score, deductions, last_commit, now=now, thresholds=thresholds)
     score = _deduct(
         score,
         deductions,
@@ -537,10 +544,33 @@ def _deduct_snapshot_age(
         deductions,
         age_days,
         "snapshot_age_days",
-        "Stale table commits",
+        STALE_COMMITS_LABEL,
         thresholds,
         _snapshot_age_reason,
     )
+
+
+def apply_lifecycle(
+    deductions: Sequence[Mapping[str, Any]],
+    *,
+    lifecycle: str | None,
+    stats: Mapping[str, Any],
+    now: datetime | None,
+) -> tuple[int, str, list[HealthDeduction]]:
+    """Re-grade a scored table for its lifecycle without re-reading the scan.
+
+    Drops the stale-commit deduction for an archived table, or re-applies it from the
+    scanned last commit for an active one. Every other deduction is kept as scored. The
+    score is 100 minus the deductions (floored at 0), as in :func:`compute_health_score`.
+    """
+    kept: list[HealthDeduction] = [
+        cast(HealthDeduction, dict(d)) for d in deductions if d.get("label") != STALE_COMMITS_LABEL
+    ]
+    if not is_archived(lifecycle):
+        last_commit = stats.get("last_snapshot_committed_at") or stats.get("first_updated_at")
+        _deduct_snapshot_age(0, kept, last_commit, now=now, thresholds=health_thresholds_for(stats))
+    score = max(0, 100 - sum(int(d.get("deduction") or 0) for d in kept))
+    return score, _grade(score), kept
 
 
 def _as_datetime(value: Any) -> datetime | None:

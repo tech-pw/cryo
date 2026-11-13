@@ -1593,6 +1593,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tables/{table_id}/lifecycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Table Lifecycle
+         * @description Mark a table archived (read-only on purpose) or return it to active (#519).
+         *
+         *     Archived tables skip the stale-commit health check, and every plan drops the operations
+         *     that rewrite data; snapshot expiry, orphan cleanup and manifest rewrites keep running.
+         *     Admin only; the caller types the table name to confirm, and every change is audited.
+         */
+        put: operations["put_table_lifecycle_api_v1_tables__table_id__lifecycle_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/{table_id}/config": {
         parameters: {
             query?: never;
@@ -13972,6 +13996,52 @@ export interface components {
             /** Finished At */
             finished_at?: string | null;
         };
+        /** TableLifecycleResponse */
+        TableLifecycleResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /**
+             * Lifecycle
+             * @enum {string}
+             */
+            lifecycle: "active" | "archived";
+            /**
+             * Previous
+             * @enum {string}
+             */
+            previous: "active" | "archived";
+            /** Changed */
+            changed: boolean;
+            /** Lifecycle Changed At */
+            lifecycle_changed_at?: string | null;
+            /** Lifecycle Changed By */
+            lifecycle_changed_by?: string | null;
+            /** Lifecycle Reason */
+            lifecycle_reason?: string | null;
+            /** Audit Log Id */
+            audit_log_id?: number | null;
+            /** Score Before */
+            score_before?: number | null;
+            /** Score After */
+            score_after?: number | null;
+            /** Message */
+            message: string;
+        };
+        /** TableLifecycleWrite */
+        TableLifecycleWrite: {
+            /**
+             * Lifecycle
+             * @enum {string}
+             */
+            lifecycle: "active" | "archived";
+            /** Reason */
+            reason: string;
+            /** Confirm */
+            confirm: string;
+        };
         /** TableMaintenanceRead */
         TableMaintenanceRead: {
             /**
@@ -14251,6 +14321,23 @@ export interface components {
             failure_category_actionable_from_cryo: boolean;
             /** Owner Email */
             owner_email?: string | null;
+            /**
+             * Lifecycle
+             * @default active
+             * @enum {string}
+             */
+            lifecycle: "active" | "archived";
+            /** Lifecycle Changed At */
+            lifecycle_changed_at?: string | null;
+            /** Lifecycle Changed By */
+            lifecycle_changed_by?: string | null;
+            /** Lifecycle Reason */
+            lifecycle_reason?: string | null;
+            /**
+             * Archive Candidate
+             * @default false
+             */
+            archive_candidate: boolean;
             stats?: components["schemas"]["TableStatsRead"] | null;
             maintenance?: components["schemas"]["TableMaintenanceRead"] | null;
             effective_preset?: components["schemas"]["TableEffectivePresetRead"] | null;
@@ -18188,6 +18275,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PathToAApplyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_table_lifecycle_api_v1_tables__table_id__lifecycle_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TableLifecycleWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableLifecycleResponse"];
                 };
             };
             /** @description Validation Error */

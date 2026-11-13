@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
 import { ConfirmAction } from "../../confirm";
+import { LifecycleBadge, type TableLifecycle } from "../../LifecycleBadge";
 import { GradePill } from "../../status";
 import { Badge } from "../../ui/badge";
 import { Breadcrumb } from "../../ui/breadcrumb";
@@ -35,6 +36,8 @@ export interface TableDetailHeaderProps {
   score: number | null;
   grade: string | null;
   ownerEmail: string | null;
+  /** "archived" shows a badge beside the grade (issue 519). */
+  lifecycle?: TableLifecycle;
   partitionLabel: string;
   location: string | null;
   scanAt: string | null;
@@ -193,6 +196,7 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
   score,
   grade,
   ownerEmail,
+  lifecycle = "active",
   partitionLabel,
   location,
   scanAt,
@@ -330,6 +334,7 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
             <Badge variant="outline">Iceberg</Badge>
             <span className="ctd-header__partition"><GitBranch size={13} aria-hidden="true" />{formatPartitionColumnLabel(partitionLabel)}</span>
             <GradeScore grade={grade} score={score} />
+            <LifecycleBadge lifecycle={lifecycle} />
             <span>Owner <span className="text-foreground">{owner}</span></span>
           </div>
         </div>

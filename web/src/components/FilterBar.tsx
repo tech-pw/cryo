@@ -59,7 +59,8 @@ const ADVANCED_KEYS = [
   "minSmallFiles",
   "minMonthlySavings",
   "minReclaimableGb",
-  "costPrecision"
+  "costPrecision",
+  "lifecycle"
 ] as const satisfies readonly (keyof TableFilterState)[];
 
 const GRADE_OPTIONS = ["A", "B", "C", "D", "F"].map((grade) => ({ label: grade, value: grade }));
@@ -284,6 +285,22 @@ export const FilterBar = ({
                       { label: "Estimated", value: "heuristic" },
                       { label: "Metadata precise", value: "metadata" },
                       { label: "Storage verified", value: "storage_truth" }
+                    ]}
+                  />
+                </div>
+                <div className="col-span-2 flex flex-col gap-1">
+                  <Label htmlFor="filter-lifecycle" className="text-xs text-muted-foreground">
+                    Lifecycle
+                  </Label>
+                  <Select
+                    id="filter-lifecycle"
+                    allowClear
+                    placeholder="Active and archived"
+                    value={value.lifecycle ?? undefined}
+                    onChange={(lifecycle) => patch({ lifecycle: (lifecycle as TableFilterState["lifecycle"]) ?? null })}
+                    options={[
+                      { label: "Active", value: "active" },
+                      { label: "Archived (read-only)", value: "archived" }
                     ]}
                   />
                 </div>
