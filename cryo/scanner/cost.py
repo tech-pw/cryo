@@ -136,9 +136,33 @@ def account_metadata_cost(
     manifest_count = len(manifests_by_path)
     manifest_bytes_total = 0
     if not bounded_out:
-        for manifest, manifest_snapshot_ids in manifests_by_path.values():
+        from cryo.observability.metrics import (
+            scan_manifest_cache_hits_total,
+            scan_manifest_cache_misses_total,
+            scan_object_store_requests_total,
+        )
+        from cryo.scanner.manifest_cache import ManifestSummaryCache
+
+        manifest_cache = ManifestSummaryCache(
+            settings.scan_manifest_cache_dir,
+            max_bytes=int(settings.scan_manifest_cache_max_mb) * MB,
+        )
+        for manifest_path, (manifest, manifest_snapshot_ids) in manifests_by_path.items():
             manifest_bytes_total += int(_attr(manifest, "manifest_length", 0) or 0)
-            for entry in _call_manifest_entries(manifest, io):
+            cached = (
+                manifest_cache.get(manifest_path)
+                if manifest_cache.enabled and manifest_path
+                else None
+            )
+            if cached is not None:
+                scan_manifest_cache_hits_total.inc()
+                entries_iter: list[object] = list(cached)
+            else:
+                if manifest_cache.enabled and manifest_path:
+                    scan_manifest_cache_misses_total.inc()
+                scan_object_store_requests_total.inc()
+                entries_iter = _call_manifest_entries(manifest, io)
+            for entry in entries_iter:
                 if _entry_status_deleted(entry):
                     continue
                 data_file = _attr(entry, "data_file", entry)

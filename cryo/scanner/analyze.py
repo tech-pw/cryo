@@ -12,6 +12,11 @@ from typing import Any, Protocol, cast
 from cryo.config import Settings, get_settings
 from cryo.cost.model import CostStatsInput
 from cryo.domain.enums import Priority
+from cryo.observability.metrics import (
+    scan_manifest_cache_hits_total,
+    scan_manifest_cache_misses_total,
+    scan_object_store_requests_total,
+)
 from cryo.planner.partitions import normalize_transform
 from cryo.planner.schema_gates import schema_time_columns
 from cryo.scanner.commit_signals import commit_signals, commits_from_snapshots
@@ -26,8 +31,14 @@ from cryo.scanner.cost import (
     estimate_storage_cost,
 )
 from cryo.scanner.health import compute_design_findings, compute_health_score
+from cryo.scanner.manifest_cache import CachedManifestEntry, ManifestSummaryCache
 from cryo.scanner.orphans import table_location
-from cryo.scanner.quality import ColumnQualityAccumulator, summarize_column_quality
+from cryo.scanner.quality import (
+    ColumnQualityAccumulator,
+    _int_mapping,
+    _raw_mapping,
+    summarize_column_quality,
+)
 from cryo.scanner.signals import detect_format_version, enrich_stats_signals, manifest_stats
 
 logger = logging.getLogger(__name__)
@@ -158,6 +169,7 @@ def analyze_catalog_table(
     stats_history: Sequence[Mapping[str, Any]] | None = None,
     source_config: Mapping[str, Any] | None = None,
     wair_columns: Sequence[str] = (),
+    table_obj: object | None = None,
 ) -> TableAnalysis:
     del file_size_threshold_mb
     effective_settings = settings or Settings(scan_small_file_mb=small_file_mb)
@@ -183,12 +195,15 @@ def analyze_catalog_table(
             scan_at=scan_at,
             settings=effective_settings,
             stats_history=stats_history,
+            table_obj=table_obj,
             table_obj_loader=lambda: cast(_LoadableCatalog, catalog).load_table(
                 schema_name, table_name
             ),
             wair_columns=wair_columns,
         )
-    table_obj = cast(_LoadableCatalog, catalog).load_table(schema_name, table_name)
+    if table_obj is None:
+        scan_object_store_requests_total.inc()
+        table_obj = cast(_LoadableCatalog, catalog).load_table(schema_name, table_name)
     result = analyze_table(
         table_obj,
         schema_name,
@@ -245,12 +260,20 @@ def analyze_table(
     max_workers = settings.scan_parallel_manifests if parallel_manifests else 1
     manifest_read_errors: list[str] = []
     snapshot_times = _snapshot_times_by_id(table_obj)
+    manifest_cache = ManifestSummaryCache(
+        settings.scan_manifest_cache_dir,
+        max_bytes=int(settings.scan_manifest_cache_max_mb) * MB,
+    )
     for entry in _iter_live_entries(
         table_obj,
         manifests,
         parallel=parallel_manifests,
         max_workers=max_workers,
         manifest_errors=manifest_read_errors,
+        manifest_cache=manifest_cache,
+        default_fields=fields,
+        current_spec_id=current_spec_id,
+        fields_by_older_spec=fields_by_older_spec,
     ):
         data_file = _attr(entry, "data_file", entry)
         write_ms = _entry_write_ms(entry, snapshot_times)
@@ -523,6 +546,7 @@ def analyze_table(
         "wair_file_sample": [wair_file_samples[path] for path in sorted(wair_file_samples)],
         "wair_file_sample_complete": len(wair_file_samples) == total_files,
         "commit_signals": commit_signals(snapshot_info["commits"], now=scan_time),
+        "scan_kind": "full",
     }
     for signal_key in (
         "format_version",
@@ -635,6 +659,58 @@ def iter_data_files(
         yield _attr(entry, "data_file", entry)
 
 
+def _manifest_path_str(manifest: object) -> str:
+    path = _attr(manifest, "manifest_path", None) or _attr(manifest, "filepath", None)
+    if callable(path):
+        try:
+            path = path()
+        except Exception:  # noqa: BLE001
+            path = None
+    return str(path) if isinstance(path, str) and path else ""
+
+
+def _summarize_entry_for_cache(
+    entry: object,
+    default_fields: Sequence[Mapping[str, Any]],
+    current_spec_id: int | None,
+    fields_by_older_spec: Mapping[int, list[dict[str, Any]]],
+) -> CachedManifestEntry:
+    data_file = _attr(entry, "data_file", entry)
+    spec_id = _optional_int(_attr(data_file, "spec_id", None))
+    older = current_spec_id is not None and spec_id is not None and spec_id != current_spec_id
+    own_fields: Sequence[Mapping[str, Any]] = (
+        fields_by_older_spec.get(spec_id, []) if older and spec_id is not None else default_fields
+    )
+    partition_vals = data_file_partition_values(data_file, own_fields)
+    raw_size = _attr(data_file, "file_size_in_bytes", None)
+    file_size = int(raw_size) if raw_size is not None else None
+    lows = {
+        k: bytes(v)
+        for k, v in _raw_mapping(getattr(data_file, "lower_bounds", None)).items()
+        if isinstance(v, bytes | bytearray)
+    }
+    highs = {
+        k: bytes(v)
+        for k, v in _raw_mapping(getattr(data_file, "upper_bounds", None)).items()
+        if isinstance(v, bytes | bytearray)
+    }
+    file_path = _attr(data_file, "file_path", None)
+    return CachedManifestEntry(
+        file_path=str(file_path) if isinstance(file_path, str) else "",
+        file_size_in_bytes=file_size,
+        record_count=int(_attr(data_file, "record_count", 0) or 0),
+        content=str(_attr(data_file, "content", "") or ""),
+        file_format=str(_attr(data_file, "file_format", "") or ""),
+        spec_id=spec_id,
+        partition_values=partition_vals,
+        null_value_counts=_int_mapping(getattr(data_file, "null_value_counts", None)),
+        value_counts=_int_mapping(getattr(data_file, "value_counts", None)),
+        lower_bounds=lows,
+        upper_bounds=highs,
+        snapshot_id=_entry_snapshot_id(entry),
+    )
+
+
 def _iter_live_entries(
     table_obj: object,
     manifests: Sequence[object] | None = None,
@@ -642,19 +718,40 @@ def _iter_live_entries(
     parallel: bool = True,
     max_workers: int = 8,
     manifest_errors: list[str] | None = None,
+    manifest_cache: ManifestSummaryCache | None = None,
+    default_fields: Sequence[Mapping[str, Any]] = (),
+    current_spec_id: int | None = None,
+    fields_by_older_spec: Mapping[int, list[dict[str, Any]]] | None = None,
 ) -> Iterable[object]:
     manifest_list = list(manifests) if manifests is not None else _manifests(table_obj)
     io = _attr(table_obj, "io", None)
+    older_map = fields_by_older_spec or {}
 
     if not parallel or len(manifest_list) <= 1:
         for manifest in manifest_list:
-            yield from _iter_manifest_entries(manifest, io, manifest_errors=manifest_errors)
+            yield from _iter_manifest_entries(
+                manifest,
+                io,
+                manifest_errors=manifest_errors,
+                manifest_cache=manifest_cache,
+                default_fields=default_fields,
+                current_spec_id=current_spec_id,
+                fields_by_older_spec=older_map,
+            )
         return
 
     workers = max(1, min(max_workers, len(manifest_list)))
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(_read_manifest_entries, manifest, io): manifest
+            executor.submit(
+                _read_manifest_entries,
+                manifest,
+                io,
+                manifest_cache=manifest_cache,
+                default_fields=default_fields,
+                current_spec_id=current_spec_id,
+                fields_by_older_spec=older_map,
+            ): manifest
             for manifest in manifest_list
         }
         for future in as_completed(futures):
@@ -672,8 +769,19 @@ def _iter_manifest_entries(
     io: object,
     *,
     manifest_errors: list[str] | None = None,
+    manifest_cache: ManifestSummaryCache | None = None,
+    default_fields: Sequence[Mapping[str, Any]] = (),
+    current_spec_id: int | None = None,
+    fields_by_older_spec: Mapping[int, list[dict[str, Any]]] | None = None,
 ) -> Iterable[object]:
-    entries, error = _read_manifest_entries(manifest, io)
+    entries, error = _read_manifest_entries(
+        manifest,
+        io,
+        manifest_cache=manifest_cache,
+        default_fields=default_fields,
+        current_spec_id=current_spec_id,
+        fields_by_older_spec=fields_by_older_spec or {},
+    )
     if error and manifest_errors is not None:
         manifest_errors.append(error)
     for entry in entries:
@@ -682,10 +790,36 @@ def _iter_manifest_entries(
         yield entry
 
 
-def _read_manifest_entries(manifest: object, io: object) -> tuple[list[object], str | None]:
-    """Read manifest entries; return empty list + error message on failure."""
+def _read_manifest_entries(
+    manifest: object,
+    io: object,
+    *,
+    manifest_cache: ManifestSummaryCache | None = None,
+    default_fields: Sequence[Mapping[str, Any]] = (),
+    current_spec_id: int | None = None,
+    fields_by_older_spec: Mapping[int, list[dict[str, Any]]] | None = None,
+) -> tuple[list[object], str | None]:
+    """Read manifest entries (using immutable cache when available); return list + error."""
+    manifest_path = _manifest_path_str(manifest)
+    if manifest_cache is not None and manifest_cache.enabled and manifest_path:
+        cached = manifest_cache.get(manifest_path)
+        if cached is not None:
+            scan_manifest_cache_hits_total.inc()
+            return list(cached), None
+        scan_manifest_cache_misses_total.inc()
+
     try:
-        return _call_manifest_entries(manifest, io), None
+        scan_object_store_requests_total.inc()
+        live_entries = _call_manifest_entries(manifest, io)
+        if manifest_cache is not None and manifest_cache.enabled and manifest_path:
+            older_map = fields_by_older_spec or {}
+            summaries = [
+                _summarize_entry_for_cache(entry, default_fields, current_spec_id, older_map)
+                for entry in live_entries
+                if not _entry_status_deleted(entry)
+            ]
+            manifest_cache.put(manifest_path, summaries)
+        return live_entries, None
     except Exception as exc:
         logger.warning("Failed to read Iceberg manifest entries: %s", exc)
         return [], str(exc)
@@ -940,6 +1074,7 @@ def _manifests(table_obj: object) -> list[object]:
     snapshot = _call_or_attr(table_obj, "current_snapshot", default=None)
     if snapshot is None:
         return []
+    scan_object_store_requests_total.inc()
     return list(
         _call_or_attr(snapshot, "manifests", _attr(table_obj, "io", None), default=()) or []
     )
