@@ -5071,21 +5071,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Similarity Clusters
-         * @description Latest-generation cluster list, ranked by reclaimable storage -- the primary data
-         *     source for the similarity page's cluster/bubble graph. Each cluster shows every
-         *     member's role (keep vs drop_candidate) and the reasoning behind it, never a bare score.
-         *
-         *     Column-projected and chunked rather than full-entity/unbounded-IN selects --
-         *     confirmed live, 2026-08-13: this endpoint (called on every page load) OOM-killed the
-         *     API pod (6Gi limit) twice within minutes, same root cause already found and fixed in
-         *     cryo.intelligence.dedup.pipeline._replace_clusters (select(Table)/select(TableStats)
-         *     for the whole cluster-membership set, plus a per-cluster max-similarity query -- 498
-         *     of them on the real fleet's data -- each with its own unbounded IN clause). See that
-         *     module's docstring for the fuller investigation writeup this fix reuses.
-         */
-        get: operations["list_similarity_clusters_api_v1_dedup_clusters_get"];
+        /** Get Similarity Clusters Route */
+        get: operations["get_similarity_clusters_route_api_v1_dedup_clusters_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -24500,7 +24487,7 @@ export interface operations {
             };
         };
     };
-    list_similarity_clusters_api_v1_dedup_clusters_get: {
+    get_similarity_clusters_route_api_v1_dedup_clusters_get: {
         parameters: {
             query?: {
                 min_reclaimable_gb?: number;

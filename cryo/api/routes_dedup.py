@@ -23,13 +23,13 @@ table; role="drop_candidate" is a recommendation label only.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 
-from cryo.api.deps import SessionDep, require_operator, require_viewer
+from cryo.api.deps import CurrentPrincipal, SessionDep, require_operator, require_viewer
 from cryo.api.schemas import (
     SimilarityClusterMemberRead,
     SimilarityClusterRead,
@@ -126,11 +126,6 @@ def run_dedup_pipeline(
     )
 
 
-@router.get(
-    "/dedup/clusters",
-    response_model=SimilarityClustersResponse,
-    dependencies=[Depends(require_viewer)],
-)
 def list_similarity_clusters(
     session: SessionDep,
     min_reclaimable_gb: Annotated[float, Query(ge=0)] = 0.0,
@@ -138,8 +133,38 @@ def list_similarity_clusters(
     """Latest-generation cluster list, ranked by reclaimable storage -- the primary data
     source for the similarity page's cluster/bubble graph. Each cluster shows every
     member's role (keep vs drop_candidate) and the reasoning behind it, never a bare score.
+    """
+    return _compute_similarity_clusters(session, min_reclaimable_gb)
 
-    Column-projected and chunked rather than full-entity/unbounded-IN selects --
+
+@router.get(
+    "/dedup/clusters",
+    response_model=SimilarityClustersResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def get_similarity_clusters_route(
+    request: Request,
+    session: SessionDep,
+    principal: CurrentPrincipal,
+    min_reclaimable_gb: Annotated[float, Query(ge=0)] = 0.0,
+) -> Any:
+    from cryo.api.conditional_cache import conditional_cache, insights_clusters_stamps
+
+    return conditional_cache.serve(
+        request=request,
+        route="/api/v1/dedup/clusters",
+        principal=principal,
+        params={"min_reclaimable_gb": min_reclaimable_gb},
+        stamps=insights_clusters_stamps(session),
+        compute=lambda: list_similarity_clusters(session, min_reclaimable_gb),
+    )
+
+
+def _compute_similarity_clusters(
+    session: SessionDep,
+    min_reclaimable_gb: float = 0.0,
+) -> SimilarityClustersResponse:
+    """Column-projected and chunked rather than full-entity/unbounded-IN selects --
     confirmed live, 2026-08-13: this endpoint (called on every page load) OOM-killed the
     API pod (6Gi limit) twice within minutes, same root cause already found and fixed in
     cryo.intelligence.dedup.pipeline._replace_clusters (select(Table)/select(TableStats)
