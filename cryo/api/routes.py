@@ -251,16 +251,21 @@ COMPUTED_SORT_FIELDS = {"score_delta_7d": score_delta_expr}
 )
 def get_datalake_dashboard(
     session: SessionDep,
-    top_limit: Annotated[int, Query(ge=1, le=50)] = 10,
-    drift_limit: Annotated[int, Query(ge=1, le=365)] = 30,
-    hot_limit: Annotated[int, Query(ge=1, le=20)] = 5,
+    top_limit: Annotated[int, Query(ge=0, le=50)] = 10,
+    drift_limit: Annotated[int, Query(ge=0, le=365)] = 30,
+    hot_limit: Annotated[int, Query(ge=0, le=20)] = 5,
+    include_schema_cost: Annotated[bool, Query()] = True,
 ) -> dict[str, object]:
+    extra: dict[str, Any] = {}
+    if not include_schema_cost:
+        extra["include_schema_cost"] = False
     return datalake.dashboard_datalake(
         session,
         top_limit=top_limit,
         drift_limit=drift_limit,
         hot_limit=hot_limit,
         settings=Settings(),
+        **extra,
     )
 
 
@@ -309,7 +314,7 @@ def get_schema_cost_dashboard(
 )
 def get_cost_dashboard(
     session: SessionDep,
-    top_limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    top_limit: Annotated[int, Query(ge=0, le=50)] = 10,
     trend_limit: Annotated[int, Query(ge=1, le=365)] = 30,
 ) -> dict[str, object]:
     return datalake.dashboard_cost(

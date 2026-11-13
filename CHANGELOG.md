@@ -229,6 +229,7 @@ All notable changes to Cryo will be documented in this file. The format is based
   that removes nothing (#381).
 
 ### Changed
+- Cost renders each card as its data arrives without gating behind /dashboards/cost; Home, Cost and Decisions skip unrendered fleet queries, aggregate per-operation savings in SQL, and avoid full history GROUP BY on fast-path checks (#494).
 - Home, Cost and vitals read only the history inside their chart window (with new scan_at indexes) instead of ranking the whole fleet history on every load (#494).
 - `GET /sources/{id}/aws-integration` returns `200` with `null` instead of `404` when a source has no AWS integration, so Settings no longer logs a failed request per source. A non-admin on /settings/admin sees "Admin role required" instead of a silent redirect, and each Settings page has its own heading (#498).
 - Decisions loads fleet SLA status only on the Approvals tab (it took 16 s on a 12k-table fleet) and pages recommendations 50 at a time. Insights → Duplicates shows 20 groups at a time and fetches pair evidence only for those (#494).

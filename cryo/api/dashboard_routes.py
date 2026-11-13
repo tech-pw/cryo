@@ -492,6 +492,7 @@ def get_fleet_trends(
     session: SessionDep,
     _principal: Annotated[dict, Depends(require_viewer)],
     days: Annotated[int, Query(description="Days of history to fetch", ge=1, le=90)] = 30,
+    include_cost: Annotated[bool, Query()] = True,
 ) -> FleetTrendsResponse:
     """Aggregate fleet-wide health and cost trends by day."""
     tenant_id = require_tenant(session)
@@ -499,7 +500,11 @@ def get_fleet_trends(
     return FleetTrendsResponse(
         days=days,
         health_trend=aggregate_fleet_health_trend(session, since=since, tenant_id=tenant_id),
-        cost_trend=aggregate_fleet_cost_trend(session, since=since, tenant_id=tenant_id),
+        cost_trend=(
+            aggregate_fleet_cost_trend(session, since=since, tenant_id=tenant_id)
+            if include_cost
+            else []
+        ),
     )
 
 

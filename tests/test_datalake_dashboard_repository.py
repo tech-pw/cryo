@@ -817,3 +817,41 @@ def test_recently_improved_claims_only_grades_raised_after_a_succeeded_job(sessi
 
 def test_recently_improved_is_empty_without_recent_runs(session) -> None:
     assert recently_improved_tables(session, now=datetime(2026, 7, 10, tzinfo=UTC)) == ([], 0)
+
+
+def test_dashboard_datalake_skips_unused_sections_when_requested(session) -> None:
+    """#494: Home passes top_limit=0, drift_limit=0, include_schema_cost=False."""
+    from cryo.api.schemas import DatalakeDashboardResponse
+    from cryo.db.repositories.datalake import dashboard_datalake
+
+    source = _seed_source(session)
+    as_of = datetime(2026, 8, 4, 12, tzinfo=UTC)
+    table_id = _seed_graded_table(
+        session, source, name="slim", grade="D", score=40, queries=5, scan_at=as_of
+    )
+    session.add(
+        TableStatsHistory(
+            table_id=table_id,
+            scan_at=as_of,
+            total_size_gb=10.0,
+            total_files=100,
+            small_files_count=50,
+            overall_score=40,
+            grade="D",
+        )
+    )
+    session.commit()
+
+    payload = dashboard_datalake(
+        session,
+        top_limit=0,
+        drift_limit=0,
+        hot_limit=5,
+        include_schema_cost=False,
+        now=as_of,
+    )
+    DatalakeDashboardResponse.model_validate(payload)
+    assert payload["top_offenders"] == []
+    assert payload["drift"] == []
+    assert payload["cost_by_schema"] == []
+    assert payload["hot_at_risk_count"] == 1

@@ -48,7 +48,6 @@ import {
 } from "./home/homeSignals";
 import "./home/home.css";
 
-const TOP_OFFENDERS_LIMIT = 1;
 const HOT_LIMIT = 5;
 const NIGHTS = 14;
 const LIVE_MS = 60_000;
@@ -73,8 +72,14 @@ const gradedTables = (distribution: Array<{ grade: string; count: number }> | nu
 export const DatalakeHealth = () => {
   const { api, token } = useAuth();
   const dashboard = useQuery({
-    queryKey: ["dashboard", token, TOP_OFFENDERS_LIMIT, HOT_LIMIT],
-    queryFn: () => getDatalakeDashboard(api, { top_limit: TOP_OFFENDERS_LIMIT, hot_limit: HOT_LIMIT }),
+    queryKey: ["dashboard", token, 0, HOT_LIMIT],
+    queryFn: () =>
+      getDatalakeDashboard(api, {
+        top_limit: 0,
+        drift_limit: 0,
+        hot_limit: HOT_LIMIT,
+        include_schema_cost: false
+      }),
     retry: 1,
     refetchInterval: SLOW_MS
   });
@@ -121,8 +126,8 @@ export const DatalakeHealth = () => {
     refetchInterval: LIVE_MS
   });
   const fleetTrends = useQuery({
-    queryKey: ["fleet-trends", token, NIGHTS],
-    queryFn: () => getFleetTrends(api, { days: NIGHTS }),
+    queryKey: ["fleet-trends", token, NIGHTS, "health-only"],
+    queryFn: () => getFleetTrends(api, { days: NIGHTS, include_cost: false }),
     retry: 1,
     refetchInterval: SLOW_MS
   });

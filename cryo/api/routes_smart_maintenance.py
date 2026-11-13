@@ -175,20 +175,27 @@ def smart_maintenance_overview(
         else:
             tiers.unknown += count
 
+    # Filter out the 99% of rows without roi_decisions before lateral jsonb_array_elements,
+    # so Postgres avoids unnesting an empty array across every table's raw JSONB (#494).
     roi_shadow = (
-        session.scalar(
-            text(
-                """
-                select count(*)
-                from cryo.table_stats ts,
-                     jsonb_array_elements(
-                         coalesce(ts.raw #> '{smart_maintenance,roi_decisions}', '[]'::jsonb)
-                     ) as decision
-                where (decision ->> 'shadow')::boolean is true
-                """
+        (
+            session.scalar(
+                text(
+                    """
+                    select count(*)
+                    from cryo.table_stats ts
+                    cross join lateral jsonb_array_elements(
+                        ts.raw #> '{smart_maintenance,roi_decisions}'
+                    ) as decision
+                    where jsonb_typeof(ts.raw #> '{smart_maintenance,roi_decisions}') = 'array'
+                      and (decision ->> 'shadow')::boolean is true
+                    """
+                )
             )
+            or 0
         )
-        or 0
+        if session.get_bind().dialect.name == "postgresql"
+        else 0
     )
 
     pending_layout = session.scalar(

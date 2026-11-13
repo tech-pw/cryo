@@ -5,12 +5,12 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, SupportsFloat, cast
 
 from sqlalchemy import and_, case, desc, func, literal, select
-from sqlalchemy.orm import Session, load_only, selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from cryo.api.schemas import TableRead
 from cryo.api.serializers import table_to_read
 from cryo.config import Settings
-from cryo.cost.model import bytes_to_usd
+from cryo.cost.model import GB, GIB, bytes_to_usd
 from cryo.db.models import (
     AuditLog,
     Destination,
@@ -57,6 +57,7 @@ def dashboard_datalake(
     top_limit: int = 10,
     drift_limit: int = 30,
     hot_limit: int = 5,
+    include_schema_cost: bool = True,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
@@ -89,7 +90,7 @@ def dashboard_datalake(
     # OOMKill at the 6Gi limit on a single GET /dashboards/datalake. Same class of bug as
     # smart_maintenance_overview (see values.yaml api.resources comment).
     cost_totals = _sql_aggregate_cost_totals(session, settings=settings)
-    cost_by_schema = _sql_aggregate_cost_by_schema(session)
+    cost_by_schema = _sql_aggregate_cost_by_schema(session) if include_schema_cost else []
 
     grade_distribution = [
         {"grade": grade or "unknown", "count": int(count)}
@@ -107,89 +108,96 @@ def dashboard_datalake(
         as_of=freshness_as_of,
     )
 
-    top_offenders = [
-        {
-            "table_id": row.id,
-            "schema_name": row.schema_name,
-            "table_name": row.table_name,
-            "grade": row.grade,
-            "overall_score": row.overall_score,
-            "total_size_gb": float(row.total_size_gb or 0),
-            "total_files": int(row.total_files or 0),
-            "small_files_count": int(row.small_files_count or 0),
-            "delete_file_pct": row.delete_file_pct,
-            "estimated_monthly_s3_cost_usd": row.estimated_monthly_s3_cost_usd,
-            "query_count_30d": int(row.query_count_30d or 0),
-        }
-        for row in session.execute(
-            select(
-                Table.id,
-                Table.schema_name,
-                Table.table_name,
-                TableStats.grade,
-                TableStats.overall_score,
-                TableStats.total_size_gb,
-                TableStats.total_files,
-                TableStats.small_files_count,
-                TableStats.delete_file_pct,
-                TableStats.estimated_monthly_s3_cost_usd,
-                TableStats.query_count_30d,
+    top_offenders = (
+        [
+            {
+                "table_id": row.id,
+                "schema_name": row.schema_name,
+                "table_name": row.table_name,
+                "grade": row.grade,
+                "overall_score": row.overall_score,
+                "total_size_gb": float(row.total_size_gb or 0),
+                "total_files": int(row.total_files or 0),
+                "small_files_count": int(row.small_files_count or 0),
+                "delete_file_pct": row.delete_file_pct,
+                "estimated_monthly_s3_cost_usd": row.estimated_monthly_s3_cost_usd,
+                "query_count_30d": int(row.query_count_30d or 0),
+            }
+            for row in session.execute(
+                select(
+                    Table.id,
+                    Table.schema_name,
+                    Table.table_name,
+                    TableStats.grade,
+                    TableStats.overall_score,
+                    TableStats.total_size_gb,
+                    TableStats.total_files,
+                    TableStats.small_files_count,
+                    TableStats.delete_file_pct,
+                    TableStats.estimated_monthly_s3_cost_usd,
+                    TableStats.query_count_30d,
+                )
+                .select_from(Table)
+                .join(TableStats)
+                .where(Table.is_active.is_(True))
+                .order_by(
+                    TableStats.needs_compaction.desc(),
+                    TableStats.small_files_count.desc(),
+                    TableStats.overall_score.asc(),
+                    Table.schema_name.asc(),
+                    Table.table_name.asc(),
+                )
+                .limit(top_limit)
             )
-            .select_from(Table)
-            .join(TableStats)
-            .where(Table.is_active.is_(True))
-            .order_by(
-                TableStats.needs_compaction.desc(),
-                TableStats.small_files_count.desc(),
-                TableStats.overall_score.asc(),
-                Table.schema_name.asc(),
-                Table.table_name.asc(),
-            )
-            .limit(top_limit)
-        )
-    ]
+        ]
+        if top_limit > 0
+        else []
+    )
 
-    # One point per day over the latest row per table that day. Grouping on the exact
-    # scan_at made each point whichever few tables shared a timestamp, so the chart was a
-    # sawtooth of unrelated subsets rather than the fleet (issue #190).
-    latest_stats = _latest_history_rows_per_table_day(
-        session,
-        TableStatsHistory,
-        (
-            TableStatsHistory.total_size_gb,
-            TableStatsHistory.total_files,
-            TableStatsHistory.small_files_count,
-            TableStatsHistory.overall_score,
-        ),
-        since=_series_start(freshness_as_of, drift_limit),
-    )
-    drift_rows = list(
-        session.execute(
-            select(
-                func.max(latest_stats.c.scan_at),
-                func.coalesce(func.sum(latest_stats.c.total_size_gb), 0.0),
-                func.coalesce(func.sum(latest_stats.c.total_files), 0),
-                func.coalesce(func.sum(latest_stats.c.small_files_count), 0),
-                func.avg(latest_stats.c.overall_score),
+    if drift_limit > 0:
+        # One point per day over the latest row per table that day. Grouping on the exact
+        # scan_at made each point whichever few tables shared a timestamp, so the chart was a
+        # sawtooth of unrelated subsets rather than the fleet (issue #190).
+        latest_stats = _latest_history_rows_per_table_day(
+            session,
+            TableStatsHistory,
+            (
+                TableStatsHistory.total_size_gb,
+                TableStatsHistory.total_files,
+                TableStatsHistory.small_files_count,
+                TableStatsHistory.overall_score,
+            ),
+            since=_series_start(freshness_as_of, drift_limit),
+        )
+        drift_rows = list(
+            session.execute(
+                select(
+                    func.max(latest_stats.c.scan_at),
+                    func.coalesce(func.sum(latest_stats.c.total_size_gb), 0.0),
+                    func.coalesce(func.sum(latest_stats.c.total_files), 0),
+                    func.coalesce(func.sum(latest_stats.c.small_files_count), 0),
+                    func.avg(latest_stats.c.overall_score),
+                )
+                .where(latest_stats.c.rn == 1)
+                .group_by(latest_stats.c.day)
+                .order_by(desc(latest_stats.c.day))
+                .limit(drift_limit)
             )
-            .where(latest_stats.c.rn == 1)
-            .group_by(latest_stats.c.day)
-            .order_by(desc(latest_stats.c.day))
-            .limit(drift_limit)
         )
-    )
-    drift = [
-        {
-            "scan_at": _as_utc(scan_at) if isinstance(scan_at, datetime) else scan_at,
-            "total_size_gb": float(total_size_gb or 0),
-            "total_files": int(total_files or 0),
-            "small_files_count": int(small_files_count or 0),
-            "avg_overall_score": float(avg_score) if avg_score is not None else None,
-        }
-        for scan_at, total_size_gb, total_files, small_files_count, avg_score in reversed(
-            drift_rows
-        )
-    ]
+        drift = [
+            {
+                "scan_at": _as_utc(scan_at) if isinstance(scan_at, datetime) else scan_at,
+                "total_size_gb": float(total_size_gb or 0),
+                "total_files": int(total_files or 0),
+                "small_files_count": int(small_files_count or 0),
+                "avg_overall_score": float(avg_score) if avg_score is not None else None,
+            }
+            for scan_at, total_size_gb, total_files, small_files_count, avg_score in reversed(
+                drift_rows
+            )
+        ]
+    else:
+        drift = []
 
     return {
         "totals": {
@@ -792,51 +800,48 @@ def _sql_aggregate_cost_by_schema(session: Session) -> list[dict[str, Any]]:
 def _sql_aggregate_savings_by_operation(
     session: Session, *, settings: Settings
 ) -> list[dict[str, object]]:
-    """Per-operation savings from TableCost reclaim columns only (no raw JSONB)."""
-    totals: dict[OperationType, dict[str, float | int]] = {
-        operation: {"savings_usd_month": 0.0, "reclaimable_bytes": 0}
-        for operation, _field in _OPERATION_RECLAIM_FIELDS
-    }
-    # load_only the reclaim + price columns -- never TableCost.raw (can be large fleet-wide).
-    costs = session.scalars(
-        select(TableCost)
-        .join(Table, Table.id == TableCost.table_id)
-        .where(Table.is_active.is_(True))
-        .options(
-            load_only(
-                TableCost.price_per_gb_month,
-                TableCost.reclaim_expire_bytes,
-                TableCost.reclaim_orphan_bytes,
-                TableCost.reclaim_optimize_bytes,
-                TableCost.reclaim_manifests_bytes,
+    """Per-operation savings aggregated in SQL across active TableCost rows (#494)."""
+    divisor = GIB if settings.cost_use_gib else GB
+    exprs: list[Any] = []
+    for _operation, field_name in _OPERATION_RECLAIM_FIELDS:
+        col = getattr(TableCost, field_name)
+        pos = case((col > 0, col), else_=0)
+        exprs.append(func.coalesce(func.sum(pos), 0))
+        exprs.append(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (col > 0, (pos * TableCost.price_per_gb_month) / float(divisor)),
+                        else_=0.0,
+                    )
+                ),
+                0.0,
             )
         )
-    )
-    for cost in costs:
-        for operation, field_name in _OPERATION_RECLAIM_FIELDS:
-            reclaim_bytes = int(getattr(cost, field_name) or 0)
-            if reclaim_bytes <= 0:
-                continue
-            usd = bytes_to_usd(
-                reclaim_bytes,
-                price_per_gb_month=cost.price_per_gb_month,
-                use_gib=settings.cost_use_gib,
+    row = session.execute(
+        select(*exprs)
+        .select_from(TableCost)
+        .join(Table, Table.id == TableCost.table_id)
+        .where(Table.is_active.is_(True))
+    ).one()
+    items: list[dict[str, object]] = []
+    for idx, (operation, _field_name) in enumerate(_OPERATION_RECLAIM_FIELDS):
+        reclaim_bytes = int(row[idx * 2] or 0)
+        usd = round(float(row[idx * 2 + 1] or 0.0), 4)
+        if usd > 0 or reclaim_bytes > 0:
+            items.append(
+                {
+                    "operation": operation,
+                    "savings_usd_month": usd,
+                    "reclaimable_bytes": reclaim_bytes,
+                }
             )
-            bucket = totals[operation]
-            bucket["savings_usd_month"] = float(bucket["savings_usd_month"]) + usd
-            bucket["reclaimable_bytes"] = int(bucket["reclaimable_bytes"]) + reclaim_bytes
-    return [
-        {
-            "operation": operation,
-            "savings_usd_month": round(float(bucket["savings_usd_month"]), 4),
-            "reclaimable_bytes": int(bucket["reclaimable_bytes"]),
-        }
-        for operation, bucket in totals.items()
-        if float(bucket["savings_usd_month"]) > 0 or int(bucket["reclaimable_bytes"]) > 0
-    ]
+    return items
 
 
 def _top_cost_opportunities(session: Session, *, limit: int) -> list[TableRead]:
+    if limit <= 0:
+        return []
     tables = list(
         session.scalars(
             select(Table)

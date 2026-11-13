@@ -813,14 +813,19 @@ export const forceAdmitJob = (api: ApiOptions, id: UUID) =>
 
 export const getDatalakeDashboard = (
   api: ApiOptions,
-  args: { top_limit?: number; drift_limit?: number; hot_limit?: number } = {}
+  args: { top_limit?: number; drift_limit?: number; hot_limit?: number; include_schema_cost?: boolean } = {}
 ) =>
   apiFetch<RawDatalakeDashboard>("/dashboards/datalake", api, {
-    query: { top_limit: args.top_limit, drift_limit: args.drift_limit, hot_limit: args.hot_limit }
+    query: {
+      top_limit: args.top_limit,
+      drift_limit: args.drift_limit,
+      hot_limit: args.hot_limit,
+      include_schema_cost: args.include_schema_cost
+    }
   }).then(normalizeDashboard);
-export const getFleetTrends = (api: ApiOptions, args: { days?: number } = {}) =>
+export const getFleetTrends = (api: ApiOptions, args: { days?: number; include_cost?: boolean } = {}) =>
   apiFetch<FleetTrendsResponse>("/dashboard/fleet-trends", api, {
-    query: { days: args.days ?? 30 }
+    query: { days: args.days ?? 30, include_cost: args.include_cost }
   });
 export const getSchemaCost = (api: ApiOptions) =>
   apiFetch<RawSchemaCost>("/dashboards/schema-cost", api).then((payload) =>
@@ -994,8 +999,15 @@ const normalizeDashboard = (payload: RawDatalakeDashboard): DatalakeDashboard =>
   }))
 });
 
-export const getCostDashboard = (api: ApiOptions) =>
-  apiFetch<CostDashboard>("/dashboards/cost", api);
+export const getCostDashboard = (
+  api: ApiOptions,
+  args?: { top_limit?: number; trend_limit?: number }
+) =>
+  apiFetch<CostDashboard>(
+    "/dashboards/cost",
+    api,
+    args ? { query: { top_limit: args.top_limit, trend_limit: args.trend_limit } } : undefined
+  );
 
 export const getTableCost = (api: ApiOptions, id: UUID) =>
   apiFetch<TableCostRead>(`/tables/${id}/cost`, api);

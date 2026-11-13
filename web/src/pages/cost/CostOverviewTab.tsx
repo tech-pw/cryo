@@ -177,7 +177,7 @@ export const CostOverviewTab = ({
 
   const cost = useQuery({
     queryKey: ["cost-dashboard", token],
-    queryFn: () => getCostDashboard(api),
+    queryFn: () => getCostDashboard(api, { top_limit: 0 }),
     retry: 1
   });
   const matchingTables = useQuery({
@@ -190,10 +190,18 @@ export const CostOverviewTab = ({
         offset: oppOffset,
         signal
       }),
-    enabled: cost.isSuccess
+    retry: 1
   });
-  const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
-  const destinations = useQuery({ queryKey: ["destinations", token], queryFn: () => listDestinations(api) });
+  const presets = useQuery({
+    queryKey: ["presets", token],
+    queryFn: () => listPresets(api),
+    enabled: runAccess.allowed || assignAccess.allowed || manifestAccess.allowed
+  });
+  const destinations = useQuery({
+    queryKey: ["destinations", token],
+    queryFn: () => listDestinations(api),
+    enabled: runAccess.allowed || manifestAccess.allowed
+  });
   const schemaCost = useQuery({
     queryKey: ["schema-cost", token],
     queryFn: () => getSchemaCost(api),
@@ -407,7 +415,7 @@ export const CostOverviewTab = ({
         />
       ) : null}
       {isLoading ? (
-        <div className="space-y-3">
+        <div className="mb-3 space-y-3">
           <Skeleton className="h-8 w-full max-w-xl" />
           <MetricGrid columns={4}>
             {Array.from({ length: 4 }).map((_, index) => (
@@ -508,62 +516,77 @@ export const CostOverviewTab = ({
               hint={<MetricHint label="Share of tables with metadata or storage-truth cost figures." />}
             />
           </MetricGrid>
-          {darkTables.data && darkTables.data.total_candidates > 0 ? (
-            <p className="mb-3 text-sm text-muted-foreground">
-              <Link to="/tables?view=unused" className="font-medium text-foreground underline-offset-2 hover:underline">
-                {darkTables.data.total_candidates} unused{" "}
-                {darkTables.data.total_candidates === 1 ? "table" : "tables"}
-              </Link>
-              {darkTables.data.candidates.some((row) => row.estimated_monthly_cost_usd == null)
-                ? " hold storage with no reader. Some have no cost figure, so no dollar total is shown."
-                : ` hold ${formatCurrency(
-                    darkTables.data.candidates.reduce(
-                      (sum, row) => sum + (row.estimated_monthly_cost_usd ?? 0),
-                      0
-                    )
-                  )}/month of storage and no reader.`}
-            </p>
-          ) : null}
+        </>
+      ) : null}
+      {darkTables.data && darkTables.data.total_candidates > 0 ? (
+        <p className="mb-3 text-sm text-muted-foreground">
+          <Link to="/tables?view=unused" className="font-medium text-foreground underline-offset-2 hover:underline">
+            {darkTables.data.total_candidates} unused{" "}
+            {darkTables.data.total_candidates === 1 ? "table" : "tables"}
+          </Link>
+          {darkTables.data.candidates.some((row) => row.estimated_monthly_cost_usd == null)
+            ? " hold storage with no reader. Some have no cost figure, so no dollar total is shown."
+            : ` hold ${formatCurrency(
+                darkTables.data.candidates.reduce(
+                  (sum, row) => sum + (row.estimated_monthly_cost_usd ?? 0),
+                  0
+                )
+              )}/month of storage and no reader.`}
+        </p>
+      ) : null}
+      {!cost.isError || impact.isSuccess || schemaCost.isSuccess || matchingTables.isSuccess ? (
+        <>
           <div className="mb-3 grid gap-3 xl:grid-cols-12">
-            <Card className="xl:col-span-12">
-              <CardHeader className="pb-2">
-                <CardTitle>Current to projected</CardTitle>
-                <p className="text-xs text-muted-foreground">
-                  Each step is what that operation saves. The last bar is the bill after all of them.
-                </p>
-              </CardHeader>
-              <CardContent>
-                <CostSavingsWaterfall
-                  currentCostUsd={data.totals.current_monthly_cost_usd}
-                  currentStorageBytes={data.totals.current_storage_bytes}
-                  byOperation={data.savings_by_operation}
-                />
-                <ChartDataTable
-                  caption="Cost waterfall from current monthly cost down to the projected cost after each maintenance operation runs."
-                  columns={[
-                    { key: "name", header: "Step", render: (row) => row.name },
-                    {
-                      key: "amount",
-                      header: "Amount",
-                      align: "right",
-                      render: (row) =>
-                        row.kind === "save" ? `- ${formatCurrency(row.amount)}` : formatCurrency(row.amount)
-                    },
-                    {
-                      key: "running",
-                      header: "Running total",
-                      align: "right",
-                      render: (row) => formatCurrency(row.kind === "save" ? row.base : row.value)
-                    }
-                  ]}
-                  rows={buildWaterfallRows(
-                    data.totals.current_monthly_cost_usd,
-                    new Map(data.savings_by_operation.map((item) => [item.operation, item.savings_usd_month]))
-                  )}
-                  getRowKey={(row, index) => `${row.name}-${index}`}
-                />
-              </CardContent>
-            </Card>
+            {isLoading ? (
+              <Card className="xl:col-span-12">
+                <CardHeader className="pb-2">
+                  <CardTitle>Current to projected</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className="h-[180px] w-full rounded-[var(--radius-default)]" />
+                </CardContent>
+              </Card>
+            ) : data ? (
+              <Card className="xl:col-span-12">
+                <CardHeader className="pb-2">
+                  <CardTitle>Current to projected</CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Each step is what that operation saves. The last bar is the bill after all of them.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <CostSavingsWaterfall
+                    currentCostUsd={data.totals.current_monthly_cost_usd}
+                    currentStorageBytes={data.totals.current_storage_bytes}
+                    byOperation={data.savings_by_operation}
+                  />
+                  <ChartDataTable
+                    caption="Cost waterfall from current monthly cost down to the projected cost after each maintenance operation runs."
+                    columns={[
+                      { key: "name", header: "Step", render: (row) => row.name },
+                      {
+                        key: "amount",
+                        header: "Amount",
+                        align: "right",
+                        render: (row) =>
+                          row.kind === "save" ? `- ${formatCurrency(row.amount)}` : formatCurrency(row.amount)
+                      },
+                      {
+                        key: "running",
+                        header: "Running total",
+                        align: "right",
+                        render: (row) => formatCurrency(row.kind === "save" ? row.base : row.value)
+                      }
+                    ]}
+                    rows={buildWaterfallRows(
+                      data.totals.current_monthly_cost_usd,
+                      new Map(data.savings_by_operation.map((item) => [item.operation, item.savings_usd_month]))
+                    )}
+                    getRowKey={(row, index) => `${row.name}-${index}`}
+                  />
+                </CardContent>
+              </Card>
+            ) : null}
             <Card className="xl:col-span-7">
               <CardHeader className="pb-2">
                 <CardTitle>What maintenance already changed</CardTitle>
@@ -574,7 +597,9 @@ export const CostOverviewTab = ({
                 </p>
               </CardHeader>
               <CardContent>
-                {(impact.data?.rows.length ?? 0) > 0 ? (
+                {impact.isLoading ? (
+                  <Skeleton className="h-[180px] w-full rounded-[var(--radius-default)]" />
+                ) : (impact.data?.rows.length ?? 0) > 0 ? (
                   <>
                     <div
                       role="img"
@@ -632,7 +657,9 @@ export const CostOverviewTab = ({
                 <CardTitle>Monthly trend</CardTitle>
               </CardHeader>
               <CardContent>
-                {hasTrend ? (
+                {isLoading ? (
+                  <Skeleton className="h-[220px] w-full rounded-[var(--radius-default)]" />
+                ) : hasTrend && data ? (
                   <>
                     <div
                       role="img"
@@ -710,11 +737,13 @@ export const CostOverviewTab = ({
                       getRowKey={(row, index) => row.scan_at ?? `trend-${index}`}
                     />
                   </>
+                ) : cost.isError ? (
+                  <p className="text-sm text-muted-foreground">Cost trend unavailable.</p>
                 ) : (
-                    <EmptyState
-                      title="No cost history yet"
-                      description="The storage-cost line appears after the first cost scan. Realized savings join it once a maintenance run records bytes freed."
-                    />
+                  <EmptyState
+                    title="No cost history yet"
+                    description="The storage-cost line appears after the first cost scan. Realized savings join it once a maintenance run records bytes freed."
+                  />
                 )}
               </CardContent>
             </Card>
@@ -723,7 +752,9 @@ export const CostOverviewTab = ({
                 <CardTitle>Cost by schema</CardTitle>
               </CardHeader>
               <CardContent>
-                {schemaCost.data && schemaCost.data.length ? (
+                {schemaCost.isLoading ? (
+                  <Skeleton className="h-[220px] w-full rounded-[var(--radius-default)]" />
+                ) : schemaCost.data && schemaCost.data.length ? (
                   <>
                     <div
                       role="img"
