@@ -67,6 +67,25 @@ The Storage tab reports four different numbers, and they must not be read as one
 - **Modelled savings** are storage dollars. Compaction's share is delete-file bytes, not the size of the small files it rewrites.
 - **Fewer GET requests** is the compaction GET-cost estimate, summed only over tables that have a `TableCost` row. `null` means no table has one — the page says unavailable, not `$0`. The table count says how much of the fleet the sum covers. A stored `0` is a real zero.
 - **Saved to date** prices `AuditLog.actual_bytes_freed` at the default storage rate. It is not a measured drop in the AWS bill, and it does not subtract what the maintenance itself cost.
+- **Versioned buckets.** `bucket_status` lists each bucket the scanner listed, with its versioning state and whether a noncurrent-version expiration rule exists. `deletes_reduce_cost: false` means versioning is on with no such rule: deletes only add delete markers, so reclaimed bytes stay on the bill. `null` means unknown (no permission, or not checked yet).
+
+## Reclaimed bytes: one definition, labelled sources (#538)
+
+Realized bytes are `SUM(audit_log.actual_bytes_freed)` over successful reclaim actions: `expire_snapshots`, `remove_orphan_files`, `optimize`, `convert_deletes` and `rewrite_position_deletes`. `cryo/reporting/impact_signals.py::realized_bytes_summary` is the only implementation. The cost dashboard total, the daily impact rows, the home figure and the daily report all call it.
+
+Expire counts. Iceberg deletes the files that only expired snapshots referenced, and orphan removal only sees files no metadata references, so the two never free the same bytes.
+
+Each row with bytes carries `result_metrics.bytes_source`:
+
+| Source | Where the number comes from |
+|---|---|
+| `engine` | The engine reported it: Trino's `$files` diff, the native engine, a Spark procedure that reported bytes, or an orphan removal that deleted nothing (a measured 0). |
+| `scan_estimate` | Spark `expire_snapshots` and `remove_orphan_files` report counts or paths, not sizes. The bytes are priced from the last scan. Expire uses the metadata cost pass's ledger (dead bytes keyed by the newest snapshot that still holds them), evaluated at the action's own `older_than` / `retain_last`. Orphan removal uses the scanner's orphan listing, bucketed by object age, older than the action's cutoff. Files that became dead after that scan are missing, so the estimate errs low. No live `$files` read and no second listing. |
+| `scan_confirmed` | The next scan saw dead bytes (or, after a fresh listing, orphan bytes) drop and replaced the estimate with the drop. `bytes_estimate` keeps the original. Confirmation only runs when exactly one estimated row of that action fell between the two scans. If the drop is zero or negative because writes outran the cleanup, the estimate stays and is marked `bytes_confirm: inconclusive`. |
+
+The cost dashboard reports `total_realized_bytes_freed` for all time (`realized_since` is the first measured action). Alongside it are `realized_actions_total`, `realized_actions_measured`, `realized_coverage_pct` and `realized_bytes_by_source`. `realized_window_bytes_freed` covers the trend window (`realized_window_start`, `realized_window_days`), which is the same set of days as the daily impact rows, so the two can be checked against each other. The all-time total is much larger than a few recent days because it covers every day since `realized_since`, not because it uses a different rule.
+
+The batch lanes and the per-job Spark runner no longer run the `dry_run => true` orphan probe. It listed the table prefix a second time and OOM'd Spark drivers.
 - The monthly trend draws the storage-cost line as soon as a scan records one. What maintenance already changed is a separate series, by day, from the impact ledger. Unmeasured days are gaps. `/impact` opens Storage. A scan does not record a ledger day.
 - Reads shows a scan-compute dollar only for days that already have `estimated_scan_cost_usd`. No priced day means "Not priced", not `$0`. A client or schema that mixes a priced day with an unpriced day is "Not priced" too — the priced slice is not a price for the bytes beside it. `scan_cost_priced_days` still counts the days that were priced.
 - Unused tables are a line on Storage, linking to the unused view. If any of them has no cost figure, no dollar total is shown.

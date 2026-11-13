@@ -304,6 +304,15 @@ CREATE TABLE cryo.table_cost_history (
 CREATE INDEX ON cryo.table_cost_history (table_id, scan_at);
 ```
 
+> **Reclaimed-bytes sources (#538)**: every reclaim audit row with bytes carries
+> `result_metrics.bytes_source` (`engine` | `scan_estimate` | `scan_confirmed`). Spark expire and
+> orphan removal are priced from stored scan data by `cryo/maintenance/reclaim_measure.py`:
+> `TableCost.raw.metadata.expire_ledger` (`snapshot_ts_ms`, `dead_bytes_by_last_ref_ms`) and
+> `TableCost.raw.orphan_ledger` (`bytes_by_day`). The next scan confirms them in
+> `persist_table_cost`. Realized totals use one function,
+> `impact_signals.realized_bytes_summary`. `cryo.s3_bucket_status` caches per-bucket versioning
+> and noncurrent-expiration state for the cost API. See `docs/cost-savings.md`.
+>
 > **Realized savings**: after a maintenance job, the Worker records `actual_bytes_freed` per
 > operation on `cryo.audit_log` (new nullable column) so the UI can show *predicted vs realized*
 > and the model can self-calibrate. This is additive to §3.4's `audit_log`.

@@ -129,6 +129,9 @@ def scan_orphans(
     listed_bytes = 0
     orphan_bytes = 0
     listed_keys = 0
+    # Orphan bytes by object age (UTC day of LastModified), so a later remove_orphan_files
+    # can be priced for its own cutoff without a second listing (#538).
+    orphan_by_day: dict[int, list[int]] = {}
     paginator = client.get_paginator("list_objects_v2")
 
     # Scheme-agnostic (see _normalize_s3_path) -- referenced_file_paths keys come from manifest
@@ -152,6 +155,7 @@ def scan_orphans(
             key = str(obj["Key"])
             size = int(obj.get("Size", 0) or 0)
             last_modified = obj.get("LastModified")
+            modified: datetime | None = None
             if isinstance(last_modified, datetime):
                 modified = (
                     last_modified if last_modified.tzinfo else last_modified.replace(tzinfo=UTC)
@@ -161,13 +165,25 @@ def scan_orphans(
             listed_bytes += size
             if f"{bucket}/{key}" not in normalized_referenced:
                 orphan_bytes += size
+                day = int(modified.timestamp()) // 86400 * 86400 if modified is not None else 0
+                bucket_row = orphan_by_day.setdefault(day, [0, 0])
+                bucket_row[0] += size
+                bucket_row[1] += 1
 
     return OrphanScanResult(
         orphan_bytes=orphan_bytes,
         listed_bytes=listed_bytes,
         listed_keys=listed_keys,
         last_full_cost_scan_at=scan_at,
-        raw={"bucket": bucket, "prefix": prefix},
+        raw={
+            "bucket": bucket,
+            "prefix": prefix,
+            "orphan_ledger": {
+                "listed_at": scan_at.isoformat(),
+                "min_age_hours": settings.cost_orphan_min_age_hours,
+                "bytes_by_day": sorted([day, b, n] for day, (b, n) in orphan_by_day.items()),
+            },
+        },
     )
 
 

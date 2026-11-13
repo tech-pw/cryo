@@ -40,6 +40,8 @@ class ImpactHistoryRowRead(BaseModel):
     tables_touched: int
     actions_with_bytes_evidence: int
     actions_without_bytes_evidence: int
+    # Share of succeeded reclaim actions that reported bytes; None when none succeeded.
+    coverage_pct: float | None = None
     optimize_files_in: int
     optimize_files_out: int
     active_tables: int
@@ -96,6 +98,11 @@ def _to_read(row: FleetImpactHistoryRow, raw: dict[str, Any] | None) -> ImpactHi
         tables_touched=row.tables_touched,
         actions_with_bytes_evidence=row.actions_with_bytes_evidence,
         actions_without_bytes_evidence=row.actions_without_bytes_evidence,
+        coverage_pct=(
+            round(row.actions_with_bytes_evidence / row.actions_succeeded * 100, 1)
+            if row.actions_succeeded
+            else None
+        ),
         optimize_files_in=row.optimize_files_in,
         optimize_files_out=row.optimize_files_out,
         active_tables=row.active_tables,

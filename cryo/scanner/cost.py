@@ -194,6 +194,15 @@ def account_metadata_cost(
 
     live_bytes = delete_bytes = dead_bytes = 0
     current_id = current_snapshot_id or _current_snapshot_id(table_obj)
+    snapshot_ts = {
+        sid: _snapshot_timestamp_ms(snapshot)
+        for snapshot in snapshots
+        if (sid := _snapshot_id(snapshot)) is not None
+    }
+    # Bytes no longer in the current snapshot, keyed by the newest snapshot still holding
+    # them. Expiry frees a file once every snapshot that holds it is expired, so this is
+    # what cryo/maintenance/reclaim_measure.py needs to price any older_than/retain_last.
+    dead_by_last_ref: dict[int, int] = {}
 
     for _path, record in referenced_files.items():
         size = int(record["size_bytes"])
@@ -206,6 +215,9 @@ def account_metadata_cost(
                 live_bytes += size
         if not refs.intersection(surviving_ids):
             dead_bytes += size
+        if current_id is not None and current_id not in refs:
+            last_ref = max((snapshot_ts.get(ref, 0) for ref in refs), default=0)
+            dead_by_last_ref[last_ref] = dead_by_last_ref.get(last_ref, 0) + size
 
     reclaim_expire_bytes = dead_bytes
     reclaim_optimize_bytes = delete_bytes
@@ -235,6 +247,10 @@ def account_metadata_cost(
             "snapshot_count": len(snapshots),
             "manifest_count": manifest_count,
             "assumptions": assumptions,
+            "expire_ledger": {
+                "snapshot_ts_ms": sorted(snapshot_ts.values()),
+                "dead_bytes_by_last_ref_ms": sorted([ts, b] for ts, b in dead_by_last_ref.items()),
+            },
         },
     )
 

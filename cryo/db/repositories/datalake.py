@@ -17,6 +17,7 @@ from cryo.db.models import (
     JobStep,
     MaintenanceJob,
     MaintenanceRun,
+    S3BucketStatus,
     Source,
     Table,
     TableCost,
@@ -29,7 +30,7 @@ from cryo.db.repositories import presets
 from cryo.db.repositories import scanner as scanner_repo
 from cryo.domain.enums import CostPrecision, OperationType
 from cryo.observability.correlation import correlation_summary
-from cryo.reporting.impact_signals import realized_reclaim_conditions
+from cryo.reporting.impact_signals import realized_bytes_summary, realized_reclaim_conditions
 
 _OPERATION_RECLAIM_FIELDS: tuple[tuple[OperationType, str], ...] = (
     (OperationType.EXPIRE_SNAPSHOTS, "reclaim_expire_bytes"),
@@ -575,9 +576,25 @@ def dashboard_cost(
     # Same fleet-wide materialization trap as dashboard_datalake -- aggregate in SQL / load
     # only the reclaim columns needed for savings_by_operation (never TableStats.raw).
     totals = _sql_aggregate_cost_totals(session, settings=settings)
-    realized_usd, realized_bytes = _total_realized_savings(session, settings=settings)
+    now = now or datetime.now(UTC)
+    # One definition (impact_signals.realized_bytes_summary) over two explicit windows:
+    # all time for the headline total, and the trend window the daily series covers, so the
+    # total and the sum of the daily points can be checked against each other (#538).
+    realized = realized_bytes_summary(session)
+    realized_usd, realized_bytes = _bytes_and_usd(realized["bytes"], settings)
     totals["total_realized_savings_usd"] = realized_usd
     totals["total_realized_bytes_freed"] = realized_bytes
+    totals["realized_since"] = realized["since"]
+    totals["realized_actions_total"] = realized["actions_total"]
+    totals["realized_actions_measured"] = realized["actions_measured"]
+    totals["realized_coverage_pct"] = realized["coverage_pct"]
+    totals["realized_bytes_by_source"] = realized["by_source"]
+    window_start = _series_start(now, trend_limit)
+    window = realized_bytes_summary(session, start=window_start)
+    totals["realized_window_start"] = window_start
+    totals["realized_window_days"] = trend_limit
+    totals["realized_window_bytes_freed"] = window["bytes"]
+    totals["realized_window_coverage_pct"] = window["coverage_pct"]
     savings_by_operation = _sql_aggregate_savings_by_operation(session, settings=settings)
     cost_by_schema = _sql_aggregate_cost_by_schema(session)
     top_opportunities = _top_cost_opportunities(session, limit=top_limit)
@@ -589,34 +606,55 @@ def dashboard_cost(
         "cost_by_schema": cost_by_schema,
         "top_opportunities": top_opportunities,
         "trend": trend,
+        "bucket_status": bucket_status_rows(session),
     }
 
 
-def _total_realized_savings(
-    session: Session, *, settings: Settings
-) -> tuple[float | None, int | None]:
-    """Monthly storage value of every byte maintenance has freed, plus the byte total.
+def bucket_status_rows(session: Session) -> list[dict[str, Any]]:
+    """Every recorded bucket with a ``deletes_reduce_cost`` verdict (None = unknown)."""
+    rows = session.scalars(select(S3BucketStatus).order_by(S3BucketStatus.bucket)).all()
+    return [
+        {
+            "bucket": row.bucket,
+            "versioning": row.versioning,
+            "noncurrent_expiration": row.noncurrent_expiration,
+            "deletes_reduce_cost": deletes_reduce_cost(row.versioning, row.noncurrent_expiration),
+            "checked_at": row.checked_at,
+            "error": row.error,
+        }
+        for row in rows
+    ]
 
-    This is a $/month storage rate for the cumulative bytes freed (not lifetime dollars, and
-    not net of data written since), so the UI labels it per month (issue #189). Only
-    successful reclaim actions count, the same rows Impact and per-run savings use. Returns
-    ``(None, None)`` when no such action reported bytes: unmeasured is not $0.
+
+def deletes_reduce_cost(versioning: str | None, noncurrent_expiration: bool | None) -> bool | None:
+    if versioning is None:
+        return None
+    if versioning == "Disabled":
+        return True
+    # Enabled or Suspended: older versions stay until a noncurrent-version rule expires them.
+    return noncurrent_expiration
+
+
+def _bytes_and_usd(freed: int | None, settings: Settings) -> tuple[float | None, int | None]:
+    """Monthly storage value of freed bytes ($/month at the configured price, issue #189).
+
+    None when nothing was measured: unmeasured is not $0.
     """
-    total_bytes, measured = session.execute(
-        select(
-            func.coalesce(func.sum(AuditLog.actual_bytes_freed), 0),
-            func.count(AuditLog.actual_bytes_freed),
-        ).where(AuditLog.actual_bytes_freed.isnot(None), *realized_reclaim_conditions())
-    ).one()
-    if not measured:
+    if freed is None:
         return None, None
-    freed = int(total_bytes or 0)
     usd = bytes_to_usd(
         freed,
         price_per_gb_month=settings.cost_price_per_gb_month,
         use_gib=settings.cost_use_gib,
     )
     return usd, freed
+
+
+def _total_realized_savings(
+    session: Session, *, settings: Settings
+) -> tuple[float | None, int | None]:
+    """All-time realized savings under the shared definition (realized_bytes_summary)."""
+    return _bytes_and_usd(realized_bytes_summary(session)["bytes"], settings)
 
 
 def table_cost(session: Session, table_id: uuid.UUID) -> dict[str, object] | None:

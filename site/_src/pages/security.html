@@ -92,6 +92,7 @@ updated: 2026-11-13
   <li>Slack and other webhook URLs</li>
 </ul>
 <p>Everything else in a source or destination <code>config</code> is stored as plain JSON. Keep credentials out of <code>config</code>. Better still, give the pods an IAM role through <code>serviceAccount.annotations</code> (IRSA on EKS), so no static AWS key is stored at all.</p>
+<p>The scanner's S3 role needs <code>s3:ListBucket</code> on table prefixes for the orphan listing. Cost insights also use <code>s3:GetBucketVersioning</code> and <code>s3:GetLifecycleConfiguration</code>. With them, the cost page can warn when a bucket has versioning on and no noncurrent-version expiration rule, which means deletes do not lower the bill. Both are optional. If they are denied, the bucket shows as unknown and the scan carries on.</p>
 <p>Local users' passwords are stored as salted PBKDF2-SHA256 hashes. The database URL, the Redis URL, the OIDC client secret and the keys themselves never go into the database. They live in the Kubernetes Secret.</p>
 
 <h2 id="egress">Network and egress</h2>

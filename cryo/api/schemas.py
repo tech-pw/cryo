@@ -1264,6 +1264,20 @@ class CostDashboardTotals(BaseModel):
     # the configured storage price), not lifetime dollars. None when nothing was measured.
     total_realized_savings_usd: float | None = None
     total_realized_bytes_freed: int | None = None
+    # One definition for realized bytes (impact_signals.realized_bytes_summary, #538):
+    # successful reclaim actions that reported bytes. The total above is all time, from
+    # realized_since; the window fields cover the same days as the trend and the daily
+    # impact history, so their sum is checkable against those rows.
+    realized_since: datetime | None = None
+    realized_actions_total: int = 0
+    realized_actions_measured: int = 0
+    realized_coverage_pct: float | None = None
+    # {"engine" | "scan_estimate" | "scan_confirmed" | "unlabeled": {"bytes", "actions"}}
+    realized_bytes_by_source: dict[str, dict[str, int]] = Field(default_factory=dict)
+    realized_window_start: datetime | None = None
+    realized_window_days: int | None = None
+    realized_window_bytes_freed: int | None = None
+    realized_window_coverage_pct: float | None = None
     # GET-cost reduction from compaction, summed over tables that have a TableCost row.
     # None means no table has one, so the UI must not render $0. The table count says how
     # much of the fleet the sum covers.
@@ -1278,12 +1292,25 @@ class CostSchemaItem(BaseModel):
     savings_usd: float
 
 
+class S3BucketStatusRead(BaseModel):
+    bucket: str
+    # Enabled / Suspended / Disabled; None when the check was denied or has not run.
+    versioning: str | None = None
+    noncurrent_expiration: bool | None = None
+    # False: versioning on and no noncurrent-version expiration rule, so deletes leave
+    # old versions billed. None: unknown.
+    deletes_reduce_cost: bool | None = None
+    checked_at: datetime
+    error: str | None = None
+
+
 class CostDashboardResponse(BaseModel):
     totals: CostDashboardTotals
     savings_by_operation: list[CostByOperationRead]
     cost_by_schema: list[CostSchemaItem]
     top_opportunities: list[TableRead]
     trend: list[CostTrendPoint] = Field(default_factory=list)
+    bucket_status: list[S3BucketStatusRead] = Field(default_factory=list)
 
 
 class TableCostRead(BaseModel):

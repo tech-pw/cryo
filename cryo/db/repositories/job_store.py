@@ -28,6 +28,7 @@ from cryo.db.repositories.job_dedupe import supersede_covered_jobs
 from cryo.db.repositories.operation_exclusions import excluded_operations
 from cryo.domain.enums import JobStatus, Mode, OperationType
 from cryo.engines.base import COMMIT_CONFLICT_MARKER
+from cryo.maintenance.reclaim_measure import apply_reclaim_measurement
 from cryo.observability.correlation import correlation_id_from_summary
 from cryo.worker.worker import (
     AuditRecord,
@@ -283,25 +284,25 @@ class SQLJobStore:
 
     def record_audit(self, record: AuditRecord) -> None:
         with self._session_factory() as session:
-            session.add(
-                AuditLog(
-                    table_id=uuid.UUID(record.table_id),
-                    job_id=uuid.UUID(record.job_id),
-                    action=record.action.value,
-                    status=record.status,
-                    engine=str(record.engine),
-                    detail=record.detail,
-                    duration_ms=record.duration_ms,
-                    actual_bytes_freed=record.actual_bytes_freed,
-                    input_files_count=record.input_files_count,
-                    output_files_count=record.output_files_count,
-                    objects_deleted=record.objects_deleted,
-                    snapshots_expired=record.snapshots_expired,
-                    result_metrics=record.result_metrics,
-                    actor=record.actor,
-                    engine_ref=record.engine_ref,
-                )
+            audit_row = AuditLog(
+                table_id=uuid.UUID(record.table_id),
+                job_id=uuid.UUID(record.job_id),
+                action=record.action.value,
+                status=record.status,
+                engine=str(record.engine),
+                detail=record.detail,
+                duration_ms=record.duration_ms,
+                actual_bytes_freed=record.actual_bytes_freed,
+                input_files_count=record.input_files_count,
+                output_files_count=record.output_files_count,
+                objects_deleted=record.objects_deleted,
+                snapshots_expired=record.snapshots_expired,
+                result_metrics=record.result_metrics,
+                actor=record.actor,
+                engine_ref=record.engine_ref,
             )
+            apply_reclaim_measurement(session, audit_row, sql=record.detail)
+            session.add(audit_row)
             if record.status == "OK":
                 from cryo.workflows.approvals import (
                     ApprovalRequest,

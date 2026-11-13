@@ -30,7 +30,9 @@ from cryo.integrations.aws_s3_metrics import fetch_s3_request_prices
 from cryo.observability.logging import configure_process_logging
 from cryo.observability.metrics import scan_tables_total, scanner_tables_scanned_total
 from cryo.optimizer.wair.ranges import wair_sample_columns
+from cryo.scanner import orphans as orphans_module
 from cryo.scanner.analyze import TableAnalysis, analyze_catalog_table
+from cryo.scanner.bucket_status import refresh_bucket_status
 from cryo.scanner.cost import MetadataCostAccounting, build_table_cost_analysis
 from cryo.scanner.failure_classifier import scan_failure_is_permanent
 from cryo.scanner.new_tables import candidate_key, record_new_tables_on_default, unregistered_keys
@@ -1248,6 +1250,7 @@ def _apply_orphan_scan(
                 precision=CostPrecision.METADATA,
                 query_count_30d=query_count_30d,
                 live_s3_get_price_per_1k=live_s3_get_price,
+                orphan_ledger=_previous_orphan_ledger(previous_cost),
             )
         return analysis
 
@@ -1277,8 +1280,10 @@ def _apply_orphan_scan(
             precision=CostPrecision.METADATA,
             query_count_30d=query_count_30d,
             live_s3_get_price_per_1k=live_s3_get_price,
+            orphan_ledger=_previous_orphan_ledger(previous_cost),
         )
 
+    _refresh_bucket_status(session, candidate, orphan_result.raw.get("bucket"), settings)
     return _rebuild_cost_analysis(
         analysis,
         settings=settings,
@@ -1288,7 +1293,32 @@ def _apply_orphan_scan(
         precision=CostPrecision.STORAGE_TRUTH,
         query_count_30d=query_count_30d,
         live_s3_get_price_per_1k=live_s3_get_price,
+        orphan_ledger=orphan_result.raw.get("orphan_ledger"),
     )
+
+
+def _refresh_bucket_status(
+    session: Session, candidate: ScanCandidate, bucket: object, settings: Settings
+) -> None:
+    """Record whether deletes in this bucket lower the bill. Never fails the scan (#538)."""
+    if not isinstance(bucket, str) or not bucket:
+        return
+    try:
+        with session.begin_nested():
+            refresh_bucket_status(
+                session,
+                orphans_module._s3_client(dict(candidate.source.config)),
+                bucket,
+                refresh_hours=settings.s3_bucket_status_refresh_hours,
+            )
+    except Exception:
+        logger.warning("bucket status refresh failed for %s", bucket, exc_info=True)
+
+
+def _previous_orphan_ledger(previous_cost: TableCost | None) -> dict[str, Any] | None:
+    raw = previous_cost.raw if previous_cost is not None else None
+    ledger = raw.get("orphan_ledger") if isinstance(raw, dict) else None
+    return ledger if isinstance(ledger, dict) else None
 
 
 def _rebuild_cost_analysis(
@@ -1301,6 +1331,7 @@ def _rebuild_cost_analysis(
     precision: CostPrecision,
     query_count_30d: int = 0,
     live_s3_get_price_per_1k: float | None = None,
+    orphan_ledger: dict[str, Any] | None = None,
 ) -> TableAnalysis:
     if analysis.cost is None:
         return analysis
@@ -1340,6 +1371,10 @@ def _rebuild_cost_analysis(
     # analyze_catalog_table call, before this function's carried-forward or freshly-scanned
     # orphan bytes were folded in) while the scalar total moves on -- the two silently disagree
     # in every persisted row from here on, exactly the drift found in production 2026-08-05.
+    if orphan_ledger is not None:
+        # Kept with the TableCost row so remove_orphan_files can be priced without a second
+        # Spark listing (cryo/maintenance/reclaim_measure.py, #538).
+        new_cost.raw["orphan_ledger"] = orphan_ledger
     new_raw = dict(analysis.raw)
     new_raw["cost"] = new_cost.raw
     return replace(analysis, cost=new_cost, raw=new_raw)

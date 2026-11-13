@@ -26,10 +26,11 @@ from sqlalchemy.orm import Session
 
 from cryo.db.models import AuditLog, FleetImpactHistory, MaintenanceJob
 from cryo.reporting.impact_signals import (
-    _RECLAIM_ACTIONS,
+    _BYTES_FREED_ACTIONS,
     _SUCCESS_STATUSES,
     day_bounds,
     measured_reclaim_gb,
+    realized_bytes_summary,
 )
 from cryo.reporting.storage_overview import storage_snapshot_for_history
 
@@ -109,7 +110,7 @@ def _bytes_freed_by_engine(
         .where(
             AuditLog.ts >= day_start,
             AuditLog.ts < day_end,
-            AuditLog.action.in_(_RECLAIM_ACTIONS),
+            AuditLog.action.in_(_BYTES_FREED_ACTIONS),
             AuditLog.status.in_(_SUCCESS_STATUSES),
             AuditLog.actual_bytes_freed.isnot(None),
         )
@@ -176,6 +177,10 @@ def record_daily_impact(
             "impact_direction": impact.direction if impact is not None else None,
             "bytes_freed_by_engine": bytes_freed_by_engine,
             "storage": storage_snapshot_for_history(session),
+            "coverage_pct": today.coverage_pct if today is not None else None,
+            "bytes_freed_by_source": realized_bytes_summary(session, start=day_start, end=day_end)[
+                "by_source"
+            ],
         },
     }
 

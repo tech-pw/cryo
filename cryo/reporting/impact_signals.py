@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from cryo.config import get_settings
@@ -49,17 +49,73 @@ ImpactSignalSource = Literal["dod", "wow"]
 # zero, not a gap).
 MeasurementState = Literal["complete", "partial", "unmeasured", "no_actions"]
 
-# Bytes-freed actions: the whole point of the job is reclaiming space. Excludes
-# expire_snapshots (frees storage indirectly, once remove_orphan_files later collects the
-# now-unreferenced files -- double-counting it here would credit the same bytes twice) and
-# optimize_manifests/apply_table_properties/compute_statistics (no bytes-freed semantics).
+# Space-reclaiming maintenance: "was this table maintained" (scheduler cooldown, last
+# maintained, triggers). An expire-only run does not count as maintenance there.
+# optimize_manifests/apply_table_properties/compute_statistics have no bytes-freed semantics.
 _RECLAIM_ACTIONS = (
     "remove_orphan_files",
     "optimize",
     "convert_deletes",
     "rewrite_position_deletes",
 )
+# Actions whose freed bytes count toward realized reclaim. expire_snapshots is included:
+# Iceberg deletes the files only expired snapshots held, and remove_orphan_files only sees
+# files no metadata references, so the two never free the same bytes (#538).
+_BYTES_FREED_ACTIONS = ("expire_snapshots", *_RECLAIM_ACTIONS)
 _SUCCESS_STATUSES = ("OK", "succeeded")
+
+
+def realized_bytes_summary(
+    session: Session, *, start: datetime | None = None, end: datetime | None = None
+) -> dict[str, Any]:
+    """The one definition of realized bytes freed over [start, end) (#538).
+
+    Successful reclaim actions only. ``bytes`` sums the actions that reported a figure;
+    ``coverage_pct`` says how many of the window's actions that is, and ``by_source`` splits
+    the bytes by how they were measured (engine, scan_estimate, scan_confirmed, unlabeled).
+    The cost dashboard total, the daily impact rows and the home figure all use this.
+    """
+    window: list[Any] = list(realized_reclaim_conditions())
+    if start is not None:
+        window.append(AuditLog.ts >= start)
+    if end is not None:
+        window.append(AuditLog.ts < end)
+    source = AuditLog.result_metrics["bytes_source"].as_string()
+    measured_ts = case((AuditLog.actual_bytes_freed.isnot(None), AuditLog.ts), else_=None)
+    rows = session.execute(
+        select(
+            source,
+            func.count(AuditLog.id),
+            func.count(AuditLog.actual_bytes_freed),
+            func.coalesce(func.sum(AuditLog.actual_bytes_freed), 0),
+            func.min(measured_ts),
+        )
+        .where(*window)
+        .group_by(source)
+    ).all()
+    total_actions = measured = freed = 0
+    since: datetime | None = None
+    by_source: dict[str, dict[str, int]] = {}
+    for label, actions, with_bytes, bytes_sum, first_ts in rows:
+        if first_ts is not None and (since is None or first_ts < since):
+            since = first_ts
+        total_actions += int(actions or 0)
+        measured += int(with_bytes or 0)
+        freed += int(bytes_sum or 0)
+        if with_bytes:
+            entry = by_source.setdefault(
+                str(label) if label else "unlabeled", {"bytes": 0, "actions": 0}
+            )
+            entry["bytes"] += int(bytes_sum or 0)
+            entry["actions"] += int(with_bytes)
+    return {
+        "bytes": freed if measured else None,
+        "actions_total": total_actions,
+        "actions_measured": measured,
+        "coverage_pct": round(measured / total_actions * 100, 1) if total_actions else None,
+        "by_source": by_source,
+        "since": since,
+    }
 
 
 def realized_reclaim_conditions() -> tuple[Any, ...]:
@@ -70,7 +126,7 @@ def realized_reclaim_conditions() -> tuple[Any, ...]:
     non-reclaim actions included, and so disagreed with Impact (issue #189).
     """
     return (
-        AuditLog.action.in_(_RECLAIM_ACTIONS),
+        AuditLog.action.in_(_BYTES_FREED_ACTIONS),
         AuditLog.status.in_(_SUCCESS_STATUSES),
     )
 
@@ -102,6 +158,13 @@ class DailyImpact:
     @property
     def gb_freed(self) -> float:
         return self.bytes_freed / (1024**3)
+
+    @property
+    def coverage_pct(self) -> float | None:
+        """Share of succeeded reclaim actions that reported bytes; None with no actions."""
+        if self.actions_succeeded <= 0:
+            return None
+        return round(self.actions_with_bytes_evidence / self.actions_succeeded * 100, 1)
 
     @property
     def measurement_state(self) -> MeasurementState:
@@ -179,7 +242,7 @@ def reclaim_display(signal: ImpactSignal) -> str:
         return "no reclaim actions"
     label = f"{signal.today.gb_freed:.1f} GB"
     if state == "partial":
-        return f"{label} measured (partial)"
+        return f"{label} measured (partial, {signal.today.coverage_pct:.0f}% of actions)"
     return label
 
 
