@@ -18,7 +18,7 @@ for (const theme of ["light", "dark"] as const) {
   test(`Home ${theme}: charts, drill-downs and accessible metrics`, async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1100 });
     await home(page, theme);
-    await expect(page.getByRole("region", { name: "Storage impact" })).toContainText("38 of 42 measured");
+    await expect(page.getByRole("region", { name: "Storage impact" })).toContainText("Measured on 75% of actions");
     await expect(page.getByRole("region", { name: "Latest nightly maintenance" })).toContainText("462 / 500 selected");
     await expect(page.getByRole("region", { name: "Latest nightly maintenance" })).toContainText("Partial");
     await expect(page.getByRole("img", { name: /Cryo platform health/ })).toBeVisible();
@@ -57,7 +57,7 @@ for (const scenario of ["unknown", "first-use-empty", "api-failure"] as const) {
     await settlePage(page);
     if (scenario === "unknown") {
       await expect(page.getByText("Grade split unknown")).toBeVisible();
-      await expect(page.getByRole("region", { name: "Storage impact" })).toContainText("Not measured");
+      await expect(page.getByRole("region", { name: "Storage impact" })).toContainText("No cleanup ran in the last 24 hours");
     } else if (scenario === "first-use-empty") {
       await expect(page.getByRole("region", { name: "Lake health" }).getByRole("link", { name: "Connect a catalog", exact: true })).toBeVisible();
       await expect(page.getByText("No nightly run")).toBeVisible();

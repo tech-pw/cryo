@@ -31,6 +31,7 @@ from cryo.reporting.impact_signals import (
     day_bounds,
     measured_reclaim_gb,
 )
+from cryo.reporting.storage_overview import storage_snapshot_for_history
 
 # reporting.daily_report imports this module for the write call, so DailyReportData is imported
 # for type checking only; a runtime import would be circular.
@@ -174,6 +175,7 @@ def record_daily_impact(
             "measured_reclaim_gb": (measured_reclaim_gb(impact) if impact is not None else None),
             "impact_direction": impact.direction if impact is not None else None,
             "bytes_freed_by_engine": bytes_freed_by_engine,
+            "storage": storage_snapshot_for_history(session),
         },
     }
 
