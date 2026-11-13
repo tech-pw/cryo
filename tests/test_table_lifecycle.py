@@ -334,6 +334,6 @@ def test_path_to_a_apply_marks_archived(api_db: ApiDb) -> None:
 
 def test_migration_is_additive() -> None:
     text = Path("migrations/versions/20261112_1200_table_lifecycle.py").read_text()
-    assert 'down_revision = "20261109_1200"' in text
+    assert 'down_revision = "20261112_2330"' in text
     assert "server_default=sa.text(\"'active'\")" in text
     assert 'schema="cryo"' in text

@@ -7,6 +7,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 ## [Unreleased]
 
 ### Added
+- Per-table `archived` lifecycle for read-only/backup tables (`PUT /api/v1/tables/{id}/lifecycle`, Config tab card, Lifecycle filter and Path-to-A step): skips *Stale table commits* health penalty and data-rewrite operations while keeping snapshot expiry, orphan cleanup and manifest rewrites (#519).
 - Run grid uses Airflow status colours, animates running/queued work, shows queue reason and ETA, planner skips, and a post-maintenance stats scan row; successful maintenance now requests a stats rescan (#525).
 - Spark on Kubernetes: new submissions are spaced per destination across all workers (default 60/min plus jitter, spark.k8s.maxSubmitsPerMinute, 0 = off), with a cryo_spark_submit_throttle_wait_seconds metric (#487).
 - Settings → About lists every component's image, version and commit (reported through Redis) with a version-skew warning; GET /api/v1/version/components and a cryo_component_build_info gauge (#489).
