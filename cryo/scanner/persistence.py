@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 import uuid
 from datetime import UTC, datetime, time, timedelta
@@ -573,8 +574,15 @@ def persist_table_cost(
     if existing_cost is None:
         session.add(TableCost(**cost_values))
     else:
+        previous = (
+            existing_cost.scan_at,
+            existing_cost.dead_bytes,
+            existing_cost.orphan_bytes,
+            existing_cost.last_full_cost_scan_at,
+        )
         for key, value in cost_values.items():
             setattr(existing_cost, key, value)
+        _confirm_reclaim_estimates(session, table_id, previous, existing_cost)
 
     session.execute(
         delete(TableCostHistory).where(
@@ -592,6 +600,36 @@ def persist_table_cost(
             precision=cost.precision.value if hasattr(cost.precision, "value") else cost.precision,
         )
     )
+
+
+def _confirm_reclaim_estimates(
+    session: Session,
+    table_id: uuid.UUID,
+    previous: tuple[datetime | None, int | None, int | None, datetime | None],
+    current: TableCost,
+) -> None:
+    """Turn last scan's reclaim estimates into measured drops (#538). Never fails the scan."""
+    from cryo.maintenance.reclaim_measure import confirm_scan_estimates
+
+    previous_scan_at, dead_before, orphan_before, previous_listing = previous
+    try:
+        with session.begin_nested():
+            confirm_scan_estimates(
+                session,
+                table_id=table_id,
+                previous_scan_at=previous_scan_at,
+                scan_at=current.scan_at,
+                dead_before=dead_before,
+                dead_after=current.dead_bytes,
+                orphan_before=orphan_before,
+                orphan_after=current.orphan_bytes,
+                orphan_relisted=current.last_full_cost_scan_at is not None
+                and current.last_full_cost_scan_at != previous_listing,
+            )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "reclaim estimate confirmation failed for table %s", table_id, exc_info=True
+        )
 
 
 def _stats_values(

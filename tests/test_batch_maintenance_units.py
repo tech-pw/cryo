@@ -381,16 +381,11 @@ def test_lane_manifest_is_reproducible_gzip_json() -> None:
     )
 
 
-def test_lane_manifest_tells_the_lane_whether_to_measure_orphan_bytes() -> None:
-    work = _work()
-    run_id = uuid.uuid4()
+def test_lane_manifest_no_longer_asks_the_lane_to_measure_orphan_bytes() -> None:
+    """Orphan bytes come from the scanner's listing now; the lane never lists twice (#538)."""
+    payload = json.loads(gzip.decompress(lane_manifest_bytes(uuid.uuid4(), 0, [_work()])))
 
-    default = lane_manifest_bytes(run_id, 0, [work])
-    measured = lane_manifest_bytes(run_id, 0, [work], measure_orphan_bytes=True)
-
-    assert json.loads(gzip.decompress(default))["measure_orphan_bytes"] is False
-    assert json.loads(gzip.decompress(measured))["measure_orphan_bytes"] is True
-    assert measured == lane_manifest_bytes(run_id, 0, [work], measure_orphan_bytes=True)
+    assert "measure_orphan_bytes" not in payload
 
 
 # -- lane Kubernetes objects ----------------------------------------------------------------
@@ -895,11 +890,14 @@ def _orphan_manifest(tmp_path: Any, **extra: Any) -> str:
 
 
 @pytest.mark.parametrize(
-    "extra", [{}, {"measure_orphan_bytes": False}], ids=["older-manifest", "flag-off"]
+    "extra",
+    [{}, {"measure_orphan_bytes": False}, {"measure_orphan_bytes": True}],
+    ids=["current-manifest", "flag-off", "old-manifest-flag-on"],
 )
-def test_runner_issues_no_orphan_dry_run_unless_the_manifest_asks(
+def test_runner_never_issues_an_orphan_dry_run(
     tmp_path: Any, capsys: pytest.CaptureFixture[str], extra: dict[str, Any]
 ) -> None:
+    """The dry-run sizing probe listed the prefix a second time and OOM'd Spark (#538)."""
     runner = _import_runner()
     spark = _FakeSpark()
 
@@ -909,62 +907,5 @@ def test_runner_issues_no_orphan_dry_run_unless_the_manifest_asks(
     assert not any("dry_run" in sql for sql in spark.executed)
     orphan = _lines(capsys)[1]
     assert orphan["ok"] and "bytes_removed" not in orphan["metrics"]
-
-
-def test_runner_sizes_orphans_before_removing_them_when_the_manifest_asks(
-    tmp_path: Any, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    runner = _import_runner()
-    spark = _FakeSpark()
-    probes: list[tuple[str, list[str]]] = []
-
-    def probe(_spark: Any, sql: str) -> int:
-        probes.append((sql, list(spark.executed)))
-        return 4096
-
-    monkeypatch.setattr(runner, "_orphan_bytes", probe)
-
-    runner._run_manifest(
-        spark, _orphan_manifest(tmp_path, measure_orphan_bytes=True), deadline_epoch=None
-    )
-
-    # Probed once, for the orphan statement, while only optimize had run.
-    assert probes == [(_ORPHAN_SQL, ["CALL o(a)"])]
-    optimize, orphan = _lines(capsys)
-    assert "bytes_removed" not in optimize["metrics"]
-    assert orphan["ok"] and orphan["metrics"]["bytes_removed"] == 4096
-
-
-def test_a_failed_orphan_probe_leaves_the_removal_ok_and_unmeasured(
-    tmp_path: Any, capsys: pytest.CaptureFixture[str]
-) -> None:
-    runner = _import_runner()
-    spark = _FakeSpark(fail_on="dry_run")
-
-    runner._run_manifest(
-        spark, _orphan_manifest(tmp_path, measure_orphan_bytes=True), deadline_epoch=None
-    )
-
-    assert any("dry_run" in sql for sql in spark.executed)
-    assert spark.executed[-1] == _ORPHAN_SQL
-    orphan = _lines(capsys)[1]
-    assert orphan["ok"] and "bytes_removed" not in orphan["metrics"]
-
-
-def test_an_orphan_probe_that_cannot_read_its_rows_leaves_the_removal_ok_and_unmeasured(
-    tmp_path: Any, capsys: pytest.CaptureFixture[str]
-) -> None:
-    runner = _import_runner()
-    # The dry run succeeds, but _Row has no positional access, so path extraction raises.
-    spark = _FakeSpark()
-
-    exit_code = runner._run_manifest(
-        spark, _orphan_manifest(tmp_path, measure_orphan_bytes=True), deadline_epoch=None
-    )
-
-    assert exit_code == 0
-    assert any("dry_run" in sql for sql in spark.executed)
-    assert spark.executed[-1] == _ORPHAN_SQL
-    optimize, orphan = _lines(capsys)
-    assert optimize["ok"]
-    assert orphan["ok"] and "bytes_removed" not in orphan["metrics"]
+    # The deleted-path rows only matter as a count: zero deleted is a measured zero.
+    assert orphan["metrics"] == {"orphan_files_deleted": 1}

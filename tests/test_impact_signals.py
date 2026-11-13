@@ -90,9 +90,9 @@ def test_daily_impact_sums_reclaim_actions_only(session) -> None:
     t2 = _seed_table(session, source, name="t2")
     _log(session, t1, days_ago=1, action="remove_orphan_files", bytes_freed=1024**3)
     _log(session, t2, days_ago=1, action="optimize", bytes_freed=2 * 1024**3)
-    # expire_snapshots frees storage indirectly (via a later remove_orphan_files) -- counting
-    # its own actual_bytes_freed here would double-count against the remove_orphan_files row.
-    _log(session, t1, days_ago=1, action="expire_snapshots", bytes_freed=999 * 1024**3)
+    # expire_snapshots counts: it frees files only expired snapshots held, which orphan
+    # removal never sees, so nothing is credited twice (#538).
+    _log(session, t1, days_ago=1, action="expire_snapshots", bytes_freed=4 * 1024**3)
     # apply_table_properties has no bytes-freed semantics; a stray non-null value must not leak in.
     _log(session, t1, days_ago=1, action="apply_table_properties", bytes_freed=1)
     session.commit()
@@ -100,8 +100,8 @@ def test_daily_impact_sums_reclaim_actions_only(session) -> None:
     start, end = day_bounds(NOW, 1)
     impact = _daily_impact(session, start, end)
 
-    assert impact.bytes_freed == 3 * 1024**3
-    assert impact.actions_succeeded == 2
+    assert impact.bytes_freed == 7 * 1024**3
+    assert impact.actions_succeeded == 3
     assert impact.tables_touched == 2
 
 

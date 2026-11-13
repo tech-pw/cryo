@@ -361,11 +361,13 @@ class Settings(BaseSettings):
         ),
     )
     maintenance_measure_orphan_bytes: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Before each remove_orphan_files, run the same call as a dry run and sum the sizes "
-            "of the files it lists, so orphan removal's audit rows carry actual_bytes_freed. "
-            "Off by default: the dry run doubles the orphan LIST, which has OOM'd Spark before."
+            "Record bytes freed by remove_orphan_files from the scanner's last orphan listing "
+            "(sizes and ages of unreferenced objects older than the action's cutoff), labelled "
+            "bytes_source=scan_estimate and confirmed by the next listing. No extra Spark "
+            "listing runs: the old dry-run probe that doubled the LIST and OOM'd Spark is gone "
+            "(#538). False leaves orphan removals that deleted files unmeasured."
         ),
     )
     # AutoComp ranking (cryo/maintenance/selection.py). Weights must sum to 1, so the compute
@@ -565,6 +567,8 @@ class Settings(BaseSettings):
     cost_scan_max_manifests: int = Field(default=5000, gt=0)
     cost_full_scan_every_hours: int = Field(default=168, ge=0)
     cost_orphan_min_age_hours: int = Field(default=72, ge=0)
+    # GetBucketVersioning + GetBucketLifecycleConfiguration per bucket, at most this often (#538).
+    s3_bucket_status_refresh_hours: int = Field(default=24, ge=1)
     cost_scan_max_list_keys: int = Field(default=1_000_000, gt=0)
     default_retention_days: int = Field(default=7, gt=0)
     default_retain_last: int = Field(default=1, gt=0)

@@ -3,7 +3,6 @@
 from cryo.engines.spark.procedure_metrics import (
     bytes_freed_from_procedure,
     bytes_removed_from_log,
-    with_orphan_dry_run,
 )
 
 
@@ -64,14 +63,9 @@ def test_log_parser_keeps_the_last_measured_result() -> None:
     assert bytes_removed_from_log(text) == 25
 
 
-def test_orphan_dry_run_is_appended_once() -> None:
-    sql = (
-        "CALL sample.system.remove_orphan_files("
-        "table => 'sample.s.t', older_than => TIMESTAMP '2026-09-01 00:00:00')"
-    )
-    once = with_orphan_dry_run(sql)
-    assert once.endswith(", dry_run => true)")
-    assert with_orphan_dry_run(once) == once
+def test_orphan_removal_without_sizes_is_unmeasured_unless_nothing_was_deleted() -> None:
+    assert bytes_freed_from_procedure("remove_orphan_files", {"orphan_files_deleted": 3}) is None
+    assert bytes_freed_from_procedure("remove_orphan_files", {"orphan_files_deleted": 0}) == 0
 
 
 def test_expire_effect_sums_deleted_files_and_keeps_the_breakdown() -> None:

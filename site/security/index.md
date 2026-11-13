@@ -101,6 +101,8 @@ These are encrypted in PostgreSQL with the key above, stored with an `enc:` pref
 
 Everything else in a source or destination `config` is stored as plain JSON. Keep credentials out of `config`. Better still, give the pods an IAM role through `serviceAccount.annotations` (IRSA on EKS), so no static AWS key is stored at all.
 
+The scanner's S3 role needs `s3:ListBucket` on table prefixes for the orphan listing. Cost insights also use `s3:GetBucketVersioning` and `s3:GetLifecycleConfiguration`. With them, the cost page can warn when a bucket has versioning on and no noncurrent-version expiration rule, which means deletes do not lower the bill. Both are optional. If they are denied, the bucket shows as unknown and the scan carries on.
+
 Local users' passwords are stored as salted PBKDF2-SHA256 hashes. The database URL, the Redis URL, the OIDC client secret and the keys themselves never go into the database. They live in the Kubernetes Secret.
 
 ## Network and egress

@@ -30,7 +30,6 @@ from pyspark.sql import SparkSession
 from cryo.engines.spark.procedure_metrics import (
     action_from_sql,
     bytes_freed_from_procedure,
-    with_orphan_dry_run,
 )
 
 _CATALOG_IMPL_SHORTHAND = {
@@ -190,38 +189,6 @@ def _json_safe(value: Any) -> Any:
 
 def _emit(prefix: str, payload: dict[str, Any]) -> None:
     print(prefix + json.dumps(payload, separators=(",", ":")), flush=True)
-
-
-def _sum_input_lengths(spark: SparkSession, paths: list[str]) -> int:
-    """Size orphan files before they are deleted. S3A is not on this image; use Iceberg S3FileIO."""
-    if not paths:
-        return 0
-    jvm = spark._jvm
-    io = jvm.org.apache.iceberg.aws.s3.S3FileIO()
-    props = jvm.java.util.HashMap()
-    io.initialize(props)
-    total = 0
-    try:
-        for path in paths:
-            location = path.replace("s3a://", "s3://", 1)
-            total += int(io.newInputFile(location).getLength())
-    finally:
-        io.close()
-    return total
-
-
-def _orphan_bytes(spark: SparkSession, sql: str) -> int | None:
-    try:
-        rows = spark.sql(with_orphan_dry_run(sql)).collect()
-        paths = [str(row[0]) for row in rows if row[0]]
-    except Exception as exc:
-        print(f"[cryo] orphan size probe failed: {exc}", file=sys.stderr)
-        return None
-    try:
-        return _sum_input_lengths(spark, paths)
-    except Exception as exc:
-        print(f"[cryo] orphan size sum failed: {exc}", file=sys.stderr)
-        return None
 
 
 _COMMIT_ACTIONS = frozenset(
@@ -401,7 +368,6 @@ def _run_manifest(spark: SparkSession, manifest_path: str, *, deadline_epoch: fl
     with gzip.open(manifest_path, "rt", encoding="utf-8") as handle:
         manifest = json.load(handle)
     tables = manifest.get("tables") or []
-    measure_orphan_bytes = bool(manifest.get("measure_orphan_bytes"))
     succeeded_tables = 0
     for table in tables:
         table_id = table["table_id"]
@@ -420,11 +386,6 @@ def _run_manifest(spark: SparkSession, manifest_path: str, *, deadline_epoch: fl
             if failed_reason is not None:
                 _emit(RESULT_PREFIX, {**base, "ok": False, "skipped": True, "error": failed_reason})
                 continue
-            measured = (
-                _orphan_bytes(spark, stmt["sql"])
-                if measure_orphan_bytes and stmt["action"] == "remove_orphan_files"
-                else None
-            )
             before_ok, before_id, snapshot_table = _begin_snapshot_probe(
                 spark, stmt["action"], stmt["sql"], table
             )
@@ -441,8 +402,8 @@ def _run_manifest(spark: SparkSession, manifest_path: str, *, deadline_epoch: fl
                 table_ok = False
                 continue
             duration_ms = int((time.monotonic() - started) * 1000)
-            if measured is not None:
-                metrics["bytes_removed"] = measured
+            if stmt["action"] == "remove_orphan_files":
+                metrics = {"orphan_files_deleted": row_count}
             _finish_snapshot_probe(
                 spark,
                 metrics,
@@ -599,16 +560,12 @@ def main() -> int | NoReturn:
                 continue
             action = action_from_sql(statement)
             print(f"[cryo] Executing SQL: {statement[:200]}{'...' if len(statement) > 200 else ''}")
-            extra: dict[str, Any] = {}
-            if action == "remove_orphan_files":
-                measured = _orphan_bytes(spark, statement)
-                if measured is not None:
-                    extra["bytes_removed"] = measured
             before_ok, before_id, snapshot_table = _begin_snapshot_probe(
                 spark, action, statement, None
             )
             row_count, metrics = _run_statement(spark, statement)
-            metrics.update(extra)
+            if action == "remove_orphan_files":
+                metrics = {"orphan_files_deleted": row_count}
             _finish_snapshot_probe(
                 spark,
                 metrics,

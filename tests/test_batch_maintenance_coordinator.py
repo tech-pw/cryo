@@ -668,20 +668,17 @@ def test_nothing_eligible_still_records_the_run_and_reports(session_factory) -> 
     assert len(h.notified) == 1
 
 
-@pytest.mark.parametrize("measure", [False, True])
-def test_every_lane_manifest_carries_the_orphan_measurement_setting(
-    session_factory, measure: bool
-) -> None:
+def test_no_lane_manifest_asks_for_an_orphan_dry_run(session_factory) -> None:
     """Replacement lanes too: lane 0 is lost before its first table, so lane 1 replaces it."""
     _seed(session_factory)
-    settings = _settings(maintenance_measure_orphan_bytes=True) if measure else _settings()
+    settings = _settings(maintenance_measure_orphan_bytes=True)
     h = _harness(session_factory, behaviour=_Behaviour(node_lost_lanes={0}), settings=settings)
 
     h.coordinator.run(trigger="batch-cron")
 
     manifests = h.runners[0].manifests
     assert sorted(manifests) == [0, 1]
-    assert [manifests[i]["measure_orphan_bytes"] for i in (0, 1)] == [measure, measure]
+    assert all("measure_orphan_bytes" not in manifests[i] for i in (0, 1))
 
 
 def _outcome() -> TableOutcome:

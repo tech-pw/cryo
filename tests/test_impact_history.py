@@ -266,11 +266,11 @@ class TestRecordDailyImpact:
             )
         ).scalar_one()
         assert persisted.raw is not None
-        assert persisted.raw["measured_reclaim_gb"] == 11.0
+        assert persisted.raw["measured_reclaim_gb"] == 20.0
         assert persisted.raw["impact_direction"] == "unknown"
         assert persisted.raw["bytes_freed_by_engine"] == {
             "native": {"bytes": 8 * 1024**3, "actions_measured": 2},
-            "trino": {"bytes": 2 * 1024**3, "actions_measured": 1},
+            "trino": {"bytes": 11 * 1024**3, "actions_measured": 2},
             "unknown": {"bytes": 1 * 1024**3, "actions_measured": 1},
         }
 

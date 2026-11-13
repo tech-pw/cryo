@@ -7734,6 +7734,8 @@ export interface components {
             top_opportunities: components["schemas"]["TableRead"][];
             /** Trend */
             trend?: components["schemas"]["CostTrendPoint"][];
+            /** Bucket Status */
+            bucket_status?: components["schemas"]["S3BucketStatusRead"][];
         };
         /** CostDashboardTotals */
         CostDashboardTotals: {
@@ -7767,6 +7769,34 @@ export interface components {
             total_realized_savings_usd?: number | null;
             /** Total Realized Bytes Freed */
             total_realized_bytes_freed?: number | null;
+            /** Realized Since */
+            realized_since?: string | null;
+            /**
+             * Realized Actions Total
+             * @default 0
+             */
+            realized_actions_total: number;
+            /**
+             * Realized Actions Measured
+             * @default 0
+             */
+            realized_actions_measured: number;
+            /** Realized Coverage Pct */
+            realized_coverage_pct?: number | null;
+            /** Realized Bytes By Source */
+            realized_bytes_by_source?: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Realized Window Start */
+            realized_window_start?: string | null;
+            /** Realized Window Days */
+            realized_window_days?: number | null;
+            /** Realized Window Bytes Freed */
+            realized_window_bytes_freed?: number | null;
+            /** Realized Window Coverage Pct */
+            realized_window_coverage_pct?: number | null;
             /** Query Request Savings Usd Month */
             query_request_savings_usd_month?: number | null;
             /**
@@ -9307,6 +9337,8 @@ export interface components {
             actions_with_bytes_evidence: number;
             /** Actions Without Bytes Evidence */
             actions_without_bytes_evidence: number;
+            /** Coverage Pct */
+            coverage_pct?: number | null;
             /** Optimize Files In */
             optimize_files_in: number;
             /** Optimize Files Out */
@@ -11870,6 +11902,24 @@ export interface components {
             lineage_complete: number;
             /** Lineage Completeness */
             lineage_completeness: number;
+        };
+        /** S3BucketStatusRead */
+        S3BucketStatusRead: {
+            /** Bucket */
+            bucket: string;
+            /** Versioning */
+            versioning?: string | null;
+            /** Noncurrent Expiration */
+            noncurrent_expiration?: boolean | null;
+            /** Deletes Reduce Cost */
+            deletes_reduce_cost?: boolean | null;
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
+            /** Error */
+            error?: string | null;
         };
         /** S3LogConfigCheckResponse */
         S3LogConfigCheckResponse: {

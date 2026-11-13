@@ -439,6 +439,24 @@ class TableCost(Base):
     table: Mapped[Table] = relationship(back_populates="cost")
 
 
+class S3BucketStatus(Base):
+    """Per-bucket versioning and lifecycle state, cached by the scanner (#538).
+
+    With versioning on and no noncurrent-version expiration rule, Iceberg deletes only add
+    delete markers, so reclaimed bytes never leave the bill. NULL means unknown (the check
+    has not run, or the scanner's role lacks s3:GetBucketVersioning /
+    s3:GetLifecycleConfiguration), never "off".
+    """
+
+    __tablename__ = "s3_bucket_status"
+
+    bucket: Mapped[str] = mapped_column(Text, primary_key=True)
+    versioning: Mapped[str | None] = mapped_column(Text)
+    noncurrent_expiration: Mapped[bool | None] = mapped_column(Boolean)
+    checked_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
 class TableCostHistory(Base):
     __tablename__ = "table_cost_history"
     __table_args__ = (

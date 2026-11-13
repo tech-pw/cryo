@@ -23,7 +23,12 @@ _EXPIRE_COUNT_KEYS = (
 def bytes_freed_from_procedure(action: str, metrics: dict[str, Any] | None) -> int | None:
     metrics = metrics or {}
     if action == "remove_orphan_files":
-        return _optional_int(metrics.get("bytes_removed"))
+        removed = _optional_int(metrics.get("bytes_removed"))
+        if removed is not None:
+            return removed
+        # The procedure lists deleted paths, not sizes. Nothing deleted is a measured zero;
+        # otherwise the scanner's listing prices it (cryo/maintenance/reclaim_measure.py).
+        return 0 if _optional_int(metrics.get("orphan_files_deleted")) == 0 else None
     if action == "rewrite_position_deletes":
         rewritten = _optional_int(metrics.get("rewritten_bytes_count"))
         added = _optional_int(metrics.get("added_bytes_count"))
@@ -36,7 +41,8 @@ def bytes_freed_from_procedure(action: str, metrics: dict[str, Any] | None) -> i
             return None
         if all(count == 0 for count in counts):
             return 0
-        # Iceberg's expire procedure returns file counts, not sizes. Do not invent bytes.
+        # Iceberg's expire procedure returns file counts, not sizes. The scanner's expire
+        # ledger prices it instead (cryo/maintenance/reclaim_measure.py).
         return None
     if action == "optimize":
         # rewrite_data_files reports bytes rewritten, not freed, and has no added-bytes figure.
@@ -83,15 +89,6 @@ def action_from_sql(sql: str) -> str | None:
     if "rewrite_data_files" in lowered:
         return "optimize"
     return None
-
-
-def with_orphan_dry_run(sql: str) -> str:
-    if "dry_run" in sql.lower():
-        return sql
-    stripped = sql.rstrip()
-    if not stripped.endswith(")"):
-        return sql
-    return stripped[:-1] + ", dry_run => true)"
 
 
 def bytes_removed_from_log(text: str | None) -> int | None:

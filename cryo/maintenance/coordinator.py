@@ -51,6 +51,7 @@ from cryo.maintenance.manifest import (
     build_table_work,
     lane_manifest_bytes,
 )
+from cryo.maintenance.reclaim_measure import apply_reclaim_measurement
 from cryo.maintenance.results import StatementResult
 from cryo.maintenance.selection import (
     BATCH_OPERATIONS_KEY,
@@ -126,6 +127,8 @@ class TableOutcome:
     results: dict[int, StatementResult] = field(default_factory=dict)
     status: JobStatus | None = None
     error: str | None = None
+    # Rendered SQL per seq: the expire/orphan cutoff that prices bytes freed from scan data.
+    sql_by_seq: dict[int, str] = field(default_factory=dict)
 
     @property
     def complete(self) -> bool:
@@ -586,6 +589,7 @@ class BatchMaintenance:
                     statement_count=len(planned.statements),
                     before_size_gb=item.candidate.total_size_gb,
                     before_files=item.candidate.total_files,
+                    sql_by_seq={stmt.seq: stmt.sql for stmt in planned.statements},
                 )
             session.commit()
 
@@ -881,7 +885,6 @@ class BatchMaintenance:
                         run_id,
                         lane.index,
                         lane_work,
-                        measure_orphan_bytes=self._settings.maintenance_measure_orphan_bytes,
                     ),
                 )
             )
@@ -952,18 +955,30 @@ class BatchMaintenance:
             return
         lane_jobs = {lane.spec.index: lane.job_name for lane in runner.lanes}
         audit: list[AuditLog] = []
+        audit_sql: list[tuple[AuditLog, str | None]] = []
         finished: list[TableOutcome] = []
         for lane_index, result in update.new_results:
             outcome = outcomes.get(result.table_id)
             if outcome is None or outcome.status is not None:
                 continue
             outcome.results[result.seq] = result
-            audit.append(_audit_row(outcome, result, lane_jobs.get(lane_index)))
+            row = _audit_row(outcome, result, lane_jobs.get(lane_index))
+            audit.append(row)
+            audit_sql.append((row, outcome.sql_by_seq.get(result.seq)))
             if outcome.complete:
                 outcome.status, outcome.error = table_status(outcome)
                 finished.append(outcome)
         if audit:
             with self._session_factory() as session:
+                for row, sql in audit_sql:
+                    apply_reclaim_measurement(
+                        session,
+                        row,
+                        sql=sql,
+                        default_retention_days=self._settings.default_retention_days,
+                        default_retain_last=self._settings.default_retain_last,
+                        estimate_orphans=self._settings.maintenance_measure_orphan_bytes,
+                    )
                 session.add_all(audit)
                 session.commit()
         self._persist_finished(finished)
@@ -1014,7 +1029,6 @@ class BatchMaintenance:
                 run_id,
                 index,
                 [work[o.table_id] for o in waiting],
-                measure_orphan_bytes=self._settings.maintenance_measure_orphan_bytes,
             ),
         )
         name = lane_names(run_id, index)
