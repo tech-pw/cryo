@@ -14,6 +14,8 @@ import {
 } from "../api/client";
 import { getCryoVitals } from "../api/vitals";
 import { getEngineLoad } from "../api/engineLoad";
+import { getStorageOverview } from "../api/storageOverview";
+import { storageFixture } from "./home/storageFixture";
 import { DatalakeHealth, tablesAtGradeDf } from "./DatalakeHealth";
 
 vi.mock("../lib/auth", () => ({ useAuth: () => ({ api: { token: "test-token" }, token: "test-token", role: "operator" }) }));
@@ -25,6 +27,7 @@ vi.mock("../api/client", () => ({
 }));
 vi.mock("../api/vitals", () => ({ getCryoVitals: vi.fn() }));
 vi.mock("../api/engineLoad", () => ({ getEngineLoad: vi.fn() }));
+vi.mock("../api/storageOverview", () => ({ getStorageOverview: vi.fn() }));
 
 const dashboard = {
   totals: { tables: 5, size_gb: 10, small_files: 100, needs_compaction: 1 },
@@ -42,6 +45,7 @@ beforeEach(() => {
   vi.mocked(getEngineLoad).mockReset().mockResolvedValue({ engines: [], workers_online: 2 });
   vi.mocked(listMaintenanceControls).mockReset().mockResolvedValue([]);
   vi.mocked(getFleetTrends).mockReset().mockResolvedValue({ days: 14, health_trend: [], cost_trend: [] });
+  vi.mocked(getStorageOverview).mockReset().mockResolvedValue(storageFixture());
   vi.mocked(getGovernorOffPeakWindow).mockReset().mockResolvedValue({ start_hour_ist: 1, end_hour_ist: 7, enabled: true });
 });
 const pause = (scope_type: "global" | "tenant" | "destination", reason: string | null) => ({
@@ -76,28 +80,25 @@ describe("Home overview", () => {
     expect(screen.getByRole("status")).toHaveTextContent("1 tables need compaction");
     expect(screen.getByText("Not graded").closest("li")).toHaveTextContent("3");
   });
-  it("keeps both missing reclaim measurements unknown instead of zero", async () => {
+  it("labels measured freed bytes apart from the estimated breakdown", async () => {
     renderHome();
     const impact = await screen.findByRole("region", { name: "Storage impact" });
-    await waitFor(() => expect(within(impact).getAllByText("Not measured")).toHaveLength(2));
-    expect(impact).not.toHaveTextContent("0 GB");
-    expect(screen.queryByText("Monthly savings")).not.toBeInTheDocument();
-  });
-  it("keeps partial evidence and estimated opportunity distinct", async () => {
-    vi.mocked(getCryoVitals).mockResolvedValue({ impact: { measurement_state: "partial", gb_freed_yesterday: 12, measured: 2, succeeded: 4 } });
-    vi.mocked(getDatalakeDashboard).mockResolvedValue({ ...dashboard, totals: { ...dashboard.totals, reclaimable_bytes: 1024 ** 3 } });
-    renderHome();
-    expect(await screen.findByText("partial · 2 of 4 measured")).toBeInTheDocument();
-    const impact = screen.getByRole("region", { name: "Storage impact" });
+    await waitFor(() => expect(impact).toHaveTextContent("Cryo freed 1.5 TB"));
+    expect(impact).toHaveTextContent("Measured on 75% of actions");
     expect(impact).toHaveTextContent("Estimate");
-    expect(impact).toHaveTextContent("1 GB");
+  });
+  it("teaches instead of showing zero when storage is unavailable", async () => {
+    vi.mocked(getStorageOverview).mockRejectedValue(new Error("down"));
+    renderHome();
+    const impact = await screen.findByRole("region", { name: "Storage impact" });
+    await waitFor(() => expect(impact).toHaveTextContent("Storage figures are unavailable"));
+    expect(impact).not.toHaveTextContent("0 GB");
   });
   it("recovers a failed dashboard using Retry, while other cards remain usable", async () => {
     vi.mocked(getDatalakeDashboard).mockRejectedValue(new Error("dashboard down"));
     renderHome();
     expect(await screen.findByText("Dashboard unavailable")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Platform" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Storage impact" })).toHaveTextContent("Unavailable");
     vi.mocked(getDatalakeDashboard).mockResolvedValue(dashboard);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("link", { name: /tables at D or F/ })).toBeInTheDocument();

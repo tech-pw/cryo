@@ -21,16 +21,13 @@ import { useAuth } from "../lib/auth";
 import { optionalNumber } from "../lib/batchSummary";
 import { formatNumber } from "../lib/format";
 import { freshnessCatalogHref } from "../lib/freshness";
-import {
-  latestNightlyRun,
-  reclaimInputFromImpact,
-  reclaimYesterdayDisplay
-} from "../lib/nowStrip";
+import { latestNightlyRun } from "../lib/nowStrip";
 import { AttentionCard } from "./home/AttentionCard";
 import { DiscoveredList } from "./home/DiscoveredList";
 import { FreshnessCard } from "./home/FreshnessCard";
 import { HotTablesCard } from "./home/HotTablesCard";
-import { ImpactCard } from "./home/ImpactCard";
+import { StorageCard } from "./home/StorageCard";
+import { getStorageOverview } from "../api/storageOverview";
 import { ImprovedCard } from "./home/ImprovedCard";
 import { LakeZone } from "./home/LakeZone";
 import { MaintenanceCard } from "./home/MaintenanceCard";
@@ -131,6 +128,12 @@ export const DatalakeHealth = () => {
     retry: 1,
     refetchInterval: SLOW_MS
   });
+  const storageOverview = useQuery({
+    queryKey: ["storage-overview", token],
+    queryFn: () => getStorageOverview(api),
+    retry: 1,
+    refetchInterval: SLOW_MS
+  });
   const offPeakWindow = useQuery({
     queryKey: ["governor-offpeak-window", token],
     queryFn: () => getGovernorOffPeakWindow(api),
@@ -146,14 +149,6 @@ export const DatalakeHealth = () => {
   const pauses = controls.isSuccess ? activePauses(controls.data) : null;
   const globalPause = pauses?.find((pause) => pause.scope_type === "global") ?? null;
   const offPeak = offPeakWindow.isSuccess ? offPeakState(offPeakWindow.data) : null;
-  const reclaim = vitals.isLoading
-    ? { hero: "…", unit: null, caption: null, tone: "muted" as const }
-    : vitals.isError
-      ? { hero: "Unavailable", unit: null, caption: null, tone: "plain" as const }
-      : reclaimYesterdayDisplay(reclaimInputFromImpact(vitals.data?.impact), {
-          measured: vitals.data?.north_star?.byte_actions_measured,
-          succeeded: vitals.data?.north_star?.byte_actions_succeeded
-        });
   const freshnessAsOf = data?.freshness_as_of ?? null;
   const freshnessDistribution = data?.freshness_distribution ?? [];
   const freshnessTotal = freshnessDistribution.reduce((sum, bucket) => sum + bucket.count, 0);
@@ -191,7 +186,7 @@ export const DatalakeHealth = () => {
   const trend = fleetTrends.data?.health_trend;
   const vitalsReason = vitals.data?.status === "CRITICAL" ? platformReason(vitals.data)?.text ?? "Open the platform card for details." : null;
   const dataAge = formatAgo(freshnessAsOf);
-  const queries = [dashboard, scannerStatus, engineLoad, fastPathFindings, vitals, nightlyRuns, pendingApprovals, controls, fleetTrends, offPeakWindow];
+  const queries = [dashboard, scannerStatus, engineLoad, fastPathFindings, vitals, nightlyRuns, pendingApprovals, controls, fleetTrends, offPeakWindow, storageOverview];
   const refreshing = queries.some((query) => query.isFetching);
   const flagged = fastPathFindings.data?.length ?? 0;
 
@@ -263,6 +258,7 @@ export const DatalakeHealth = () => {
         scanStale={scanStale}
       />
       <div className="home-grid">
+        <StorageCard data={storageOverview.data} loading={storageOverview.isLoading} error={storageOverview.isError} />
         <MaintenanceCard run={latest} loading={nightlyRuns.isLoading} error={nightlyRuns.isError} history={runs} offPeak={offPeak} />
         <AttentionCard
           pauses={pauses}
@@ -288,14 +284,6 @@ export const DatalakeHealth = () => {
           totalFiles={data?.totals?.total_files ?? null}
           dfDelta={dfDelta(trend, currentDf, gradedTables(data?.grade_distribution))}
           dfSeries={dfSeries(trend)}
-        />
-        <ImpactCard
-          reclaim={reclaim}
-          reclaimableBytes={data?.totals?.reclaimable_bytes ?? null}
-          loading={dashboard.isLoading}
-          error={dashboard.isError}
-          wowPct={vitals.data?.impact?.wow_pct ?? null}
-          projectedSavingsUsd={data?.totals?.projected_savings_usd_month ?? null}
         />
         <HotTablesCard tables={data?.hot_at_risk ?? null} total={data?.hot_at_risk_count ?? null} loading={dashboard.isLoading} error={dashboard.isError} />
         <ImprovedCard tables={data?.recently_improved ?? null} total={data?.recently_improved_count ?? null} loading={dashboard.isLoading} error={dashboard.isError} />

@@ -5588,6 +5588,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/impact/storage-overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Storage Overview
+         * @description Fleet storage breakdown, last-24h freed bytes, cumulative freed, and a 60-day trend.
+         */
+        get: operations["get_storage_overview_api_v1_impact_storage_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}/queue-status": {
         parameters: {
             query?: never;
@@ -7927,6 +7947,17 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** CumulativeFreedRead */
+        CumulativeFreedRead: {
+            /** Bytes Freed */
+            bytes_freed: number;
+            /** Since */
+            since: string | null;
+            /** Days Recorded */
+            days_recorded: number;
+            /** Days Unmeasured */
+            days_unmeasured: number;
+        };
         /** DailyReportResponse */
         DailyReportResponse: {
             /** Report Date */
@@ -9083,6 +9114,36 @@ export interface components {
             hour_start: string;
             /** Expected Queries */
             expected_queries: number;
+        };
+        /**
+         * Freed24hRead
+         * @description Measured: summed actual_bytes_freed on successful reclaim actions.
+         */
+        Freed24hRead: {
+            /** Bytes Freed */
+            bytes_freed: number;
+            /** Actions Succeeded */
+            actions_succeeded: number;
+            /** Actions Measured */
+            actions_measured: number;
+            /** Tables Cleaned */
+            tables_cleaned: number;
+            /**
+             * Window Start
+             * Format: date-time
+             */
+            window_start: string;
+            /**
+             * Window End
+             * Format: date-time
+             */
+            window_end: string;
+            /** Bytes By Source */
+            bytes_by_source: {
+                [key: string]: number;
+            } | null;
+            /** Savings Usd Month */
+            savings_usd_month: number | null;
         };
         /** FreshnessDistributionItem */
         FreshnessDistributionItem: {
@@ -13652,6 +13713,67 @@ export interface components {
             last_run: components["schemas"]["SpecMigrationLastRunRead"] | null;
         };
         /**
+         * StorageBreakdownRead
+         * @description Estimated bytes by category, from scanner cost accounting.
+         */
+        StorageBreakdownRead: {
+            /** Live Bytes */
+            live_bytes: number;
+            /** Retained History Bytes */
+            retained_history_bytes: number;
+            /** Dead Bytes */
+            dead_bytes: number;
+            /** Orphan Bytes */
+            orphan_bytes: number;
+            /** Metadata Bytes */
+            metadata_bytes: number;
+            /** Total Bytes */
+            total_bytes: number;
+            /** Compaction Savings Bytes */
+            compaction_savings_bytes: number;
+            /** Tables Total */
+            tables_total: number;
+            /** Tables With Cost */
+            tables_with_cost: number;
+            /** Tables With Listing */
+            tables_with_listing: number;
+            /** Price Per Gb Month */
+            price_per_gb_month: number | null;
+        };
+        /** StorageOverviewResponse */
+        StorageOverviewResponse: {
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            breakdown: components["schemas"]["StorageBreakdownRead"];
+            freed_24h: components["schemas"]["Freed24hRead"];
+            cumulative: components["schemas"]["CumulativeFreedRead"];
+            /** Trend */
+            trend: components["schemas"]["StorageTrendPointRead"][];
+            /** Versioning Findings */
+            versioning_findings: components["schemas"]["VersioningFindingRead"][] | null;
+        };
+        /** StorageTrendPointRead */
+        StorageTrendPointRead: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Total Bytes */
+            total_bytes: number | null;
+            /** Live Bytes */
+            live_bytes: number | null;
+            /** Bytes Freed */
+            bytes_freed: number | null;
+            /** Cumulative Freed Bytes */
+            cumulative_freed_bytes: number;
+            /** Measurement State */
+            measurement_state: string;
+        };
+        /**
          * SupportStatus
          * @enum {string}
          */
@@ -14953,6 +15075,13 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** VersioningFindingRead */
+        VersioningFindingRead: {
+            /** Bucket */
+            bucket: string;
+            /** Tables */
+            tables: number;
         };
         /** WairBoundaryReportResponse */
         WairBoundaryReportResponse: {
@@ -25298,6 +25427,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_storage_overview_api_v1_impact_storage_overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageOverviewResponse"];
                 };
             };
         };

@@ -1,5 +1,6 @@
 import type { Page, Route } from "@playwright/test";
 
+import { storageFixture } from "../../src/pages/home/storageFixture";
 import { installVisualMocks } from "../visual/helpers";
 import {
   DEMO_RUN,
@@ -97,6 +98,7 @@ export async function installDemo(page: Page, unhandled: Set<string>): Promise<v
       if (tab !== undefined) return json(route, tab);
       if (p.endsWith("/api/v1/dashboards/datalake")) return json(route, demoDashboardBody());
       if (p.endsWith("/api/v1/vitals")) return json(route, demoVitalsBody());
+      if (p.endsWith("/api/v1/impact/storage-overview")) return json(route, storageFixture());
       if (p.endsWith("/api/v1/runs")) {
         const pipeline = url.searchParams.get("pipeline");
         const runs = pipeline ? DEMO_RUN_HISTORY.filter((run) => (run.summary as Record<string, unknown>).pipeline === pipeline) : DEMO_RUN_HISTORY;

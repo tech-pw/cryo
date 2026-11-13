@@ -128,6 +128,7 @@ const SHOTS: Array<{
   act?: (page: Page) => Promise<void>;
 }> = [
   { name: "health", path: "/", waitFor: "Your lake at a glance", height: 1000 },
+  { name: "home-storage", path: "/", waitFor: "Where storage goes", height: 1200, selector: ".home-storage" },
   { name: "tables", path: "/tables", waitFor: "Last nightly run", height: 1320 },
   {
     name: "tables-triage",

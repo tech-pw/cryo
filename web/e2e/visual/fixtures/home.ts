@@ -1,4 +1,5 @@
 import { VISUAL_NOW_ISO, VISUAL_RUN_ID } from "./constants";
+import { storageFixture } from "../../../src/pages/home/storageFixture";
 
 /** Synthetic Home data for browser checks; never used by the application. */
 export const homeResponses: Record<string, unknown> = {
@@ -14,6 +15,7 @@ export const homeResponses: Record<string, unknown> = {
       ["over_1y", "Not updated over 1 year", 8], ["unknown", "No snapshot timestamp", 30], ["failed", "Failed / corrupt tables", 10]
     ].map(([key, label, count]) => ({ key, label, count })), top_offenders: [], drift: []
   },
+  "/api/v1/impact/storage-overview": storageFixture(),
   "/api/v1/vitals": {
     generated_at: VISUAL_NOW_ISO, score: 86, status: "DEGRADED",
     deductions: [{ reason: "scanner: Scan coverage is behind schedule.", points: 10 }, { reason: "jobs: Recent maintenance failures need review.", points: 4 }],

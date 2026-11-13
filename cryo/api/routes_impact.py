@@ -9,6 +9,7 @@ bounded window. An unmeasured day's ``bytes_freed`` of 0 is passed through with
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 from cryo.api.deps import SessionDep, require_viewer
 from cryo.db.models import FleetImpactHistory
 from cryo.reporting.impact_history import FleetImpactHistoryRow, fleet_impact_trend
+from cryo.reporting.storage_overview import GIB, storage_overview
 
 router = APIRouter(prefix="/api/v1", tags=["impact"])
 
@@ -129,4 +131,97 @@ def get_impact_history(
         since=window_since,
         until=window_until,
         rows=[_to_read(row, raw_by_date.get(row.report_date)) for row in rows],
+    )
+
+
+class StorageBreakdownRead(BaseModel):
+    """Estimated bytes by category, from scanner cost accounting."""
+
+    live_bytes: int
+    retained_history_bytes: int
+    dead_bytes: int
+    orphan_bytes: int
+    metadata_bytes: int
+    total_bytes: int
+    compaction_savings_bytes: int
+    tables_total: int
+    tables_with_cost: int
+    tables_with_listing: int
+    price_per_gb_month: float | None
+
+
+class Freed24hRead(BaseModel):
+    """Measured: summed actual_bytes_freed on successful reclaim actions."""
+
+    bytes_freed: int
+    actions_succeeded: int
+    actions_measured: int
+    tables_cleaned: int
+    window_start: datetime
+    window_end: datetime
+    bytes_by_source: dict[str, int] | None
+    savings_usd_month: float | None
+
+
+class CumulativeFreedRead(BaseModel):
+    bytes_freed: int
+    since: date | None
+    days_recorded: int
+    days_unmeasured: int
+
+
+class StorageTrendPointRead(BaseModel):
+    day: date
+    total_bytes: int | None
+    live_bytes: int | None
+    bytes_freed: int | None
+    cumulative_freed_bytes: int
+    measurement_state: str
+
+
+class VersioningFindingRead(BaseModel):
+    bucket: str
+    tables: int
+
+
+class StorageOverviewResponse(BaseModel):
+    generated_at: datetime
+    breakdown: StorageBreakdownRead
+    freed_24h: Freed24hRead
+    cumulative: CumulativeFreedRead
+    trend: list[StorageTrendPointRead]
+    versioning_findings: list[VersioningFindingRead] | None
+
+
+@router.get(
+    "/impact/storage-overview",
+    response_model=StorageOverviewResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def get_storage_overview(session: SessionDep) -> StorageOverviewResponse:
+    """Fleet storage breakdown, last-24h freed bytes, cumulative freed, and a 60-day trend."""
+    overview = storage_overview(session)
+    breakdown = overview.breakdown
+    freed = overview.freed_24h
+    price = breakdown.price_per_gb_month
+    return StorageOverviewResponse(
+        generated_at=overview.generated_at,
+        breakdown=StorageBreakdownRead(**breakdown.to_raw()),
+        freed_24h=Freed24hRead(
+            bytes_freed=freed.bytes_freed,
+            actions_succeeded=freed.actions_succeeded,
+            actions_measured=freed.actions_measured,
+            tables_cleaned=freed.tables_cleaned,
+            window_start=freed.window_start,
+            window_end=freed.window_end,
+            bytes_by_source=freed.bytes_by_source,
+            savings_usd_month=(freed.bytes_freed / GIB) * price if price is not None else None,
+        ),
+        cumulative=CumulativeFreedRead(**asdict(overview.cumulative)),
+        trend=[StorageTrendPointRead(**asdict(point)) for point in overview.trend],
+        versioning_findings=(
+            None
+            if overview.versioning_findings is None
+            else [VersioningFindingRead(**asdict(f)) for f in overview.versioning_findings]
+        ),
     )

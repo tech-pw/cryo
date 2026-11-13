@@ -2,7 +2,7 @@
 title: Health and cost
 description: How Cryo grades tables from A to F, how deductions work with a worked example, and what each maintenance operation projects.
 canonical: https://tech-pw.github.io/cryo/health/
-updated: 2026-11-12
+updated: 2026-11-13
 ---
 
 # Health and cost
@@ -22,6 +22,21 @@ Every table starts at 100 points and loses points for each problem the scan find
 | **F** | Below 40 |
 
 The home screen rolls those grades up across the lake, so you can see at a glance how many tables need work and how much storage maintenance could give back. It shows whether the count of D and F tables moved since yesterday, which D and F tables people query most, and which tables Cryo moved up a grade in the last 24 hours. A table only counts as fixed once a scan after its maintenance job shows the better grade. The [quickstart](https://tech-pw.github.io/cryo/quickstart/#next) shows that screen after the first scan of the seeded lake.
+
+## Storage impact on home
+
+The **Storage impact** card at the top of home answers one question: is Cryo making the lake smaller? Every figure carries a **Measured** or **Estimate** label.
+
+- **Last 24 hours (measured).** Bytes freed by successful cleanup actions, the number of tables cleaned and a monthly saving at list price. "Measured on 75% of actions" means three in four actions reported a byte count. The rest still ran, they just were not counted. Below it, a running total of bytes freed since the first daily report, counting measured days only.
+- **Where storage goes (estimate).** One bar splits the lake into live data, snapshot history still inside retention, dead data that snapshot expiry frees, orphan files that orphan cleanup frees, and metadata. Dead and orphans are marked **freeable**. Orphans and retained history need an S3 listing of the table, so the card says how many tables have one ("Storage listing for 812 of 1,044 tables"). A compaction estimate sits under the bar.
+- **Last 60 days.** Total storage, live data and the running total freed by Cryo, one point per daily report. The gap between total and live is what maintenance can still remove. Days recorded before this card existed show the total only.
+- **Versioned buckets.** When the scanner reports that a bucket has versioning on without a noncurrent-version expiration rule, a warning names the bucket. Deletes there leave billed old versions, so cleanup does not lower the bill until a lifecycle rule is added.
+
+When there is nothing to show yet, the card says why and what fills it in, instead of showing zero.
+
+cryo.local/
+
+*The Storage impact card with demo data. Measured results on the left, the estimated breakdown on the right, the 60-day trend below.*
 
 ## Deductions
 

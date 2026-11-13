@@ -82,6 +82,21 @@ The Storage tab reports four different numbers, and they must not be read as one
 
 `projected_savings = Σ storage savings`; `projected_cost = current_cost − projected_savings`.
 
+## Home storage overview (`GET /api/v1/impact/storage-overview`, issue #537)
+
+Viewer-scoped. Built in `cryo/reporting/storage_overview.py`; every query is one bounded aggregate:
+
+| Block | Source | Kind |
+|---|---|---|
+| Breakdown: live, retained snapshot history, dead, orphans, metadata, compaction estimate | `SUM` over `table_cost` (one row per table) joined to active `tables` | Estimate |
+| Last 24 h freed, tables cleaned, measured coverage, ≈ $/month | `audit_log` on `ts` (`ix_audit_log_ts`) with `realized_reclaim_conditions()` | Measured |
+| Freed since first report | `SUM(bytes_freed)` over `fleet_impact_history`, unmeasured days excluded | Measured |
+| 60-day trend: total, live, cumulative freed | `fleet_impact_history` rows, `LIMIT 60` | Mixed |
+
+- **Retained history** = `listed_bytes - (live + dead + metadata + orphan)`, clamped at 0, only for tables with an S3 listing. Orphans also count only for listed tables. The response carries `tables_with_listing` / `tables_total` so the UI can say how partial that is.
+- **Trend recording.** `record_daily_impact` now stores `raw.storage` (the breakdown) on each day's row. Days recorded earlier fall back to `total_size_tb` and have no live value. `fleet_impact_history` is never pruned, so 60 days are always retained.
+- **Feature-detected inputs.** If `AuditLog.bytes_freed_source` exists (engine / scan_estimate / listing_confirmed), `freed_24h.bytes_by_source` is filled. If any listed table has `table_cost.raw.bucket_versioning = {bucket, status, noncurrent_expiration}`, `versioning_findings` lists buckets with versioning `Enabled` and no noncurrent expiration; otherwise it is `null` (unknown, not "fine"). Only that JSON key is selected, capped at 20,000 rows.
+
 ## Build order (suggested)
 
 1. **Migration** — `20260703_0002_cost_tables.py` adds `cryo.table_cost`, `cryo.table_cost_history`,
