@@ -124,7 +124,7 @@ export const PresetConfigForm = ({
   const modeOptions = [
     { label: "Light", value: "light", disabled: false },
     { label: "Standard", value: "standard", disabled: false },
-    { label: "Deep", value: "deep", disabled: false },
+    { label: "Deep (default)", value: "deep", disabled: false },
     {
       label: "Manifest only",
       value: "manifest_only",

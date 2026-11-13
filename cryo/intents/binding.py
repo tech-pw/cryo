@@ -19,6 +19,7 @@ from cryo.db.repositories.job_store import (
     _job_record,
     _latest_partitions,
     _stats_dict,
+    orphan_cadence_stats,
 )
 from cryo.db.repositories.protected_snapshots import ProtectedSnapshotRepository
 from cryo.domain.enums import EngineType, OperationType
@@ -83,7 +84,7 @@ def build_and_bind_job_intent(
             job_record,
             params={**dict(job_record.params), "requested_operations": list(requested)},
         )
-    stats = _stats_dict(job.table)
+    stats = {**_stats_dict(job.table), **orphan_cadence_stats(session, job.table_id)}
     partitions = _latest_partitions(session, job.table_id)
     protected_snapshots = sorted(
         ProtectedSnapshotRepository(session).list_snapshot_ids(job.table_id)

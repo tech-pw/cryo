@@ -19,11 +19,16 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ## [Unreleased](https://github.com/tech-pw/cryo/compare/v0.2.0...HEAD)
 
+### Changed
+
+- **Behavior change:** the default preset now runs in deep mode, so scheduled maintenance removes orphan files and rewrites manifests. New presets default to deep. Migration `20261113_1300` switches the seeded `default-spark-compact` preset only if it was never edited; an edited default keeps its mode (set it to deep in the preset editor to opt in). Operation order is unchanged (#541).
+
 ### Added
 
 - Home: a Storage impact section shows what Cryo freed in the last 24 hours (with measurement coverage), where the lake's bytes are (live, retained history, dead, orphans, metadata), a 60-day storage trend and a versioned-bucket warning, backed by a new viewer-scoped `GET /api/v1/impact/storage-overview` endpoint. A malformed response shows the card's error state instead of breaking Home (#537).
 - Scanner unchanged-snapshot fast path (skips manifest walks when current_snapshot_id matches snapshot_watermark, with 7-day full reconcile) and shared Python/Go immutable Iceberg manifest summary LRU disk cache, plus scan/cache/object-store Prometheus metrics (#532).
 - API request coalescing (single-flight), input-version ETags with 304 Not Modified, short-lived response caching, and Prometheus metrics on heavy fleet and Path-to-A endpoints, paired with conditional If-None-Match revalidation in apiFetch (#533).
+- Per-table orphan cadence: `remove_orphan_files` runs on a table at most once per `orphan_removal_cadence_days` (default 7), staggered across nights by table id, with never-cleaned tables holding at least `orphan_catchup_min_bytes` (default 10 GiB) of orphans caught up first. Tables over `orphan_max_listing_keys` (default 5M objects) are skipped with a plan note, and orphan retention is never under 7 days. Deep-mode `optimize_manifests` needs at least `min_manifests` (default 100) manifests. Path to A shows the next orphan cleanup date (#541).
 - Per-table `archived` lifecycle for read-only/backup tables (`PUT /api/v1/tables/{id}/lifecycle`, Config tab card, Lifecycle filter and Path-to-A step): skips *Stale table commits* health penalty and data-rewrite operations while keeping snapshot expiry, orphan cleanup and manifest rewrites (#519).
 - Run grid uses Airflow status colours, animates running/queued work, shows queue reason and ETA, planner skips, and a post-maintenance stats scan row; successful maintenance now requests a stats rescan (#525).
 - Spark on Kubernetes: new submissions are spaced per destination across all workers (default 60/min plus jitter, spark.k8s.maxSubmitsPerMinute, 0 = off), with a cryo_spark_submit_throttle_wait_seconds metric (#487).

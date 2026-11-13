@@ -678,6 +678,35 @@ now in testable Python. Transform → value mapping is preserved exactly (epoch-
 | standard | `optimize` (partition-aware), `expire_snapshots` |
 | deep | `optimize` (partition-aware), `optimize_manifests`, `expire_snapshots`, `remove_orphan_files` |
 
+**Deep is the default (#541).** New presets default to `mode = deep`, and migration
+`20261113_1300` switches the seeded `default-spark-compact` preset from standard to deep only
+when every seeded column (mode, operations, params, guardrails, description) is unchanged; an
+edited default is left alone. Standard never planned orphan or manifest work, so a fleet on the
+old default never removed orphans. The operation order is unchanged (parity call-out, AGENTS.md §5).
+
+Two gates keep a nightly deep run cheap:
+
+- **Orphan cadence** (`cryo/planner/orphan_cadence.py`, applied by
+  `execution.gate_scheduled_orphan_removal`). `remove_orphan_files` is planned for a table at
+  most once per `orphan_removal_cadence_days` (default 7; preset `params.orphan_cadence_days`
+  overrides; 0 disables), counted in UTC days from the table's last successful
+  `remove_orphan_files` audit row. Within that, a table runs only on its stagger slot,
+  `crc32(table_id) mod N == epoch_day mod N`, so each night lists ~1/N of the fleet. A table
+  never cleaned whose last listing found `>= orphan_catchup_min_bytes` orphan bytes
+  (`TableCost.orphan_bytes`, else `reclaim_orphan_bytes`) runs ahead of its slot once; the
+  scheduler's existing reclaimable-bytes ranking puts the largest backlogs first under the
+  run's table cap. Skips leave a plan note with the next due date. Tables whose estimated root
+  object count (referenced files + orphan bytes / average file size) exceeds
+  `orphan_max_listing_keys` (default 5,000,000) are skipped with a note, since the listing runs
+  on one Spark driver whose heap is capped at 4 GiB. Orphan retention is raised to at least 7
+  days. An explicit `requested_operations` naming the op bypasses cadence and stagger only.
+- **Manifest need.** Deep `optimize_manifests` is planned only when the scan's `manifest_count`
+  is unknown or `>= params.min_manifests` (default 100, the checklist's manifest-bloat yellow).
+  `manifest_only` mode and explicit requests are not gated.
+
+The shared-location gate (fail closed when the overlap lookup fails), `gc.enabled=false`,
+governor admission, per-table locks and deadlines are unchanged and still apply after cadence.
+
 Operation order is enforced for correctness: compact first, then rewrite manifests, then
 expire and remove orphans last, so a single run reclaims the space its own compaction freed.
 `compute_statistics` (when enabled) runs immediately after `optimize`, because Puffin blobs

@@ -10,6 +10,7 @@ from cryo.domain.models import MaintenancePlan, Operation, OptimizeTruncation, P
 from cryo.planner.chunking import greedy_pack
 from cryo.planner.equality_deletes import plan_convert_equality_deletes
 from cryo.planner.guardrails import sort_operations_canonically
+from cryo.planner.orphan_cadence import DEFAULT_MIN_MANIFESTS as _DEFAULT_MIN_MANIFESTS
 from cryo.planner.partitions import (
     DEFAULT_RENDERABLE_CAPABILITIES,
     PartitionFieldSpec,
@@ -171,7 +172,11 @@ def build_plan(
         operations.extend(_spec_migration_operations(stats, partitions, params, notes))
 
     if resolved_mode is Mode.DEEP:
-        operations.append(Operation(OperationType.OPTIMIZE_MANIFESTS, dict(params)))
+        manifest_skip = _manifest_rewrite_not_needed(stats, params)
+        if manifest_skip is None:
+            operations.append(Operation(OperationType.OPTIMIZE_MANIFESTS, dict(params)))
+        else:
+            notes.append(manifest_skip)
     elif resolved_mode in {Mode.LIGHT, Mode.STANDARD}:
         # Regression, 2026-07-27: a standard-mode run only ran expire_snapshots + optimize,
         # silently dropping remove_orphan_files and
@@ -1347,6 +1352,29 @@ def _expire_nothing_to_expire_note(
             f"inside the {window_hours}h retention window, so nothing is old enough to expire."
         )
     return None
+
+
+def _manifest_rewrite_not_needed(stats: Mapping[str, Any], params: Mapping[str, Any]) -> str | None:
+    """Skip note when the last scan counted too few manifests for a rewrite to help.
+
+    An unknown count keeps the old always-plan behavior. An explicit request for
+    optimize_manifests is honored regardless of the count.
+    """
+    requested = params.get("requested_operations")
+    if isinstance(requested, (list, tuple)) and OperationType.OPTIMIZE_MANIFESTS.value in {
+        str(item) for item in requested
+    }:
+        return None
+    count = stats.get("manifest_count")
+    if not isinstance(count, int) or isinstance(count, bool):
+        return None
+    threshold = int(params.get("min_manifests", _DEFAULT_MIN_MANIFESTS))
+    if count >= threshold:
+        return None
+    return (
+        f"Skipped optimize_manifests: the last scan counted {count} manifests, "
+        f"under the {threshold}-manifest threshold."
+    )
 
 
 def _orphan_params(params: Mapping[str, Any]) -> dict[str, Any]:

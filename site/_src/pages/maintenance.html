@@ -78,6 +78,8 @@ updated: 2026-11-13
 <p>Drops snapshots the retention policy would not keep, and the files only they referenced. Guarded, and forcing it is audited.</p>
 <h3 id="remove-orphan-files">remove_orphan_files</h3>
 <p>Deletes files in storage that no snapshot references. Guarded, and forcing it is audited.</p>
+<p>The default preset runs in <strong>deep</strong> mode, so the nightly schedule removes orphan files. Each table is cleaned at most once every <code>orphan_removal_cadence_days</code> (default 7), counted from its last successful orphan removal, and tables are staggered by a hash of their id so each night lists about a seventh of the fleet. A table that has never been cleaned and whose last storage listing found at least <code>orphan_catchup_min_bytes</code> of orphans skips the stagger wait once; the run's table cap takes the largest backlogs first. A table whose root holds more than <code>orphan_max_listing_keys</code> objects is skipped with a plan note. Orphan files must be at least 7 days old, and a shared location, a failed overlap check or <code>gc.enabled=false</code> still drop the step. The table's Maintain tab shows when the next orphan cleanup is due.</p>
+<p><code>optimize_manifests</code> under deep mode is planned only when the last scan counted at least <code>min_manifests</code> manifests (default 100). Naming either operation in a manual run bypasses the cadence and the manifest threshold, not the safety checks.</p>
 
 <h2 id="chunking">Planner chunking</h2>
 <p>A large table is never compacted in one statement. The planner ranks partitions by small-file count, highest first, skips those under the <code>min_small_files</code> threshold, and then picks one of three paths.</p>

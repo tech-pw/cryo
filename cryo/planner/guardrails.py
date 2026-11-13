@@ -184,6 +184,11 @@ def validate_params(params: Mapping[str, object]) -> list[str]:
         "partition_write_idle_hours",
         # 0 = unlimited (bytes-only split); positive = optional soft file ceiling.
         "max_files_per_group",
+        "min_manifests",
+        # 0 turns the per-table orphan cadence / listing cap off.
+        "orphan_cadence_days",
+        "orphan_catchup_min_bytes",
+        "orphan_max_listing_keys",
     )
     positive_keys = (
         "max_partitions_per_chunk",

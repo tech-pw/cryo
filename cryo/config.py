@@ -370,6 +370,33 @@ class Settings(BaseSettings):
             "(#538). False leaves orphan removals that deleted files unmeasured."
         ),
     )
+    orphan_removal_cadence_days: int = Field(
+        default=7,
+        ge=0,
+        description=(
+            "Plan remove_orphan_files on a table at most once per this many days, counted "
+            "from its last successful orphan removal, with tables staggered across the "
+            "nights by a hash of their id. 0 plans it on every deep run. A preset can "
+            "override it with params.orphan_cadence_days."
+        ),
+    )
+    orphan_catchup_min_bytes: int = Field(
+        default=10 * 1024**3,
+        ge=0,
+        description=(
+            "A table never cleaned whose last storage listing found at least this many "
+            "orphan bytes skips the stagger wait once. 0 disables the catch-up."
+        ),
+    )
+    orphan_max_listing_keys: int = Field(
+        default=5_000_000,
+        ge=0,
+        description=(
+            "Skip remove_orphan_files when the table root holds more objects than this "
+            "(referenced files plus estimated orphans): the listing runs on one driver. "
+            "0 disables the cap."
+        ),
+    )
     # AutoComp ranking (cryo/maintenance/selection.py). Weights must sum to 1, so the compute
     # cost weight is 1 - maintenance_autocomp_w_file_reduction; 0.7 is the paper's evaluation.
     maintenance_autocomp_w_file_reduction: float = Field(default=0.7, ge=0.0, le=1.0)
