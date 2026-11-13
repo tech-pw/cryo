@@ -22,6 +22,10 @@ type ScanStatsRequest struct {
 	// SampleColumns limits file-bound samples to these columns (WAIR clustering-key
 	// candidates). Empty means no samples are kept.
 	SampleColumns []string `json:"sample_columns,omitempty"`
+	// ManifestCacheDir enables local immutable manifest summary caching (#532).
+	ManifestCacheDir string `json:"manifest_cache_dir,omitempty"`
+	// ManifestCacheMaxBytes bounds the local manifest cache size with mtime LRU eviction.
+	ManifestCacheMaxBytes int64 `json:"manifest_cache_max_bytes,omitempty"`
 }
 
 // ToExecuteRequest adapts scan-stats catalog fields for catalog.LoadTable.
@@ -162,6 +166,9 @@ type ScanStatsResponse struct {
 	WairFileSampleComplete bool                       `json:"wair_file_sample_complete"`
 	Commits                []ScanStatsCommit          `json:"commits"`
 	FileSizeBins           ScanStatsFileSizeBins      `json:"file_size_bins"`
+	ManifestCacheHits      int                        `json:"manifest_cache_hits,omitempty"`
+	ManifestCacheMisses    int                        `json:"manifest_cache_misses,omitempty"`
+	ObjectStoreRequests    int                        `json:"object_store_requests,omitempty"`
 }
 
 // ScanStatsFileSizeBins matches cryo.scanner.analyze file_size_bins: 40 log-2 buckets.

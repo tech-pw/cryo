@@ -69,7 +69,9 @@ type Options struct {
 	SampleColumns []string
 	// TargetFileBytes is what a rewrite of this table produces. AutoComp's file-count
 	// reduction counts every data file below it, not just "small" ones.
-	TargetFileBytes int64
+	TargetFileBytes       int64
+	ManifestCacheDir      string
+	ManifestCacheMaxBytes int64
 }
 
 func (o Options) withDefaults() Options {
@@ -106,13 +108,17 @@ func Run(ctx context.Context, req *protocol.ScanStatsRequest) protocol.ScanStats
 		msg := err.Error()
 		return protocol.ScanStatsResponse{OK: false, Error: &msg}
 	}
-	return ScanTable(ctx, tbl, Options{
-		SmallFileMB:          req.SmallFileMB,
-		HealthSmallFileBytes: req.HealthSmallFileBytes,
-		MaxPartitions:        req.MaxPartitions,
-		MaxFileSamples:       req.MaxFileSamples,
-		SampleColumns:        req.SampleColumns,
+	resp := ScanTable(ctx, tbl, Options{
+		SmallFileMB:           req.SmallFileMB,
+		HealthSmallFileBytes:  req.HealthSmallFileBytes,
+		MaxPartitions:         req.MaxPartitions,
+		MaxFileSamples:        req.MaxFileSamples,
+		SampleColumns:         req.SampleColumns,
+		ManifestCacheDir:      req.ManifestCacheDir,
+		ManifestCacheMaxBytes: req.ManifestCacheMaxBytes,
 	})
+	resp.ObjectStoreRequests++ // catalog.LoadTable metadata.json GET
+	return resp
 }
 
 // ScanTable walks the current snapshot of an already-loaded table.
@@ -150,7 +156,11 @@ func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protoc
 
 	snap := tbl.CurrentSnapshot()
 	var manifests []iceberg.ManifestFile
+	objectStoreRequests := 0
+	cacheHits := 0
+	cacheMisses := 0
 	if snap != nil {
+		objectStoreRequests++ // manifest-list GET
 		manifests, err = snap.Manifests(fs)
 		if err != nil {
 			msg := fmt.Sprintf("load manifests: %v", err)
@@ -159,11 +169,27 @@ func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protoc
 	}
 	acc.manifestCount = len(manifests)
 	snapshotTimesByID := snapshotTimes(tbl)
+	cacheEnabled := strings.TrimSpace(opts.ManifestCacheDir) != "" && opts.ManifestCacheMaxBytes > 0
 	for _, m := range manifests {
 		acc.manifestTotalBytes += m.Length()
+		manifestPath := m.FilePath()
+		if cacheEnabled && manifestPath != "" {
+			if cachedEntries, ok := loadCachedManifest(opts.ManifestCacheDir, manifestPath, opts.ManifestCacheMaxBytes); ok {
+				cacheHits++
+				for _, item := range cachedEntries {
+					acc.addCachedEntry(item, snapshotTimesByID)
+				}
+				continue
+			}
+			cacheMisses++
+		}
+		objectStoreRequests++ // manifest Avro GET
+		var toCache []cachedManifestEntry
+		hadManifestErr := false
 		for entry, entryErr := range m.Entries(fs, true) {
 			if entryErr != nil {
 				acc.manifestErrors = append(acc.manifestErrors, entryErr.Error())
+				hadManifestErr = true
 				break
 			}
 			if entry == nil {
@@ -175,6 +201,12 @@ func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protoc
 			}
 			writeMs, hasWrite := entrySnapshotTime(entry, snapshotTimesByID)
 			acc.addDataFile(df, fields, writeMs, hasWrite)
+			if cacheEnabled && manifestPath != "" {
+				toCache = append(toCache, summarizeLiveEntry(entry, df, acc, fields))
+			}
+		}
+		if cacheEnabled && manifestPath != "" && !hadManifestErr {
+			saveCachedManifest(opts.ManifestCacheDir, manifestPath, opts.ManifestCacheMaxBytes, toCache)
 		}
 	}
 
@@ -205,6 +237,9 @@ func ScanTable(ctx context.Context, tbl *table.Table, opts Options) (resp protoc
 	resp.IcebergProperties = props.icebergProperties
 	resp.GCEnabled = props.gcEnabled
 	resp.FormatVersion = formatVersion
+	resp.ManifestCacheHits = cacheHits
+	resp.ManifestCacheMisses = cacheMisses
+	resp.ObjectStoreRequests = objectStoreRequests
 	return resp
 }
 
