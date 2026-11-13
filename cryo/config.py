@@ -514,6 +514,25 @@ class Settings(BaseSettings):
         default=None,
         description="Optional path to cryo-engine-go; otherwise resolve like native runner.",
     )
+    scan_unchanged_fast_path_enabled: bool = Field(
+        default=True,
+        description=(
+            "Skip the manifest walk when a table's current snapshot ID matches its stored "
+            "snapshot_watermark and weekly reconcile is not due (#532)."
+        ),
+    )
+    scan_manifest_cache_dir: str = Field(
+        default="/tmp/cryo-manifest-cache",
+        description=(
+            "Local directory for immutable Iceberg manifest summaries shared by Python and Go "
+            "scanners. Empty string disables disk caching (#532)."
+        ),
+    )
+    scan_manifest_cache_max_mb: int = Field(
+        default=512,
+        ge=0,
+        description="Maximum size in MiB for the local manifest summary LRU cache (0 disables).",
+    )
     cost_metadata_max_files_estimate: int = Field(
         default=2_000_000,
         gt=0,

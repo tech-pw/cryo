@@ -6,7 +6,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, replace
@@ -28,7 +28,7 @@ from cryo.domain.enums import CostPrecision
 from cryo.integrations.aws_credentials import credentials_for_source
 from cryo.integrations.aws_s3_metrics import fetch_s3_request_prices
 from cryo.observability.logging import configure_process_logging
-from cryo.observability.metrics import scanner_tables_scanned_total
+from cryo.observability.metrics import scan_tables_total, scanner_tables_scanned_total
 from cryo.optimizer.wair.ranges import wair_sample_columns
 from cryo.scanner.analyze import TableAnalysis, analyze_catalog_table
 from cryo.scanner.cost import MetadataCostAccounting, build_table_cost_analysis
@@ -45,6 +45,12 @@ from cryo.scanner.persistence import (
     upsert_table,
 )
 from cryo.scanner.reconcile_missing import ReconcileResult, reconcile_missing_tables
+from cryo.scanner.unchanged import (
+    build_unchanged_table_analysis,
+    can_reuse_unchanged_stats,
+    current_snapshot_id_of,
+    load_table_for_probe,
+)
 from cryo.sources.base import SourceCatalog
 from cryo.sources.factory import source_catalog_for
 
@@ -541,10 +547,11 @@ def _run_scan_serial(
                 {"event": "table_result", "table_ref": table_ref, "outcome": "skipped"},
             )
             continue
+        weekly_reconcile_due = needs_weekly_reconcile(session, table_id=table_row.id, now=scan_at)
         if (
             not full_scan
             and already_scanned_today(session, table_id=table_row.id, now=scan_at)
-            and not needs_weekly_reconcile(session, table_id=table_row.id, now=scan_at)
+            and not weekly_reconcile_due
         ):
             skipped += 1
             _emit_progress(
@@ -554,31 +561,16 @@ def _run_scan_serial(
             continue
 
         try:
-            history = stats_history_for_signals(session, table_row.id)
-            wair_columns = _wair_columns(session, table_row.id)
-
-            def _analyze(
-                candidate: ScanCandidate = candidate,
-                history: Sequence[Mapping[str, Any]] | None = history,
-                wair_columns: Sequence[str] = wair_columns,
-            ) -> TableAnalysis:
-                return analyze_catalog_table(
-                    candidate.catalog,
-                    candidate.schema_name,
-                    candidate.table_name,
-                    scan_at=scan_at,
-                    small_file_mb=settings.scan_small_file_mb,
-                    file_size_threshold_mb=settings.scan_needs_compaction_threshold,
-                    settings=settings,
-                    stats_history=history,
-                    source_config=candidate.source.config,
-                    wair_columns=wair_columns,
-                )
-
-            analysis = _run_bounded(
-                _analyze,
-                timeout_seconds=settings.scan_table_timeout_seconds,
-                description=f"analyze_catalog_table({table_ref})",
+            analysis = _analyze_candidate_with_fast_path(
+                session,
+                candidate=candidate,
+                table_id=table_row.id,
+                table_ref=table_ref,
+                scan_at=scan_at,
+                settings=settings,
+                full_scan=full_scan,
+                cost_full_scan=cost_full_scan,
+                weekly_reconcile_due=weekly_reconcile_due,
             )
             analysis = _apply_orphan_scan(
                 session,
@@ -606,6 +598,10 @@ def _run_scan_serial(
             )
             session.commit()
             scanned += 1
+            scan_kind = (
+                "unchanged" if (analysis.raw or {}).get("scan_kind") == "unchanged" else "full"
+            )
+            scan_tables_total.labels(kind=scan_kind).inc()
             scanner_tables_scanned_total.labels(source=candidate.source.name).inc()
             _emit_progress(
                 progress_callback,
@@ -694,32 +690,28 @@ def _run_scan_parallel(
             )
             if honor_retry_backoff and scan_retry_deferred(table_row, now=scan_at):
                 return ("deferred", None)
+            weekly_reconcile_due = needs_weekly_reconcile(
+                table_session, table_id=table_row.id, now=scan_at
+            )
             if (
                 not full_scan
                 and already_scanned_today(table_session, table_id=table_row.id, now=scan_at)
-                and not needs_weekly_reconcile(table_session, table_id=table_row.id, now=scan_at)
+                and not weekly_reconcile_due
             ):
                 return ("skipped", None)
 
             try:
-                history = stats_history_for_signals(table_session, table_row.id)
-                wair_columns = _wair_columns(table_session, table_row.id)
                 table_ref = _table_ref(candidate)
-                analysis = _run_bounded(
-                    lambda: analyze_catalog_table(
-                        candidate.catalog,
-                        candidate.schema_name,
-                        candidate.table_name,
-                        scan_at=scan_at,
-                        small_file_mb=settings.scan_small_file_mb,
-                        file_size_threshold_mb=settings.scan_needs_compaction_threshold,
-                        settings=settings,
-                        stats_history=history,
-                        source_config=candidate.source.config,
-                        wair_columns=wair_columns,
-                    ),
-                    timeout_seconds=settings.scan_table_timeout_seconds,
-                    description=f"analyze_catalog_table({table_ref})",
+                analysis = _analyze_candidate_with_fast_path(
+                    table_session,
+                    candidate=candidate,
+                    table_id=table_row.id,
+                    table_ref=table_ref,
+                    scan_at=scan_at,
+                    settings=settings,
+                    full_scan=full_scan,
+                    cost_full_scan=cost_full_scan,
+                    weekly_reconcile_due=weekly_reconcile_due,
                 )
                 analysis = _apply_orphan_scan(
                     table_session,
@@ -746,6 +738,10 @@ def _run_scan_parallel(
                     scanned_at=scan_at,
                 )
                 table_session.commit()
+                scan_kind = (
+                    "unchanged" if (analysis.raw or {}).get("scan_kind") == "unchanged" else "full"
+                )
+                scan_tables_total.labels(kind=scan_kind).inc()
                 scanner_tables_scanned_total.labels(source=candidate.source.name).inc()
                 return ("scanned", None)
             except Exception as exc:
@@ -892,6 +888,82 @@ def _wair_columns(session: Session, table_id: UUID) -> list[str]:
     """Columns to sample per-file bounds for, from the last scan and the query-log window."""
     stats = session.get(TableStats, table_id)
     return wair_sample_columns(stats.raw) if stats is not None else []
+
+
+def _analyze_candidate_with_fast_path(
+    session: Session,
+    *,
+    candidate: ScanCandidate,
+    table_id: UUID,
+    table_ref: str,
+    scan_at: datetime,
+    settings: Settings,
+    full_scan: bool,
+    cost_full_scan: bool,
+    weekly_reconcile_due: bool,
+) -> TableAnalysis:
+    """Probe current snapshot ID first when stored stats are reusable; else full scan (#532)."""
+    history = stats_history_for_signals(session, table_id)
+    wair_columns = _wair_columns(session, table_id)
+    existing_stats = session.get(TableStats, table_id)
+    previous_cost = session.get(TableCost, table_id)
+    orphan_due = settings.cost_scan_tier == "storage_truth" and should_run_orphan_scan(
+        previous_cost, scan_at, settings, force=cost_full_scan
+    )
+
+    preloaded_table_obj: object | None = None
+    if (
+        not full_scan
+        and not weekly_reconcile_due
+        and not orphan_due
+        and settings.scan_unchanged_fast_path_enabled
+        and existing_stats is not None
+        and existing_stats.last_full_reconcile_at is not None
+    ):
+        preloaded_table_obj = _run_bounded(
+            lambda: load_table_for_probe(
+                candidate.catalog, candidate.schema_name, candidate.table_name
+            ),
+            timeout_seconds=settings.scan_table_timeout_seconds,
+            description=f"load_table_for_probe({table_ref})",
+        )
+        snap_id = current_snapshot_id_of(preloaded_table_obj)
+        if can_reuse_unchanged_stats(
+            existing_stats,
+            current_snapshot_id=snap_id,
+            full_scan=full_scan,
+            weekly_reconcile_due=weekly_reconcile_due,
+            settings=settings,
+        ):
+            return build_unchanged_table_analysis(
+                session,
+                table_id=table_id,
+                schema_name=candidate.schema_name,
+                table_name=candidate.table_name,
+                table_obj=preloaded_table_obj,
+                existing_stats=existing_stats,
+                scan_at=scan_at,
+                settings=settings,
+                stats_history=history,
+            )
+
+    return _run_bounded(
+        lambda: analyze_catalog_table(
+            candidate.catalog,
+            candidate.schema_name,
+            candidate.table_name,
+            scan_at=scan_at,
+            small_file_mb=settings.scan_small_file_mb,
+            file_size_threshold_mb=settings.scan_needs_compaction_threshold,
+            settings=settings,
+            stats_history=history,
+            source_config=candidate.source.config,
+            wair_columns=wair_columns,
+            table_obj=preloaded_table_obj,
+        ),
+        timeout_seconds=settings.scan_table_timeout_seconds,
+        description=f"analyze_catalog_table({table_ref})",
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -383,7 +383,7 @@ def persist_table_analysis(
         table_row.location = location
 
     existing_stats = session.get(TableStats, table_id)
-    stats_values = _stats_values(table_id, analysis)
+    stats_values = _stats_values(table_id, analysis, existing_stats=existing_stats)
     previous_raw = (
         dict(existing_stats.raw or {})
         if existing_stats and isinstance(existing_stats.raw, dict)
@@ -432,12 +432,14 @@ def persist_table_analysis(
         for key, value in stats_values.items():
             setattr(existing_stats, key, value)
 
-    # Deletes *all* of this table's existing partition rows, not just ones matching this
-    # scan_at -- table_partitions should only ever hold the latest scan's layout per table.
-    # Scoping the delete to scan_at == analysis.scan_at (idempotent re-run of the same scan)
-    # left every prior day's rows in place forever: unbounded growth, ~1.5GB/day in prod.
-    session.execute(delete(TablePartition).where(TablePartition.table_id == table_id))
-    session.execute(delete(TableColumn).where(TableColumn.table_id == table_id))
+    is_unchanged = (analysis.raw or {}).get("scan_kind") == "unchanged"
+    if not is_unchanged:
+        # Deletes *all* of this table's existing partition rows, not just ones matching this
+        # scan_at -- table_partitions should only ever hold the latest scan's layout per table.
+        # Scoping the delete to scan_at == analysis.scan_at (idempotent re-run of the same scan)
+        # left every prior day's rows in place forever: unbounded growth, ~1.5GB/day in prod.
+        session.execute(delete(TablePartition).where(TablePartition.table_id == table_id))
+        session.execute(delete(TableColumn).where(TableColumn.table_id == table_id))
     session.execute(
         delete(TableStatsHistory).where(
             TableStatsHistory.table_id == table_id,
@@ -446,12 +448,13 @@ def persist_table_analysis(
     )
     from cryo.config import get_settings
 
-    session.add_all(
-        _partition_rows(
-            table_id, analysis, max_partitions=get_settings().scanner_max_partitions_per_table
+    if not is_unchanged:
+        session.add_all(
+            _partition_rows(
+                table_id, analysis, max_partitions=get_settings().scanner_max_partitions_per_table
+            )
         )
-    )
-    session.add_all(_column_rows(table_id, analysis))
+        session.add_all(_column_rows(table_id, analysis))
     session.add(
         TableStatsHistory(
             table_id=table_id,
@@ -591,7 +594,12 @@ def persist_table_cost(
     )
 
 
-def _stats_values(table_id: uuid.UUID, analysis: TableAnalysis) -> dict[str, Any]:
+def _stats_values(
+    table_id: uuid.UUID,
+    analysis: TableAnalysis,
+    *,
+    existing_stats: TableStats | None = None,
+) -> dict[str, Any]:
     raw = dict(_json_safe(analysis.raw) or {})
     if not isinstance(raw, dict):
         raw = {}
@@ -603,6 +611,14 @@ def _stats_values(table_id: uuid.UUID, analysis: TableAnalysis) -> dict[str, Any
     last_snapshot_committed_at = _parse_optional_datetime(
         (analysis.raw or {}).get("last_snapshot_committed_at")
     )
+    if (
+        raw.get("scan_kind") == "unchanged"
+        and existing_stats is not None
+        and existing_stats.last_full_reconcile_at is not None
+    ):
+        last_full_reconcile_at = existing_stats.last_full_reconcile_at
+    else:
+        last_full_reconcile_at = analysis.scan_at
 
     return {
         "table_id": table_id,
@@ -627,7 +643,7 @@ def _stats_values(table_id: uuid.UUID, analysis: TableAnalysis) -> dict[str, Any
         "delete_file_pct": analysis.delete_file_pct,
         "snapshot_watermark": snapshot_watermark,
         "last_snapshot_committed_at": last_snapshot_committed_at,
-        "last_full_reconcile_at": analysis.scan_at,
+        "last_full_reconcile_at": last_full_reconcile_at,
         "manifest_count": analysis.manifest_count,
         "partition_col": analysis.partition_col,
         "partition_col_type": analysis.partition_col_type,

@@ -34,6 +34,7 @@
 <h2 id="unreleased"><a href="https://github.com/tech-pw/cryo/compare/v0.2.0...HEAD">Unreleased</a><a class="anchor" href="#unreleased" aria-label="Link to Unreleased">#</a></h2>
 <h3 id="unreleased-added">Added<a class="anchor" href="#unreleased-added" aria-label="Link to Added">#</a></h3>
 <ul>
+  <li>Scanner unchanged-snapshot fast path (skips manifest walks when current_snapshot_id matches snapshot_watermark, with 7-day full reconcile) and shared Python/Go immutable Iceberg manifest summary LRU disk cache, plus scan/cache/object-store Prometheus metrics (#532).</li>
   <li>API request coalescing (single-flight), input-version ETags with 304 Not Modified, short-lived response caching, and Prometheus metrics on heavy fleet and Path-to-A endpoints, paired with conditional If-None-Match revalidation in apiFetch (#533).</li>
   <li>Per-table <code>archived</code> lifecycle for read-only/backup tables (<code>PUT /api/v1/tables/{id}/lifecycle</code>, Config tab card, Lifecycle filter and Path-to-A step): skips *Stale table commits* health penalty and data-rewrite operations while keeping snapshot expiry, orphan cleanup and manifest rewrites (#519).</li>
   <li>Run grid uses Airflow status colours, animates running/queued work, shows queue reason and ETA, planner skips, and a post-maintenance stats scan row; successful maintenance now requests a stats rescan (#525).</li>
