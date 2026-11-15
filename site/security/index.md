@@ -27,6 +27,8 @@ These are issued by password sign-in for local users, by Google sign-in, and by 
 
 On the API Service, `/healthz`, `/readyz` and `/healthz/deep` need no token, and `/metrics` needs one only when `CRYO_METRICS_BEARER_TOKEN` is set. The web UI does not proxy `/healthz/deep` or `/metrics`; admins see them through `/api/v1/ops/`. Keep the API Service off the public internet; see [Install](https://tech-pw.github.io/cryo/install/#verify).
 
+The live run console never puts your token in a URL. The UI trades its token for a single-use ticket at `POST /api/v1/ws-tickets`. The ticket is bound to one run and expires after 30 seconds, and the API spends it when the WebSocket connects, so a ticket that reaches a proxy log can't be replayed. Scripts can send an `Authorization` header on the upgrade instead. The old `?token=` parameter is rejected unless `CRYO_WS_QUERY_TOKEN_ENABLED=true`, a deprecated switch that logs a warning each time it's used. Rejections are counted in `cryo_ws_auth_failures_total`.
+
 ## OIDC setup
 
 Register Cryo as a confidential client with the authorization-code flow, then set these in the Secret that `global.envFromSecret` names:
@@ -123,6 +125,7 @@ A default-deny egress NetworkPolicy that opens only these destinations is a good
 
 - `CRYO_ENVIRONMENT=prod` is set in `global.env`.
 - `CRYO_ALLOW_DEV_TOKEN_IN_PROD` is unset or `false`.
+- `CRYO_WS_QUERY_TOKEN_ENABLED` is unset or `false`.
 - `CRYO_SECRET_KEY` is a random value of at least 32 characters, it's stored in a Secret, and it's backed up with the database.
 - `CRYO_JWT_SECRET` is set to a different random value.
 - OIDC is configured, the access token carries a Cryo role, and you've signed in as an admin through it.

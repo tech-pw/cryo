@@ -47,6 +47,7 @@
     <tr><td><code>CRYO_OIDC_CLIENT_SECRET</code></td><td>secret</td><td>OIDC client secret, for the authorization-code exchange.</td></tr>
     <tr><td><code>CRYO_OIDC_REDIRECT_URI</code></td><td>unset</td><td>The redirect URI registered with the provider. The UI callback.</td></tr>
     <tr><td><code>CRYO_ALLOW_DEV_TOKEN_IN_PROD</code></td><td><code>false</code></td><td>Keeps the dev token live in prod. Anyone who can reach the API can self-grant any role while this is true.</td></tr>
+    <tr><td><code>CRYO_WS_QUERY_TOKEN_ENABLED</code></td><td><code>false</code></td><td>Deprecated. Lets the run console WebSocket accept the API token as <code>?token=</code>, where it can reach proxy logs. The UI uses a single-use ticket instead.</td></tr>
     <tr><td><code>CRYO_DISPLAY_TIMEZONE</code></td><td><code>UTC</code></td><td>IANA zone the install schedules and reports in. Also the zone the off-peak window is read in and the UI renders instants in.</td></tr>
     <tr><td><code>CRYO_OFFPEAK_START_IST</code></td><td><code>0</code></td><td>Hour the off-peak window opens, in the display time zone. Equal bounds disable the gate.</td></tr>
     <tr><td><code>CRYO_OFFPEAK_END_IST</code></td><td><code>0</code></td><td>Hour the off-peak window closes.</td></tr>

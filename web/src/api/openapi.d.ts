@@ -1061,6 +1061,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ws-tickets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Ws Ticket
+         * @description Issue a single-use, ~30 s ticket for opening ``/ws/runs/{run_id}`` (#551).
+         */
+        post: operations["create_ws_ticket_api_v1_ws_tickets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}/cancel": {
         parameters: {
             query?: never;
@@ -15181,6 +15201,21 @@ export interface components {
             /** Points */
             points: components["schemas"]["ForecastPointRead"][];
         };
+        /** WsTicketCreate */
+        WsTicketCreate: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+        };
+        /** WsTicketRead */
+        WsTicketRead: {
+            /** Ticket */
+            ticket: string;
+            /** Expires In Sec */
+            expires_in_sec: number;
+        };
         /**
          * CostAttributionResponse
          * @description Response for cost attribution dashboard.
@@ -17303,6 +17338,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_ws_ticket_api_v1_ws_tickets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WsTicketCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WsTicketRead"];
                 };
             };
             /** @description Validation Error */

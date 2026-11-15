@@ -61,3 +61,38 @@ class SensitiveDataFilter(logging.Filter):
             r"\1=" + REDACTED,
             message,
         )
+
+
+_QUERY_CREDENTIAL_RE = re.compile(
+    r"(?i)([?&](?:token|ticket|access_token|id_token|api_key|apikey|code)=)[^&\s\"']+"
+)
+ACCESS_LOG_LOGGERS = ("uvicorn.access", "uvicorn.error", "uvicorn")
+
+
+def scrub_query_credentials(text: str) -> str:
+    """Replace credential-bearing query parameter values in a URL or log line (#551)."""
+    return _QUERY_CREDENTIAL_RE.sub(r"\1" + REDACTED, text)
+
+
+class QueryStringCredentialFilter(logging.Filter):
+    """Scrub ``?token=``/``?ticket=`` values from server access and WebSocket log lines.
+
+    Uvicorn formats the request path with its query string into ``record.args``; its loggers
+    do not propagate to the root logger, so the root ``SensitiveDataFilter`` never sees them.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = scrub_query_credentials(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                scrub_query_credentials(arg) if isinstance(arg, str) else arg for arg in record.args
+            )
+        return True
+
+
+def install_access_log_scrubbing() -> None:
+    for name in ACCESS_LOG_LOGGERS:
+        logger = logging.getLogger(name)
+        if not any(isinstance(f, QueryStringCredentialFilter) for f in logger.filters):
+            logger.addFilter(QueryStringCredentialFilter())

@@ -17,6 +17,7 @@ updated: 2026-11-13
   <dd>These are issued by password sign-in for local users, by Google sign-in, and by the dev token route. They're signed with <code>CRYO_JWT_SECRET</code>, or with <code>CRYO_SECRET_KEY</code> when that's unset, and they last 24 hours.</dd>
 </dl>
 <p>On the API Service, <code>/healthz</code>, <code>/readyz</code> and <code>/healthz/deep</code> need no token, and <code>/metrics</code> needs one only when <code>CRYO_METRICS_BEARER_TOKEN</code> is set. The web UI does not proxy <code>/healthz/deep</code> or <code>/metrics</code>; admins see them through <code>/api/v1/ops/</code>. Keep the API Service off the public internet; see <a href="@/install/#verify">Install</a>.</p>
+<p>The live run console never puts your token in a URL. The UI trades its token for a single-use ticket at <code>POST /api/v1/ws-tickets</code>. The ticket is bound to one run and expires after 30 seconds, and the API spends it when the WebSocket connects, so a ticket that reaches a proxy log can't be replayed. Scripts can send an <code>Authorization</code> header on the upgrade instead. The old <code>?token=</code> parameter is rejected unless <code>CRYO_WS_QUERY_TOKEN_ENABLED=true</code>, a deprecated switch that logs a warning each time it's used. Rejections are counted in <code>cryo_ws_auth_failures_total</code>.</p>
 
 <h2 id="oidc">OIDC setup</h2>
 <p>Register Cryo as a confidential client with the authorization-code flow, then set these in the Secret that <code>global.envFromSecret</code> names:</p>
@@ -112,6 +113,7 @@ updated: 2026-11-13
 <ul class="checklist">
   <li><input type="checkbox" aria-label="Done"> <code>CRYO_ENVIRONMENT=prod</code> is set in <code>global.env</code>.</li>
   <li><input type="checkbox" aria-label="Done"> <code>CRYO_ALLOW_DEV_TOKEN_IN_PROD</code> is unset or <code>false</code>.</li>
+  <li><input type="checkbox" aria-label="Done"> <code>CRYO_WS_QUERY_TOKEN_ENABLED</code> is unset or <code>false</code>.</li>
   <li><input type="checkbox" aria-label="Done"> <code>CRYO_SECRET_KEY</code> is a random value of at least 32 characters, it's stored in a Secret, and it's backed up with the database.</li>
   <li><input type="checkbox" aria-label="Done"> <code>CRYO_JWT_SECRET</code> is set to a different random value.</li>
   <li><input type="checkbox" aria-label="Done"> OIDC is configured, the access token carries a Cryo role, and you've signed in as an admin through it.</li>

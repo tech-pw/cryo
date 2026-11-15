@@ -62,6 +62,16 @@ class Settings(BaseSettings):
         default=None,
         description="OAuth redirect URI registered with the IdP (UI callback).",
     )
+    ws_query_token_enabled: bool = Field(
+        default=False,
+        description=(
+            "Deprecated compatibility switch (#551): accept the API bearer token as a "
+            "`?token=` query parameter on the run console WebSocket. Off by default because a "
+            "token in a URL lands in proxy/ingress access logs, browser history and Referer. "
+            "Browsers use a single-use ticket from POST /api/v1/ws-tickets; other clients "
+            "send an Authorization header."
+        ),
+    )
     allow_dev_token_in_prod: bool = Field(
         default=False,
         description=(

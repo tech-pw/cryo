@@ -540,6 +540,7 @@ GET  /api/v1/runs/{run_id}
 GET  /api/v1/runs/{run_id}/jobs
 POST /api/v1/runs/{run_id}/cancel
 GET  /api/v1/jobs/{job_id}
+POST /api/v1/ws-tickets
 WS   /api/v1/ws/runs/{run_id}
 ```
 
@@ -548,9 +549,16 @@ Cancellation marks the run `cancelled` and queued/admitted/running jobs as skipp
 those jobs. Re-cancelling an already-cancelled run is idempotent and re-attempts the same
 Redis cleanup (useful if a prior cancel left a lock behind).
 
-The WebSocket requires viewer access through either an authorization header or
-the browser `?token=` parameter. It emits run/job snapshots and Redis
-live-state/log events with DB polling fallback.
+The WebSocket requires viewer access. Browsers first call `POST /api/v1/ws-tickets`
+with `{"run_id": "..."}` and their bearer token; the response is
+`{"ticket": "...", "expires_in_sec": 30}`. They then connect with `?ticket=`. The ticket
+is random, stored hashed in Redis, bound to the caller's subject, roles, tenant and that run,
+and consumed atomically (GETDEL) on connect, so reuse, expiry or a different run closes
+the socket with 1008. Non-browser clients can send `Authorization: Bearer` instead. The
+`?token=` parameter is rejected unless the deprecated `CRYO_WS_QUERY_TOKEN_ENABLED` switch
+is on (#551). Ticket issue returns 503 when Redis is unreachable. Rejected connections are
+counted in `cryo_ws_auth_failures_total{reason}`. The socket emits run/job snapshots and
+Redis live-state/log events with DB polling fallback.
 
 ## Known Gaps
 

@@ -43,6 +43,7 @@ SECRET_VALUE_SETTINGS = frozenset(
 NON_SECRET_OVERRIDES = frozenset(
     {
         "allow_dev_token_in_prod",
+        "ws_query_token_enabled",
         "google_admin_emails",
         "oidc_audience",
     }

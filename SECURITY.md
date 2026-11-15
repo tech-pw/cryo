@@ -95,6 +95,21 @@ shorter than 32 characters.
 
 Issued tokens expire in 24 hours. There is no published revocation list.
 
+## Run console WebSocket
+
+Browsers can't set an `Authorization` header on a WebSocket, so the UI never puts the API token
+in the socket URL. It calls `POST /api/v1/ws-tickets` with its bearer token and gets a random
+single-use ticket for one run. The ticket expires after 30 seconds and Redis stores only its
+SHA-256 hash. The UI opens `/api/v1/ws/runs/{run_id}?ticket=...`, and the API consumes the ticket
+atomically on connect. A reused, expired or other-run ticket is closed with 1008. A ticket that
+lands in an access log is already spent. Non-browser clients can send `Authorization: Bearer`
+on the upgrade instead.
+
+The old `?token=` parameter is rejected unless `CRYO_WS_QUERY_TOKEN_ENABLED=true`. That
+compatibility switch is off by default, logs a deprecation warning on every use, and will be
+removed. The API scrubs `token`, `ticket` and similar query values from its own Uvicorn access
+and WebSocket logs. Rejected sockets are counted in `cryo_ws_auth_failures_total{reason}`.
+
 ## Rotating CRYO_SECRET_KEY
 
 `CRYO_SECRET_KEY` encrypts stored connection secrets, so changing it alone makes them

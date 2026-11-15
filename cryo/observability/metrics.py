@@ -14,6 +14,12 @@ from prometheus_client import Counter, Gauge, Histogram, Summary
 
 # ==================== API SLO Metrics ====================
 
+ws_auth_failures_total = Counter(
+    "cryo_ws_auth_failures_total",
+    "Rejected run console WebSocket connections by bounded reason (#551).",
+    ["reason"],
+)
+
 auth_login_failures_total = Counter(
     "cryo_auth_login_failures_total",
     "Failed or throttled sign-ins by method (password, google) and bounded reason.",

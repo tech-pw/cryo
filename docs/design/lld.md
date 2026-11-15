@@ -1238,7 +1238,8 @@ GET   /api/v1/runs                  GET /api/v1/runs/{id}      GET /api/v1/runs/
                                     GET /api/v1/runs/{id}/dispatches  # native K8s Job packs
 GET   /api/v1/jobs/{id}
 POST  /api/v1/runs/{id}/cancel
-WS    /api/v1/ws/runs/{id}                                    # live job state / logs
+POST  /api/v1/ws-tickets   {run_id} -> {ticket, expires_in_sec}  # single-use, 30 s, Redis GETDEL (#551)
+WS    /api/v1/ws/runs/{id}?ticket=...                         # live job state / logs; or Authorization header
 ```
 
 **Bulk assignment is a selection spec, not a list of IDs**, so "filter → select all 3,000 matches →

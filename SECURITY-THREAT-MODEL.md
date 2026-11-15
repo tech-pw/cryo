@@ -23,7 +23,7 @@ The chart defaults to `CRYO_ENVIRONMENT=prod`. These remain exposed when an oper
 - `CRYO_ALLOW_DEV_TOKEN_IN_PROD` reopens the dev token in every environment, including `prod`.
 - Outside `staging` and `prod`, omitting `CRYO_SECRET_KEY` falls back to the published default `dev-only-change-me`, and tokens signed with it are accepted. `staging` and `prod` refuse to start with the default or a key shorter than 32 characters.
 - FastAPI `/docs` and `/openapi.json` are served outside `prod`, and in `prod` when `CRYO_API_DOCS_ENABLED` is set.
-- The run console WebSocket accepts the token as `?token=`, so it can reach proxy and access logs (#551).
+- `CRYO_WS_QUERY_TOKEN_ENABLED=true` makes the run console WebSocket accept the API token as `?token=` again, where it can reach proxy and access logs. By default the socket takes only a single-use, 30-second ticket from `POST /api/v1/ws-tickets` or an `Authorization` header (#551).
 
 ## Data plane
 

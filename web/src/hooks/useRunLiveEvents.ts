@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { wsRunUrl } from "../api/client";
+import { createWsTicket, wsRunUrl } from "../api/client";
 import type { JobRead, RunRead, UUID } from "../api/types";
 
 const MAX_WS_RETRIES = 8;
@@ -155,35 +155,51 @@ export const useRunLiveEvents = (runId: UUID, token: string) => {
     }
     setWsOpen(false);
 
-    const socket = new WebSocket(wsRunUrl(runId, token));
-    socketRef.current = socket;
+    let cancelled = false;
+    let activeSocket: WebSocket | null = null;
 
-    socket.onopen = () => {
-      retryCountRef.current = 0;
-      setReconnectAttempt(0);
-      setWsExhausted(false);
-      setWsOpen(true);
+    const openSocket = (ticket: string): WebSocket => {
+      const socket = new WebSocket(wsRunUrl(runId, ticket));
+      socketRef.current = socket;
+
+      socket.onopen = () => {
+        retryCountRef.current = 0;
+        setReconnectAttempt(0);
+        setWsExhausted(false);
+        setWsOpen(true);
+      };
+      socket.onmessage = (messageEvent) => {
+        try {
+          const payload = JSON.parse(messageEvent.data) as RunLiveEvent;
+          ingestEvent(payload);
+        } catch {
+          ingestEvent({ type: "log_line", message: messageEvent.data, ts: new Date().toISOString() });
+        }
+      };
+      socket.onerror = () => setWsOpen(false);
+      socket.onclose = (closeEvent) => {
+        setWsOpen(false);
+        if (socketRef.current === socket && !runTerminalRef.current && closeEvent.code !== 1008) {
+          scheduleReconnect();
+        }
+      };
+      return socket;
     };
-    socket.onmessage = (messageEvent) => {
-      try {
-        const payload = JSON.parse(messageEvent.data) as RunLiveEvent;
-        ingestEvent(payload);
-      } catch {
-        ingestEvent({ type: "log_line", message: messageEvent.data, ts: new Date().toISOString() });
-      }
-    };
-    socket.onerror = () => setWsOpen(false);
-    socket.onclose = (closeEvent) => {
-      setWsOpen(false);
-      if (socketRef.current === socket && !runTerminalRef.current && closeEvent.code !== 1008) {
-        scheduleReconnect();
-      }
-    };
+
+    // Each attempt needs a fresh ticket: the server spends it on connect.
+    createWsTicket(runId, { token })
+      .then(({ ticket }) => {
+        if (!cancelled) activeSocket = openSocket(ticket);
+      })
+      .catch(() => {
+        if (!cancelled && !runTerminalRef.current) scheduleReconnect();
+      });
 
     return () => {
+      cancelled = true;
       socketRef.current = null;
       clearRetryTimer();
-      socket.close();
+      activeSocket?.close();
     };
   }, [runId, token, manualReconnectKey, clearRetryTimer, scheduleReconnect, ingestEvent]);
 
