@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -340,3 +341,40 @@ def quote_identifier(identifier: str) -> str:
 def quote_qualified_name(*parts: str) -> str:
     """Quote each part of a dotted Trino name (catalog.schema.table) independently."""
     return ".".join(_quote_identifier(part) for part in parts)
+
+
+# Iceberg table properties Trino's Iceberg connector can change with ALTER TABLE ... SET
+# PROPERTIES, keyed by Iceberg property name. Both are integer-valued. Everything else
+# (write.*, bloom filters) has no Trino table property and needs Spark.
+TRINO_ICEBERG_TABLE_PROPERTIES: dict[str, str] = {
+    "format-version": "format_version",
+    "commit.retry.num-retries": "max_commit_retry",
+}
+
+
+def trino_supports_table_properties(keys: Sequence[str]) -> bool:
+    return all(key in TRINO_ICEBERG_TABLE_PROPERTIES for key in keys)
+
+
+def render_set_table_properties(
+    catalog: str, schema: str, table: str, properties: dict[str, str]
+) -> str:
+    """``ALTER TABLE ... SET PROPERTIES`` for the keys Trino maps (#557).
+
+    Values are rendered as integers only, so nothing from the request reaches the SQL text
+    unparsed.
+    """
+    if not properties:
+        raise ValueError("no properties to set")
+    assignments: list[str] = []
+    for key, value in sorted(properties.items()):
+        trino_name = TRINO_ICEBERG_TABLE_PROPERTIES.get(key)
+        if trino_name is None:
+            raise ValueError(f"Trino cannot set Iceberg property {key!r}")
+        try:
+            number = int(str(value).strip())
+        except ValueError as exc:
+            raise ValueError(f"{key} must be an integer, got {value!r}") from exc
+        assignments.append(f"{trino_name} = {number}")
+    name = ".".join(quote_identifier(part) for part in (catalog, schema, table))
+    return f"ALTER TABLE {name} SET PROPERTIES {', '.join(assignments)}"

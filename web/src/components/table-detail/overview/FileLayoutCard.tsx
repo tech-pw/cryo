@@ -108,7 +108,8 @@ export const FileLayoutCard = ({ stats, tableId }: { stats: TableStatsRead | nul
           value={skew == null ? (partitions === 1 ? "One partition" : "—") : `${skew.toFixed(skew >= 10 ? 0 : 1)}×`}
           tone={skew != null && skew > 10 ? "attention" : undefined}
         />
-        <Fact label="Delete files" value={deletes == null ? "—" : formatNumber(deletes)} tone={deletes ? "attention" : undefined} />
+        <Fact label="Iceberg format" value={stats?.format_version ? `v${stats.format_version}` : "—"} />
+        <Fact label="Delete files"value={deletes == null ? "—" : formatNumber(deletes)} tone={deletes ? "attention" : undefined} />
       </dl>
       {skew != null ? <p className="td-overview-caption">Skew compares the largest partition's file count with the median partition.</p> : null}
       <Link className="td-overview-link" to={`/tables/${tableId}?tab=files`}>

@@ -409,23 +409,57 @@ def count_suboptimal_property_issues(stats: Mapping[str, Any]) -> int:
     return issues
 
 
-def apply_table_properties(
-    session: Session,
-    table_id: uuid.UUID,
-    properties: dict[str, str],
-    *,
-    confirm_risky: bool = False,
-) -> dict[str, str]:
-    """Persist table properties via PyIceberg. Returns applied key→value map."""
-    from cryo.db.models import Source, Table
-    from cryo.sources.pyiceberg_catalog import PyIcebergSourceCatalog
+@dataclass(frozen=True)
+class PropertyApplyResult:
+    applied: dict[str, str]
+    route: str
+    engine: str
+    destination: str | None = None
+    statements: tuple[str, ...] = ()
 
+    def result_metrics(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"route": self.route, "engine": self.engine}
+        if self.destination:
+            out["destination"] = self.destination
+        return out
+
+    def audit_detail(self) -> str:
+        parts = [f"route={self.route}", f"engine={self.engine}"]
+        if self.destination:
+            parts.append(f"destination={self.destination}")
+        return " ".join(parts)
+
+
+def filter_applyable(
+    properties: Mapping[str, str], *, confirm_risky: bool = False
+) -> dict[str, str]:
     allowed: dict[str, str] = {}
     for key, value in properties.items():
         if key in TIER1_APPLYABLE_KEYS or key.startswith(BLOOM_FILTER_PROPERTY_PREFIX):
             allowed[key] = value
         elif key in RISKY_APPLYABLE_KEYS and confirm_risky:
             allowed[key] = value
+    return allowed
+
+
+def apply_table_properties(
+    session: Session,
+    table_id: uuid.UUID,
+    properties: dict[str, str],
+    *,
+    confirm_risky: bool = False,
+    allow_engine_route: bool = True,
+) -> PropertyApplyResult:
+    """Persist table properties. PyIceberg for v1/v2; engine DDL for v3 (#557).
+
+    Raises ``NoPropertyRouteError`` when a v3 table has no capable destination, or when
+    ``allow_engine_route`` is False (background sweeps don't start engine jobs).
+    """
+    from cryo.db.models import Source, Table
+    from cryo.sources.pyiceberg_catalog import PyIcebergSourceCatalog
+    from cryo.table_config import engine_route
+
+    allowed = filter_applyable(properties, confirm_risky=confirm_risky)
     if not allowed:
         raise ValueError("No applyable properties in request")
 
@@ -436,8 +470,30 @@ def apply_table_properties(
     if source is None:
         raise ValueError("Source not found")
 
+    format_version = engine_route.stored_format_version(session.get(TableStats, table_id))
+    if not engine_route.pyiceberg_can_commit(format_version):
+        if not allow_engine_route:
+            raise engine_route.NoPropertyRouteError(
+                "v3 table: property changes run only from a person's request, through an engine"
+            )
+        route = engine_route.resolve_property_route(session, table, list(allowed))
+        if route is None:
+            raise engine_route.NoPropertyRouteError()
+        statements = engine_route.apply_via_engine(
+            route, table.schema_name, table.table_name, allowed
+        )
+        return PropertyApplyResult(
+            applied=allowed,
+            route=engine_route.ENGINE_ROUTE,
+            engine=route.engine.value,
+            destination=route.destination_name,
+            statements=tuple(statements),
+        )
+
     catalog = PyIcebergSourceCatalog(name=str(source.id), config=source.config)
     iceberg_table = catalog.load_table(table.schema_name, table.table_name)
     with iceberg_table.transaction() as txn:
         txn.set_properties(**allowed)
-    return allowed
+    return PropertyApplyResult(
+        applied=allowed, route=engine_route.PYICEBERG_ROUTE, engine="pyiceberg"
+    )

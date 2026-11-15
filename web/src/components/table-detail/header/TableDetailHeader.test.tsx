@@ -67,6 +67,16 @@ describe("TableDetailHeader", () => {
   afterEach(() => {
     setDisplayTimeZone(undefined);
   });
+  it("shows the Iceberg format version badge (issue 557)", () => {
+    renderHeader({ formatVersion: 3 });
+    expect(screen.getByTestId("iceberg-format-badge")).toHaveTextContent("Iceberg v3");
+  });
+
+  it("falls back to a plain Iceberg badge when the version is unknown", () => {
+    renderHeader({ formatVersion: null });
+    expect(screen.getByTestId("iceberg-format-badge")).toHaveTextContent(/^Iceberg$/);
+  });
+
   it("shows Not scanned and Scan now when the table has not been scanned", () => {
     const onScan = vi.fn();
     renderHeader({

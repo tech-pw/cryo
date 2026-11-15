@@ -138,7 +138,15 @@ export const PropertyRecommendations = () => {
     }
   };
 
+  const route = recommendations.data?.property_route ?? null;
   const actionButton = (item: PropertyRecommendationRead): ReactNode => {
+    if (item.action === "apply" && item.recommended_value && route?.route === "none") {
+      return (
+        <span className="block max-w-48 text-right text-[11px] text-muted-foreground" data-testid="property-route-none">
+          Needs a Spark destination for v3 tables
+        </span>
+      );
+    }
     if (item.action === "apply" && item.recommended_value) {
       return (
         <>

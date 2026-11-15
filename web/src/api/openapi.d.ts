@@ -6345,6 +6345,17 @@ export interface components {
             audit_log_id: number;
             /** Message */
             message: string;
+            /**
+             * Route
+             * @default pyiceberg
+             * @enum {string}
+             */
+            route: "pyiceberg" | "engine";
+            /**
+             * Engine
+             * @default pyiceberg
+             */
+            engine: string;
         };
         /** ApprovalAction */
         ApprovalAction: {
@@ -11051,6 +11062,28 @@ export interface components {
              * @default false
              */
             gc_blocked: boolean;
+            /** Format Version */
+            format_version?: number | null;
+            property_route?: components["schemas"]["PropertyRouteRead"] | null;
+        };
+        /**
+         * PropertyRouteRead
+         * @description How Cryo commits a property change to this table (#557).
+         */
+        PropertyRouteRead: {
+            /** Format Version */
+            format_version?: number | null;
+            /**
+             * Route
+             * @enum {string}
+             */
+            route: "pyiceberg" | "engine" | "none";
+            /** Engine */
+            engine?: string | null;
+            /** Destination Name */
+            destination_name?: string | null;
+            /** Message */
+            message?: string | null;
         };
         /** ProtectSnapshotRequest */
         ProtectSnapshotRequest: {
@@ -13913,6 +13946,9 @@ export interface components {
             /** Columns */
             columns?: string[];
             operations?: components["schemas"]["TableOperationsRead"] | null;
+            /** Format Version */
+            format_version?: number | null;
+            property_route?: components["schemas"]["PropertyRouteRead"] | null;
         };
         /** TableCostRead */
         TableCostRead: {
@@ -14782,6 +14818,11 @@ export interface components {
             raw?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Format Version
+             * @description Iceberg format version from the last scan (raw.format_version), #557.
+             */
+            readonly format_version: number | null;
         };
         /**
          * TableStatsSnapshotRead

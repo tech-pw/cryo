@@ -111,6 +111,9 @@ class TableSnapshot:
     partition_skew_ratio: float = 0.0
     query_filters: Mapping[str, int] = field(default_factory=dict)
     property_changes: Mapping[str, str] = field(default_factory=dict)
+    # Why Cryo can't commit property_changes (a v3 table with no Spark/Trino destination,
+    # #557). Set: the step is shown without an action and projects no grade.
+    property_apply_blocked: str | None = None
     sort_columns: Sequence[str] = ()
     # The scanner's stats as compute_health_score saw them (total_size_gb, avg_file_size_mb,
     # snapshot_retention_days, commits_per_day, ...), so projections use the same limits.
@@ -792,7 +795,8 @@ def _property_issues(
     """
     from cryo.scanner.property_recommendations import count_suboptimal_property_issues
 
-    props = snapshot.property_changes if with_changes else {}
+    applies = with_changes and not snapshot.property_apply_blocked
+    props = snapshot.property_changes if applies else {}
     return count_suboptimal_property_issues(
         {
             "write_distribution_mode": props.get("write.distribution-mode")
@@ -813,7 +817,7 @@ def _mark_joint_property_fix(snapshot: TableSnapshot, steps: list[Step]) -> None
     by_id = {step.id: step for step in steps}
     properties, sort = by_id.get("table_properties"), by_id.get("sort_order")
     label = "Suboptimal properties"
-    if properties is None or sort is None or label not in sort.fixes:
+    if properties is None or properties.action is None or sort is None or label not in sort.fixes:
         return
     if not _property_issues(snapshot, sort_order=True, with_changes=False):
         return  # the sort order alone clears it
@@ -827,10 +831,21 @@ def _mark_joint_property_fix(snapshot: TableSnapshot, steps: list[Step]) -> None
 def _properties_step(snapshot: TableSnapshot, projection: _Projection) -> Step | None:
     if not snapshot.property_changes:
         return None
+    changes = ", ".join(f"{k} = {v}" for k, v in sorted(snapshot.property_changes.items()))
+    if snapshot.property_apply_blocked:
+        return Step(
+            id="table_properties",
+            kind="external",
+            title="Apply recommended table properties",
+            detail=f"Would set {changes}. {snapshot.property_apply_blocked}",
+            fixes=[],
+            projected_score=projection.score(),
+            projected_grade=grade_for_score(projection.score()),
+            confidence="measured",
+        )
     before = dict(projection.points)
     if projection.has("properties"):
         projection.set("properties", 8 if _property_issues(snapshot) else 0)
-    changes = ", ".join(f"{k} = {v}" for k, v in sorted(snapshot.property_changes.items()))
     detail = f"Sets {changes}."
     if not snapshot.has_sort_order and projection.has("properties"):
         detail += " The property deduction also needs a sort order (see the sort step)."

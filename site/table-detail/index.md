@@ -22,7 +22,7 @@ cryo.local/tables/analytics.events
 | Part | What it shows |
 | --- | --- |
 | Breadcrumb | Tables, then the lakehouse (source), the namespace and the table. **Copy link** copies a link to the current tab. |
-| Name and badges | Table format, the partition column (or *Unpartitioned*), the health score with its grade letter, and the owner. |
+| Name and badges | Table format with its Iceberg format version from the last scan (for example *Iceberg v3*), the partition column (or *Unpartitioned*), the health score with its grade letter, and the owner. |
 | Summary tiles | **Table size**, **Files**, **Compaction candidates** (small files, also as a share of all files), **Snapshots**, and **Maintenance workflow**: the preset that maintains the table, how it was assigned, and its engine. |
 | Activity line | When the scanner last read the table, the last commit, the latest maintenance action, and a **Storage location** disclosure with a copy button. |
 | Run maintenance | Runs the table's workflow now, or previews it when you can't run it. The arrow opens the actions menu. |
@@ -236,6 +236,8 @@ Every setting that shapes how the table is written, committed and cleaned up, re
 cryo.local/tables/analytics.events?tab=config
 
 *Rows that differ from the recommendation carry a bar on the left. Click the first tile to show only those.*
+
+**Iceberg v3 tables.** PyIceberg can't write format-version 3 metadata yet, so on a v3 table Cryo applies property changes as engine DDL instead: `ALTER TABLE … SET TBLPROPERTIES` on a Spark destination, or `ALTER TABLE … SET PROPERTIES` on Trino for the few keys Trino can set (format version and commit retries). A note above the inventory names the destination Cryo will use. It prefers the table's own workflow destination, then its SQL fallback, then any enabled Spark destination. Without one, property rows are read-only, the note says a Spark destination is needed, and Path to A shows the property step without an Apply button or a projected grade. The same allowlist, risk checks, confirmation and audit row apply, and the audit row records the engine and route.
 
 Below the inventory, **More suggestions from the last scan** lists what the scan's property checks suggest where no row already makes a recommendation, so a property never gets two answers. **Stage** adds the suggestion to the same review as a row edit.
 

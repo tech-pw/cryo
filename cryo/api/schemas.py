@@ -9,6 +9,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    computed_field,
     field_serializer,
     field_validator,
     model_validator,
@@ -739,6 +740,14 @@ class TableStatsRead(OrmModel):
     cost_last_full_scan_at: datetime | None = None
     query_count_30d: int = 0
     raw: JsonDict | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def format_version(self) -> int | None:
+        """Iceberg format version from the last scan (raw.format_version), #557."""
+        from cryo.table_config.engine_route import parse_format_version
+
+        return parse_format_version((self.raw or {}).get("format_version"))
 
 
 class TableRead(OrmModel):
