@@ -27,6 +27,7 @@ from cryo.domain.lifecycle import is_archived
 from cryo.scanner.analyze import PartitionAnalysis, TableAnalysis
 from cryo.scanner.detection_tiers import TierInputs, classify_detection_tier
 from cryo.scanner.health import apply_lifecycle
+from cryo.sources.missing import TABLE_MISSING_REASON
 
 
 def _json_safe(value: Any) -> Any:
@@ -164,6 +165,9 @@ def record_table_scan_outcome(
         # A table that scans cleanly is in the catalog, so a #120 tombstone no longer holds.
         table.removed_from_catalog_at = None
         table.removed_reason = None
+        if table.maintenance_missing_metadata_reason == TABLE_MISSING_REASON:
+            table.maintenance_missing_metadata_reason = None
+            table.maintenance_retry_after = None
         table.consecutive_scan_failures = 0
         table.last_scan_error = None
         table.last_scan_error_at = None

@@ -82,8 +82,10 @@ class TableCommitWatcher:
         max_tables_per_poll: int | None = None,
         min_table_interval_seconds: float = 0.0,
         clock: Callable[[], float] = time.monotonic,
+        on_missing: Callable[[str], None] | None = None,
     ) -> None:
         self._probe = probe
+        self._on_missing = on_missing
         self._publish = publish
         self._poll_interval_seconds = poll_interval_seconds
         self._max_tables_per_poll = max_tables_per_poll
@@ -120,7 +122,11 @@ class TableCommitWatcher:
         self._state.pop(table_ref, None)
 
     def poll_once(self, *, now: datetime | None = None) -> list[TableCommitted]:
-        from cryo.observability.metrics import events_snapshot_probes_total
+        from cryo.observability.metrics import (
+            events_snapshot_probes_total,
+            table_load_skipped_total,
+        )
+        from cryo.sources.missing import is_missing_table_error
 
         current = now or datetime.now(UTC)
         tick = self._clock()
@@ -140,6 +146,22 @@ class TableCommitWatcher:
             try:
                 event = self._probe_table(table_ref, state, current)
             except Exception as exc:
+                if is_missing_table_error(exc):
+                    # Dropped from the catalog: stop probing it and hold it (on_missing), so a
+                    # target refresh does not re-add it before the next scan tombstones it.
+                    events_snapshot_probes_total.labels(outcome="table_missing").inc()
+                    self.unwatch(table_ref)
+                    if state.table_id and self._on_missing is not None:
+                        try:
+                            self._on_missing(state.table_id)
+                        except Exception as hold_exc:  # noqa: BLE001
+                            logger.warning("Could not hold missing %s: %s", table_ref, hold_exc)
+                    else:
+                        table_load_skipped_total.labels(
+                            component="commit_watcher", reason="table_missing"
+                        ).inc()
+                        logger.info("Commit watcher: %s is no longer in the catalog", table_ref)
+                    continue
                 events_snapshot_probes_total.labels(outcome="failed").inc()
                 logger.warning("Snapshot probe failed for %s: %s", table_ref, exc)
                 continue

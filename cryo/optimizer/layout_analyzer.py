@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from cryo.db.models import LayoutRecommendation, QueryPattern, Source, Table, TableStats
 from cryo.optimizer.schema_columns import resolve_columns, table_schema_columns
+from cryo.sources.missing import TableMissingFromCatalogError, is_missing_table_error
 from cryo.telemetry.patterns import get_recommended_sort_columns, get_table_query_patterns
 
 logger = logging.getLogger(__name__)
@@ -201,6 +202,10 @@ def fetch_file_stats(
     checked and there's nothing to prune on" -- see ``analyze_table_layout``'s ``if
     file_stats:`` gate, which already treats both the same way, but future callers reading this
     return value directly shouldn't have to guess.
+
+    One exception (#561): a table the catalog says does not exist raises
+    ``TableMissingFromCatalogError`` instead, so periodic callers can skip and hold it
+    (``cryo.sources.missing.note_missing_table``) rather than log a traceback every tick.
     """
     from pyiceberg.conversions import from_bytes
 
@@ -218,7 +223,11 @@ def fetch_file_stats(
             description=f"catalog.load_table({table.schema_name}.{table.table_name})",
         )
         schema = iceberg_table.schema()
-    except Exception:
+    except Exception as exc:
+        if is_missing_table_error(exc):
+            raise TableMissingFromCatalogError(
+                f"{table.schema_name}.{table.table_name} is not in the catalog"
+            ) from exc
         logger.warning(
             "fetch_file_stats: could not load Iceberg table %s.%s",
             table.schema_name,

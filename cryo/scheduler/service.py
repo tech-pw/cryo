@@ -808,6 +808,7 @@ class SchedulerService:
         from cryo.api.security import Principal, Role
         from cryo.db.models import LayoutRecommendation, Table
         from cryo.db.repositories import presets as presets_repo
+        from cryo.sources.missing import is_held_missing
 
         logger = logging.getLogger(__name__)
         autopilot_principal = Principal(
@@ -829,7 +830,7 @@ class SchedulerService:
             )
             for recommendation in candidates:
                 table = session.get(Table, recommendation.table_id)
-                if table is None:
+                if table is None or not table.is_active or is_held_missing(table):
                     continue
                 effective = presets_repo.resolve_effective_preset(session, table)
                 if effective is None:
@@ -891,8 +892,13 @@ class SchedulerService:
 
         from sqlalchemy import select
 
-        from cryo.db.models import LayoutRecommendation, QueryPattern
+        from cryo.db.models import LayoutRecommendation, QueryPattern, Table
         from cryo.optimizer.layout_analyzer import generate_layout_recommendation
+        from cryo.sources.missing import (
+            TableMissingFromCatalogError,
+            note_missing_table,
+            table_not_held_missing,
+        )
 
         logger = logging.getLogger(__name__)
         with SessionLocal() as session:
@@ -900,10 +906,12 @@ class SchedulerService:
             table_ids = (
                 session.execute(
                     select(distinct_tables.c.table_id)
+                    .join(Table, Table.id == distinct_tables.c.table_id)
                     .outerjoin(
                         LayoutRecommendation,
                         LayoutRecommendation.table_id == distinct_tables.c.table_id,
                     )
+                    .where(Table.is_active.is_(True), table_not_held_missing())
                     .where(LayoutRecommendation.status.is_distinct_from("applied"))
                     .order_by(LayoutRecommendation.updated_at.asc().nulls_first())
                     .limit(settings.layout_recommendation_max_tables_per_tick)
@@ -916,6 +924,9 @@ class SchedulerService:
                 try:
                     generate_layout_recommendation(session, table_id)
                     generated += 1
+                except TableMissingFromCatalogError:
+                    session.rollback()
+                    note_missing_table(session, table_id, component="layout_analyzer")
                 except Exception as exc:  # noqa: BLE001
                     # A failed statement aborts the transaction. Without the rollback every
                     # later table failed with InFailedSqlTransaction, hiding the real error
@@ -947,10 +958,15 @@ class SchedulerService:
 
         from sqlalchemy import select
 
-        from cryo.db.models import LayoutRecommendation
+        from cryo.db.models import LayoutRecommendation, Table
         from cryo.optimizer.layout_analyzer import (
             MIN_HOURS_BEFORE_MEASURING_EFFECTIVENESS,
             measure_layout_recommendation_effectiveness,
+        )
+        from cryo.sources.missing import (
+            TableMissingFromCatalogError,
+            note_missing_table,
+            table_not_held_missing,
         )
 
         logger = logging.getLogger(__name__)
@@ -961,6 +977,8 @@ class SchedulerService:
             candidates = (
                 session.execute(
                     select(LayoutRecommendation)
+                    .join(Table, Table.id == LayoutRecommendation.table_id)
+                    .where(Table.is_active.is_(True), table_not_held_missing())
                     .where(LayoutRecommendation.status == "applied")
                     .where(LayoutRecommendation.observed_prune_improvement.is_(None))
                     .where(LayoutRecommendation.applied_at.isnot(None))
@@ -976,6 +994,11 @@ class SchedulerService:
                     result = measure_layout_recommendation_effectiveness(session, recommendation)
                     if result is not None:
                         measured += 1
+                except TableMissingFromCatalogError:
+                    session.rollback()
+                    note_missing_table(
+                        session, recommendation.table_id, component="layout_effectiveness"
+                    )
                 except Exception as exc:  # noqa: BLE001
                     failed += 1
                     logger.warning(

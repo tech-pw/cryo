@@ -186,6 +186,14 @@ CREATE TABLE cryo.tables (
 );
 ```
 
+Periodic loaders that load a table by name (layout analyzer and effectiveness check, property
+autopilot, commit watcher) recognise a catalog "no such table" error through
+`cryo.sources.missing.is_missing_table_error` and call `note_missing_table` (#561): one INFO
+line, `cryo_table_load_skipped_total{component,reason}`, and the existing
+`maintenance_retry_after` hold with reason `table_missing_from_catalog`. Their candidate
+queries filter `is_active` and `table_not_held_missing()`. Tombstoning stays with the scan
+reconcile above; the hold only stops per-tick retries until then.
+
 Hard purge of tombstones is opt-in (#330, `removed_table_purge_after_days`, default off;
 `cryo/db/repositories/removed_table_purge.py`). It deletes the `tables` row and relies on
 foreign keys: every FK that a delete reaches from `cryo.tables` (directly or through a
