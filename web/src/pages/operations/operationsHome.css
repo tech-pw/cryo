@@ -252,7 +252,7 @@
 
 .ops-workflow-desc {
   display: block;
-  max-width: 28rem;
+  max-width: 100%;
   overflow: hidden;
   color: var(--color-muted-foreground);
   font-size: 0.6875rem;
@@ -430,4 +430,122 @@
   .operations-home-page .ops-workspace-card [role="tabpanel"] {
     padding: 0.75rem 0.5rem 0.5rem;
   }
+}
+
+.operations-home-page .ops-workflows {
+  padding: 0.75rem;
+}
+
+.ops-workflows__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.ops-workflows__head h2 {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.ops-workflows__count,
+.ops-workflows__note {
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+}
+
+.ops-workflows__note {
+  margin-bottom: 0.5rem;
+}
+
+.operations-home-page .ops-workflows table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.ops-workflow-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.ops-workflow-name {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.ops-workflow-row--failing > td {
+  background: color-mix(in srgb, var(--color-destructive, #dc2626) 7%, transparent);
+}
+
+.ops-workflow-row--failing > td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-destructive, #dc2626);
+}
+
+.ops-workflow-alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--color-destructive, #dc2626) 35%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--color-destructive, #dc2626) 8%, transparent);
+  padding: 0.5rem 0.75rem;
+  color: var(--color-destructive, #dc2626);
+  font-size: 0.8125rem;
+}
+
+.ops-workflow-alert > span {
+  color: var(--color-foreground);
+}
+
+.ops-workflow-alert__link {
+  margin-left: auto;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.ops-workflow-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ops-workflow-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.6rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.ops-workflow-card.is-failing {
+  border-color: color-mix(in srgb, var(--color-destructive, #dc2626) 45%, transparent);
+  box-shadow: inset 3px 0 0 var(--color-destructive, #dc2626);
+}
+
+.ops-workflow-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.ops-workflow-card__meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  font-size: 0.75rem;
+}
+
+.ops-workflow-card__meta dt {
+  color: var(--color-muted-foreground);
+  font-size: 0.6875rem;
 }

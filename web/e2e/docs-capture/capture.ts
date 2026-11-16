@@ -239,7 +239,7 @@ const SHOTS: Array<{
     act: openTableSettings,
     selector: "[role='dialog'] [aria-labelledby='settings-hold']"
   },
-  { name: "runs", path: "/runs", waitFor: "Success rate · 7d", height: 1100 },
+  { name: "runs", path: "/runs", waitFor: "Success rate · 7d", height: 1300 },
   { name: "runs-holds", path: "/runs?tab=holds", waitFor: "Active holds", height: 900 },
   { name: "run-detail", path: `/runs/${DEMO_RUN_ID}`, height: 960 },
   { name: "preset-config-review", path: PRESET_CONFIG, height: 1000, role: "admin", act: reviewModeChange, selector: "[role='alertdialog']" },
