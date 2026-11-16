@@ -149,7 +149,12 @@ export const PresetConfigForm = ({
       }
       return;
     }
-    const body = formValuesToPresetWrite(formValues, preset, modeOperations(modes.data, formValues.mode));
+    const operations = modeOperations(modes.data, formValues.mode);
+    if (!operations) {
+      toast.error("Can't save until this mode's operations have loaded.");
+      return;
+    }
+    const body = formValuesToPresetWrite(formValues, preset, operations);
     const lifecycleChange = preset ? presetLifecycleWarning(preset, formValues, null) : null;
     const modeChange =
       preset && formValues.mode !== preset.mode
@@ -415,7 +420,12 @@ export const PresetConfigForm = ({
                 >
                   Discard
                 </Button>
-                <Button type="submit" variant="primary" loading={save.isPending || reviewing}>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={!modes.data}
+                  loading={save.isPending || reviewing}
+                >
                   Save preset
                 </Button>
               </div>

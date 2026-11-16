@@ -151,6 +151,16 @@ describe("PresetConfigForm", () => {
     expect(modeRadio(/^Standard/)).toBeChecked();
   });
 
+  it("won't save until the mode catalog has loaded, so operations always match the mode", async () => {
+    vi.mocked(getPresetModes).mockReturnValue(new Promise(() => {}));
+    renderForm();
+    const name = await screen.findByDisplayValue(preset.name);
+    fireEvent.change(name, { target: { value: `${preset.name} edited` } });
+    const bar = await screen.findByRole("region", { name: "Unsaved changes" });
+    expect(within(bar).getByRole("button", { name: "Save preset" })).toBeDisabled();
+    expect(patchPreset).not.toHaveBeenCalled();
+  });
+
   it("hints to update the description after a mode change", async () => {
     renderForm();
     await waitFor(() => modeRadio(/^Deep/));

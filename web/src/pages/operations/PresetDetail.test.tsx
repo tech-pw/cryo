@@ -98,6 +98,26 @@ describe("PresetDetail overview", () => {
     expect(container.textContent).toMatch(/optimize.*expire snapshots/i);
   });
 
+  it("lists what the mode runs, not a stale stored operations list", async () => {
+    vi.mocked(listPresets).mockResolvedValue([{ ...preset, mode: "deep", operations: ["optimize"] }]);
+    vi.mocked(getPresetModes).mockResolvedValue({
+      modes: [
+        {
+          mode: "deep",
+          description: "Plus orphans.",
+          operations: ["optimize", "expire_snapshots", "remove_orphan_files"],
+          recommended: true
+        }
+      ],
+      param_defaults: []
+    });
+    renderPage();
+    const orderLine = await screen.findByText("Operation order:");
+    await waitFor(() =>
+      expect((orderLine.parentElement as HTMLElement).textContent).toMatch(/remove orphan files/i)
+    );
+  });
+
   it("shows matched-count and size once simulation resolves", async () => {
     renderPage();
     expect(await screen.findByText(/Matched tables: 3/)).toBeInTheDocument();
