@@ -28,6 +28,7 @@ print.
 | `CRYO_OIDC_AUDIENCE` | `str \| None` | *(unset)* | Expected access-token audience; defaults to oidc_client_id. |
 | `CRYO_OIDC_JWKS_URI` | `str \| None` | *(unset)* | Optional JWKS URI override (defaults to issuer/.well-known/jwks.json). |
 | `CRYO_OIDC_REDIRECT_URI` | `str \| None` | *(unset)* | OAuth redirect URI registered with the IdP (UI callback). |
+| `CRYO_WS_QUERY_TOKEN_ENABLED` | `bool` | `false` | Deprecated compatibility switch (#551): accept the API bearer token as a `?token=` query parameter on the run console WebSocket. Off by default because a token in a URL lands in proxy/ingress access logs, browser history and Referer. Browsers use a single-use ticket from POST /api/v1/ws-tickets; other clients send an Authorization header. |
 | `CRYO_ALLOW_DEV_TOKEN_IN_PROD` | `bool` | `false` | Explicit opt-in to keep POST /api/v1/auth/token (self-declared role, no real identity check) enabled even when environment=='prod'. Only for bridging the gap before OIDC is configured -- anyone who can reach the API can self-grant any role while this is true. Turn off once oidc_issuer_url is set. |
 | `CRYO_GOOGLE_ADMIN_EMAILS` | `str` | `""` | Comma-separated Google emails that become Cryo admins on their first Google sign-in when no Cryo user exists for them. Bootstraps the first admin once Google sign-in is enabled and dev tokens are turned off. Does not change the role of an existing user. |
 | `CRYO_CORS_ALLOW_ORIGINS` | `list` | *(computed)* | - |

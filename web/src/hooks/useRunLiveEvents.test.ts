@@ -1,6 +1,14 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createWsTicket } from "../api/client";
 import { isTerminalRunStatus, useRunLiveEvents } from "./useRunLiveEvents";
+
+vi.mock("../api/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/client")>()),
+  createWsTicket: vi.fn()
+}));
+
+let ticketSeq = 0;
 
 class MockWebSocket {
   static instances: MockWebSocket[] = [];
@@ -24,6 +32,15 @@ class MockWebSocket {
 }
 
 describe("useRunLiveEvents", () => {
+  beforeEach(() => {
+    ticketSeq = 0;
+    vi.mocked(createWsTicket).mockReset();
+    vi.mocked(createWsTicket).mockImplementation(async () => {
+      ticketSeq += 1;
+      return { ticket: `ticket-${ticketSeq}`, expires_in_sec: 30 };
+    });
+  });
+
   afterEach(() => {
     MockWebSocket.instances = [];
     vi.unstubAllGlobals();
@@ -116,5 +133,41 @@ describe("useRunLiveEvents", () => {
 
     expect(result.current.messages).toHaveLength(1);
     expect(result.current.messages[0]?.type).toBe("log_line");
+  });
+
+  it("opens the socket with a single-use ticket and never puts the token in the URL", async () => {
+    vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
+
+    const { result } = renderHook(() => useRunLiveEvents("run-1", "secret-bearer"));
+
+    await waitFor(() => {
+      expect(result.current.wsOpen).toBe(true);
+    });
+
+    expect(createWsTicket).toHaveBeenCalledWith("run-1", { token: "secret-bearer" });
+    const url = new URL(MockWebSocket.instances[0]!.url);
+    expect(url.pathname).toBe("/api/v1/ws/runs/run-1");
+    expect(url.searchParams.get("ticket")).toBe("ticket-1");
+    expect(url.searchParams.has("token")).toBe(false);
+    expect(MockWebSocket.instances[0]!.url).not.toContain("secret-bearer");
+  });
+
+  it("fetches a fresh ticket for every reconnect", async () => {
+    vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
+
+    const { result } = renderHook(() => useRunLiveEvents("run-1", "token"));
+    await waitFor(() => {
+      expect(result.current.wsOpen).toBe(true);
+    });
+
+    act(() => {
+      result.current.manualReconnect();
+    });
+
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(2);
+    });
+    expect(createWsTicket).toHaveBeenCalledTimes(2);
+    expect(new URL(MockWebSocket.instances[1]!.url).searchParams.get("ticket")).toBe("ticket-2");
   });
 });

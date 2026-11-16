@@ -26,6 +26,7 @@ from fastapi import (
     status,
 )
 from fastapi.encoders import jsonable_encoder
+from pydantic import BaseModel
 from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -141,6 +142,11 @@ from cryo.api.table_maintenance import (
 )
 from cryo.api.table_view_filters import build_table_view_filter
 from cryo.api.validators import validate_cron_field
+from cryo.api.ws_tickets import (
+    TICKET_TTL_SECONDS,
+    TicketStoreUnavailableError,
+    ws_ticket_store,
+)
 from cryo.config import Settings, get_settings
 from cryo.db.models import (
     AuditLog,
@@ -189,6 +195,7 @@ from cryo.engines.spark.sql import render as render_spark
 from cryo.engines.trino.engine import TrinoEngine
 from cryo.engines.trino.sql import render as render_trino
 from cryo.infra.wiring import build_runtime_wiring
+from cryo.observability.metrics import ws_auth_failures_total
 from cryo.planner.guardrails import (
     sort_operations_canonically,
     validate_guardrails,
@@ -2589,16 +2596,48 @@ async def _send_run_snapshot(
     return snapshot
 
 
+class WsTicketCreate(BaseModel):
+    run_id: uuid.UUID
+
+
+class WsTicketRead(BaseModel):
+    ticket: str
+    expires_in_sec: int
+
+
+@router.post(
+    "/ws-tickets",
+    response_model=WsTicketRead,
+    status_code=status.HTTP_201_CREATED,
+    tags=["runs"],
+)
+def create_ws_ticket(
+    payload: WsTicketCreate,
+    principal: Annotated[Principal, Depends(require_viewer)],
+) -> WsTicketRead:
+    """Issue a single-use, ~30 s ticket for opening ``/ws/runs/{run_id}`` (#551)."""
+    try:
+        ticket = ws_ticket_store.issue(principal, payload.run_id)
+    except TicketStoreUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Live run console is unavailable: ticket store is not reachable",
+        ) from exc
+    return WsTicketRead(ticket=ticket, expires_in_sec=TICKET_TTL_SECONDS)
+
+
 @router.websocket("/ws/runs/{run_id}")
 async def watch_run(
     websocket: WebSocket,
     run_id: uuid.UUID,
+    ticket: Annotated[str | None, Query()] = None,
     token: Annotated[str | None, Query()] = None,
     once: Annotated[bool, Query()] = False,
     poll_interval_sec: Annotated[float, Query(ge=0.2, le=30.0)] = 2.0,
 ) -> None:
-    principal = _websocket_viewer_principal(websocket, token)
+    principal, reason = _websocket_viewer_principal(websocket, run_id, ticket=ticket, token=token)
     if principal is None:
+        ws_auth_failures_total.labels(reason=reason).inc()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
@@ -2878,20 +2917,47 @@ def force_admit_job(
     return JobRead.model_validate(presets.job_summary(job))
 
 
-def _websocket_viewer_principal(websocket: WebSocket, token: str | None) -> Principal | None:
+def _websocket_viewer_principal(
+    websocket: WebSocket,
+    run_id: uuid.UUID,
+    *,
+    ticket: str | None,
+    token: str | None,
+) -> tuple[Principal | None, str]:
+    """Resolve the socket's principal; returns ``(None, bounded_reason)`` on rejection.
+
+    Order: ``Authorization: Bearer`` (non-browser clients), then a single-use ``?ticket=``
+    (browsers), then the deprecated ``?token=`` only when ``ws_query_token_enabled`` is set.
+    """
+    principal: Principal | None = None
     auth_header = websocket.headers.get("authorization")
-    token_value = token
     if auth_header:
         scheme, _, credentials = auth_header.partition(" ")
-        if scheme.lower() == "bearer" and credentials:
-            token_value = credentials
+        if scheme.lower() != "bearer" or not credentials:
+            return None, "invalid_token"
+        principal = principal_from_token(credentials)
+        if principal is None:
+            return None, "invalid_token"
+    elif ticket:
+        principal, reason = ws_ticket_store.consume(ticket, run_id)
+        if principal is None:
+            return None, reason
+    elif token:
+        if not get_settings().ws_query_token_enabled:
+            return None, "query_token_disabled"
+        logger.warning(
+            "run console WebSocket authenticated with deprecated ?token= query parameter; "
+            "switch to POST /api/v1/ws-tickets (ws_query_token_enabled will be removed)"
+        )
+        principal = principal_from_token(token)
+        if principal is None:
+            return None, "invalid_token"
+    else:
+        return None, "missing_credentials"
 
-    if not token_value:
-        return None
-    principal = principal_from_token(token_value)
-    if principal is None or not principal.can(Role.VIEWER):
-        return None
-    return principal
+    if not principal.can(Role.VIEWER):
+        return None, "forbidden"
+    return principal, "ok"
 
 
 def _run_read_or_none(run: object | None) -> RunRead | None:

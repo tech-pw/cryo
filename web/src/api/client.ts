@@ -3,6 +3,7 @@ import type {
   RemovedTablesMode,
   SpecMigrationApprovalRead,
   SpecMigrationRead,
+  WsTicketRead,
   ColumnUsageResponse,
   MaintenanceImpactResponse,
   SkipEvaluationPage,
@@ -955,10 +956,15 @@ export const getScanCostAttribution = (api: ApiOptions, args: { days?: number } 
     query: { days: args.days }
   });
 
-export const wsRunUrl = (runId: UUID, token: string): string => {
+// The bearer token never goes in the socket URL (#551): trade it for a single-use, ~30 s
+// ticket bound to this run, then open the socket with the ticket.
+export const createWsTicket = (runId: UUID, api: ApiOptions) =>
+  apiFetch<WsTicketRead>("/ws-tickets", api, { method: "POST", body: { run_id: runId } });
+
+export const wsRunUrl = (runId: UUID, ticket: string): string => {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const url = new URL(`${proto}//${window.location.host}${API_PREFIX}/ws/runs/${runId}`);
-  url.searchParams.set("token", token);
+  url.searchParams.set("ticket", ticket);
   return url.toString();
 };
 

@@ -14,7 +14,7 @@ import sys
 from typing import Any
 
 from cryo.observability.correlation import correlation_fields
-from cryo.observability.log_redaction import SensitiveDataFilter
+from cryo.observability.log_redaction import SensitiveDataFilter, install_access_log_scrubbing
 
 try:
     import structlog
@@ -148,6 +148,7 @@ def configure_logging(
         root_logger.addFilter(SensitiveDataFilter())
 
     quiet_third_party_loggers()
+    install_access_log_scrubbing()
 
     # Log configuration
     logger = get_logger(__name__)

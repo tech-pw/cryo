@@ -31,6 +31,7 @@ The full table, with every variable and its type, is in [docs/CONFIGURATION.md](
 | `CRYO_OIDC_CLIENT_SECRET` | secret | OIDC client secret, for the authorization-code exchange. |
 | `CRYO_OIDC_REDIRECT_URI` | unset | The redirect URI registered with the provider. The UI callback. |
 | `CRYO_ALLOW_DEV_TOKEN_IN_PROD` | `false` | Keeps the dev token live in prod. Anyone who can reach the API can self-grant any role while this is true. |
+| `CRYO_WS_QUERY_TOKEN_ENABLED` | `false` | Deprecated. Lets the run console WebSocket accept the API token as `?token=`, where it can reach proxy logs. The UI uses a single-use ticket instead. |
 | `CRYO_DISPLAY_TIMEZONE` | `UTC` | IANA zone the install schedules and reports in. Also the zone the off-peak window is read in and the UI renders instants in. |
 | `CRYO_OFFPEAK_START_IST` | `0` | Hour the off-peak window opens, in the display time zone. Equal bounds disable the gate. |
 | `CRYO_OFFPEAK_END_IST` | `0` | Hour the off-peak window closes. |

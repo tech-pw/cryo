@@ -9,6 +9,7 @@ export type Priority = "HIGH" | "MEDIUM" | "LOW" | string;
 export type CostPrecision = "heuristic" | "metadata" | "storage_truth";
 export type OperationType = components["schemas"]["OperationType"];
 export type SpecMigrationRead = components["schemas"]["SpecMigrationRead"];
+export type WsTicketRead = components["schemas"]["WsTicketRead"];
 export type SpecMigrationApprovalRead = components["schemas"]["SpecMigrationApprovalRead"];
 export type MaturityTier = components["schemas"]["MaturityTier"];
 export type RemovedTablesMode = components["schemas"]["RemovedTables"];

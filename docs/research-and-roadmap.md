@@ -785,8 +785,9 @@ storybook-style demo.
   2026-07-05 hardening pass).
 - Recharts for bar/line/donut; waterfall is custom SVG.
 - IBM Plex fonts: **self-host** `woff2` instead of pulling from Google Fonts CDN (todo item).
-- WebSocket auth via short-lived ticket after handshake (per [`premortem.md §3`](./premortem.md)
-  — the current `?token=` query string leaks into proxy logs; mitigation in the next iteration).
+- WebSocket auth via a single-use, 30-second ticket from `POST /api/v1/ws-tickets` (shipped
+  in #551, per [`premortem.md §3`](./premortem.md)); `?token=` is off unless the deprecated
+  `CRYO_WS_QUERY_TOKEN_ENABLED` switch is set.
 
 ## 9. Implementation status
 
