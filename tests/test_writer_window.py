@@ -204,7 +204,7 @@ def test_contended_chunk_cap_reads_the_stored_writer_cadence() -> None:
 
 
 def test_contended_chunk_cap_falls_back_to_the_arrival_gap_on_older_scans() -> None:
-    # gold_orders' stored signals before writer_cadence existed.
+    # A table's stored signals before writer_cadence existed.
     hourly = {"data_commits": 71, "arrival_gap_p50_hours": 0.996, "hours_since_data_commit": 0.6}
     daily = {"data_commits": 8, "arrival_gap_p50_hours": 24.0, "hours_since_data_commit": 2}
     gone = {**hourly, "hours_since_data_commit": 72}

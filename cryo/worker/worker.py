@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
 from time import perf_counter, sleep, time
@@ -51,6 +51,7 @@ from cryo.planner.planner import is_nothing_to_do_skip
 from cryo.planner.serialization import plan_from_dict, plan_to_dict
 from cryo.planner.writer_window import (
     DATA_REWRITE_OPERATIONS,
+    WRITER_WINDOW_MARKER,
     WindowVerdict,
     WriterWindow,
     format_hold,
@@ -366,6 +367,15 @@ class InMemoryJobStore:
 
     def record_audit(self, record: AuditRecord) -> None:
         self.audit.append(record)
+
+    def count_writer_window_holds(self, job_id: str) -> int:
+        return sum(
+            1
+            for record in self.audit
+            if record.job_id == job_id
+            and record.status == "DEFERRED"
+            and (record.detail or "").startswith(f"{WRITER_WINDOW_MARKER}:")
+        )
 
     def count_commit_conflicts(self, job_id: str) -> int:
         return sum(
@@ -1019,11 +1029,28 @@ class Worker:
                         else None
                     )
                     if window is not None and window.verdict is WindowVerdict.HOLD:
-                        # Deferred, not failed: the reconciler re-queues it once retry_at
-                        # passes, and the step ledger skips the statements already done.
-                        final_status = JobStatus.DEFERRED
-                        error = format_hold(window)
-                        break
+                        if self._writer_window_holds_left(job):
+                            # Deferred, not failed: the reconciler re-queues it once retry_at
+                            # passes, and the step ledger skips the statements already done.
+                            final_status = JobStatus.DEFERRED
+                            error = format_hold(window)
+                            self._store.record_audit(
+                                AuditRecord(
+                                    job_id=job.id,
+                                    table_id=job.table_id,
+                                    action=statement.action,
+                                    status="DEFERRED",
+                                    engine=engine.type,
+                                    detail=error,
+                                    actor=job.actor,
+                                )
+                            )
+                            break
+                        window = replace(
+                            window,
+                            verdict=WindowVerdict.NO_WINDOW,
+                            reason=f"hold limit reached; {window.reason}",
+                        )
                     if window is not None and window.verdict is WindowVerdict.NO_WINDOW:
                         had_skip = True
                         writer_blocked[statement.action] = format_hold(window)
@@ -1744,6 +1771,19 @@ class Worker:
             operation_type=operation_type,
             status=metric_status,
         ).inc()
+
+    def _writer_window_holds_left(self, job: MaintenanceJobRecord) -> bool:
+        from cryo.config import get_settings
+
+        count = getattr(self._store, "count_writer_window_holds", None)
+        if not callable(count):
+            return True
+        try:
+            held = int(count(job.id))
+        except Exception:
+            logger.warning("Could not count writer-window holds for %s", job.id)
+            return True
+        return held < get_settings().worker_writer_window_max_holds
 
     def _writer_window_before_step(
         self,

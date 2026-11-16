@@ -17,8 +17,8 @@ HOURLY_WRITER = {"writer_cadence": {"runs": 24, "interval_minutes": 60.0, "run_s
 
 def _stats(signals: dict[str, Any] | None) -> dict[str, Any]:
     stats: dict[str, Any] = {
-        "schema_name": "cdp_revenue",
-        "table_name": "gold_student_fee_mappings",
+        "schema_name": "sales",
+        "table_name": "orders_gold",
         "small_files_count": 43,
         "total_size_gb": 34.3,
         "partition_fields": [

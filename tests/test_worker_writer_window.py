@@ -143,3 +143,44 @@ def test_the_governor_keeps_a_writer_hold_deferred_until_retry_at() -> None:
 
     assert blocked(result) == result.error
     assert released(result) is None
+
+
+def test_each_hold_is_audited() -> None:
+    reader = _Reader(_writer(every_min=60, last_ago_ms=50 * MIN))
+
+    _result, _engine, store, _locks = _run(reader)
+
+    assert store.count_writer_window_holds("job-1") == 1
+
+
+def test_past_the_hold_limit_the_rewrite_is_skipped_not_deferred() -> None:
+    from cryo.config import get_settings
+    from cryo.worker.worker import AuditRecord
+
+    reader = _Reader(_writer(every_min=60, last_ago_ms=50 * MIN))
+    queue, locks, store = _worker_fixture()
+    store.jobs["job-1"].params = {**store.jobs["job-1"].params, "retention_days": 0}
+    for _ in range(get_settings().worker_writer_window_max_holds):
+        store.record_audit(
+            AuditRecord(
+                job_id="job-1",
+                table_id="table-1",
+                action=OperationType.OPTIMIZE,
+                status="DEFERRED",
+                engine="trino",
+                detail=f"{WRITER_WINDOW_MARKER}: writer due",
+                actor=None,
+            )
+        )
+    engine = FakeMaintenanceEngine()
+
+    result = Worker(
+        queue, store, lambda _d: engine, locks, writer_commit_reader=reader
+    ).process_next()
+
+    assert result is not None
+    assert result.status is JobStatus.PARTIAL
+    assert OperationType.OPTIMIZE not in _executed(engine)
+    assert OperationType.EXPIRE_SNAPSHOTS in _executed(engine)
+    skipped = [r for r in store.audit if r.status == "SKIPPED"]
+    assert skipped and "hold limit reached" in (skipped[0].detail or "")

@@ -1096,7 +1096,9 @@ Three places use it:
   one `load_table`, no manifests). The operations are optimize, convert_deletes,
   convert_equality_deletes, expire_data and migrate_partition_spec. Each verdict leads to:
   - HOLD: the job goes DEFERRED with `writer_window: <reason>; retry_at=<UTC>`. The step ledger
-    skips chunks that already succeeded when the job comes back.
+    skips chunks that already succeeded when the job comes back. Each hold writes a DEFERRED
+    audit row; after `worker_writer_window_max_holds` (default 12) holds the step is treated
+    as NO_WINDOW, so a writer that never leaves a gap cannot keep the job deferred forever.
   - NO_WINDOW: that operation's statements are skipped with a SKIPPED audit row. The job ends
     PARTIAL if anything else ran, SKIPPED if nothing did.
   - A catalog read that fails or times out (`worker_writer_window_probe_timeout_seconds`) fails

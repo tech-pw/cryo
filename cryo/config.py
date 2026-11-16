@@ -227,6 +227,15 @@ class Settings(BaseSettings):
         gt=0,
         description="Timeout for the writer-window catalog read; on timeout the rewrite runs.",
     )
+    worker_writer_window_max_holds: int = Field(
+        default=12,
+        ge=1,
+        description=(
+            "Writer-window deferrals one job may take for a step. Past the limit the step is "
+            "skipped and audited like a table with no window, so a writer that never leaves "
+            "a gap cannot keep the job deferred forever."
+        ),
+    )
 
     # Fleet-cost day-over-day / week-over-week spike & decline thresholds for the daily
     # report (see cryo/reporting/cost_signals.py). Defaults are reasonable starting points,
