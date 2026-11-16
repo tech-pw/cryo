@@ -348,6 +348,18 @@ const InventoryBody = ({
         </div>
       ) : null}
 
+      {data.format_version && data.format_version >= 3 && data.property_route ? (
+        <div className="tc-banner" role="note" data-testid="v3-route-note">
+          <AlertTriangle aria-hidden="true" />
+          <span>
+            <strong>Iceberg v{data.format_version}.</strong>{" "}
+            {data.property_route.route === "none"
+              ? "Property changes need a Spark destination (or Trino for the keys it supports). PyIceberg can't write v3 metadata yet, so editing is paused."
+              : data.property_route.message ?? "Property changes run through an engine destination."}
+          </span>
+        </div>
+      ) : null}
+
       <div className="tc-summary">
         <button
           type="button"

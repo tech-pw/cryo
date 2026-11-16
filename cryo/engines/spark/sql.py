@@ -699,3 +699,44 @@ def _quote_identifier(identifier: str) -> str:
     if identifier.replace("_", "").isalnum() and not identifier[0].isdigit():
         return identifier
     return "`" + identifier.replace("`", "``") + "`"
+
+
+def _always_quote_identifier(identifier: str) -> str:
+    if not identifier or "\x00" in identifier:
+        raise ValueError(f"invalid identifier: {identifier!r}")
+    return "`" + identifier.replace("`", "``") + "`"
+
+
+def _string_literal(value: str) -> str:
+    """Spark SQL string literal. Backslash is Spark's escape character in literals."""
+    if "\x00" in value:
+        raise ValueError("property keys and values cannot contain NUL")
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def render_set_table_properties(
+    catalog: str, schema: str, table: str, properties: dict[str, str]
+) -> str:
+    """``ALTER TABLE ... SET TBLPROPERTIES`` for a metadata-only property change.
+
+    Used for format-version 3 tables, which PyIceberg cannot commit to (#557). Spark's
+    Iceberg extension also treats ``'format-version'`` here as a real format upgrade.
+    """
+    if not properties:
+        raise ValueError("no properties to set")
+    name = ".".join(_always_quote_identifier(part) for part in (catalog, schema, table))
+    pairs = ", ".join(
+        f"{_string_literal(key)} = {_string_literal(value)}"
+        for key, value in sorted(properties.items())
+    )
+    return f"ALTER TABLE {name} SET TBLPROPERTIES ({pairs})"
+
+
+def render_unset_table_properties(
+    catalog: str, schema: str, table: str, keys: Sequence[str]
+) -> str:
+    if not keys:
+        raise ValueError("no properties to unset")
+    name = ".".join(_always_quote_identifier(part) for part in (catalog, schema, table))
+    listed = ", ".join(_string_literal(key) for key in sorted(set(keys)))
+    return f"ALTER TABLE {name} UNSET TBLPROPERTIES IF EXISTS ({listed})"

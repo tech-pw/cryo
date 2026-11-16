@@ -57,6 +57,7 @@ export const TableDetailHeaderBar = () => {
         grade={stats?.grade ?? null}
         ownerEmail={row?.owner_email ?? null}
         lifecycle={row?.lifecycle ?? "active"}
+        formatVersion={stats?.format_version ?? null}
         partitionLabel={ctx.partitionColLabel}
         location={row?.location ?? null}
         scanAt={stats?.scan_at ?? null}

@@ -2065,19 +2065,14 @@ export interface PropertyRecommendationRead {
   needs_confirmation: boolean;
 }
 
-export interface PropertyRecommendationsResponse {
-  table_id: UUID;
-  generated_at: string;
-  items: PropertyRecommendationRead[];
-  gc_blocked: boolean;
-}
+export type PropertyRouteRead = components["schemas"]["PropertyRouteRead"];
 
-export interface ApplyTablePropertiesResponse {
-  table_id: UUID;
-  applied: Record<string, string>;
-  audit_log_id: number;
-  message: string;
-}
+export type PropertyRecommendationsResponse = Omit<
+  components["schemas"]["PropertyRecommendationsResponse"],
+  "items"
+> & { items: PropertyRecommendationRead[] };
+
+export type ApplyTablePropertiesResponse = components["schemas"]["ApplyTablePropertiesResponse"];
 
 export interface OffPeakWindowResponse {
   start_hour_ist: number;

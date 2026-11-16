@@ -786,6 +786,15 @@ class Settings(BaseSettings):
         default=True,
         description="Enable native cryo-engine maintenance (default workflow).",
     )
+    pyiceberg_v3_writes: bool = Field(
+        default=False,
+        description=(
+            "Commit property changes to Iceberg format-version 3 tables through PyIceberg. "
+            "Off while the pinned PyIceberg cannot write v3 metadata (apache/iceberg-python"
+            "#1551); v3 changes then go through a Spark or Trino destination. Turn on after "
+            "upgrading to a PyIceberg release that writes v3."
+        ),
+    )
     flink_engine_enabled: bool = Field(
         default=False,
         description="Enable Flink config-generation engine (does not submit jobs).",

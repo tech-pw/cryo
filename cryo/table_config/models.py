@@ -167,6 +167,16 @@ class OperationExclusionsResponse(BaseModel):
     operations: TableOperationsRead
 
 
+class PropertyRouteRead(BaseModel):
+    """How Cryo commits a property change to this table (#557)."""
+
+    format_version: int | None = None
+    route: Literal["pyiceberg", "engine", "none"]
+    engine: str | None = None
+    destination_name: str | None = None
+    message: str | None = None
+
+
 class TableConfigResponse(BaseModel):
     table_id: uuid.UUID
     read_from: Literal["catalog", "scan"]
@@ -182,6 +192,8 @@ class TableConfigResponse(BaseModel):
     property_details: list[PropertyDetailRead] = Field(default_factory=list)
     columns: list[str] = Field(default_factory=list)
     operations: TableOperationsRead | None = None
+    format_version: int | None = None
+    property_route: PropertyRouteRead | None = None
 
 
 class ConfigChange(BaseModel):

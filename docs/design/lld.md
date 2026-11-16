@@ -866,6 +866,22 @@ EMR Serverless adapter (`engines/spark/emr.py`): `boto3.client('emr-serverless')
 sparkSubmitParameters: "--conf spark.sql.catalog... "}, ...})`; poll `get_job_run` until terminal;
 fetch logs from the configured S3 location. Capacity = configured slot cap minus in-flight runs.
 
+**Table properties on format-version 3 tables (#557).** PyIceberg 0.11 raises
+`NotImplementedError` on any commit to a v3 table, so `cryo/table_config/engine_route.py`
+sends v3 property writes (the Path to A / Property recommendations apply and the Config tab
+apply) through an engine. Rendering is per dialect: `engines/spark/sql.py::render_set_table_properties`
+/ `render_unset_table_properties` (backtick identifiers, `\`-escaped string literals) and
+`engines/trino/sql.py::render_set_table_properties` (only the keys in
+`TRINO_ICEBERG_TABLE_PROPERTIES`, values rendered as integers, never removals). The
+destination is the effective preset's destination if capable, then its
+`sql_fallback_destination_id`, then any enabled Spark destination, then a Trino destination
+bound to the source. The statement runs through the engine's normal `execute()` carrying
+`OperationType.OPTIMIZE_MANIFESTS` (metadata-only) with `statement_kind=table_properties`.
+No capable destination returns 409 and the UI hides the apply action. Audit rows record
+`engine` and `result_metrics.route`. v1/v2 tables keep PyIceberg. `CRYO_PYICEBERG_V3_WRITES=true`
+switches v3 back to PyIceberg once a release writes v3. The property autopilot skips v3
+tables (no engine job from a background sweep).
+
 A tiny PySpark entrypoint (`cryo_spark_runner.py`, shipped to S3) receives the list of `CALL`
 statements (as args/JSON) and executes them with the Iceberg-configured `SparkSession`.
 

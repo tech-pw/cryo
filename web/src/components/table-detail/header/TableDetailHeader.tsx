@@ -38,6 +38,8 @@ export interface TableDetailHeaderProps {
   ownerEmail: string | null;
   /** "archived" shows a badge beside the grade (issue 519). */
   lifecycle?: TableLifecycle;
+  /** Iceberg format version from the last scan; shown as "Iceberg v3" (issue 557). */
+  formatVersion?: number | null;
   partitionLabel: string;
   location: string | null;
   scanAt: string | null;
@@ -197,6 +199,7 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
   grade,
   ownerEmail,
   lifecycle = "active",
+  formatVersion = null,
   partitionLabel,
   location,
   scanAt,
@@ -331,7 +334,9 @@ export const TableDetailHeader: React.FC<TableDetailHeaderProps> = ({
         <div className="ctd-header__identity">
           <h1>{tableName}</h1>
           <div className="ctd-header__identity-meta">
-            <Badge variant="outline">Iceberg</Badge>
+            <Badge variant="outline" data-testid="iceberg-format-badge">
+              {formatVersion ? `Iceberg v${formatVersion}` : "Iceberg"}
+            </Badge>
             <span className="ctd-header__partition"><GitBranch size={13} aria-hidden="true" />{formatPartitionColumnLabel(partitionLabel)}</span>
             <GradeScore grade={grade} score={score} />
             <LifecycleBadge lifecycle={lifecycle} />

@@ -39,6 +39,7 @@ from cryo.scanner.property_recommendations import (
     apply_table_properties,
     compute_property_recommendations,
 )
+from cryo.table_config.engine_route import NoPropertyRouteError
 
 AUTOPILOT_ACTOR = "cryo-property-autopilot"
 
@@ -130,20 +131,25 @@ def run_property_autopilot(
             continue
 
         try:
-            applied = apply_table_properties(session, table_id, safe_props)
+            result = apply_table_properties(session, table_id, safe_props, allow_engine_route=False)
+        except NoPropertyRouteError:
+            # v3 tables: an engine job per table is not a background sweep's call to make.
+            continue
         except Exception as exc:  # noqa: BLE001 - one table's apply must not stop the batch
             per_table.append(PropertyAutopilotTableResult(table_id, {}, error=str(exc)))
             tables_failed += 1
             continue
 
+        applied = result.applied
         detail = " ".join(f"{k}={v}" for k, v in sorted(applied.items()))
         session.add(
             AuditLog(
                 table_id=table_id,
                 action="apply_table_properties",
                 status="OK",
-                engine="pyiceberg",
-                detail=f"{detail} note=autonomous tier1 apply",
+                engine=result.engine,
+                detail=f"{detail} {result.audit_detail()} note=autonomous tier1 apply",
+                result_metrics=result.result_metrics(),
                 actor=AUTOPILOT_ACTOR,
             )
         )

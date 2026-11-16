@@ -279,6 +279,40 @@ describe("TableConfigInventory", () => {
     client.previewTableConfig.mockResolvedValue(previewFor("low"));
   });
 
+  it("notes the v3 engine route, and pauses editing without one (issue 557)", async () => {
+    client.getTableConfig.mockResolvedValue({
+      ...response(),
+      format_version: 3,
+      property_route: { format_version: 3, route: "none", engine: null, destination_name: null, message: "x" }
+    });
+    renderInventory();
+    const note = await screen.findByTestId("v3-route-note");
+    expect(note).toHaveTextContent("Iceberg v3.");
+    expect(note).toHaveTextContent("need a Spark destination");
+  });
+
+  it("names the engine for a v3 table that has a route", async () => {
+    client.getTableConfig.mockResolvedValue({
+      ...response(),
+      format_version: 3,
+      property_route: {
+        format_version: 3,
+        route: "engine",
+        engine: "spark_emr",
+        destination_name: "spark",
+        message: "Cryo applies property changes with spark_emr (spark)."
+      }
+    });
+    renderInventory();
+    expect(await screen.findByTestId("v3-route-note")).toHaveTextContent("spark_emr (spark)");
+  });
+
+  it("shows no v3 note for a v2 table", async () => {
+    renderInventory();
+    await screen.findByTestId("setting-write.target-file-size-bytes");
+    expect(screen.queryByTestId("v3-route-note")).toBeNull();
+  });
+
   it("shows value, source, recommendation and risk for each setting", async () => {
     renderInventory();
     const row = await screen.findByTestId("setting-write.target-file-size-bytes");

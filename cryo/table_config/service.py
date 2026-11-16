@@ -1,8 +1,10 @@
 """Build, preview and apply a table's configuration.
 
 Property edits are metadata-only commits made through the table's Source catalog with
-PyIceberg, the same path ``POST /tables/{id}/properties/apply`` already used. No engine runs
-and no data is rewritten. Cryo-enforced settings are per-table preset overrides in Postgres.
+PyIceberg, the same path ``POST /tables/{id}/properties/apply`` already used. Format-version 3
+tables are the exception: PyIceberg can't write v3 metadata, so those commits run as engine
+DDL on a Spark (or Trino) destination (``cryo.table_config.engine_route``, #557). No data is
+rewritten either way. Cryo-enforced settings are per-table preset overrides in Postgres.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from cryo.db.models import (
     TableStats,
 )
 from cryo.domain.enums import Mode
-from cryo.table_config import live
+from cryo.table_config import engine_route, live
 from cryo.table_config.context import (
     ConfigContext,
     bloom_columns,
@@ -42,6 +44,7 @@ from cryo.table_config.models import (
     MaintenanceOperationRead,
     PartitionFieldRead,
     PropertyDetailRead,
+    PropertyRouteRead,
     RefRead,
     RiskDirectionRead,
     SettingEditorRead,
@@ -87,6 +90,9 @@ class TableInputs:
     operation_exclusions: tuple[TableOperationExclusion, ...] = ()
     held: bool = False
     shared_location: bool = False
+    # Where a v3 property change would go (engine route, or none), computed as if the table
+    # were v3 so a stale stored version doesn't hide it. Read only when the table is v3.
+    v3_route: engine_route.PropertyRouteStatus | None = None
 
 
 class ConfigApplyError(Exception):
@@ -133,6 +139,30 @@ def load_inputs(session: Session, table: Table) -> TableInputs:
         operation_exclusions=tuple(list_operation_exclusions(session, table.id)),
         held=bool(excluded_table_ids(session, [table.id])),
         shared_location=table.id in shared_location_table_ids(session),
+        v3_route=engine_route.property_route_status(session, table, (), format_version=3),
+    )
+
+
+def property_route(
+    inputs: TableInputs, format_version: int | None
+) -> engine_route.PropertyRouteStatus:
+    if engine_route.pyiceberg_can_commit(format_version):
+        return engine_route.PropertyRouteStatus(
+            format_version=format_version, route=engine_route.PYICEBERG_ROUTE
+        )
+    v3 = inputs.v3_route
+    if v3 is None or not v3.can_apply:
+        return engine_route.PropertyRouteStatus(
+            format_version=format_version,
+            route="none",
+            message=engine_route.NO_ROUTE_MESSAGE,
+        )
+    return engine_route.PropertyRouteStatus(
+        format_version=format_version,
+        route=v3.route,
+        engine=v3.engine,
+        destination_name=v3.destination_name,
+        message=v3.message,
     )
 
 
@@ -204,8 +234,15 @@ def build_response(
     catalog_error: str | None = None,
 ) -> TableConfigResponse:
     ctx = build_context(inputs, config)
-    can_edit_properties = config is not None
-    settings = [_setting_read(spec, ctx, can_edit_properties, inputs) for spec in SETTINGS]
+    route = property_route(inputs, ctx.format_version)
+    if config is None:
+        property_lock: str | None = _CATALOG_UNREADABLE
+    elif not route.can_apply:
+        property_lock = route.message
+    else:
+        property_lock = None
+    can_edit_properties = property_lock is None
+    settings = [_setting_read(spec, ctx, property_lock, inputs) for spec in SETTINGS]
     return TableConfigResponse(
         table_id=inputs.table.id,
         read_from="catalog" if config is not None else "scan",
@@ -223,6 +260,8 @@ def build_response(
         property_details=_property_details(ctx.properties),
         columns=list(ctx.columns),
         operations=operations_read(inputs, ctx),
+        format_version=ctx.format_version,
+        property_route=PropertyRouteRead(**route.as_dict()),
     )
 
 
@@ -310,7 +349,7 @@ def operations_read(inputs: TableInputs, ctx: ConfigContext) -> TableOperationsR
 def _setting_read(
     spec: SettingSpec,
     ctx: ConfigContext,
-    can_edit_properties: bool,
+    property_lock: str | None,
     inputs: TableInputs,
 ) -> TableSettingRead:
     value, source = current_value(spec, ctx)
@@ -322,7 +361,7 @@ def _setting_read(
         matches = _same(spec, eff, advice.recommended)
         if not matches:
             recommendation_risk = assess(spec, value, advice.recommended, ctx).risk
-    editable, read_only_reason = _editability(spec, ctx, can_edit_properties, inputs)
+    editable, read_only_reason = _editability(spec, ctx, property_lock, inputs)
     directions = _risk_directions(spec, value, ctx) if spec.editable else []
     live_directions = [d for d in directions if d.blocked is None] or directions
     change_risk: Risk = (
@@ -367,7 +406,7 @@ def _setting_read(
 def _editability(
     spec: SettingSpec,
     ctx: ConfigContext,
-    can_edit_properties: bool,
+    property_lock: str | None,
     inputs: TableInputs,
 ) -> tuple[bool, str | None]:
     if not spec.editable:
@@ -376,9 +415,12 @@ def _editability(
         if inputs.preset_name is None:
             return False, "No Cryo preset governs this table. Assign one first."
         return True, None
-    if not can_edit_properties:
-        return False, "The catalog could not be read, so the live value is unknown."
+    if property_lock is not None:
+        return False, property_lock
     return True, None
+
+
+_CATALOG_UNREADABLE = "The catalog could not be read, so the live value is unknown."
 
 
 def _risk_directions(
@@ -597,9 +639,68 @@ def plan_catalog_write(previews: Sequence[ConfigChangePreview], ctx: ConfigConte
     return CatalogWrite(sets, removes, format_version)
 
 
-def commit_catalog_write(inputs: TableInputs, write: CatalogWrite) -> None:
+@dataclass(frozen=True)
+class CommitRoute:
+    route: str
+    engine: str
+    destination: str | None = None
+
+    def audit_detail(self) -> str:
+        parts = [f"route={self.route}", f"engine={self.engine}"]
+        if self.destination:
+            parts.append(f"destination={self.destination}")
+        return " ".join(parts)
+
+    def result_metrics(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"route": self.route, "engine": self.engine}
+        if self.destination:
+            out["destination"] = self.destination
+        return out
+
+
+PYICEBERG_COMMIT = CommitRoute(route=engine_route.PYICEBERG_ROUTE, engine="pyiceberg")
+
+
+def commit_catalog_write(
+    inputs: TableInputs,
+    write: CatalogWrite,
+    *,
+    session: Session | None = None,
+    current_format_version: int | None = None,
+) -> CommitRoute:
+    """Commit through PyIceberg, or through an engine when the table is (or becomes) v3."""
     if inputs.source is None:
         raise CatalogReadError("Table has no source catalog")
+    if not engine_route.pyiceberg_can_commit(current_format_version, write.format_version):
+        return _commit_via_engine(session, inputs, write)
+    _commit_pyiceberg(inputs, write)
+    return PYICEBERG_COMMIT
+
+
+def _commit_via_engine(
+    session: Session | None, inputs: TableInputs, write: CatalogWrite
+) -> CommitRoute:
+    if session is None:
+        raise engine_route.NoPropertyRouteError()
+    table = inputs.table
+    sets = dict(write.set_properties)
+    if write.format_version is not None:
+        sets["format-version"] = str(write.format_version)
+    route = engine_route.resolve_property_route(session, table, list(sets), write.remove_properties)
+    if route is None:
+        raise engine_route.NoPropertyRouteError()
+    engine_route.apply_via_engine(
+        route, table.schema_name, table.table_name, sets, write.remove_properties
+    )
+    return CommitRoute(
+        route=engine_route.ENGINE_ROUTE,
+        engine=route.engine.value,
+        destination=route.destination_name,
+    )
+
+
+def _commit_pyiceberg(inputs: TableInputs, write: CatalogWrite) -> None:
+    assert inputs.source is not None
     view = source_view(inputs.source)
     table = inputs.table
 
@@ -679,9 +780,13 @@ def audit_change(
     reason: str | None,
     status: str,
     error: str | None = None,
+    commit: CommitRoute | None = None,
 ) -> AuditLog:
     parts = [f"{item.key}: {_audit_value(item.old_value)} -> {_audit_value(item.new_value)}"]
     parts.append(f"risk={item.risk}")
+    is_cryo = item.kind == "cryo_param"
+    if commit is not None and not is_cryo:
+        parts.append(commit.audit_detail())
     if reason:
         parts.append(f"reason={reason}")
     if error:
@@ -690,8 +795,9 @@ def audit_change(
         table_id=table_id,
         action="table_config_change",
         status=status,
-        engine="cryo" if item.kind == "cryo_param" else "pyiceberg",
+        engine="cryo" if is_cryo else (commit.engine if commit else "pyiceberg"),
         detail=" ".join(parts)[:4000],
+        result_metrics=commit.result_metrics() if commit is not None and not is_cryo else None,
         actor=actor,
     )
     session.add(entry)
@@ -750,11 +856,22 @@ def apply_config(
     cryo_items = [p for p in pending if SETTINGS_BY_KEY[p.key].kind == "cryo_param"]
     audit_entries: list[AuditLog] = []
 
+    commit: CommitRoute | None = None
     if catalog_items:
         write = plan_catalog_write(catalog_items, ctx)
         try:
-            commit_catalog_write(inputs, write)
-        except CatalogReadError as exc:
+            commit = commit_catalog_write(
+                inputs, write, session=session, current_format_version=ctx.format_version
+            )
+        except engine_route.NoPropertyRouteError as exc:
+            live.forget(inputs.table.id)
+            raise ConfigApplyError(409, str(exc)) from exc
+        except (CatalogReadError, engine_route.EnginePropertyApplyError) as exc:
+            failed = (
+                CommitRoute(route=engine_route.ENGINE_ROUTE, engine=exc.engine or "engine")
+                if isinstance(exc, engine_route.EnginePropertyApplyError)
+                else None
+            )
             for item in catalog_items:
                 audit_change(
                     session,
@@ -764,6 +881,7 @@ def apply_config(
                     reason=reason,
                     status="FAILED",
                     error=str(exc)[:500],
+                    commit=failed,
                 )
             session.commit()
             raise ConfigApplyError(502, f"Catalog commit failed: {exc}") from exc
@@ -782,6 +900,7 @@ def apply_config(
                 actor=actor,
                 reason=reason,
                 status="OK",
+                commit=commit,
             )
         )
 

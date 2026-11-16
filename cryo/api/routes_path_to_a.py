@@ -161,6 +161,17 @@ def _property_changes(session: Session, table_id: uuid.UUID) -> dict[str, str]:
     return changes
 
 
+def _property_apply_blocked(
+    session: Session, table: Table, changes: Mapping[str, str]
+) -> str | None:
+    if not changes:
+        return None
+    from cryo.table_config.engine_route import property_route_status
+
+    status = property_route_status(session, table, list(changes))
+    return None if status.can_apply else status.message
+
+
 def _commit_rate(session: Session, table_id: uuid.UUID, raw: Mapping[str, Any]) -> float | None:
     from cryo.scanner.persistence import stats_history_for_signals
 
@@ -189,6 +200,7 @@ def load_snapshot(session: Session, table: Table) -> TableSnapshot | None:
         },
         params,
     )
+    changes = _property_changes(session, table.id)
     return TableSnapshot(
         table_name=table.table_name,
         score=int(stats.overall_score),
@@ -211,7 +223,8 @@ def load_snapshot(session: Session, table: Table) -> TableSnapshot | None:
         partitions=_latest_partitions(session, table.id),
         partition_skew_ratio=float(stats.partition_skew_ratio or 0.0),
         query_filters=_query_filters(session, table.id),
-        property_changes=_property_changes(session, table.id),
+        property_changes=changes,
+        property_apply_blocked=_property_apply_blocked(session, table, changes),
         sort_columns=_sort_columns(session, table.id),
         stats={
             "total_size_gb": float(stats.total_size_gb or 0),

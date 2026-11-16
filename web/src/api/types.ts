@@ -191,6 +191,7 @@ export interface TableStatsRead {
   cost_last_full_scan_at?: string | null;
   query_count_30d?: number;
   raw?: JsonObject | null;
+  format_version?: number | null;
 }
 
 export interface TableRead {
