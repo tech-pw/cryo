@@ -111,6 +111,80 @@ def test_note_missing_table_holds_counts_and_expires(session, caplog) -> None:
     ]
 
 
+def test_implicit_context_is_not_followed() -> None:
+    try:
+        try:
+            raise NoSuchTableError("gone")
+        except NoSuchTableError:
+            raise RuntimeError("auth failed while handling") from None
+    except RuntimeError as exc:
+        assert not is_missing_table_error(exc)
+    try:
+        try:
+            raise NoSuchTableError("gone")
+        except NoSuchTableError:
+            raise RuntimeError("auth failed while handling")  # noqa: B904
+    except RuntimeError as exc:
+        assert exc.__context__ is not None
+        assert not is_missing_table_error(exc)
+
+
+def test_note_missing_table_keeps_an_existing_other_reason(session) -> None:
+    table = _seed(session)
+    until = datetime.now(UTC) + timedelta(days=30)
+    table.maintenance_missing_metadata_reason = "metadata_json_missing"
+    table.maintenance_retry_after = until
+    session.commit()
+
+    note_missing_table(session, table.id, component="layout_analyzer")
+    session.refresh(table)
+
+    assert table.maintenance_missing_metadata_reason == "metadata_json_missing"
+    assert table.maintenance_retry_after.replace(tzinfo=UTC) == until
+
+
+def test_clean_scan_releases_the_missing_hold(session) -> None:
+    from cryo.scanner.persistence import record_table_scan_outcome
+
+    table = _seed(session)
+    note_missing_table(session, table.id, component="layout_analyzer")
+    record_table_scan_outcome(
+        session,
+        source_id=table.source_id,
+        schema_name=table.schema_name,
+        table_name=table.table_name,
+        error=None,
+        scanned_at=datetime.now(UTC),
+    )
+    session.commit()
+    session.refresh(table)
+
+    assert table.maintenance_missing_metadata_reason is None
+    assert table.maintenance_retry_after is None
+    assert not is_held_missing(table)
+
+
+def test_clean_scan_keeps_other_holds(session) -> None:
+    from cryo.scanner.persistence import record_table_scan_outcome
+
+    table = _seed(session)
+    table.maintenance_missing_metadata_reason = "metadata_json_missing"
+    table.maintenance_retry_after = datetime.now(UTC) + timedelta(days=30)
+    session.commit()
+    record_table_scan_outcome(
+        session,
+        source_id=table.source_id,
+        schema_name=table.schema_name,
+        table_name=table.table_name,
+        error=None,
+        scanned_at=datetime.now(UTC),
+    )
+    session.commit()
+    session.refresh(table)
+
+    assert table.maintenance_missing_metadata_reason == "metadata_json_missing"
+
+
 def test_unheld_tables_pass_the_filter(session) -> None:
     table = _seed(session)
     assert session.scalars(select(Table.id).where(table_not_held_missing())).all() == [table.id]

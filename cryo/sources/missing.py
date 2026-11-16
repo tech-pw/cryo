@@ -47,7 +47,9 @@ def is_missing_table_error(exc: BaseException | None) -> bool:
             needle in cls.__name__.lower() for cls in type(exc).__mro__ for needle in _MISSING_NAMES
         ):
             return True
-        exc = exc.__cause__ or exc.__context__
+        # Only explicit causes: __context__ is whatever was being handled when exc was raised,
+        # so an auth or network error raised inside an `except NoSuchTableError` would match.
+        exc = exc.__cause__
     return False
 
 
@@ -87,7 +89,11 @@ def note_missing_table(
     table_ref: Any = None,
     commit: bool = True,
 ) -> None:
-    """Log, count and hold one missing table until the next scan reconciles it."""
+    """Log, count and hold one missing table until the next scan reconciles it.
+
+    An existing hold with another reason (a confirmed missing metadata.json) is kept as is.
+    """
+    from cryo.db.models import Table
     from cryo.db.repositories.sources import record_missing_metadata
     from cryo.observability.metrics import table_load_skipped_total
 
@@ -97,10 +103,10 @@ def note_missing_table(
         component,
         table_ref or table_id,
     )
-    record_missing_metadata(
-        session,
-        table_id if isinstance(table_id, uuid.UUID) else uuid.UUID(str(table_id)),
-        reason=TABLE_MISSING_REASON,
-    )
+    tid = table_id if isinstance(table_id, uuid.UUID) else uuid.UUID(str(table_id))
+    existing = session.get(Table, tid)
+    existing_reason = getattr(existing, "maintenance_missing_metadata_reason", None)
+    if existing_reason in (None, TABLE_MISSING_REASON):
+        record_missing_metadata(session, tid, reason=TABLE_MISSING_REASON)
     if commit:
         session.commit()
