@@ -137,7 +137,7 @@ The Runs page shows what ran, what failed and what is held. It reads top to bott
 
 cryo.local/runs
 
-*Seeded demo lake. The red bar is a failed nightly run, and the amber bar a partial one. The striped bar on the right is still running.*
+*Seeded demo lake. Workflows stay visible above the History, Actions and Holds tabs. If a system workflow such as the nightly pass fails, its row turns red and a banner links to the run. In the timeline, the red bar is a failed nightly run, the amber bars are partial runs, and the striped bar is still running.*
 
 Workers are not concurrency
 

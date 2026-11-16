@@ -1,4 +1,4 @@
-import { MoreHorizontal, RefreshCw, Sparkles } from "lucide-react";
+import { AlertTriangle, MoreHorizontal, RefreshCw, Sparkles } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -12,6 +12,7 @@ import { Button } from "../../components/ui/button";
 import { DataTable, type DataTableColumnDef } from "../../components/ui/data-table";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { useAuth } from "../../lib/auth";
 import { cn } from "../../lib/cn";
 import { formatDuration, formatNumber, formatPercent, formatTime } from "../../lib/format";
@@ -36,7 +37,7 @@ import {
   nightlyBatchRuns,
   NO_PRESETS_COPY
 } from "./nightlyBatch";
-import { DurationCell, RunDurationBars, RunStateCounts, RunStateLabel, RunTimeline } from "./RunBars";
+import { DurationCell, RunDurationBars, RunStateLabel, RunTimeline } from "./RunBars";
 import { countByTone, formatRelative, successRate } from "./runState";
 import "./operationsHome.css";
 
@@ -177,16 +178,132 @@ const WorkflowMenu = ({ row }: { row: WorkflowRow }) => {
 
 const RUNS_PAGE_SIZE = 12;
 
+const NARROW_QUERY = "(max-width: 767px)";
+
+const useNarrow = (): boolean => {
+  const read = () => typeof window !== "undefined" && !!window.matchMedia?.(NARROW_QUERY).matches;
+  const [narrow, setNarrow] = useState(read);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const media = window.matchMedia(NARROW_QUERY);
+    const refresh = () => setNarrow(media.matches);
+    media.addEventListener?.("change", refresh);
+    refresh();
+    return () => media.removeEventListener?.("change", refresh);
+  }, []);
+  return narrow;
+};
+
+const isSystem = (row: WorkflowRow) => row.isScanner || row.isNightly;
+
+const isFailing = (row: WorkflowRow) => {
+  const status = row.runs[0]?.status;
+  return status === "failed" || status === "partial";
+};
+
+const WorkflowName = ({ row }: { row: WorkflowRow }) => (
+  <div className="ops-workflow-name">
+    {row.to ? (
+      <Link to={row.to} className="font-semibold text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
+        {row.name}
+      </Link>
+    ) : (
+      <span className="font-semibold">{row.name}</span>
+    )}
+    {isSystem(row) ? (
+      <Badge variant="secondary">System</Badge>
+    ) : (
+      <>
+        <Badge variant="outline">Preset</Badge>
+        {row.preset?.is_default ? <Badge variant="default">Default</Badge> : null}
+        {!row.enabled ? (
+          <Badge variant="outline">Disabled</Badge>
+        ) : row.preset?.paused ? (
+          <Badge variant="outline">Paused</Badge>
+        ) : null}
+      </>
+    )}
+  </div>
+);
+
+const WorkflowDescription = ({ text }: { text: string }) => (
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <span className="ops-workflow-desc" tabIndex={0}>
+        {text}
+      </span>
+    </TooltipTrigger>
+    <TooltipContent className="max-w-sm">{text}</TooltipContent>
+  </Tooltip>
+);
+
+const WorkflowLastRun = ({ row }: { row: WorkflowRow }) => {
+  const latest = row.runs[0];
+  if (!latest) return <span className="text-muted-foreground">—</span>;
+  return (
+    <Link
+      to={`/runs/${latest.id}`}
+      className="ops-started hover:underline"
+      title={formatTime(latest.created_at)}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <span>{formatRelative(latest.created_at)}</span>
+      <span className="ops-started__abs">{formatDuration(runDurationMs(latest))}</span>
+    </Link>
+  );
+};
+
+const WorkflowStatus = ({ row }: { row: WorkflowRow }) => {
+  const latest = row.runs[0];
+  if (!latest) return <Badge variant="secondary">Not run</Badge>;
+  return <StatusTag status={latest.status} />;
+};
+
+const WorkflowCards = ({ rows }: { rows: WorkflowRow[] }) => (
+  <ul className="ops-workflow-cards" aria-label="Workflows">
+    {rows.map((row) => (
+      <li key={row.key} className={cn("ops-workflow-card", isSystem(row) && isFailing(row) && "is-failing")}>
+        <div className="ops-workflow-card__head">
+          <WorkflowName row={row} />
+          <WorkflowMenu row={row} />
+        </div>
+        <WorkflowDescription text={row.description} />
+        <dl className="ops-workflow-card__meta">
+          <div>
+            <dt>Schedule</dt>
+            <dd>{row.schedule}</dd>
+          </div>
+          <div>
+            <dt>Last run</dt>
+            <dd>
+              <WorkflowLastRun row={row} />
+            </dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd>
+              <WorkflowStatus row={row} />
+            </dd>
+          </div>
+        </dl>
+        <RunDurationBars runs={row.runs} />
+      </li>
+    ))}
+  </ul>
+);
+
 export const OperationsHome = () => {
   const { api, token, role } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
   const tab =
-    tabParam === "runs" || tabParam === "history"
-      ? "runs"
-      : tabParam === "actions" || tabParam === "holds"
-        ? tabParam
-        : "workflows";
+    tabParam === "actions" || tabParam === "holds" ? tabParam : "runs";
+  const narrow = useNarrow();
+  const workflowsRef = useRef<HTMLElement>(null);
+  // ?tab=workflows predates the always-visible section; honour old links by scrolling to it.
+  useEffect(() => {
+    if (tabParam === "workflows") workflowsRef.current?.scrollIntoView?.({ block: "start" });
+  }, [tabParam]);
   const runFilterParam = searchParams.get("runFilter");
   const runFilter = isRunFilter(runFilterParam) ? runFilterParam : "all";
   const runsPageParam = Number.parseInt(searchParams.get("runsPage") ?? "0", 10);
@@ -457,40 +574,16 @@ export const OperationsHome = () => {
         id: "workflow",
         header: "Workflow",
         cell: ({ row }) => (
-          <div className="flex flex-col gap-0.5">
-            <div className="flex items-center gap-1.5">
-              {row.original.to ? (
-                <Link
-                  to={row.original.to}
-                  className="font-semibold text-primary hover:underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {row.original.name}
-                </Link>
-              ) : (
-                <span className="font-semibold">{row.original.name}</span>
-              )}
-              {row.original.isScanner || row.original.isNightly ? (
-                <Badge variant="secondary">System</Badge>
-              ) : (
-                <>
-                  {row.original.preset?.is_default ? <Badge variant="default">Default</Badge> : null}
-                  {!row.original.enabled ? (
-                    <Badge variant="outline">Disabled</Badge>
-                  ) : row.original.preset?.paused ? (
-                    <Badge variant="outline">Paused</Badge>
-                  ) : null}
-                </>
-              )}
-            </div>
-            <span className="ops-workflow-desc">{row.original.description}</span>
+          <div className="ops-workflow-cell">
+            <WorkflowName row={row.original} />
+            <WorkflowDescription text={row.original.description} />
           </div>
         )
       },
       {
         id: "schedule",
         header: "Schedule",
-        size: 168,
+        size: 150,
         cell: ({ row }) => (
           <div className="ops-schedule-cell">
             <span className="ops-schedule-cell__label">{row.original.schedule}</span>
@@ -500,56 +593,20 @@ export const OperationsHome = () => {
           </div>
         )
       },
-      {
-        id: "runs",
-        header: "Runs",
-        size: 150,
-        cell: ({ row }) => <RunStateCounts runs={row.original.runs.slice(0, 25)} />
-      },
-      {
-        id: "lastRun",
-        header: "Last run",
-        size: 120,
-        cell: ({ row }) => {
-          const latest = row.original.runs[0];
-          if (!latest) return <span className="text-muted-foreground">—</span>;
-          return (
-            <Link
-              to={`/runs/${latest.id}`}
-              className="ops-started hover:underline"
-              title={formatTime(latest.created_at)}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <span>{formatRelative(latest.created_at)}</span>
-              <span className="ops-started__abs">{formatDuration(runDurationMs(latest))}</span>
-            </Link>
-          );
-        }
-      },
+      { id: "lastRun", header: "Last run", size: 110, cell: ({ row }) => <WorkflowLastRun row={row.original} /> },
       {
         id: "recent",
         header: "Recent runs",
-        size: 150,
+        size: 140,
         cell: ({ row }) => <RunDurationBars runs={row.original.runs} />
       },
-      {
-        id: "status",
-        header: "Status",
-        size: 110,
-        cell: ({ row }) => {
-          const latest = row.original.runs[0];
-          return latest ? <StatusTag status={latest.status} /> : <Badge variant="secondary">Not run</Badge>;
-        }
-      },
-      {
-        id: "actions",
-        header: "",
-        size: 48,
-        cell: ({ row }) => <WorkflowMenu row={row.original} />
-      }
+      { id: "status", header: "Status", size: 104, cell: ({ row }) => <WorkflowStatus row={row.original} /> },
+      { id: "actions", header: "", size: 40, cell: ({ row }) => <WorkflowMenu row={row.original} /> }
     ],
     []
   );
+
+  const failingSystem = workflowRows.filter((row) => isSystem(row) && isFailing(row));
 
   return (
     <div className="operations-home-page">
@@ -628,6 +685,45 @@ export const OperationsHome = () => {
       </section>
 
       <div className="flex flex-col gap-3">
+        <section
+          id="workflows"
+          ref={workflowsRef}
+          className="ops-workspace-card ops-workflows"
+          aria-labelledby="ops-workflows-title"
+        >
+          <header className="ops-workflows__head">
+            <h2 id="ops-workflows-title">Workflows</h2>
+            <span className="ops-workflows__count">{plural(workflowRows.length, "workflow")}</span>
+          </header>
+          {failingSystem.map((row) => (
+            <div key={row.key} className="ops-workflow-alert" role="alert">
+              <AlertTriangle className="size-4 shrink-0" aria-hidden />
+              <span>
+                <strong>{row.name}</strong> last run {row.runs[0]?.status === "failed" ? "failed" : "finished partially"}{" "}
+                {row.runs[0] ? formatRelative(row.runs[0].created_at) : null}.
+              </span>
+              {row.runs[0] ? (
+                <Link className="ops-workflow-alert__link" to={`/runs/${row.runs[0].id}`}>
+                  Open latest run
+                </Link>
+              ) : null}
+            </div>
+          ))}
+          {noPresets ? <p className="ops-workflows__note">{NO_PRESETS_COPY}</p> : null}
+          {narrow ? (
+            <WorkflowCards rows={workflowRows} />
+          ) : (
+            <DataTable
+              columns={workflowColumns}
+              data={workflowRows}
+              density="compact"
+              getRowId={(row) => row.key}
+              getRowClassName={(row) => (isSystem(row) && isFailing(row) ? "ops-workflow-row--failing" : undefined)}
+              emptyTitle="No workflows"
+              emptyDescription="Scanner and maintenance presets appear here."
+            />
+          )}
+        </section>
 
         <section className="ops-workspace-card" aria-label="Run operations workspace">
           <Tabs
@@ -641,7 +737,6 @@ export const OperationsHome = () => {
             }
           >
             <TabsList className="ops-workspace-tabs">
-              <TabsTrigger value="workflows">Workflows</TabsTrigger>
               <TabsTrigger value="runs">History</TabsTrigger>
               <TabsTrigger value="actions">Actions</TabsTrigger>
               <TabsTrigger value="holds">
@@ -651,20 +746,6 @@ export const OperationsHome = () => {
                 ) : null}
               </TabsTrigger>
             </TabsList>
-
-            <TabsContent value="workflows">
-            <div className="space-y-2">
-              {noPresets ? <p className="text-sm text-muted-foreground">{NO_PRESETS_COPY}</p> : null}
-              <DataTable
-                columns={workflowColumns}
-                data={workflowRows}
-                density="compact"
-                getRowId={(row) => row.key}
-                emptyTitle="No workflows"
-                emptyDescription="Scanner and maintenance presets appear here."
-              />
-            </div>
-            </TabsContent>
 
             <TabsContent value="runs">
             <div className="flex flex-col gap-3">

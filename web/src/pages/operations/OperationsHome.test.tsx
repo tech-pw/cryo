@@ -119,7 +119,8 @@ describe("OperationsHome", () => {
 
     renderPage();
 
-    const nightlyLink = await screen.findByRole("link", { name: "Nightly maintenance" });
+    const workflows = await screen.findByRole("region", { name: "Workflows" });
+    const nightlyLink = await within(workflows).findByRole("link", { name: "Nightly maintenance" });
     const row = nightlyLink.closest("tr");
     expect(row).toBeTruthy();
     const nightlyRow = within(row as HTMLElement);
@@ -207,5 +208,76 @@ describe("OperationsHome", () => {
     });
     const failedFilterButton = screen.getByRole("button", { name: "With failures · 24h" });
     expect(failedFilterButton.className).toMatch(/bg-primary/);
+  });
+
+  it("keeps Workflows visible above the History, Actions and Holds tabs (#568)", async () => {
+    vi.mocked(getScannerStatus).mockResolvedValue(scannerStatus);
+    vi.mocked(listPresets).mockResolvedValue([preset]);
+    vi.mocked(listRuns).mockResolvedValue([]);
+
+    renderPage(["/operations?tab=holds"]);
+
+    const section = await screen.findByRole("region", { name: "Workflows" });
+    expect(await within(section).findByText("Nightly compaction")).toBeInTheDocument();
+    expect(within(section).getByText("Scanner")).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Workflows" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Holds/, selected: true })).toBeInTheDocument();
+  });
+
+  it("defaults to History and treats legacy ?tab=workflows as non-breaking (#568)", async () => {
+    vi.mocked(getScannerStatus).mockResolvedValue(scannerStatus);
+    vi.mocked(listPresets).mockResolvedValue([preset]);
+    vi.mocked(listRuns).mockResolvedValue([]);
+
+    renderPage(["/operations?tab=workflows"]);
+
+    expect(await screen.findByRole("region", { name: "Workflows" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "History", selected: true })).toBeInTheDocument();
+  });
+
+  it("flags a failed system workflow and links to its latest run (#568)", async () => {
+    const failed: RunRead = {
+      id: "dddddddd-0000-0000-0000-000000000004",
+      kind: "scheduled",
+      status: "failed",
+      trigger: "batch-cron",
+      created_at: new Date().toISOString(),
+      summary: { pipeline: "batch" }
+    };
+    vi.mocked(getScannerStatus).mockResolvedValue(scannerStatus);
+    vi.mocked(listPresets).mockResolvedValue([preset]);
+    vi.mocked(listRuns).mockImplementation(async (_api, args) => (args?.kind === "scan" ? [] : [failed]));
+
+    renderPage();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Nightly maintenance last run failed");
+    expect(within(alert).getByRole("link", { name: "Open latest run" })).toHaveAttribute("href", `/runs/${failed.id}`);
+    const section = screen.getByRole("region", { name: "Workflows" });
+    const row = within(section).getByRole("link", { name: "Nightly maintenance" }).closest("tr") as HTMLElement;
+    expect(row.className).toMatch(/ops-workflow-row--failing/);
+  });
+
+  it("renders workflows as stacked cards on narrow screens (#568)", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      ...original(query),
+      matches: query === "(max-width: 767px)",
+      addEventListener: () => {},
+      removeEventListener: () => {}
+    })) as typeof window.matchMedia;
+    try {
+      vi.mocked(getScannerStatus).mockResolvedValue(scannerStatus);
+      vi.mocked(listPresets).mockResolvedValue([preset]);
+      vi.mocked(listRuns).mockResolvedValue([]);
+
+      renderPage();
+
+      const cards = await screen.findByRole("list", { name: "Workflows" });
+      expect(await within(cards).findByText("Nightly compaction")).toBeInTheDocument();
+      expect(within(cards).getAllByRole("listitem").length).toBeGreaterThanOrEqual(3);
+    } finally {
+      window.matchMedia = original;
+    }
   });
 });
