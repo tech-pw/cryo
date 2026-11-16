@@ -78,6 +78,14 @@ A table with no commit in 30 days loses 20 points for **Stale table commits**. T
 - **Finding them:** archived tables carry an **Archived** badge on the Tables list and the table header. Filter by **Lifecycle** in the list's advanced filters.
 - **Suggestions:** an active table with no commit for 90 days or more, and no recorded reads in 30 days, is shown as an archive candidate. Cryo never archives a table on its own.
 
+## Changing the limits
+
+Each warn and critical limit is a policy choice. A lake whose snapshot policy keeps 300 snapshots, or whose streaming tables carry 30% delete files between compactions, would otherwise lose points that no maintenance can win back.
+
+- **Fleet:** set `CRYO_HEALTH_THRESHOLD_OVERRIDES` to a JSON map keyed by the limit names, for example `{"snapshot_count_warn": 300, "snapshot_count_crit": 1000}`. An unknown name, a value that is not a positive number, or a warn limit at or above its critical limit fails startup.
+- **One table:** `PUT /api/v1/tables/{id}/health-thresholds` with `overrides` and a `reason` (admin only). A table's limit wins over the fleet's, the stored grade updates at once, and the change is audited with the old and new values. An empty map returns the table to the defaults. `GET` on the same path lists every limit in force that differs from the default, and where it came from.
+- **What it changes:** the grade only. An override replaces the base limit before size scaling and the file-count and snapshot-rate adjustments. The weights (−8 / −20) and grade bands stay as they are, and compaction gating (`min_small_files`, chunking) never reads these limits.
+
 ## Projection: from scan to stored cost
 
 The cost estimator turns the scanner's stored statistics into a projected byte count for each operation and stores it. Nothing is read from object storage to produce it. Orphan-file precision is an opt-in scanner tier. Without it, the number is flagged as last-known.

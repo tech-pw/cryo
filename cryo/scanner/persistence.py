@@ -4,6 +4,7 @@ import dataclasses
 import logging
 import math
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
@@ -26,7 +27,12 @@ from cryo.db.models import (
 from cryo.domain.lifecycle import is_archived
 from cryo.scanner.analyze import PartitionAnalysis, TableAnalysis
 from cryo.scanner.detection_tiers import TierInputs, classify_detection_tier
-from cryo.scanner.health import apply_lifecycle
+from cryo.scanner.health import (
+    THRESHOLD_OVERRIDES_KEY,
+    apply_lifecycle,
+    compute_health_score,
+    threshold_override_sources,
+)
 from cryo.sources.missing import TABLE_MISSING_REASON
 
 
@@ -366,6 +372,31 @@ def analysis_for_lifecycle(analysis: TableAnalysis, lifecycle: str | None) -> Ta
     return dataclasses.replace(analysis, overall_score=score, grade=grade, raw=raw)
 
 
+def analysis_for_threshold_overrides(
+    analysis: TableAnalysis, overrides: Mapping[str, Any] | None, lifecycle: str | None
+) -> TableAnalysis:
+    """Re-grade with the table's own health limits (#552); fleet limits are already applied."""
+    raw = dict(analysis.raw or {})
+    raw.pop(THRESHOLD_OVERRIDES_KEY, None)
+    if overrides:
+        raw[THRESHOLD_OVERRIDES_KEY] = dict(overrides)
+        projected: dict[str, Any] = dict(raw)
+        for item in dataclasses.fields(analysis):
+            if item.name != "raw":
+                projected[item.name] = getattr(analysis, item.name)
+        score, grade, deductions = compute_health_score(
+            projected, analysis.small_files_count, now=analysis.scan_at, lifecycle=lifecycle
+        )
+        raw["health_deductions"] = deductions
+        analysis = dataclasses.replace(analysis, overall_score=score, grade=grade)
+    sources = threshold_override_sources(raw)
+    if sources:
+        raw["health_threshold_sources"] = sources
+    else:
+        raw.pop("health_threshold_sources", None)
+    return dataclasses.replace(analysis, raw=raw)
+
+
 def persist_table_analysis(
     session: Session,
     *,
@@ -381,6 +412,9 @@ def persist_table_analysis(
     )
     table_id = table_row.id
     _lock_table_for_persist(session, table_id)
+    analysis = analysis_for_threshold_overrides(
+        analysis, table_row.health_threshold_overrides, table_row.lifecycle
+    )
     analysis = analysis_for_lifecycle(analysis, table_row.lifecycle)
 
     location = (analysis.raw or {}).get("location")

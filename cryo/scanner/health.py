@@ -159,10 +159,76 @@ def _size_scale(total_size_gb: float) -> float:
     return float(max(1.0, ((total_size_gb or 0) / 100.0) ** 0.5))
 
 
-def _scaled_thresholds(total_size_gb: float) -> dict[str, int | float]:
+# Per-table overrides ride in the scorer's stats under this key (#552); fleet overrides come
+# from CRYO_HEALTH_THRESHOLD_OVERRIDES. Both replace the base limit before size scaling.
+THRESHOLD_OVERRIDES_KEY = "health_threshold_overrides"
+
+
+def validate_threshold_overrides(
+    overrides: Mapping[str, Any] | None,
+    *,
+    base: Mapping[str, int | float] | None = None,
+) -> dict[str, int | float]:
+    """Known keys, positive numbers, and warn below crit once merged over ``base``."""
+    if not overrides:
+        return {}
+    unknown = sorted(set(overrides) - set(HEALTH_THRESHOLDS))
+    if unknown:
+        raise ValueError(f"Unknown health threshold(s): {', '.join(unknown)}")
+    clean: dict[str, int | float] = {}
+    for key, value in overrides.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise ValueError(f"{key} must be a positive number")
+        clean[key] = (
+            int(value)
+            if isinstance(HEALTH_THRESHOLDS[key], int) and float(value).is_integer()
+            else float(value)
+        )
+    merged = {**(base or HEALTH_THRESHOLDS), **clean}
+    for key in clean:
+        stem = key.removesuffix("_warn").removesuffix("_crit")
+        if merged[f"{stem}_warn"] >= merged[f"{stem}_crit"]:
+            raise ValueError(f"{stem}_warn must be below {stem}_crit")
+    return clean
+
+
+def _fleet_overrides() -> Mapping[str, int | float]:
+    from cryo.config import get_settings
+
+    return get_settings().health_threshold_overrides
+
+
+def threshold_override_sources(stats: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Each overridden limit with its default and where the override came from."""
+    sources: dict[str, dict[str, Any]] = {}
+    table = stats.get(THRESHOLD_OVERRIDES_KEY)
+    for source, overrides in (
+        ("fleet", _fleet_overrides()),
+        ("table", table if isinstance(table, Mapping) else {}),
+    ):
+        for key, value in overrides.items():
+            if key in HEALTH_THRESHOLDS:
+                sources[key] = {
+                    "limit": value,
+                    "default": HEALTH_THRESHOLDS[key],
+                    "source": source,
+                }
+    return sources
+
+
+def _base_thresholds(stats: Mapping[str, Any]) -> dict[str, int | float]:
+    base: dict[str, int | float] = dict(HEALTH_THRESHOLDS)
+    for key, entry in threshold_override_sources(stats).items():
+        base[key] = entry["limit"]
+    return base
+
+
+def _scaled_thresholds(
+    total_size_gb: float, base: Mapping[str, int | float] = HEALTH_THRESHOLDS
+) -> dict[str, int | float]:
     scale = _size_scale(total_size_gb)
     scaled: dict[str, int | float] = {}
-    for key, value in HEALTH_THRESHOLDS.items():
+    for key, value in base.items():
         if "pct" in key or "ratio" in key or "age" in key:
             scaled[key] = value
         elif isinstance(value, int):
@@ -240,7 +306,7 @@ def health_thresholds_for(stats: Mapping[str, Any]) -> dict[str, int | float]:
     Public so projections (cryo.advisor.path_to_a) grade with the same per-table limits
     rather than a copy of the flat HEALTH_THRESHOLDS.
     """
-    thresholds = _scaled_thresholds(float(stats.get("total_size_gb") or 0))
+    thresholds = _scaled_thresholds(float(stats.get("total_size_gb") or 0), _base_thresholds(stats))
     thresholds.update(_file_count_thresholds(stats, thresholds))
     thresholds.update(_snapshot_thresholds(stats, thresholds))
     return thresholds
@@ -248,7 +314,7 @@ def health_thresholds_for(stats: Mapping[str, Any]) -> dict[str, int | float]:
 
 def compute_design_findings(stats: Mapping[str, Any]) -> list[DesignFinding]:
     """Structural findings (partition count, partition skew) reported beside the grade (#264)."""
-    thresholds = _scaled_thresholds(float(stats.get("total_size_gb") or 0))
+    thresholds = _scaled_thresholds(float(stats.get("total_size_gb") or 0), _base_thresholds(stats))
     findings: list[DesignFinding] = []
     partitions = int(stats.get("total_partitions") or 0)
     for severity in ("crit", "warn"):
