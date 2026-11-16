@@ -50,6 +50,7 @@ from cryo.observability.metrics import (
     governor_queue_depth,
     governor_wave_duration_seconds,
 )
+from cryo.planner.table_properties import is_property_job
 from cryo.queue.locks import LockStore
 from cryo.queue.reconcile import (
     purge_stale_queue_entries,
@@ -902,6 +903,9 @@ class Governor:
         (roi_gate_shadow_mode=False) every candidate is evaluated regardless of sample rate.
         """
         if not self._roi_gate_enabled or wave.session is None:
+            return None
+        # A person's property change (#560) reclaims nothing; benefit-cost does not apply.
+        if is_property_job(job.requested_operations):
             return None
         if self._roi_gate_shadow_mode and not _shadow_sampled(job.id, self._shadow_sample_rate):
             return None

@@ -682,6 +682,11 @@ def _job_record(session: Session, job: MaintenanceJob) -> MaintenanceJobRecord:
         if trimmed is not None:
             operations = trimmed
             params["requested_operations"] = [op.value for op in trimmed]
+    # A property-change job (#560) carries the requested change on its run, never on a preset.
+    params.pop("table_properties", None)
+    table_properties = summary.get("table_properties")
+    if isinstance(table_properties, dict):
+        params["table_properties"] = table_properties
     # Never taken from a preset or a table override: build_execution_plan drops the operations
     # it gates unless an approval request for this table names them.
     params.pop("approved_operations", None)

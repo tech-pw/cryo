@@ -165,6 +165,8 @@ def job_starts_cooldown() -> ColumnElement[bool]:
         # An operation-scoped pass (#443) did metadata work only; it must not park the table
         # out of the compaction pass.
         MaintenanceJob.plan[BATCH_OPERATIONS_KEY].as_string().is_(None),
+        # A property change (#560) maintains nothing.
+        MaintenanceJob.dedupe_key.is_distinct_from(OperationType.SET_TABLE_PROPERTIES.value),
     )
 
 

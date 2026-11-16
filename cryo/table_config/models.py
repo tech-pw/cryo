@@ -241,3 +241,7 @@ class ConfigApplyResponse(BaseModel):
     audit_log_ids: list[int]
     message: str
     config: TableConfigResponse
+    # "queued" (HTTP 202) when the catalog part runs as an engine job (#560).
+    status: Literal["applied", "queued"] = "applied"
+    run_id: uuid.UUID | None = None
+    job_id: uuid.UUID | None = None

@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -437,11 +437,13 @@ def _apply_properties(
         ApplyTablePropertiesRequest(properties=step.action["properties"], note="path-to-a"),
         session,
         principal,
+        Response(),
     )
     return PathToAApplyResponse(
         step_id=step.id,
-        status="applied",
+        status="started" if result.status == "queued" else "applied",
         message=result.message,
+        run_id=result.run_id,
         audit_log_id=result.audit_log_id,
     )
 

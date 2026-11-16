@@ -1691,6 +1691,9 @@ export interface paths {
          * @description Apply a batch of setting changes. Properties go to the catalog in one metadata commit;
          *     Cryo retention settings become per-table preset overrides (admin only). Every change is
          *     audited, and high-risk batches need ``confirm`` plus a written ``reason``.
+         *
+         *     On an Iceberg v3 table the catalog part runs as a job on an engine destination (#560):
+         *     the response is 202 with ``status="queued"`` and a ``job_id`` to follow.
          */
         post: operations["apply_table_config_api_v1_tables__table_id__config_apply_post"];
         delete?: never;
@@ -6376,6 +6379,16 @@ export interface components {
              * @default pyiceberg
              */
             engine: string;
+            /**
+             * Status
+             * @default applied
+             * @enum {string}
+             */
+            status: "applied" | "queued";
+            /** Run Id */
+            run_id?: string | null;
+            /** Job Id */
+            job_id?: string | null;
         };
         /** ApprovalAction */
         ApprovalAction: {
@@ -7407,6 +7420,16 @@ export interface components {
             /** Message */
             message: string;
             config: components["schemas"]["TableConfigResponse"];
+            /**
+             * Status
+             * @default applied
+             * @enum {string}
+             */
+            status: "applied" | "queued";
+            /** Run Id */
+            run_id?: string | null;
+            /** Job Id */
+            job_id?: string | null;
         };
         /** ConfigChange */
         ConfigChange: {
@@ -10374,7 +10397,7 @@ export interface components {
          * OperationType
          * @enum {string}
          */
-        OperationType: "expire_snapshots" | "remove_orphan_files" | "convert_equality_deletes" | "convert_deletes" | "optimize" | "optimize_manifests" | "compute_statistics" | "rewrite_position_deletes" | "expire_data" | "migrate_partition_spec";
+        OperationType: "expire_snapshots" | "remove_orphan_files" | "convert_equality_deletes" | "convert_deletes" | "optimize" | "optimize_manifests" | "compute_statistics" | "rewrite_position_deletes" | "expire_data" | "migrate_partition_spec" | "set_table_properties";
         /** OrphanScanCostRead */
         OrphanScanCostRead: {
             /** Estimated List Requests */
@@ -18489,6 +18512,15 @@ export interface operations {
                     "application/json": components["schemas"]["ApplyTablePropertiesResponse"];
                 };
             };
+            /** @description Queued as a job */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyTablePropertiesResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -18686,6 +18718,15 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigApplyResponse"];
+                };
+            };
+            /** @description Queued as a job */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -62,6 +62,8 @@ def _render_operation(
         sql = render_expire_data_delete(f"{catalog}.{table_name}", operation.params, quote="spark")
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
         sql = f"CALL {catalog}.system.rewrite_manifests(table => '{catalog}.{table_name}')"
+    elif operation.type is OperationType.SET_TABLE_PROPERTIES:
+        sql = _render_set_table_properties(f"{catalog}.{table_name}", operation.params)
     elif operation.type is OperationType.COMPUTE_STATISTICS:
         stats_sql = _render_compute_statistics(catalog, table_name, operation.params)
         if stats_sql is None:
@@ -722,9 +724,20 @@ def render_set_table_properties(
     Used for format-version 3 tables, which PyIceberg cannot commit to (#557). Spark's
     Iceberg extension also treats ``'format-version'`` here as a real format upgrade.
     """
+    name = ".".join(_always_quote_identifier(part) for part in (catalog, schema, table))
+    return _set_tblproperties(name, properties)
+
+
+def render_unset_table_properties(
+    catalog: str, schema: str, table: str, keys: Sequence[str]
+) -> str:
+    name = ".".join(_always_quote_identifier(part) for part in (catalog, schema, table))
+    return _unset_tblproperties(name, keys)
+
+
+def _set_tblproperties(name: str, properties: dict[str, str]) -> str:
     if not properties:
         raise ValueError("no properties to set")
-    name = ".".join(_always_quote_identifier(part) for part in (catalog, schema, table))
     pairs = ", ".join(
         f"{_string_literal(key)} = {_string_literal(value)}"
         for key, value in sorted(properties.items())
@@ -732,11 +745,20 @@ def render_set_table_properties(
     return f"ALTER TABLE {name} SET TBLPROPERTIES ({pairs})"
 
 
-def render_unset_table_properties(
-    catalog: str, schema: str, table: str, keys: Sequence[str]
-) -> str:
+def _unset_tblproperties(name: str, keys: Sequence[str]) -> str:
     if not keys:
         raise ValueError("no properties to unset")
-    name = ".".join(_always_quote_identifier(part) for part in (catalog, schema, table))
     listed = ", ".join(_string_literal(key) for key in sorted(set(keys)))
     return f"ALTER TABLE {name} UNSET TBLPROPERTIES IF EXISTS ({listed})"
+
+
+def _render_set_table_properties(name: str, params: dict[str, Any]) -> str:
+    """A SET_TABLE_PROPERTIES operation carries either ``set`` or ``remove``, never both
+    (``cryo.planner.table_properties`` emits one operation per statement)."""
+    sets = params.get("set") or {}
+    removes = params.get("remove") or []
+    if sets and removes:
+        raise ValueError("set_table_properties operation carries both set and remove")
+    if sets:
+        return _set_tblproperties(name, {str(k): str(v) for k, v in dict(sets).items()})
+    return _unset_tblproperties(name, [str(key) for key in removes])

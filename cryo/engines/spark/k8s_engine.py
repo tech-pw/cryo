@@ -118,11 +118,25 @@ def is_spark_executor_oom(message: str | None) -> bool:
     return message.split("\n", 1)[0].startswith(EXECUTOR_OOM_PREFIX)
 
 
-def is_spark_retryable_catalog_error(message: str | None) -> bool:
+# A property change the catalog or Spark rejected as invalid fails the same way every time
+# (#560): an unknown or reserved key, a bad value, a format-version downgrade.
+_SPARK_VALIDATION_SIGNATURES = (
+    "ValidationException",
+    "AnalysisException",
+    "IllegalArgumentException",
+)
+_NO_VALIDATION_RETRY_OPS = frozenset({"set_table_properties"})
+
+
+def is_spark_retryable_catalog_error(message: str | None, operation: str | None = None) -> bool:
     """True when a Spark driver failure is worth one more attempt against the catalog."""
     if not message:
         return False
     if any(sig in message for sig in _SPARK_NON_RETRYABLE_SIGNATURES):
+        return False
+    if operation in _NO_VALIDATION_RETRY_OPS and any(
+        sig in message for sig in _SPARK_VALIDATION_SIGNATURES
+    ):
         return False
     return any(sig in message for sig in _SPARK_RETRYABLE_SIGNATURES) or (
         is_spark_transient_metastore_error(message)
@@ -548,10 +562,10 @@ class SparkK8sEngine:
                 # An OOM is not a catalog race. Counting it here used to burn a catalog
                 # retry and, on a later catalog failure, leave room for a fifth pod.
                 catalog_retry = (
-                    is_spark_retryable_catalog_error(state_details)
+                    is_spark_retryable_catalog_error(state_details, stmt.action.value)
                     and catalog_attempts < _SPARK_CATALOG_RETRY_ATTEMPTS - 1
                 )
-                if is_spark_retryable_catalog_error(state_details):
+                if is_spark_retryable_catalog_error(state_details, stmt.action.value):
                     catalog_attempts += 1
                 # File-count sizing already ran on the first submit. One more heap step
                 # only when the kernel killed the driver and the ceiling has not been hit.

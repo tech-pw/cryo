@@ -185,6 +185,8 @@ _LIGHTWEIGHT_OPS = frozenset(
         "remove_orphan_files",
         "optimize_manifests",
         "compute_statistics",
+        # A metadata-only ALTER TABLE (#560): the flat small profile, never table-size scaled.
+        "set_table_properties",
     }
 )
 # Expire and orphan die on the driver, not the executors. Iceberg's expire anti-joins every

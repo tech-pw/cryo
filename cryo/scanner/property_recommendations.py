@@ -10,13 +10,16 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from cryo.db.models import LayoutRecommendation, Table, TableStats
+from cryo.db.models import AuditLog, LayoutRecommendation, Table, TableStats
 from cryo.optimizer.layout_analyzer import analyze_table_layout
+
+if TYPE_CHECKING:
+    from cryo.table_config.property_jobs import QueuedPropertyChange
 
 RecommendationTier = Literal["tier1", "tier2", "tier3"]
 RecommendationAction = Literal[
@@ -416,8 +419,12 @@ class PropertyApplyResult:
     engine: str
     destination: str | None = None
     statements: tuple[str, ...] = ()
+    # Set on the engine route (#560): the change was queued as a job, not applied yet.
+    queued: QueuedPropertyChange | None = None
 
     def result_metrics(self) -> dict[str, Any]:
+        if self.queued is not None:
+            return self.queued.result_metrics()
         out: dict[str, Any] = {"route": self.route, "engine": self.engine}
         if self.destination:
             out["destination"] = self.destination
@@ -449,11 +456,17 @@ def apply_table_properties(
     *,
     confirm_risky: bool = False,
     allow_engine_route: bool = True,
+    actor: str | None = None,
+    note: str | None = None,
+    trigger: str = "web-table-properties",
 ) -> PropertyApplyResult:
-    """Persist table properties. PyIceberg for v1/v2; engine DDL for v3 (#557).
+    """Persist table properties. PyIceberg for v1/v2, synchronously. For v3 (#557) the change
+    is queued as a ``set_table_properties`` job on an engine destination (#560) and the
+    result carries ``queued``; a QUEUED audit row is written with the job id.
 
     Raises ``NoPropertyRouteError`` when a v3 table has no capable destination, or when
-    ``allow_engine_route`` is False (background sweeps don't start engine jobs).
+    ``allow_engine_route`` is False (background sweeps don't start engine jobs), and
+    ``PropertyChangeInProgressError`` when a change for the table is already queued.
     """
     from cryo.db.models import Source, Table
     from cryo.sources.pyiceberg_catalog import PyIcebergSourceCatalog
@@ -479,15 +492,36 @@ def apply_table_properties(
         route = engine_route.resolve_property_route(session, table, list(allowed))
         if route is None:
             raise engine_route.NoPropertyRouteError()
-        statements = engine_route.apply_via_engine(
-            route, table.schema_name, table.table_name, allowed
+        from cryo.table_config.property_jobs import QUEUED_STATUS, enqueue_property_change
+
+        detail = " ".join(f"{k}={v}" for k, v in sorted(allowed.items()))
+        if note:
+            detail = f"{detail} note={note}"
+        audit = AuditLog(
+            table_id=table_id,
+            action="apply_table_properties",
+            status=QUEUED_STATUS,
+            engine=route.engine.value,
+            detail=detail,
+            result_metrics={},
+            actor=actor,
+        )
+        queued = enqueue_property_change(
+            session,
+            table,
+            route,
+            set_properties=allowed,
+            actor=actor,
+            trigger=trigger,
+            origin="properties",
+            audit_rows=[audit],
         )
         return PropertyApplyResult(
             applied=allowed,
             route=engine_route.ENGINE_ROUTE,
             engine=route.engine.value,
             destination=route.destination_name,
-            statements=tuple(statements),
+            queued=queued,
         )
 
     catalog = PyIcebergSourceCatalog(name=str(source.id), config=source.config)
