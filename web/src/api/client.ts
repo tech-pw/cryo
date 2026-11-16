@@ -43,6 +43,7 @@ import type {
   TablesFunnel,
   PresetRead,
   PresetRuleRead,
+  PresetModeCatalog,
   PresetSimulationResponse,
   PresetWrite,
   RoleToken,
@@ -748,6 +749,7 @@ export const createPresetRule = (api: ApiOptions, id: UUID, body: { predicate: P
   apiFetch<PresetRuleRead>(`/presets/${id}/rules`, api, { method: "POST", body });
 export const deletePresetRule = (api: ApiOptions, presetId: UUID, ruleId: UUID) =>
   apiFetch<void>(`/presets/${presetId}/rules/${ruleId}`, api, { method: "DELETE" });
+export const getPresetModes = (api: ApiOptions) => apiFetch<PresetModeCatalog>("/presets/modes", api);
 export const simulatePreset = (api: ApiOptions, id: UUID) =>
   apiFetch<PresetSimulationResponse>(`/presets/${id}/simulate`, api, { method: "POST" });
 

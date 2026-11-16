@@ -163,7 +163,7 @@ def covered_table_count(session: Session, preset: Preset) -> int:
     _, estimate = presets_repo.simulate_preset(
         session, preset, sample_limit=0, tenant_id=tenant_filter_id(session)
     )
-    return int(estimate["matched_count"])
+    return int(estimate["matched_count"] or 0)
 
 
 def audit_lifecycle_change(

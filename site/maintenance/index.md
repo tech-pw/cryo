@@ -2,7 +2,7 @@
 title: Maintenance
 description: Why Iceberg tables need maintenance, the seven operations Cryo runs in a fixed order, how the planner chunks work, how admission works, and the guardrails that stay on.
 canonical: https://tech-pw.github.io/cryo/maintenance/
-updated: 2026-11-13
+updated: 2026-11-16
 ---
 
 # Maintenance
@@ -92,7 +92,7 @@ Deletes files in storage that no snapshot references. Guarded, and forcing it is
 
 The default preset runs in **deep** mode, so the nightly schedule removes orphan files. Each table is cleaned at most once every `orphan_removal_cadence_days` (default 7), counted from its last successful orphan removal, and tables are staggered by a hash of their id so each night lists about a seventh of the fleet. A table that has never been cleaned and whose last storage listing found at least `orphan_catchup_min_bytes` of orphans skips the stagger wait once; the run's table cap takes the largest backlogs first. A table whose root holds more than `orphan_max_listing_keys` objects is skipped with a plan note. Orphan files must be at least 7 days old, and a shared location, a failed overlap check or `gc.enabled=false` still drop the step. The table's Maintain tab shows when the next orphan cleanup is due.
 
-`optimize_manifests` under deep mode is planned only when the last scan counted at least `min_manifests` manifests (default 100). Naming either operation in a manual run bypasses the cadence and the manifest threshold, not the safety checks.
+`optimize_manifests` under deep mode is planned only when the last scan counted at least `min_manifests` manifests (default 100). Naming either operation in a manual run bypasses the cadence and the manifest threshold, not the safety checks. A preset can override all four thresholds on its Config tab, see [Configuring a workflow](https://tech-pw.github.io/cryo/maintenance/#preset-config).
 
 ## Planner chunking
 
@@ -160,6 +160,24 @@ One job's failure is recorded against that table. The run continues with the nex
 Destructive operations are guarded
 
 `expire_snapshots` and `remove_orphan_files` require the relevant tier in the scanner, and forcing them is audited. Cryo never touches snapshots the retention policy would keep.
+
+## Configuring a workflow
+
+A workflow (a preset) is edited on **Runs → Workflows → *name* → Config**. Editing needs the admin role. The **mode** decides what a scheduled run does: each mode lists the operations it runs, in execution order, straight from the server, so the page cannot drift from the planner. There is no per-operation checkbox. The planner still skips an operation a table does not need. **Deep** is marked Recommended because new presets use it.
+
+When the mode runs `remove_orphan_files` or `optimize_manifests`, the thresholds behind them appear: orphan cleanup cadence in days, the catch-up threshold, the listing cap and the manifest threshold. Leave a field empty to inherit the default. Each field shows the value a run will use and where it comes from: set on this preset, a deployment default (a Cryo setting such as `orphan_removal_cadence_days`), or a built-in default.
+
+Any edit brings up a bar pinned to the bottom of the page: **Unsaved changes · Discard · Save preset**. Ctrl/⌘+S saves. Switching tabs, following a link or closing the page with unsaved edits asks first. Changing the mode also shows a hint if the description still describes the old mode.
+
+Saving a mode change opens a review first: how many tables the preset covers, which operations the next scheduled run adds or stops, and, when deep adds orphan cleanup, the orphan bytes the last storage listing found across those tables.
+
+cryo.local/runs/workflows/nightly-standard?tab=config
+
+*The review before a mode change: tables covered, operations added, and the orphan backlog.*
+
+**Assignment rules** sit in their own section below the form. Adding or deleting a rule takes effect immediately and is not part of Save preset.
+
+The API behind the page: `GET /api/v1/presets/modes` returns each mode's operations, description and the deep-mode defaults, and `POST /api/v1/presets/{id}/simulate` now reports `orphan_backlog_bytes` and `orphan_backlog_tables` for the covered tables. The preset's `operations` field is written from the mode for older readers; scheduled runs never read it.
 
 ## Pausing maintenance
 

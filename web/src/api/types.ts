@@ -147,11 +147,18 @@ export interface PresetRuleRead {
   enabled: boolean;
 }
 
+export type PresetModeCatalog = components["schemas"]["PresetModeCatalog"];
+export type PresetModeInfo = components["schemas"]["PresetModeInfo"];
+export type PresetParamDefault = components["schemas"]["PresetParamDefault"];
+
 export interface PresetSimulationResponse {
   preset_id: UUID;
   matched_count: number;
   total_size_gb: number;
   small_files_count: number;
+  // Orphan bytes from the last storage listing of the covered tables; null when none was listed.
+  orphan_backlog_bytes?: number | null;
+  orphan_backlog_tables?: number;
   sample: Array<Pick<TableRead, "id" | "schema_name" | "table_name"> & {
     total_size_gb?: number;
     small_files_count?: number;

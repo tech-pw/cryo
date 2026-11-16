@@ -521,9 +521,53 @@ export function demoPresets() {
   ];
 }
 
-export function demoAccessToken(): string {
+// Mirrors GET /presets/modes (cryo/planner/guardrails.py MODE_OPERATIONS / MODE_DESCRIPTIONS).
+export function demoPresetModes() {
+  const standard = [
+    "convert_equality_deletes",
+    "convert_deletes",
+    "rewrite_position_deletes",
+    "optimize",
+    "compute_statistics",
+    "expire_data",
+    "expire_snapshots"
+  ];
+  return {
+    modes: [
+      { mode: "light", description: "Expires old snapshots and data only. No rewrites.", operations: ["expire_data", "expire_snapshots"], recommended: false },
+      { mode: "standard", description: "Compacts small files and resolves deletes, then expires snapshots.", operations: standard, recommended: false },
+      {
+        mode: "deep",
+        description: "Standard plus manifest rewrite and orphan-file cleanup, both gated by thresholds and a per-table cadence.",
+        operations: [...standard.slice(0, 5), "optimize_manifests", ...standard.slice(5), "remove_orphan_files"],
+        recommended: true
+      },
+      { mode: "manifest_only", description: "Rewrites manifests only. Snapshots are not expired.", operations: ["optimize_manifests"], recommended: false }
+    ],
+    param_defaults: [
+      { key: "orphan_cadence_days", value: 7, source: "deployment", setting: "orphan_removal_cadence_days" },
+      { key: "orphan_catchup_min_bytes", value: 10 * GB, source: "deployment", setting: "orphan_catchup_min_bytes" },
+      { key: "orphan_max_listing_keys", value: 5_000_000, source: "deployment", setting: "orphan_max_listing_keys" },
+      { key: "min_manifests", value: 100, source: "built_in", setting: null }
+    ]
+  };
+}
+
+export function demoPresetSimulation(presetId: string) {
+  return {
+    preset_id: presetId,
+    matched_count: 214,
+    total_size_gb: 18_420,
+    small_files_count: 1_284_000,
+    sample: [],
+    orphan_backlog_bytes: Math.round(612 * GB),
+    orphan_backlog_tables: 38
+  };
+}
+
+export function demoAccessToken(role: "operator" | "admin" = "operator"): string {
   const encode = (value: object) => Buffer.from(JSON.stringify(value), "utf8").toString("base64");
-  const payload = { sub: "demo", preferred_username: "demo", roles: ["operator"], exp: 1893456000 };
+  const payload = { sub: "demo", preferred_username: "demo", roles: [role], exp: 1893456000 };
   return `${encode({ alg: "none", typ: "JWT" })}.${encode(payload)}.visual`;
 }
 

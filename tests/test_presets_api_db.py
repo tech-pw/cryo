@@ -31,6 +31,7 @@ from cryo.db.models import (
     Table,
     TableAlertDispatch,
     TableAlertSubscription,
+    TableCost,
     TableCostHistory,
     TableStats,
     TableStatsHistory,
@@ -1519,3 +1520,109 @@ def test_runs_list_target_labels_match_single_run_summary(api_db: ApiDb) -> None
 
     detail = api_db.client.get(f"/api/v1/runs/{multi_run_id}", headers=VIEWER_HEADERS)
     assert detail.json()["summary"]["target_label"] == multi["target_label"]
+
+
+def test_preset_modes_catalog_lists_mode_operations_and_deep_defaults(api_db: ApiDb) -> None:
+    response = api_db.client.get("/api/v1/presets/modes", headers=VIEWER_HEADERS)
+    assert response.status_code == 200
+    body = response.json()
+    modes = {item["mode"]: item for item in body["modes"]}
+    assert set(modes) == {"light", "standard", "deep", "manifest_only"}
+    assert modes["deep"]["recommended"] is True
+    assert [m for m, item in modes.items() if item["recommended"]] == ["deep"]
+    assert "remove_orphan_files" in modes["deep"]["operations"]
+    assert "remove_orphan_files" not in modes["standard"]["operations"]
+    assert modes["manifest_only"]["operations"] == ["optimize_manifests"]
+    # Execution order, so the UI lists them as they run.
+    deep_ops = modes["deep"]["operations"]
+    assert deep_ops.index("optimize") < deep_ops.index("remove_orphan_files")
+    assert all(item["description"] for item in body["modes"])
+    defaults = {item["key"]: item for item in body["param_defaults"]}
+    assert defaults["orphan_cadence_days"]["source"] == "deployment"
+    assert defaults["orphan_cadence_days"]["setting"] == "orphan_removal_cadence_days"
+    assert defaults["min_manifests"] == {
+        "key": "min_manifests",
+        "value": 100,
+        "source": "built_in",
+        "setting": None,
+    }
+
+
+def test_patch_preset_accepts_and_validates_deep_mode_params(api_db: ApiDb) -> None:
+    _, destination_id = _seed_source_destination(api_db.session_factory)
+    client = api_db.client
+    preset_id = _create_preset(client, "deep-params", destination_id, priority=10)
+    deep_params = {
+        "min_small_files": 10,
+        "orphan_cadence_days": 3,
+        "orphan_catchup_min_bytes": 5 * 1024**3,
+        "min_manifests": 40,
+    }
+    ok = client.patch(
+        f"/api/v1/presets/{preset_id}",
+        headers=ADMIN_HEADERS,
+        json={"mode": "deep", "params": deep_params},
+    )
+    assert ok.status_code == 200, ok.text
+    assert {k: ok.json()["params"][k] for k in deep_params} == deep_params
+
+    for key in ("orphan_cadence_days", "orphan_catchup_min_bytes", "min_manifests"):
+        bad = client.patch(
+            f"/api/v1/presets/{preset_id}",
+            headers=ADMIN_HEADERS,
+            json={"params": {**deep_params, key: -1}},
+        )
+        assert bad.status_code in (400, 422), (key, bad.text)
+        assert key in bad.text
+
+    # 0 is the documented off switch for the cadence.
+    zero = client.patch(
+        f"/api/v1/presets/{preset_id}",
+        headers=ADMIN_HEADERS,
+        json={"params": {**deep_params, "orphan_cadence_days": 0}},
+    )
+    assert zero.status_code == 200, zero.text
+
+
+def test_simulate_reports_orphan_backlog_of_covered_tables(api_db: ApiDb) -> None:
+    source_id, destination_id = _seed_source_destination(api_db.session_factory)
+    hot_table_id, cold_table_id = _seed_tables(api_db.session_factory, source_id)
+    client = api_db.client
+    preset_id = _create_preset(client, "backlog", destination_id, priority=10)
+    patched = client.patch(
+        f"/api/v1/presets/{preset_id}",
+        headers=ADMIN_HEADERS,
+        json={"is_default": True, "schedule_cron": "0 2 * * *"},
+    )
+    assert patched.status_code == 200, patched.text
+
+    empty = client.post(f"/api/v1/presets/{preset_id}/simulate", headers=OPERATOR_HEADERS)
+    assert empty.status_code == 200
+    assert empty.json()["orphan_backlog_bytes"] is None
+    assert empty.json()["orphan_backlog_tables"] == 0
+
+    scan_at = datetime(2026, 1, 1, tzinfo=UTC)
+    with api_db.session_factory() as session:
+        for table_id, orphan in ((hot_table_id, 3 * 1024**3), (cold_table_id, 0)):
+            session.add(
+                TableCost(
+                    table_id=table_id,
+                    scan_at=scan_at,
+                    precision="estimated",
+                    price_per_gb_month=0.023,
+                    live_bytes=1,
+                    dead_bytes=0,
+                    metadata_bytes=0,
+                    orphan_bytes=orphan,
+                    current_monthly_cost_usd=0,
+                    projected_monthly_cost_usd=0,
+                    projected_savings_usd_month=0,
+                )
+            )
+        session.commit()
+
+    listed = client.post(f"/api/v1/presets/{preset_id}/simulate", headers=OPERATOR_HEADERS)
+    assert listed.status_code == 200
+    assert listed.json()["matched_count"] == 2
+    assert listed.json()["orphan_backlog_bytes"] == 3 * 1024**3
+    assert listed.json()["orphan_backlog_tables"] == 1

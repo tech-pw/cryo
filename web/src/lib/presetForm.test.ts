@@ -271,3 +271,49 @@ describe("continuous maintenance fields", () => {
     expect(validatePresetFormValues({ ...enabled, continuous_max_commits: 5 })).toBeNull();
   });
 });
+
+describe("deep-mode params", () => {
+  it("round-trips cadence, catch-up (GiB to bytes), listing cap and manifest threshold", () => {
+    const preset = {
+      id: "p",
+      name: "deep",
+      destination_id: destinationId,
+      mode: "deep",
+      operations: ["optimize"],
+      params: {
+        orphan_cadence_days: 0,
+        orphan_catchup_min_bytes: 5 * 1024 ** 3,
+        orphan_max_listing_keys: 1000,
+        min_manifests: 25,
+        unknown_key: "kept"
+      },
+      guardrails: {},
+      priority: 1,
+      enabled: true,
+      created_at: "",
+      updated_at: ""
+    } as PresetRead;
+    const values = { ...baseFormValues(), ...presetToFormValues(preset, []) } as PresetFormValues;
+    expect(values.orphan_cadence_days).toBe(0);
+    expect(values.orphan_catchup_min_gb).toBe(5);
+    const write = formValuesToPresetWrite(values, preset, ["optimize", "remove_orphan_files"]);
+    expect(write.params).toMatchObject({
+      orphan_cadence_days: 0,
+      orphan_catchup_min_bytes: 5 * 1024 ** 3,
+      orphan_max_listing_keys: 1000,
+      min_manifests: 25,
+      unknown_key: "kept"
+    });
+    expect(write.operations).toEqual(["optimize", "remove_orphan_files"]);
+
+    const cleared = formValuesToPresetWrite({ ...values, min_manifests: null }, preset, null);
+    expect("min_manifests" in cleared.params).toBe(false);
+    expect(cleared.operations).toEqual(values.operations);
+  });
+
+  it("rejects negative thresholds", () => {
+    const errors = validatePresetFormValues({ ...baseFormValues(), orphan_cadence_days: -1, min_manifests: -5 });
+    expect(errors?.orphan_cadence_days).toMatch(/non-negative/);
+    expect(errors?.min_manifests).toMatch(/non-negative/);
+  });
+});

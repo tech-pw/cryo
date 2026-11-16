@@ -2,7 +2,7 @@
 title: Maintenance
 lede: A maintenance run compacts first, then cleans up, in one fixed order. The order is defined in code and no preset can change it.
 description: Why Iceberg tables need maintenance, the seven operations Cryo runs in a fixed order, how the planner chunks work, how admission works, and the guardrails that stay on.
-updated: 2026-11-13
+updated: 2026-11-16
 ---
 <h2 id="canonical-order">Canonical order</h2>
 <p>Seven operations, skipping the ones a table does not need. Expiry comes after compaction so one run reclaims the space its own compaction freed.</p>
@@ -79,7 +79,7 @@ updated: 2026-11-13
 <h3 id="remove-orphan-files">remove_orphan_files</h3>
 <p>Deletes files in storage that no snapshot references. Guarded, and forcing it is audited.</p>
 <p>The default preset runs in <strong>deep</strong> mode, so the nightly schedule removes orphan files. Each table is cleaned at most once every <code>orphan_removal_cadence_days</code> (default 7), counted from its last successful orphan removal, and tables are staggered by a hash of their id so each night lists about a seventh of the fleet. A table that has never been cleaned and whose last storage listing found at least <code>orphan_catchup_min_bytes</code> of orphans skips the stagger wait once; the run's table cap takes the largest backlogs first. A table whose root holds more than <code>orphan_max_listing_keys</code> objects is skipped with a plan note. Orphan files must be at least 7 days old, and a shared location, a failed overlap check or <code>gc.enabled=false</code> still drop the step. The table's Maintain tab shows when the next orphan cleanup is due.</p>
-<p><code>optimize_manifests</code> under deep mode is planned only when the last scan counted at least <code>min_manifests</code> manifests (default 100). Naming either operation in a manual run bypasses the cadence and the manifest threshold, not the safety checks.</p>
+<p><code>optimize_manifests</code> under deep mode is planned only when the last scan counted at least <code>min_manifests</code> manifests (default 100). Naming either operation in a manual run bypasses the cadence and the manifest threshold, not the safety checks. A preset can override all four thresholds on its Config tab, see <a href="@/maintenance/#preset-config">Configuring a workflow</a>.</p>
 
 <h2 id="chunking">Planner chunking</h2>
 <p>A large table is never compacted in one statement. The planner ranks partitions by small-file count, highest first, skips those under the <code>min_small_files</code> threshold, and then picks one of three paths.</p>
@@ -117,6 +117,15 @@ updated: 2026-11-13
 <callout type="caution" title="Destructive operations are guarded">
   <p><code>expire_snapshots</code> and <code>remove_orphan_files</code> require the relevant tier in the scanner, and forcing them is audited. Cryo never touches snapshots the retention policy would keep.</p>
 </callout>
+
+<h2 id="preset-config">Configuring a workflow</h2>
+<p>A workflow (a preset) is edited on <strong>Runs → Workflows → <em>name</em> → Config</strong>. Editing needs the admin role. The <strong>mode</strong> decides what a scheduled run does: each mode lists the operations it runs, in execution order, straight from the server, so the page cannot drift from the planner. There is no per-operation checkbox. The planner still skips an operation a table does not need. <strong>Deep</strong> is marked Recommended because new presets use it.</p>
+<p>When the mode runs <code>remove_orphan_files</code> or <code>optimize_manifests</code>, the thresholds behind them appear: orphan cleanup cadence in days, the catch-up threshold, the listing cap and the manifest threshold. Leave a field empty to inherit the default. Each field shows the value a run will use and where it comes from: set on this preset, a deployment default (a Cryo setting such as <code>orphan_removal_cadence_days</code>), or a built-in default.</p>
+<p>Any edit brings up a bar pinned to the bottom of the page: <strong>Unsaved changes · Discard · Save preset</strong>. <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>S</kbd> saves. Switching tabs, following a link or closing the page with unsaved edits asks first. Changing the mode also shows a hint if the description still describes the old mode.</p>
+<p>Saving a mode change opens a review first: how many tables the preset covers, which operations the next scheduled run adds or stops, and, when deep adds orphan cleanup, the orphan bytes the last storage listing found across those tables.</p>
+<screenshot name="preset-config-review" url="cryo.local/runs/workflows/nightly-standard?tab=config" alt="Dialog titled Switch to Deep mode? It reads Standard to Deep, the next scheduled run applies it to 214 tables, Adds: optimize manifests, remove orphan files, and 612 GB of orphan files across 38 tables from the last storage listing." caption="The review before a mode change: tables covered, operations added, and the orphan backlog." />
+<p><strong>Assignment rules</strong> sit in their own section below the form. Adding or deleting a rule takes effect immediately and is not part of Save preset.</p>
+<p>The API behind the page: <code>GET /api/v1/presets/modes</code> returns each mode's operations, description and the deep-mode defaults, and <code>POST /api/v1/presets/{id}/simulate</code> now reports <code>orphan_backlog_bytes</code> and <code>orphan_backlog_tables</code> for the covered tables. The preset's <code>operations</code> field is written from the mode for older readers; scheduled runs never read it.</p>
 
 <h2 id="pause">Pausing maintenance</h2>
 <p>A hold stops new maintenance without cancelling anything. It is the switch for an engine upgrade, an incident, or a change freeze. Set one from <strong>Runs → Holds</strong>:</p>

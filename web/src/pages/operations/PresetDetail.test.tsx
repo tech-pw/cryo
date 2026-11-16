@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PresetRead, PresetRuleRead, PresetSimulationResponse } from "../../api/types";
@@ -28,10 +28,14 @@ vi.mock("../../api/client", () => ({
   listTables: vi.fn(),
   createPresetRule: vi.fn(),
   updatePreset: vi.fn(),
-  deletePresetRule: vi.fn()
+  deletePresetRule: vi.fn(),
+  listDestinations: vi.fn(),
+  getPresetModes: vi.fn(),
+  patchPreset: vi.fn(),
+  createPreset: vi.fn()
 }));
 
-import { listPresetRules, listPresets, listRuns, simulatePreset } from "../../api/client";
+import { getPresetModes, listDestinations, listPresetRules, listPresets, listRuns, simulatePreset } from "../../api/client";
 
 const preset: PresetRead = {
   id: "11111111-1111-1111-1111-111111111111",
@@ -108,5 +112,55 @@ describe("PresetDetail overview", () => {
     });
     expect(screen.getByText(/not the same as zero matches/i)).toBeInTheDocument();
     expect(screen.queryByText(/Matched tables: 0/)).not.toBeInTheDocument();
+  });
+});
+
+describe("PresetDetail config tab", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(listPresets).mockResolvedValue([preset]);
+    vi.mocked(listPresetRules).mockResolvedValue(rules);
+    vi.mocked(listRuns).mockResolvedValue([]);
+    vi.mocked(simulatePreset).mockResolvedValue(simulation);
+    vi.mocked(listDestinations).mockResolvedValue([
+      { id: "dest-1", name: "spark-main", engine: "spark_emr", config: {}, enabled: true } as never
+    ]);
+    vi.mocked(getPresetModes).mockResolvedValue({
+      modes: [
+        { mode: "standard", description: "Compacts.", operations: ["optimize", "expire_snapshots"], recommended: false },
+        {
+          mode: "deep",
+          description: "Plus orphans.",
+          operations: ["optimize", "expire_snapshots", "remove_orphan_files"],
+          recommended: true
+        }
+      ],
+      param_defaults: []
+    });
+  });
+
+  it("keeps assignment rules in their own section outside the form", async () => {
+    renderPage([`/operations/presets/${preset.id}?tab=config`]);
+    const heading = await screen.findByText("Assignment rules");
+    const form = await screen.findByRole("form", { name: "Preset configuration" });
+    expect(form.contains(heading)).toBe(false);
+  });
+
+  it("asks before leaving the Config tab with unsaved changes", async () => {
+    renderPage([`/operations/presets/${preset.id}?tab=config`]);
+    fireEvent.click(await screen.findByRole("radio", { name: /^Deep/ }));
+    await screen.findByRole("region", { name: "Unsaved changes" });
+
+    const runsTab = screen.getByRole("tab", { name: "Runs" });
+    fireEvent.mouseDown(runsTab);
+    fireEvent.click(runsTab);
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute("data-state", "active");
+
+    fireEvent.mouseDown(runsTab);
+    fireEvent.click(runsTab);
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Runs" })).toHaveAttribute("data-state", "active"));
   });
 });

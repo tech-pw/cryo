@@ -41,6 +41,11 @@ export interface PresetFormValues {
   retention_days: number;
   retain_last: number;
   orphan_retention_days?: number | null;
+  // Deep-mode thresholds (#541). null inherits the deployment or built-in default.
+  orphan_cadence_days?: number | null;
+  orphan_catchup_min_gb?: number | null;
+  orphan_max_listing_keys?: number | null;
+  min_manifests?: number | null;
   file_size_mb: number;
   compute_statistics: boolean;
   stats_columns?: string[];
@@ -177,6 +182,13 @@ const optionalNumber = (value: unknown): number | null | undefined => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const GIB = 1024 ** 3;
+
+const bytesToGib = (bytes: number | null | undefined): number | null =>
+  bytes == null ? null : Math.round((bytes / GIB) * 100) / 100;
+
+export const gibToBytes = (gib: number): number => Math.round(gib * GIB);
+
 const asStringArray = (value: unknown): string[] | undefined => {
   if (!Array.isArray(value)) return undefined;
   const items = value.map((item) => String(item)).filter((item) => item.length > 0);
@@ -253,6 +265,10 @@ export const presetToFormValues = (
     retention_days: asNumber(params.retention_days, PRESET_PARAM_DEFAULTS.retention_days),
     retain_last: asNumber(params.retain_last, PRESET_PARAM_DEFAULTS.retain_last),
     orphan_retention_days: optionalNumber(params.orphan_retention_days),
+    orphan_cadence_days: optionalNumber(params.orphan_cadence_days),
+    orphan_catchup_min_gb: bytesToGib(optionalNumber(params.orphan_catchup_min_bytes)),
+    orphan_max_listing_keys: optionalNumber(params.orphan_max_listing_keys),
+    min_manifests: optionalNumber(params.min_manifests),
     file_size_mb: asNumber(params.file_size_mb, PRESET_PARAM_DEFAULTS.file_size_mb),
     compute_statistics: Boolean(params.compute_statistics ?? PRESET_PARAM_DEFAULTS.compute_statistics),
     stats_columns: asStringArray(params.stats_columns),
@@ -298,6 +314,12 @@ const buildParamsPatch = (values: PresetFormValues): JsonObject => {
 
   if (values.max_chunks != null) patch.max_chunks = values.max_chunks;
   if (values.orphan_retention_days != null) patch.orphan_retention_days = values.orphan_retention_days;
+  if (values.orphan_cadence_days != null) patch.orphan_cadence_days = values.orphan_cadence_days;
+  if (values.orphan_catchup_min_gb != null) {
+    patch.orphan_catchup_min_bytes = gibToBytes(values.orphan_catchup_min_gb);
+  }
+  if (values.orphan_max_listing_keys != null) patch.orphan_max_listing_keys = values.orphan_max_listing_keys;
+  if (values.min_manifests != null) patch.min_manifests = values.min_manifests;
   if (values.stats_columns?.length) patch.stats_columns = values.stats_columns;
   if (values.bloom_filter_columns?.length) patch.bloom_filter_columns = values.bloom_filter_columns;
 
@@ -350,9 +372,15 @@ const mergePreservingUnknown = (
   return merged;
 };
 
+/**
+ * `modeOperations` is what the mode runs (GET /presets/modes). Scheduled runs take their
+ * operations from the mode, never from this field, so it is written from the mode to keep
+ * the stored list honest for older readers.
+ */
 export const formValuesToPresetWrite = (
   values: PresetFormValues,
-  existingPreset?: PresetRead | null
+  existingPreset?: PresetRead | null,
+  modeOperations?: readonly string[] | null
 ): PresetWrite => {
   const paramsPatch = buildParamsPatch(values);
   const guardrailsPatch = buildGuardrailsPatch(values);
@@ -362,7 +390,7 @@ export const formValuesToPresetWrite = (
     description: values.description || null,
     destination_id: values.destination_id,
     mode: values.mode,
-    operations: values.operations,
+    operations: modeOperations ? [...modeOperations] : values.operations,
     schedule_cron: values.schedule_cron || null,
     priority: values.priority,
     enabled: values.enabled,
@@ -472,6 +500,10 @@ export const buildDefaultPresetFormValues = (destinations: DestinationRead[]): P
     retention_days: base.retention_days ?? PRESET_PARAM_DEFAULTS.retention_days,
     retain_last: base.retain_last ?? PRESET_PARAM_DEFAULTS.retain_last,
     orphan_retention_days: base.orphan_retention_days ?? null,
+    orphan_cadence_days: null,
+    orphan_catchup_min_gb: null,
+    orphan_max_listing_keys: null,
+    min_manifests: null,
     file_size_mb: base.file_size_mb ?? PRESET_PARAM_DEFAULTS.file_size_mb,
     compute_statistics: base.compute_statistics ?? PRESET_PARAM_DEFAULTS.compute_statistics,
     stats_columns: base.stats_columns,
@@ -558,6 +590,10 @@ export const validatePresetFormValues = (values: PresetFormValues): Record<strin
     ["retention_days", validatePositive("Snapshot retention", values.retention_days)],
     ["retain_last", validatePositive("Retain last snapshots", values.retain_last)],
     ["orphan_retention_days", validatePositive("Orphan retention", values.orphan_retention_days)],
+    ["orphan_cadence_days", validateNonNegative("Orphan cleanup cadence", values.orphan_cadence_days)],
+    ["orphan_catchup_min_gb", validateNonNegative("Catch-up threshold", values.orphan_catchup_min_gb)],
+    ["orphan_max_listing_keys", validateNonNegative("Listing cap", values.orphan_max_listing_keys)],
+    ["min_manifests", validateNonNegative("Manifest threshold", values.min_manifests)],
     ["cooldown_hours", validateNonNegative("Cooldown", values.cooldown_hours)],
     ["deadline_minutes", validatePositive("Run deadline", values.deadline_minutes)],
     ["sla_freshness_hours", validateNonNegative("Freshness SLA", values.sla_freshness_hours)],

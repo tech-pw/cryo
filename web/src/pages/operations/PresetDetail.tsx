@@ -1,11 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { listPresetRules, listPresets, listRuns, simulatePreset } from "../../api/client";
 import type { RunRead } from "../../api/types";
 import { OperationPipeline, maintenanceOpsToSteps } from "../../components/operations/OperationPipeline";
 import { MiniRunHistoryBar } from "../../components/operations/RunHistoryGrid";
 import { describeCronSchedule, nextCronRun } from "../../components/operations/scheduleSummary";
+import { DiscardChangesDialog } from "../../components/DiscardChangesDialog";
 import { StatusTag } from "../../components/status";
 import { Alert } from "../../components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
@@ -262,37 +263,62 @@ export const PresetDetail = () => {
     | "runs"
     | "config";
 
+  const [configDirty, setConfigDirty] = useState(false);
+  const [pendingTab, setPendingTab] = useState<WorkflowTabKey | null>(null);
+  const onConfigDirtyChange = useCallback((dirty: boolean) => setConfigDirty(dirty), []);
+
+  const goToTab = (tab: WorkflowTabKey) => {
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        if (tab === "overview") next.delete("tab");
+        else next.set("tab", tab);
+        return next;
+      },
+      { replace: true }
+    );
+  };
+
   if (!presetId) return <Alert variant="error" title="Missing preset id" />;
 
   return (
-    <WorkflowDetailShell
-      title={preset?.name ?? "Preset"}
-      subtitle={preset?.description ?? "Maintenance workflow"}
-      activeTab={activeTab}
-      onTabChange={(tab) => {
-        setSearchParams(
-          (previous) => {
-            const next = new URLSearchParams(previous);
-            if (tab === "overview") next.delete("tab");
-            else next.set("tab", tab);
-            return next;
-          },
-          { replace: true }
-        );
-      }}
-      overview={<PresetOverviewTab presetId={presetId} presetName={preset?.name ?? "Preset"} />}
-      grid={<PresetGridTab presetId={presetId} />}
-      graph={<PresetGraphTab presetId={presetId} />}
-      runs={<PresetRunsTab presetId={presetId} />}
-      config={
-        <PresetConfigTab
-          preset={preset}
-          loading={presetsQuery.isLoading}
-          onSaved={() => {
-            void queryClient.invalidateQueries({ queryKey: ["presets"] });
-          }}
-        />
-      }
-    />
+    <>
+      <WorkflowDetailShell
+        title={preset?.name ?? "Preset"}
+        subtitle={preset?.description ?? "Maintenance workflow"}
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          if (activeTab === "config" && tab !== "config" && configDirty) {
+            setPendingTab(tab);
+            return;
+          }
+          goToTab(tab);
+        }}
+        overview={<PresetOverviewTab presetId={presetId} presetName={preset?.name ?? "Preset"} />}
+        grid={<PresetGridTab presetId={presetId} />}
+        graph={<PresetGraphTab presetId={presetId} />}
+        runs={<PresetRunsTab presetId={presetId} />}
+        config={
+          <PresetConfigTab
+            preset={preset}
+            loading={presetsQuery.isLoading}
+            onDirtyChange={onConfigDirtyChange}
+            onSaved={() => {
+              void queryClient.invalidateQueries({ queryKey: ["presets"] });
+            }}
+          />
+        }
+      />
+      <DiscardChangesDialog
+        open={pendingTab !== null}
+        onCancel={() => setPendingTab(null)}
+        onDiscard={() => {
+          const tab = pendingTab;
+          setPendingTab(null);
+          setConfigDirty(false);
+          if (tab) goToTab(tab);
+        }}
+      />
+    </>
   );
 };
