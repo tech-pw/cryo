@@ -114,7 +114,7 @@ Viewer-scoped. Built in `cryo/reporting/storage_overview.py`; every query is one
 
 - **Retained history** = `listed_bytes - (live + dead + metadata + orphan)`, clamped at 0, only for tables with an S3 listing. Orphans also count only for listed tables. The response carries `tables_with_listing` / `tables_total` so the UI can say how partial that is.
 - **Trend recording.** `record_daily_impact` now stores `raw.storage` (the breakdown) on each day's row. Days recorded earlier fall back to `total_size_tb` and have no live value. `fleet_impact_history` is never pruned, so 60 days are always retained.
-- **Feature-detected inputs.** If `AuditLog.bytes_freed_source` exists (engine / scan_estimate / listing_confirmed), `freed_24h.bytes_by_source` is filled. If any listed table has `table_cost.raw.bucket_versioning = {bucket, status, noncurrent_expiration}`, `versioning_findings` lists buckets with versioning `Enabled` and no noncurrent expiration; otherwise it is `null` (unknown, not "fine"). Only that JSON key is selected, capped at 20,000 rows.
+- **Feature-detected inputs.** When reclaim audit rows carry `result_metrics.bytes_source` (engine / scan_estimate / listing_confirmed), `freed_24h.bytes_by_source` sums bytes per source; with no tagged row it is `null`. Versioning reads the scanner's `s3_bucket_status` cache (`S3BucketStatus` model, when present) and flags buckets with versioning `Enabled`/`Suspended` and no noncurrent-version expiration; it falls back to `table_cost.raw.bucket_versioning = {bucket, status, noncurrent_expiration}`. With neither, `versioning_findings` is `null` (unknown, not "fine"). Both reads are capped at 20,000 rows.
 
 ## Build order (suggested)
 

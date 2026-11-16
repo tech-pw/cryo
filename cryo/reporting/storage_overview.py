@@ -13,8 +13,9 @@ on audit rows (measured); the breakdown comes from scanner cost accounting (esti
 ``listed_bytes`` marking tables whose storage was confirmed by an S3 listing).
 
 Two inputs are feature-detected so this module works before and after they land:
-``AuditLog.bytes_freed_source`` (engine / scan_estimate / listing_confirmed) and a
-``TableCost.raw["bucket_versioning"]`` object. Neither is required.
+``AuditLog.result_metrics["bytes_source"]`` (engine / scan_estimate / listing_confirmed) and
+per-bucket versioning state (the ``S3BucketStatus`` model when present, else a
+``TableCost.raw["bucket_versioning"]`` object). Neither is required.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from cryo.db import models as db_models
 from cryo.db.models import AuditLog, FleetImpactHistory, Table, TableCost
 from cryo.reporting.impact_signals import realized_reclaim_conditions
 
@@ -183,16 +185,17 @@ def freed_last_24h(session: Session, *, now: datetime) -> Freed24h:
             func.count(func.distinct(AuditLog.table_id)),
         ).where(*window)
     ).one()
+    # result_metrics.bytes_source (engine / scan_estimate / listing_confirmed) is written by the
+    # byte-measurement work; rows without it are left out, and no tagged row means None.
+    source = AuditLog.result_metrics["bytes_source"].as_string()
     by_source: dict[str, int] | None = None
-    source_column = getattr(AuditLog, "bytes_freed_source", None)
-    if source_column is not None:
-        by_source = {}
-        for source, freed in session.execute(
-            select(source_column, func.sum(AuditLog.actual_bytes_freed))
-            .where(*window, AuditLog.actual_bytes_freed.isnot(None))
-            .group_by(source_column)
-        ).all():
-            by_source[str(source or "unknown")] = _int(freed)
+    for tag, freed in session.execute(
+        select(source, func.sum(AuditLog.actual_bytes_freed))
+        .where(*window, AuditLog.actual_bytes_freed.isnot(None), source.isnot(None))
+        .group_by(source)
+    ).all():
+        by_source = by_source or {}
+        by_source[str(tag)] = _int(freed)
     return Freed24h(
         actions_succeeded=_int(row[0]),
         actions_measured=_int(row[1]),
@@ -263,6 +266,26 @@ def storage_trend(session: Session, *, today: date, days: int = TREND_DAYS) -> l
     return points
 
 
+def _bucket_status_findings(session: Session) -> list[VersioningFinding] | None:
+    """Read the scanner's cached per-bucket state when the s3_bucket_status table exists."""
+    model = getattr(db_models, "S3BucketStatus", None)
+    if model is None:
+        return None
+    rows = session.execute(
+        select(model.bucket, model.versioning, model.noncurrent_expiration).limit(
+            _MAX_VERSIONING_ROWS
+        )
+    ).all()
+    if not rows:
+        return None
+    flagged = sorted(
+        str(bucket)
+        for bucket, versioning, noncurrent in rows
+        if versioning in ("Enabled", "Suspended") and noncurrent is not True
+    )
+    return [VersioningFinding(bucket=b, tables=0) for b in flagged[:_MAX_VERSIONING_FINDINGS]]
+
+
 def versioning_findings(session: Session) -> list[VersioningFinding] | None:
     """Buckets with versioning on and no noncurrent-version expiration rule.
 
@@ -270,6 +293,9 @@ def versioning_findings(session: Session) -> list[VersioningFinding] | None:
     "noncurrent_expiration"}``) for listed tables only. Only that JSON key is selected (never the
     whole ``raw`` blob), with a row cap. Returns None when no table reports the field at all.
     """
+    cached = _bucket_status_findings(session)
+    if cached is not None:
+        return cached
     rows = session.execute(
         select(TableCost.raw["bucket_versioning"])
         .join(Table, Table.id == TableCost.table_id)

@@ -92,7 +92,7 @@ const Hero = ({ data }: { data: StorageOverview }) => {
     <section className="home-storage-hero" aria-label="Last 24 hours">
       <ReclaimRing data={data} />
       <div className="home-storage-hero-copy">
-        <div className="home-storage-eyebrow"><span className="home-caption">Last 24 hours</span><Kind measured={view.state === "measured"} /></div>
+        <div className="home-storage-eyebrow"><span className="home-caption">Last 24 hours</span>{view.state === "measured" ? <Kind measured /> : null}</div>
         {view.state === "idle" ? (
           <>
             <p className="home-storage-headline">No cleanup ran in the last 24 hours</p>

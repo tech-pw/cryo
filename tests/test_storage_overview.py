@@ -241,3 +241,36 @@ def test_api_requires_auth_and_returns_overview(session: Session) -> None:
     assert body["freed_24h"]["savings_usd_month"] == 0.02
     assert body["versioning_findings"] is None
     assert body["trend"] == []
+
+
+def test_freed_24h_groups_by_bytes_source_when_tagged(session: Session) -> None:
+    table = _table(session)
+    for source, freed in (("engine", 3 * GIB), ("scan_estimate", GIB), (None, 5 * GIB)):
+        session.add(
+            AuditLog(
+                ts=NOW - timedelta(hours=1),
+                table_id=table.id,
+                action="remove_orphan_files",
+                status="OK",
+                actual_bytes_freed=freed,
+                result_metrics={"bytes_source": source} if source else {},
+            )
+        )
+    session.flush()
+    freed_24h = freed_last_24h(session, now=NOW)
+    assert freed_24h.bytes_by_source == {"engine": 3 * GIB, "scan_estimate": GIB}
+    assert freed_24h.bytes_freed == 9 * GIB
+
+
+def test_freed_24h_source_is_none_without_tags(session: Session) -> None:
+    session.add(
+        AuditLog(
+            ts=NOW - timedelta(hours=1),
+            table_id=_table(session).id,
+            action="optimize",
+            status="OK",
+            actual_bytes_freed=GIB,
+        )
+    )
+    session.flush()
+    assert freed_last_24h(session, now=NOW).bytes_by_source is None
