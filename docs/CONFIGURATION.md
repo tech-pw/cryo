@@ -35,6 +35,7 @@ print.
 | `CRYO_SCAN_NUM_CHUNKS` | `int` | `4` | - |
 | `CRYO_SCAN_SMALL_FILE_MB` | `float` | `89.6` | - |
 | `CRYO_SCAN_NEEDS_COMPACTION_THRESHOLD` | `int` | `128` | - |
+| `CRYO_HEALTH_THRESHOLD_OVERRIDES` | `dict` | *(computed)* | Fleet-wide replacements for the health-grade warn/crit limits, keyed by the names in cryo.scanner.health.HEALTH_THRESHOLDS, as JSON (for example {"snapshot_count_warn": 300, "snapshot_count_crit": 1000}). Applied before size scaling; a table's own override wins. Changes grades only, never planner gating. Unknown keys fail startup. |
 | `CRYO_EVENTS_PROBE_MAX_TABLES_PER_POLL` | `int` | `100` | Most watched tables the commit watcher loads from the catalog in one poll. Tables past the cap wait for the next poll, oldest-probed first. |
 | `CRYO_EVENTS_PROBE_MIN_TABLE_INTERVAL_SECONDS` | `float` | `30.0` | Minimum seconds between two catalog probes of the same watched table. |
 | `CRYO_EVENTS_PROBE_TIMEOUT_SECONDS` | `float` | `10.0` | Seconds one catalog load_table may take before the probe gives up. |

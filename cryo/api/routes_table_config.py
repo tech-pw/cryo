@@ -6,13 +6,27 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Response
 
 from cryo.api.deps import SessionDep, require_admin, require_operator, require_viewer
-from cryo.api.schemas import TableLifecycleResponse, TableLifecycleWrite
+from cryo.api.schemas import (
+    TableHealthThresholdsResponse,
+    TableHealthThresholdsWrite,
+    TableLifecycleResponse,
+    TableLifecycleWrite,
+)
 from cryo.api.security import Principal, Role
 from cryo.db.models import Table
 from cryo.db.repositories.operation_exclusions import set_excluded_operations
+from cryo.db.repositories.table_health_thresholds import (
+    ThresholdChange,
+    set_table_health_thresholds,
+)
 from cryo.db.repositories.table_lifecycle import set_table_lifecycle
 from cryo.db.tenant_scope import get_scoped_resource
 from cryo.domain.lifecycle import TableLifecycle
+from cryo.scanner.health import (
+    HEALTH_THRESHOLDS,
+    THRESHOLD_OVERRIDES_KEY,
+    threshold_override_sources,
+)
 from cryo.table_config import service
 from cryo.table_config.live import CatalogReadError
 from cryo.table_config.models import (
@@ -31,6 +45,62 @@ router = APIRouter(prefix="/api/v1", tags=["tables"])
 ViewerPrincipalDep = Annotated[Principal, Depends(require_viewer)]
 OperatorPrincipalDep = Annotated[Principal, Depends(require_operator)]
 AdminPrincipalDep = Annotated[Principal, Depends(require_admin)]
+
+
+def _thresholds_response(
+    table: Table, change: ThresholdChange | None = None
+) -> TableHealthThresholdsResponse:
+    current = dict(table.health_threshold_overrides or {})
+    return TableHealthThresholdsResponse(
+        table_id=table.id,
+        overrides=current,
+        previous=dict(change.before) if change else current,
+        changed=bool(change and change.before != change.after),
+        effective=threshold_override_sources({THRESHOLD_OVERRIDES_KEY: current}),
+        defaults=dict(HEALTH_THRESHOLDS),
+        audit_log_id=change.audit_id if change else None,
+        score_before=change.score_before if change else None,
+        score_after=change.score_after if change else None,
+    )
+
+
+@router.get("/tables/{table_id}/health-thresholds", response_model=TableHealthThresholdsResponse)
+def get_table_health_thresholds(
+    table_id: uuid.UUID, session: SessionDep, _principal: ViewerPrincipalDep
+) -> TableHealthThresholdsResponse:
+    """The table's own health-grade limits and every limit in force that differs from the
+    default, with where it came from (fleet setting or this table) (#552)."""
+    return _thresholds_response(
+        get_scoped_resource(session, Table, table_id, resource_type="Table")
+    )
+
+
+@router.put("/tables/{table_id}/health-thresholds", response_model=TableHealthThresholdsResponse)
+def put_table_health_thresholds(
+    table_id: uuid.UUID,
+    payload: TableHealthThresholdsWrite,
+    session: SessionDep,
+    principal: AdminPrincipalDep,
+) -> TableHealthThresholdsResponse:
+    """Replace this table's health-grade limits (#552). An empty map returns to the defaults.
+
+    Changes the grade only; compaction gating and chunking never read these limits. The
+    stored scan is re-graded at once, and every change is audited with before and after.
+    """
+    table = get_scoped_resource(session, Table, table_id, resource_type="Table")
+    try:
+        change = set_table_health_thresholds(
+            session,
+            table,
+            payload.overrides,
+            reason=payload.reason.strip(),
+            actor=principal.subject,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    session.commit()
+    session.refresh(table)
+    return _thresholds_response(table, change)
 
 
 @router.put("/tables/{table_id}/lifecycle", response_model=TableLifecycleResponse)

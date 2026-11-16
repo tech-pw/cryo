@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_SECRET_KEY = "dev-only-change-me"
@@ -95,6 +95,16 @@ class Settings(BaseSettings):
     scan_num_chunks: int = Field(default=4, gt=0)
     scan_small_file_mb: float = Field(default=89.6, gt=0)
     scan_needs_compaction_threshold: int = Field(default=128, gt=0)
+    health_threshold_overrides: dict[str, int | float] = Field(
+        default_factory=dict,
+        description=(
+            "Fleet-wide replacements for the health-grade warn/crit limits, keyed by the names "
+            "in cryo.scanner.health.HEALTH_THRESHOLDS, as JSON (for example "
+            '{"snapshot_count_warn": 300, "snapshot_count_crit": 1000}). Applied before size '
+            "scaling; a table's own override wins. Changes grades only, never planner gating. "
+            "Unknown keys fail startup."
+        ),
+    )
 
     # `cryo events` commit watcher. Each probe is one catalog load_table (metadata only), so
     # these bound catalog load: at most max_tables_per_poll loads per poll, and no table is
@@ -1878,6 +1888,19 @@ class Settings(BaseSettings):
         ge=1,
         description="Default workload forecast horizon for smart-maintenance API endpoints.",
     )
+
+    # A field validator, not a model one: a model-level error echoes every setting, secrets
+    # included, into the startup log.
+    @field_validator("health_threshold_overrides", mode="before")
+    @classmethod
+    def _validate_health_threshold_overrides(cls, value: Any) -> dict[str, int | float]:
+        from cryo.scanner.health import validate_threshold_overrides
+
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("must be a JSON object of threshold name to number")
+        return validate_threshold_overrides(value)
 
     @model_validator(mode="after")
     def _require_real_keys_outside_dev(self) -> Settings:

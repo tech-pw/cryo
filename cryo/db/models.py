@@ -271,6 +271,9 @@ class Table(Base):
     lifecycle_changed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     lifecycle_changed_by: Mapped[str | None] = mapped_column(Text)
     lifecycle_reason: Mapped[str | None] = mapped_column(Text)
+    # #552: per-table replacements for health-grade warn/crit limits, keyed like
+    # cryo.scanner.health.HEALTH_THRESHOLDS. Grades only; planner gating never reads it.
+    health_threshold_overrides: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
     source: Mapped[Source] = relationship(back_populates="tables")
     stats: Mapped[TableStats | None] = relationship(

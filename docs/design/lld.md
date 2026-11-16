@@ -931,6 +931,14 @@ statements (as args/JSON) and executes them with the Iceberg-configured `SparkSe
   `rewrite_data_files` `min-file-size-bytes`. Thresholds (50 / 200, size-scaled) and weights are
   unchanged; only the measured quantity changed. Inputs are stored scan stats only. Path to A
   projects the same quantity. See `docs/health-fragmented-partitions.md`.
+  *Threshold overrides* (#552): `health_thresholds_for` builds its base from `HEALTH_THRESHOLDS`,
+  then `CRYO_HEALTH_THRESHOLD_OVERRIDES` (fleet), then `tables.health_threshold_overrides` (carried
+  in the scorer's stats as `health_threshold_overrides`), before size scaling and the file-floor /
+  snapshot-rate adjustments. Scanner persistence re-grades a table that has its own overrides;
+  `PUT /api/v1/tables/{id}/health-thresholds` (admin, audited as `table_health_thresholds`) re-grades
+  the stored scan at once. `raw.health_threshold_sources` records each overridden limit with its
+  default and source. With no overrides the score is byte-identical. Grades only: the planner
+  never reads them.
   **Lifecycle (#519):** `cryo.tables.lifecycle` is `active` (default) or `archived`. For an
   archived table the "Stale table commits" check does not apply; no weight or threshold changes,
   and every other check is unchanged. The scanner scores every table as active, and

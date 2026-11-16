@@ -887,6 +887,25 @@ class TableLifecycleWrite(BaseModel):
     confirm: str
 
 
+class TableHealthThresholdsWrite(BaseModel):
+    # Keys from cryo.scanner.health.HEALTH_THRESHOLDS; an empty map clears the overrides.
+    overrides: dict[str, int | float]
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class TableHealthThresholdsResponse(BaseModel):
+    table_id: uuid.UUID
+    overrides: dict[str, int | float]
+    previous: dict[str, int | float]
+    changed: bool
+    # Each limit in force that differs from the default: limit, default and source.
+    effective: dict[str, dict[str, Any]]
+    defaults: dict[str, int | float]
+    audit_log_id: int | None = None
+    score_before: int | None = None
+    score_after: int | None = None
+
+
 class TableLifecycleResponse(BaseModel):
     table_id: uuid.UUID
     lifecycle: Literal["active", "archived"]

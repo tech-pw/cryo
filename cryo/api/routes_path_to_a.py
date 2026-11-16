@@ -235,6 +235,7 @@ def load_snapshot(session: Session, table: Table) -> TableSnapshot | None:
             "partition_skew_ratio": float(stats.partition_skew_ratio or 0.0),
             "commits_per_day": raw.get("commits_per_day"),
             "is_streaming": bool(raw.get("is_streaming")),
+            "health_threshold_overrides": dict(table.health_threshold_overrides or {}),
         },
         spec_migration=dict(raw.get("spec_migration") or {}),
         lifecycle=table.lifecycle or "active",

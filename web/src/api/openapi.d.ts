@@ -1613,6 +1613,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tables/{table_id}/health-thresholds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Table Health Thresholds
+         * @description The table's own health-grade limits and every limit in force that differs from the
+         *     default, with where it came from (fleet setting or this table) (#552).
+         */
+        get: operations["get_table_health_thresholds_api_v1_tables__table_id__health_thresholds_get"];
+        /**
+         * Put Table Health Thresholds
+         * @description Replace this table's health-grade limits (#552). An empty map returns to the defaults.
+         *
+         *     Changes the grade only; compaction gating and chunking never read these limits. The
+         *     stored scan is re-graded at once, and every change is audited with before and after.
+         */
+        put: operations["put_table_health_thresholds_api_v1_tables__table_id__health_thresholds_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tables/{table_id}/lifecycle": {
         parameters: {
             query?: never;
@@ -14139,6 +14167,49 @@ export interface components {
             /** Total Savings Usd Month */
             total_savings_usd_month: number;
         };
+        /** TableHealthThresholdsResponse */
+        TableHealthThresholdsResponse: {
+            /**
+             * Table Id
+             * Format: uuid
+             */
+            table_id: string;
+            /** Overrides */
+            overrides: {
+                [key: string]: number;
+            };
+            /** Previous */
+            previous: {
+                [key: string]: number;
+            };
+            /** Changed */
+            changed: boolean;
+            /** Effective */
+            effective: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+            /** Defaults */
+            defaults: {
+                [key: string]: number;
+            };
+            /** Audit Log Id */
+            audit_log_id?: number | null;
+            /** Score Before */
+            score_before?: number | null;
+            /** Score After */
+            score_after?: number | null;
+        };
+        /** TableHealthThresholdsWrite */
+        TableHealthThresholdsWrite: {
+            /** Overrides */
+            overrides: {
+                [key: string]: number;
+            };
+            /** Reason */
+            reason: string;
+        };
         /**
          * TableHealthTrendPoint
          * @description Single data point in table health trend.
@@ -18585,6 +18656,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PathToAApplyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_table_health_thresholds_api_v1_tables__table_id__health_thresholds_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableHealthThresholdsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_table_health_thresholds_api_v1_tables__table_id__health_thresholds_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                table_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TableHealthThresholdsWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableHealthThresholdsResponse"];
                 };
             };
             /** @description Validation Error */
