@@ -214,6 +214,28 @@ class Settings(BaseSettings):
             "re-runs."
         ),
     )
+    worker_writer_window_enabled: bool = Field(
+        default=True,
+        description=(
+            "Before each data rewrite, read the table's snapshot list from the catalog and "
+            "defer the job while a regular overwrite/delete writer is about to commit, so the "
+            "rewrite never fails the writer. A preset turns it off with writer_window: false."
+        ),
+    )
+    worker_writer_window_probe_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        description="Timeout for the writer-window catalog read; on timeout the rewrite runs.",
+    )
+    worker_writer_window_max_holds: int = Field(
+        default=12,
+        ge=1,
+        description=(
+            "Writer-window deferrals one job may take for a step. Past the limit the step is "
+            "skipped and audited like a table with no window, so a writer that never leaves "
+            "a gap cannot keep the job deferred forever."
+        ),
+    )
 
     # Fleet-cost day-over-day / week-over-week spike & decline thresholds for the daily
     # report (see cryo/reporting/cost_signals.py). Defaults are reasonable starting points,

@@ -118,6 +118,10 @@ When touching scanner/planner/governor/engines, keep all of these (ported from t
 - **Load-aware admission** via `system.runtime.queries`; **per-replica caps** + **round-robin**.
 - **Cooldown** (skip recently maintained), **off-peak** windows, **adaptive budget**, **deadlines**.
 - **Failure isolation** per table; **per-table lock** (no double maintenance).
+- **Writer window**: a data rewrite never starts when a table's regular overwrite/delete writer
+ is about to commit, and writer-contended tables get chunks capped at
+ `contended_chunk_size_gb` (this narrows the small-table bypass for them only). See
+ `docs/design/lld.md` §9.2.
 - Correct op order: `convert_equality_deletes → convert_deletes → rewrite_position_deletes → optimize → compute_statistics →
  optimize_manifests → expire_data → expire_snapshots → remove_orphan_files`. Compact first, clean up after, so a
  single run reclaims the space its own compaction freed. `cryo/planner/guardrails.py::CORRECT_ORDER`

@@ -268,6 +268,44 @@ def test_live_probe_reads_the_catalog_not_the_last_scan(session_factory: Any) ->
     assert catalog.loads == [("analytics", "events"), ("analytics", "events")]
 
 
+def test_writer_commit_reader_lists_every_snapshot_from_the_catalog(session_factory: Any) -> None:
+    from cryo.planner.writer_window import WriterCommit
+    from cryo.worker.writer_window import LiveWriterCommitReader
+
+    with session_factory() as session:
+        source_id = _add_source(session)
+        table_id = _add_table(session, source_id, "events")
+        session.commit()
+    metadata = _metadata(
+        _commit(900, None, 1, SPARK_APPEND),
+        _commit(77, 900, 3, TRINO_OPTIMIZE),
+        _commit(78, 77, 2, FLINK_UPSERT),
+    )
+    catalog = _FakeCatalog({("analytics", "events"): metadata})
+    reader = LiveWriterCommitReader(
+        LiveCatalogSnapshotProbe(session_factory, catalog_factory=lambda _view: catalog)
+    )
+
+    commits = reader(
+        {
+            "table_id": str(table_id),
+            "source_id": str(source_id),
+            "schema_name": "analytics",
+            "table_name": "events",
+        }
+    )
+
+    base = 1_700_000_000_000
+    assert commits == [
+        WriterCommit(base + 1000, "append"),
+        WriterCommit(base + 2000, "overwrite"),
+        WriterCommit(base + 3000, "replace"),
+    ]
+    assert [c.conflicts for c in commits] == [False, True, False]
+    with pytest.raises(LookupError):
+        reader({"schema_name": "analytics", "table_name": "events"})
+
+
 def test_live_probe_rebuilds_catalog_after_a_failure(session_factory: Any) -> None:
     with session_factory() as session:
         source_id = _add_source(session)

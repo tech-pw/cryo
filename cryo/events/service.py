@@ -25,8 +25,10 @@ from cryo.events.drift import (
 from cryo.events.redis_stream import RedisEventStream
 from cryo.events.snapshots import (
     DEFAULT_MAX_COMMITS_PER_OBSERVATION,
+    SnapshotCommit,
     SnapshotObservation,
     observe_metadata,
+    snapshot_commit,
 )
 from cryo.events.watcher import TableCommitted, TableCommitWatcher
 from cryo.infra.wiring import RuntimeWiring, build_runtime_wiring
@@ -104,6 +106,19 @@ class LiveCatalogSnapshotProbe:
             last_seen_sequence_number=last_seen_sequence_number,
             max_commits=self._max_commits,
         )
+
+    def snapshot_commits(self, target: WatchTarget) -> list[SnapshotCommit]:
+        """Every live snapshot in the table's current metadata, oldest first."""
+        metadata = self._load_metadata(target)
+        snapshots = getattr(metadata, "snapshots", None)
+        if snapshots is None and isinstance(metadata, dict):
+            snapshots = metadata.get("snapshots")
+        commits = [
+            commit
+            for snapshot in snapshots or ()
+            if (commit := snapshot_commit(snapshot)) is not None
+        ]
+        return sorted(commits, key=lambda commit: commit.timestamp_ms or 0)
 
     def _load_metadata(self, target: WatchTarget) -> Any:
         catalog = self._catalog(target.source_id)

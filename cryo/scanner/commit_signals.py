@@ -20,6 +20,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from cryo.planner.writer_window import (
+    WriterCommit,
+    WriterWindowPolicy,
+    stored_cadence_summary,
+    writer_cadence,
+)
+
 SYSTEM_OPERATION = "replace"
 
 # Cryo thresholds, not from the paper. Arrival is overdue once the silence exceeds twice the
@@ -146,7 +153,23 @@ def commit_signals(commits: list[Commit], *, now: datetime) -> dict[str, Any]:
         )
     signals.update(_arrival(data, signals["hours_since_data_commit"]))
     signals.update(_row_count(data))
+    signals["writer_cadence"] = _writer_cadence(ordered, now)
     return signals
+
+
+def _writer_cadence(commits: list[Commit], now: datetime) -> dict[str, Any] | None:
+    """Cadence of the overwrite/delete writer, which the planner sizes rewrites around."""
+    policy = WriterWindowPolicy()
+    cadence = writer_cadence(
+        (
+            WriterCommit(int(c.committed_at.timestamp() * 1000), c.operation)
+            for c in commits
+            if not c.is_system
+        ),
+        now_ms=int(now.timestamp() * 1000),
+        policy=policy,
+    )
+    return stored_cadence_summary(cadence)
 
 
 def _arrival(data: list[Commit], hours_since: float | None) -> dict[str, Any]:

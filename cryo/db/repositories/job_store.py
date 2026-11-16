@@ -31,6 +31,7 @@ from cryo.domain.enums import JobStatus, Mode, OperationType
 from cryo.engines.base import COMMIT_CONFLICT_MARKER
 from cryo.maintenance.reclaim_measure import apply_reclaim_measurement
 from cryo.observability.correlation import correlation_id_from_summary
+from cryo.planner.writer_window import WRITER_WINDOW_MARKER
 from cryo.worker.worker import (
     AuditRecord,
     DestinationConfig,
@@ -244,6 +245,21 @@ class SQLJobStore:
             job = _load_job(session, uuid.UUID(job_id))
             job.engine_ref = engine_ref
             session.commit()
+
+    def count_writer_window_holds(self, job_id: str) -> int:
+        with self._session_factory() as session:
+            return int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(AuditLog)
+                    .where(
+                        AuditLog.job_id == uuid.UUID(job_id),
+                        AuditLog.status == "DEFERRED",
+                        AuditLog.detail.startswith(f"{WRITER_WINDOW_MARKER}:", autoescape=True),
+                    )
+                )
+                or 0
+            )
 
     def count_commit_conflicts(self, job_id: str) -> int:
         with self._session_factory() as session:

@@ -202,6 +202,12 @@ worker_commit_conflicts_total = Counter(
     ["outcome"],  # outcome: retried, deferred, gave_up
 )
 
+worker_writer_window_total = Counter(
+    "cryo_worker_writer_window_total",
+    "Writer-window checks before a data rewrite, by verdict.",
+    ["verdict"],  # verdict: untracked, open, hold, no_window, probe_failed
+)
+
 worker_job_duration_seconds = Histogram(
     "cryo_worker_job_duration_seconds",
     "Duration of worker job execution",

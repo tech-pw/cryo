@@ -19,6 +19,7 @@ from cryo.planner.partitions import (
     partition_fields_from_stats,
 )
 from cryo.planner.ttl import plan_expire_data
+from cryo.planner.writer_window import contended_chunk_size_gb
 
 # Tables just under detect_streaming_from_history's 24 commits/day cutoff still
 # take concurrent writes during rewrite_data_files. Treat that band
@@ -324,6 +325,7 @@ def _optimize_operations(
             f"{original_min_small} → {min_small_files}, and max_partitions_per_chunk "
             f"{original_max_parts} → {max_parts}."
         )
+    chunk_size_gb = _cap_for_writer(stats, params, chunk_size_gb, notes)
 
     delete_triggered = delete_ratio_trigger > 0 and delete_file_pct >= delete_ratio_trigger
     if table_small_files < min_small_files and not delete_triggered:
@@ -471,6 +473,7 @@ def _spec_migration_operations(
     operation_params = {**resolved, "rewrite_all": True}
     write_aware = _is_write_aware(stats, params)
     chunk_size_gb = _effective_chunk_size_gb(float(params.get("chunk_size_gb", 100)), write_aware)
+    chunk_size_gb = _cap_for_writer(stats, params, chunk_size_gb, notes)
     max_parts = int(params.get("max_partitions_per_chunk", 100))
     if write_aware:
         max_parts = max(1, max_parts // 2)
@@ -629,14 +632,41 @@ def effective_optimize_chunk_size_gb(
     params: Mapping[str, Any],
 ) -> float:
     configured_chunk_size_gb = float(params.get("chunk_size_gb", 100))
-    return _effective_chunk_size_gb(
+    chunk_size_gb = _effective_chunk_size_gb(
         configured_chunk_size_gb,
         _is_write_aware(stats, params),
     )
+    return _cap_for_writer(stats, params, chunk_size_gb, None)
 
 
 def _effective_chunk_size_gb(chunk_size_gb: float, write_aware: bool) -> float:
     return max(1.0, chunk_size_gb / 2.0) if write_aware else chunk_size_gb
+
+
+def _cap_for_writer(
+    stats: Mapping[str, Any],
+    params: Mapping[str, Any],
+    chunk_size_gb: float,
+    notes: list[str] | None,
+) -> float:
+    """Cap a rewrite statement for a table with a regular overwrite/delete writer.
+
+    Every file a rewrite removes can fail the writer's next copy-on-write commit. A statement
+    sized to fit between two writer runs, with the worker's writer-window gate checked before
+    each one, finishes before the next run reads the table. This also takes such a table out
+    of the small-table bypass: a full-table rewrite of a 37 GB table ran ~2h and failed every
+    hourly ingestion attempt it overlapped (2026-11-14/15).
+    """
+    cap = contended_chunk_size_gb(stats, params)
+    if cap is None or cap >= chunk_size_gb:
+        return chunk_size_gb
+    if notes is not None:
+        notes.append(
+            "Writer-contended table: the last scan saw a regular overwrite/delete writer, so "
+            f"each rewrite statement is capped at {cap:g} GB (was {chunk_size_gb:g} GB) to fit "
+            "between its runs."
+        )
+    return cap
 
 
 def _chunk_bytes(chunk_size_gb: float) -> int:

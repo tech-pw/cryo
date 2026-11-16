@@ -652,6 +652,7 @@ What to watch:
 | `cryo_continuous_pending_tables` | Tables waiting for evaluation |
 | `cryo_continuous_drift_to_completion_seconds` | First drift commit to the job that reset it |
 | `cryo_worker_commit_conflicts_total{outcome}` | Lost commits: `retried`, `deferred`, `gave_up` |
+| `cryo_worker_writer_window_total{verdict}` | Writer-window checks before data rewrites: `open`, `hold`, `no_window`, `untracked`, `probe_failed` |
 
 Every trigger, coalesce, deferral and rescan writes an `audit_log` row with
 `origin=continuous`. The row's actions are `continuous_trigger`, `continuous_coalesced`,
@@ -669,6 +670,26 @@ conflicts (default 3) it fails with a `commit_conflict_give_up` audit row.
 `cryo_worker_commit_conflicts_total{outcome}` counts `retried`, `deferred` and `gave_up`.
 Steady `gave_up` on one table means maintenance is racing a writer that never pauses. Raise
 `debounce_seconds`, or move the table's window off the writer's busy hours.
+
+Writer window. The section above protects Cryo's own commit, but a rewrite can also fail
+the writer. An ingestion MERGE fails with "Missing required files to delete" when a rewrite
+committed in between its read and its commit. So before each data rewrite (optimize,
+convert_deletes, convert_equality_deletes, expire_data, migrate_partition_spec) the worker
+reads the table's snapshot list from the catalog. If an overwrite/delete writer commits on a
+regular cadence and its next run is due, the job is deferred with
+`writer_window: ...; retry_at=<UTC>` and resumes after the writer commits. Such tables are
+also planned in rewrite statements of at most 4 GB (plan note "Writer-contended table"), so
+each one fits between writer runs. A writer that leaves no 20-minute gap gets its rewrite
+skipped (`optimize: writer_window: ...`; the job ends PARTIAL or SKIPPED), and the rest of
+the plan still runs.
+
+- `cryo_worker_writer_window_total{verdict}` counts `open`, `hold`, `no_window`, `untracked`
+  and `probe_failed`.
+- A catalog read failure counts as `probe_failed`, and the rewrite runs as before.
+- Tune per preset with `writer_window: {lead_minutes: 25}` when the writer reads earlier than
+  15 minutes before it commits.
+- `writer_window: false` turns the gate and the chunk cap off for a preset.
+- `CRYO_WORKER_WRITER_WINDOW_ENABLED=false` turns the gate off fleet-wide.
 
 ### API memory / OOM (cryo-api)
 

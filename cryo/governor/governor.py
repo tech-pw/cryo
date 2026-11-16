@@ -51,6 +51,7 @@ from cryo.observability.metrics import (
     governor_wave_duration_seconds,
 )
 from cryo.planner.table_properties import is_property_job
+from cryo.planner.writer_window import hold_retry_at
 from cryo.queue.locks import LockStore
 from cryo.queue.reconcile import (
     purge_stale_queue_entries,
@@ -1325,6 +1326,11 @@ def _still_blocked_reason(
             return False
 
     def blocked_reason(job: MaintenanceJobRecord) -> str | None:
+        # The worker deferred it until the table's writer commits; the worker re-checks the
+        # window live when it runs, so this only spares the queue a round trip per wave.
+        writer_retry_at = hold_retry_at(job.error)
+        if writer_retry_at is not None and _as_utc(writer_retry_at) > now:
+            return job.error
         if intent_blocks(job):
             return _intent_block_reason(job)
         if lock_blocks(job):

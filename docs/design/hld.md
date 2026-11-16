@@ -371,6 +371,7 @@ reused (flagged stale) so dashboards stay complete without re-listing.
 | Deadlines | Governor stops admitting when the maintenance window/run deadline nears; remainder deferred. |
 | Partition safety | Planner caps partitions/chunk to avoid Trino `FilterNode` complexity errors; oversize alone. |
 | Big-table guardrail | Planner/policy refuses unbounded full-table ops above file/size thresholds unless forced. |
+| External writers | A table with a regular overwrite/delete writer gets rewrite statements capped at `contended_chunk_size_gb` (default 4 GB). Before each data rewrite the worker reads the snapshot list live and defers the job until the writer's next commit lands, so a rewrite never removes files a writer is about to replace (lld §9.2). |
 
 ---
 
