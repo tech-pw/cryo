@@ -86,6 +86,9 @@ from cryo.api.schemas import (
     OrphanScanCostRead,
     PaginatedTables,
     PresetCreate,
+    PresetModeCatalog,
+    PresetModeInfo,
+    PresetParamDefault,
     PresetPatch,
     PresetProvenance,
     PresetRead,
@@ -197,11 +200,15 @@ from cryo.engines.trino.sql import render as render_trino
 from cryo.infra.wiring import build_runtime_wiring
 from cryo.observability.metrics import ws_auth_failures_total
 from cryo.planner.guardrails import (
+    MODE_DESCRIPTIONS,
+    MODE_OPERATIONS,
+    RECOMMENDED_MODE,
     sort_operations_canonically,
     validate_guardrails,
     validate_operation_order,
     validate_params,
 )
+from cryo.planner.orphan_cadence import DEFAULT_MIN_MANIFESTS
 from cryo.planner.planner import build_plan
 from cryo.scanner.orphans import estimate_orphan_scan_cost
 from cryo.scheduler.continuous import validate_continuous_preset
@@ -976,6 +983,48 @@ def list_presets(session: SessionDep) -> list[Preset]:
 
 
 @router.get(
+    "/presets/modes",
+    response_model=PresetModeCatalog,
+    dependencies=[Depends(require_viewer)],
+)
+def list_preset_modes() -> PresetModeCatalog:
+    """What each mode plans, and the deep-mode thresholds a preset falls back to."""
+    settings = get_settings()
+    return PresetModeCatalog(
+        modes=[
+            PresetModeInfo(
+                mode=mode,
+                description=MODE_DESCRIPTIONS[mode],
+                operations=sort_operations_canonically(MODE_OPERATIONS[mode]),
+                recommended=mode is RECOMMENDED_MODE,
+            )
+            for mode in Mode
+        ],
+        param_defaults=[
+            PresetParamDefault(
+                key="orphan_cadence_days",
+                value=settings.orphan_removal_cadence_days,
+                source="deployment",
+                setting="orphan_removal_cadence_days",
+            ),
+            PresetParamDefault(
+                key="orphan_catchup_min_bytes",
+                value=settings.orphan_catchup_min_bytes,
+                source="deployment",
+                setting="orphan_catchup_min_bytes",
+            ),
+            PresetParamDefault(
+                key="orphan_max_listing_keys",
+                value=settings.orphan_max_listing_keys,
+                source="deployment",
+                setting="orphan_max_listing_keys",
+            ),
+            PresetParamDefault(key="min_manifests", value=DEFAULT_MIN_MANIFESTS, source="built_in"),
+        ],
+    )
+
+
+@router.get(
     "/presets/{preset_id}",
     response_model=PresetRead,
     dependencies=[Depends(require_viewer)],
@@ -1201,9 +1250,15 @@ def simulate_preset(preset_id: uuid.UUID, session: SessionDep) -> PresetSimulati
     sample, estimate = presets.simulate_preset(session, preset, tenant_id=tenant_filter_id(session))
     return PresetSimulationResponse(
         preset_id=preset.id,
-        matched_count=int(estimate["matched_count"]),
-        total_size_gb=float(estimate["total_size_gb"]),
-        small_files_count=int(estimate["small_files_count"]),
+        matched_count=int(estimate["matched_count"] or 0),
+        total_size_gb=float(estimate["total_size_gb"] or 0),
+        small_files_count=int(estimate["small_files_count"] or 0),
+        orphan_backlog_bytes=(
+            None
+            if estimate.get("orphan_backlog_bytes") is None
+            else int(estimate["orphan_backlog_bytes"] or 0)
+        ),
+        orphan_backlog_tables=int(estimate.get("orphan_backlog_tables") or 0),
         sample=[
             PresetSampleTable(
                 id=uuid.UUID(table.id),

@@ -22,6 +22,8 @@ import {
   demoDestinations,
   demoJobsBody,
   demoPresets,
+  demoPresetModes,
+  demoPresetSimulation,
   demoScannerStatus,
   demoSources,
   demoTablesBody,
@@ -36,22 +38,27 @@ const json = (route: Route, body: unknown) =>
   route.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(body) });
 
 /** Answers every API call the docs captures make from the synthetic demo lake. Unanswered calls land in `unhandled`. */
-export async function installDemo(page: Page, unhandled: Set<string>): Promise<void> {
+export async function installDemo(
+  page: Page,
+  unhandled: Set<string>,
+  role: "operator" | "admin" = "operator"
+): Promise<void> {
   await installVisualMocks(page, "populated");
-  await page.addInitScript((token) => {
+  await page.addInitScript(({ token, role }) => {
     localStorage.setItem("cryo.accessToken", token);
     localStorage.setItem("cryo.devSubject", "demo");
+    localStorage.setItem("cryo.devRole", role);
     const style = document.createElement("style");
     style.textContent = "[aria-label='Ask Cryo'][class*='fixed'], button.fixed, .fixed.bottom-6.right-6 { display: none !important; }";
     document.addEventListener("DOMContentLoaded", () => document.head.appendChild(style));
-  }, demoAccessToken());
+  }, { token: demoAccessToken(role), role });
   await page.route(
     (url) => url.pathname.includes("/api/v1/"),
     async (route) => {
       const url = new URL(route.request().url());
       const p = url.pathname.replace(/\/$/, "");
       if (route.request().method() === "OPTIONS") return route.fallback();
-      if (p.endsWith("/api/v1/auth/token")) return json(route, { access_token: demoAccessToken(), token_type: "bearer", role: "operator" });
+      if (p.endsWith("/api/v1/auth/token")) return json(route, { access_token: demoAccessToken(role), token_type: "bearer", role });
       if (p.endsWith("/api/v1/tables")) return json(route, demoTablesBody(url));
       if (p.endsWith("/api/v1/tables/maintenance-funnel")) return json(route, demoTablesFunnel());
       if (/\/api\/v1\/tables\/[^/]+\/config\/preview$/.test(p)) return json(route, demoTableConfig.preview);
@@ -117,6 +124,19 @@ export async function installDemo(page: Page, unhandled: Set<string>): Promise<v
       if (p.endsWith("/api/v1/sources")) return json(route, demoSources());
       if (p.endsWith("/api/v1/destinations")) return json(route, demoDestinations());
       if (p.endsWith("/api/v1/presets")) return json(route, demoPresets());
+      if (p.endsWith("/api/v1/presets/modes")) return json(route, demoPresetModes());
+      const presetSub = p.match(/\/api\/v1\/presets\/([^/]+)\/(simulate|rules)$/);
+      if (presetSub) {
+        if (presetSub[2] === "simulate") return json(route, demoPresetSimulation(presetSub[1]));
+        return json(route, [
+          {
+            id: "00000000-0000-4000-8000-000000000031",
+            preset_id: presetSub[1],
+            enabled: true,
+            predicate: { field: "schema_name", op: "=", value: "analytics" }
+          }
+        ]);
+      }
       unhandled.add(`${route.request().method()} ${p}`);
       return route.fallback();
     }

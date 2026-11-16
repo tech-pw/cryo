@@ -1322,7 +1322,8 @@ POST  /api/v1/anomalies/shared-s3/notify                      # Slack only if ov
 
 # Presets, rules, assignments
 GET/POST/PATCH/DELETE  /api/v1/presets
-POST  /api/v1/presets/{id}/simulate                           # -> {matched_count, est_load, sample}
+POST  /api/v1/presets/{id}/simulate                           # -> {matched_count, total_size_gb, sample, orphan_backlog_bytes, orphan_backlog_tables}
+GET   /api/v1/presets/modes                                   # -> {modes: [{mode, description, operations, recommended}], param_defaults: [{key, value, source}]}
 GET/POST/DELETE        /api/v1/presets/{id}/rules
 POST  /api/v1/assignments                                     # body: {selection, preset_id}
         # selection = {mode:"ids", ids:[...]} OR {mode:"filter", filter:<predicate>}

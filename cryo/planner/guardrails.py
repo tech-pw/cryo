@@ -56,6 +56,21 @@ MODE_OPERATIONS: Mapping[Mode, frozenset[OperationType]] = {
 }
 
 
+# One-line operator copy per mode, served by GET /presets/modes so the web never restates it.
+MODE_DESCRIPTIONS: Mapping[Mode, str] = {
+    Mode.LIGHT: "Expires old snapshots and data only. No rewrites.",
+    Mode.STANDARD: "Compacts small files and resolves deletes, then expires snapshots.",
+    Mode.DEEP: (
+        "Standard plus manifest rewrite and orphan-file cleanup, both gated by thresholds "
+        "and a per-table cadence."
+    ),
+    Mode.MANIFEST_ONLY: "Rewrites manifests only. Snapshots are not expired.",
+}
+
+# The mode new presets get when the request names none (PresetCreate.mode).
+RECOMMENDED_MODE = Mode.DEEP
+
+
 def canonical_rank(operation: OperationType | str) -> int:
     """Sort rank for an operation. Unknown/future ops sink to the end rather than raising."""
     try:

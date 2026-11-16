@@ -485,6 +485,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/presets/modes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Preset Modes
+         * @description What each mode plans, and the deep-mode thresholds a preset falls back to.
+         */
+        get: operations["list_preset_modes_api_v1_presets_modes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/presets/{preset_id}": {
         parameters: {
             query?: never;
@@ -10842,6 +10862,47 @@ export interface components {
             paused: boolean;
             continuous?: components["schemas"]["ContinuousSettings"] | null;
         };
+        /** PresetModeCatalog */
+        PresetModeCatalog: {
+            /** Modes */
+            modes: components["schemas"]["PresetModeInfo"][];
+            /** Param Defaults */
+            param_defaults: components["schemas"]["PresetParamDefault"][];
+        };
+        /** PresetModeInfo */
+        PresetModeInfo: {
+            mode: components["schemas"]["Mode"];
+            /** Description */
+            description: string;
+            /**
+             * Operations
+             * @description Upper bound of the operations this mode plans, in execution order.
+             */
+            operations: components["schemas"]["OperationType"][];
+            /**
+             * Recommended
+             * @default false
+             */
+            recommended: boolean;
+        };
+        /** PresetParamDefault */
+        PresetParamDefault: {
+            /** Key */
+            key: string;
+            /** Value */
+            value: number;
+            /**
+             * Source
+             * @description deployment: a Cryo setting the operator can change; built_in: a code constant. A preset's params override either.
+             * @enum {string}
+             */
+            source: "deployment" | "built_in";
+            /**
+             * Setting
+             * @description The Cryo setting behind the value.
+             */
+            setting?: string | null;
+        };
         /** PresetPatch */
         PresetPatch: {
             /** Name */
@@ -11011,6 +11072,16 @@ export interface components {
             small_files_count: number;
             /** Sample */
             sample: components["schemas"]["PresetSampleTable"][];
+            /**
+             * Orphan Backlog Bytes
+             * @description Orphan bytes the last storage listing found across the covered tables; null when none of them has been listed.
+             */
+            orphan_backlog_bytes?: number | null;
+            /**
+             * Orphan Backlog Tables
+             * @default 0
+             */
+            orphan_backlog_tables: number;
         };
         /** PreviewTable */
         PreviewTable: {
@@ -16257,6 +16328,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_preset_modes_api_v1_presets_modes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresetModeCatalog"];
                 };
             };
         };

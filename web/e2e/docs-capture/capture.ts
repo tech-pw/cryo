@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { test, type Page } from "@playwright/test";
 
 import { applyTheme, settlePage } from "../visual/helpers";
+import { VISUAL_PRESET_ID } from "../visual/fixtures/constants";
 import { DEMO_RUN_ID, DEMO_TABLES } from "./demo-data";
 import { installDemo } from "./demo-routes";
 
@@ -103,6 +104,28 @@ const openArchiveDialog = async (page: Page): Promise<void> => {
   await page.getByRole("dialog").getByText("Permissions", { exact: false }).first().waitFor();
 };
 
+const PRESET_CONFIG = `/runs/workflows/${VISUAL_PRESET_ID}?tab=config`;
+const ACTIVE_TAB = "[role='tabpanel'][data-state='active']";
+const PRESET_FORM = "form[aria-label='Preset configuration']";
+
+const waitForPresetForm = async (page: Page): Promise<void> => {
+  await page.locator(`${ACTIVE_TAB} form`).first().waitFor({ timeout: 110_000 });
+  await page.waitForTimeout(800);
+};
+
+const pickDeepMode = async (page: Page): Promise<void> => {
+  await waitForPresetForm(page);
+  await page.getByRole("radio", { name: /^Deep/ }).check();
+  await page.getByRole("region", { name: "Unsaved changes" }).waitFor();
+  await clearPointer(page);
+};
+
+const reviewModeChange = async (page: Page): Promise<void> => {
+  await pickDeepMode(page);
+  await page.getByRole("region", { name: "Unsaved changes" }).getByRole("button", { name: "Save preset" }).click();
+  await page.getByRole("alertdialog").getByText("Switch to Deep mode?").waitFor();
+};
+
 const TABLE = `/tables/${DEMO_TABLES[0].id}`;
 const ACTIVE_PANEL = "[role='tabpanel'][data-state='active']";
 const tabShot = (tab: string, waitFor?: string, part?: { name: string; selector: string }) => ({
@@ -126,6 +149,8 @@ const SHOTS: Array<{
   /** Crop a `selector` shot to its top N pixels. */
   maxHeight?: number;
   act?: (page: Page) => Promise<void>;
+  /** Sign in as this role; editing a preset needs admin. */
+  role?: "operator" | "admin";
 }> = [
   { name: "health", path: "/", waitFor: "Your lake at a glance", height: 1000 },
   { name: "home-storage", path: "/", waitFor: "Where storage goes", height: 1200, selector: ".home-storage" },
@@ -217,6 +242,7 @@ const SHOTS: Array<{
   { name: "runs", path: "/runs", waitFor: "Success rate · 7d", height: 1100 },
   { name: "runs-holds", path: "/runs?tab=holds", waitFor: "Active holds", height: 900 },
   { name: "run-detail", path: `/runs/${DEMO_RUN_ID}`, height: 960 },
+  { name: "preset-config-review", path: PRESET_CONFIG, height: 1000, role: "admin", act: reviewModeChange, selector: "[role='alertdialog']" },
   { name: "connections", path: "/settings/connections", waitFor: "Iceberg catalogs Cryo reads", height: 820 },
   { name: "connections-engines", path: "/settings/connections?tab=engines", waitFor: "Shipped with Cryo", height: 900 }
 ];
@@ -224,6 +250,8 @@ const SHOTS: Array<{
 for (const theme of THEMES) {
   for (const shot of SHOTS) {
     test(`${shot.name} (${theme})`, async ({ page }) => {
+      // The workflow page's chunk is slow to compile on a cold dev server.
+      test.setTimeout(150_000);
       mkdirSync(OUT, { recursive: true });
       const unhandled = new Set<string>();
       await page.setViewportSize({ width: 1440, height: shot.height ?? 900 });
@@ -233,7 +261,7 @@ for (const theme of THEMES) {
         console.log(`[${shot.name}] console:`, m.text().slice(0, 300), stacks.filter(Boolean).join("\n").slice(0, 900));
       });
       await applyTheme(page, theme);
-      await installDemo(page, unhandled);
+      await installDemo(page, unhandled, shot.role);
       await page.goto(shot.path);
       if (shot.waitFor) await page.getByText(shot.waitFor).first().waitFor({ timeout: 60_000 });
       if (shot.act) await shot.act(page);

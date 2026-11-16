@@ -1,28 +1,21 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import {
-  createPreset,
-  listDestinations,
-  patchPreset,
-  listPresetRules,
-  createPresetRule,
-  deletePresetRule,
-  simulatePreset
-} from "../../api/client";
-import type { DestinationRead, PresetRead, PresetWrite, UUID } from "../../api/types";
-import { ConfirmAction } from "../confirm";
+import { createPreset, getPresetModes, listDestinations, patchPreset, simulatePreset } from "../../api/client";
+import type { DestinationRead, PresetRead, PresetSimulationResponse, PresetWrite } from "../../api/types";
 import { CronInput } from "../CronInput";
+import { DiscardChangesDialog } from "../DiscardChangesDialog";
 import { ContinuousFields } from "./ContinuousFields";
+import { DeepModeFields } from "./DeepModeFields";
 import { PresetConfigFields } from "./PresetConfigFields";
-import { FilterBar } from "../FilterBar";
 import { Alert } from "../ui/alert";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
 import { FormField, FormProvider, useForm } from "../ui/form";
 import { Input } from "../ui/input";
 import { InputNumber } from "../ui/input-number";
 import { Label } from "../ui/label";
+import { RadioGroup } from "../ui/radio-group";
 import { Select } from "../ui/select";
 import { Switch } from "../ui/switch";
 import {
@@ -35,16 +28,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from "../ui/alert-dialog";
-import { DataTable, type DataTableColumnDef } from "../ui/data-table";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { useAuth } from "../../lib/auth";
-import {
-  formatDestinationLabel,
-  isNativeDestination,
-  nativeSupportsOperation,
-  nativeUnsupportedOpTooltip,
-  resolveNativeEngineImpl
-} from "../../lib/engines";
+import { formatDestinationLabel, isNativeDestination, nativeUnsupportedOpTooltip } from "../../lib/engines";
+import { formatNumber } from "../../lib/format";
 import {
   formValuesToPresetWrite,
   presetLifecycleWarning,
@@ -52,119 +38,190 @@ import {
   validatePresetFormValues,
   type PresetFormValues
 } from "../../lib/presetForm";
-import { validateOperationOrder } from "../../lib/operationOrder";
-import { tableFiltersToPredicate, type TableFilterState } from "../../lib/predicate";
+import {
+  formatOrphanBacklog,
+  modeLabel,
+  modeOperationDiff,
+  modeOperations,
+  operationLabel,
+  type OperationDiff
+} from "../../lib/presetModes";
+import { useUnsavedChangesGuard } from "../../lib/useUnsavedChangesGuard";
 
-// Selectable ops, listed in the canonical execution order (see ../../lib/operationOrder.ts).
-const operations = ["optimize", "optimize_manifests", "expire_snapshots", "remove_orphan_files"];
+interface PendingSave {
+  body: PresetWrite;
+  lifecycle: string | null;
+  modeChange: { from: string; to: string; diff: OperationDiff | null } | null;
+  simulation: PresetSimulationResponse | null;
+}
+
+// Operations are derived from the mode, so they are not part of the comparison.
+const snapshot = (values: PresetFormValues, preset: PresetRead | undefined): string =>
+  JSON.stringify({ ...formValuesToPresetWrite(values, preset, []), operations: [] });
 
 export const PresetConfigForm = ({
   preset,
   loading,
-  onSaved
+  onSaved,
+  onDirtyChange
 }: {
   preset?: PresetRead;
   loading?: boolean;
   onSaved: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) => {
   const { api, role } = useAuth();
+  const queryClient = useQueryClient();
   const destinations = useQuery({ queryKey: ["destinations"], queryFn: () => listDestinations(api) });
+  const modes = useQuery({
+    queryKey: ["preset-modes"],
+    queryFn: () => getPresetModes(api),
+    staleTime: Infinity
+  });
 
   const form = useForm<PresetFormValues>({
     defaultValues: presetToFormValues(null, destinations.data ?? []) as PresetFormValues
   });
+  const [baseline, setBaseline] = useState<PresetFormValues | null>(null);
 
-  const destinationId = form.watch("destination_id");
-  const selectedOps = form.watch("operations");
-  const operationOrderWarnings = useMemo(() => validateOperationOrder(selectedOps ?? []), [selectedOps]);
+  const resetTo = useCallback(
+    (values: PresetFormValues) => {
+      form.reset(values);
+      setBaseline(values);
+    },
+    [form]
+  );
+
+  useEffect(() => {
+    if (preset && destinations.data) {
+      resetTo(presetToFormValues(preset, destinations.data) as PresetFormValues);
+    }
+  }, [preset, destinations.data, resetTo]);
+
+  const values = form.watch();
+  const dirty = baseline !== null && snapshot(values, preset) !== snapshot(baseline, preset);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  const leaveGuard = useUnsavedChangesGuard(dirty);
+
+  const destinationId = values.destination_id;
   const selectedDestination = useMemo(
     () => (destinations.data ?? []).find((item) => item.id === destinationId),
     [destinations.data, destinationId]
   );
   const isNative = isNativeDestination(selectedDestination);
-  const nativeImpl = selectedDestination ? resolveNativeEngineImpl(selectedDestination.config) : undefined;
 
   useEffect(() => {
-    if (preset && destinations.data) {
-      form.reset(presetToFormValues(preset, destinations.data) as PresetFormValues);
+    if (isNative && form.getValues("mode") === "manifest_only") {
+      form.setValue("mode", "deep", { shouldDirty: true });
     }
-  }, [preset, destinations.data, form]);
+  }, [isNative, form]);
 
-  useEffect(() => {
-    const id = form.getValues("destination_id");
-    const destination = (destinations.data ?? []).find((item) => item.id === id);
-    if (!destination || !isNativeDestination(destination)) return;
-    const impl = resolveNativeEngineImpl(destination.config);
-    const currentOps = form.getValues("operations");
-    const nextOps = (currentOps ?? []).filter((op) => nativeSupportsOperation(op, impl ?? "go"));
-    if (nextOps.length !== (currentOps ?? []).length) {
-      form.setValue("operations", nextOps);
-    }
-    if (form.getValues("mode") === "manifest_only") {
-      form.setValue("mode", "deep");
-    }
-  }, [destinationId, destinations.data, form]);
+  const mode = values.mode;
+  const runsOperations = modeOperations(modes.data, mode);
+  const savedMode = baseline?.mode;
+  const modeChanged = Boolean(savedMode && mode !== savedMode);
+  const descriptionUnchanged = (values.description ?? "") === (baseline?.description ?? "");
 
   const save = useMutation({
-    mutationFn: (body: PresetWrite) =>
-      preset ? patchPreset(api, preset.id, body) : createPreset(api, body),
-    onSuccess: () => {
+    mutationFn: (body: PresetWrite) => (preset ? patchPreset(api, preset.id, body) : createPreset(api, body)),
+    onSuccess: (saved) => {
       toast.success("Preset saved");
+      if (destinations.data) resetTo(presetToFormValues(saved, destinations.data) as PresetFormValues);
+      void queryClient.invalidateQueries({ queryKey: ["preset-simulation"] });
       onSaved();
     },
     onError: (error) => toast.error((error as Error).message)
   });
 
-  const operationOptions = operations.map((operation) => {
-    const supported = !isNative || nativeSupportsOperation(operation, nativeImpl ?? "go");
-    const tooltip = operation === "optimize_manifests" ? nativeUnsupportedOpTooltip : undefined;
-    return { operation, supported, tooltip };
-  });
+  const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
+  const [reviewing, setReviewing] = useState(false);
 
-  const modeOptions = [
-    { label: "Light", value: "light", disabled: false },
-    { label: "Standard", value: "standard", disabled: false },
-    { label: "Deep (default)", value: "deep", disabled: false },
-    {
-      label: "Manifest only",
-      value: "manifest_only",
-      disabled: isNative,
-      tooltip: isNative ? nativeUnsupportedOpTooltip : undefined
-    }
-  ];
-
-  const [pendingSave, setPendingSave] = useState<{ body: PresetWrite; message: string } | null>(null);
-
-  const submit = async (values: PresetFormValues) => {
-    const errors = validatePresetFormValues(values);
+  const submit = async (formValues: PresetFormValues) => {
+    const errors = validatePresetFormValues(formValues);
     if (errors) {
       for (const [key, message] of Object.entries(errors)) {
         form.setError(key as keyof PresetFormValues, { message });
       }
       return;
     }
-    const body = formValuesToPresetWrite(values, preset);
-    if (preset && presetLifecycleWarning(preset, values, null)) {
-      let covered: number | null = null;
-      try {
-        covered = (await simulatePreset(api, preset.id)).matched_count;
-      } catch {
-        covered = null;
-      }
-      setPendingSave({ body, message: presetLifecycleWarning(preset, values, covered) ?? "" });
+    const operations = modeOperations(modes.data, formValues.mode);
+    if (!operations) {
+      toast.error("Can't save until this mode's operations have loaded.");
       return;
     }
-    save.mutate(body);
+    const body = formValuesToPresetWrite(formValues, preset, operations);
+    const lifecycleChange = preset ? presetLifecycleWarning(preset, formValues, null) : null;
+    const modeChange =
+      preset && formValues.mode !== preset.mode
+        ? { from: preset.mode, to: formValues.mode, diff: modeOperationDiff(modes.data, preset.mode, formValues.mode) }
+        : null;
+    if (!preset || (!lifecycleChange && !modeChange)) {
+      save.mutate(body);
+      return;
+    }
+    setReviewing(true);
+    let simulation: PresetSimulationResponse | null = null;
+    try {
+      simulation = await queryClient.fetchQuery({
+        queryKey: ["preset-simulation", preset.id, "review"],
+        queryFn: () => simulatePreset(api, preset.id),
+        staleTime: 30_000
+      });
+    } catch {
+      simulation = null;
+    } finally {
+      setReviewing(false);
+    }
+    setPendingSave({
+      body,
+      lifecycle: lifecycleChange ? presetLifecycleWarning(preset, formValues, simulation?.matched_count ?? null) : null,
+      modeChange,
+      simulation
+    });
   };
+
+  const onSubmit = form.handleSubmit(submit);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void onSubmit();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [dirty, onSubmit]);
 
   if (loading) return null;
 
   const disabled = role !== "admin";
 
+  const modeOptions = (modes.data?.modes ?? []).map((info) => {
+    const unsupported = isNative && info.mode === "manifest_only";
+    return {
+      value: info.mode,
+      disabled: unsupported,
+      label: (
+        <span className="inline-flex items-center gap-2">
+          {modeLabel(info.mode)}
+          {info.recommended ? <Badge variant="secondary">Recommended</Badge> : null}
+        </span>
+      ),
+      description: unsupported ? nativeUnsupportedOpTooltip : info.description
+    };
+  });
+
   return (
     <div className="flex w-full flex-col gap-4">
       <FormProvider {...form}>
-        <form className="flex flex-col gap-4" onSubmit={form.handleSubmit(submit)}>
+        <form className="flex flex-col gap-4" onSubmit={onSubmit} aria-label="Preset configuration">
           <FormField name="name" label="Name">
             {(field) => (
               <Input
@@ -177,18 +234,26 @@ export const PresetConfigForm = ({
               />
             )}
           </FormField>
-          <FormField name="description" label="Description">
-            {(field) => (
-              <Input
-                disabled={disabled}
-                value={String(field.value ?? "")}
-                onChange={field.onChange}
-                onBlur={field.onBlur}
-                name={field.name}
-                ref={field.ref}
-              />
-            )}
-          </FormField>
+          <div className="space-y-1">
+            <FormField name="description" label="Description">
+              {(field) => (
+                <Input
+                  disabled={disabled}
+                  value={String(field.value ?? "")}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                  name={field.name}
+                  ref={field.ref}
+                />
+              )}
+            </FormField>
+            {modeChanged && descriptionUnchanged && values.description ? (
+              <p className="text-xs text-[var(--color-status-warning-fg)]" role="status">
+                Mode changed from {modeLabel(savedMode ?? "")} to {modeLabel(mode)}. Update the description if it
+                still describes the old mode.
+              </p>
+            ) : null}
+          </div>
           <FormField name="destination_id" label="Engine">
             {(field) => (
               <Select
@@ -206,24 +271,61 @@ export const PresetConfigForm = ({
             )}
           </FormField>
 
-          <div className="flex flex-wrap gap-3">
-            <FormField name="mode" label="Mode" className="w-40">
-              {(field) => (
-                <Select
-                  disabled={disabled}
-                  value={String(field.value ?? "")}
-                  onChange={(next) => field.onChange(next ?? "")}
-                  options={modeOptions.map((opt) => ({
-                    label: opt.label,
-                    value: opt.value,
-                    disabled: opt.disabled
-                  }))}
-                  onBlur={field.onBlur}
-                  name={field.name}
-                  ref={field.ref}
-                />
+          <fieldset className="space-y-2" disabled={disabled}>
+            <legend id="preset-mode-label" className="mb-1.5 text-sm font-medium text-foreground">
+              Mode
+            </legend>
+            {modes.isError ? (
+              <Alert
+                variant="warning"
+                title="Couldn't load the maintenance modes"
+                description={(modes.error as Error)?.message ?? "Try reloading the page."}
+              />
+            ) : (
+              <RadioGroup
+                variant="card"
+                name="mode"
+                aria-labelledby="preset-mode-label"
+                value={mode}
+                disabled={disabled}
+                onChange={(next) => form.setValue("mode", next as PresetFormValues["mode"], { shouldDirty: true })}
+                options={modeOptions}
+              />
+            )}
+            <div
+              className="rounded-[var(--radius-default)] bg-[var(--color-surface-sunken)] px-3 py-2 text-sm"
+              aria-live="polite"
+              data-testid="mode-operations"
+            >
+              {runsOperations ? (
+                <>
+                  <span className="text-muted-foreground">{modeLabel(mode)} runs: </span>
+                  {runsOperations.map((op, idx) => (
+                    <span key={op} className="inline-flex items-center gap-1">
+                      <code className="mono-id text-xs">{operationLabel(op)}</code>
+                      {idx < runsOperations.length - 1 ? (
+                        <span aria-hidden className="mx-0.5 text-muted-foreground">
+                          →
+                        </span>
+                      ) : null}
+                    </span>
+                  ))}
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    The planner still skips an operation a table does not need. Orphan cleanup and manifest rewrite
+                    follow the thresholds below.
+                  </p>
+                </>
+              ) : (
+                <span className="text-muted-foreground">
+                  {modes.isLoading ? "Loading what this mode runs…" : "This mode's operations are unavailable."}
+                </span>
               )}
-            </FormField>
+            </div>
+          </fieldset>
+
+          <DeepModeFields catalog={modes.data} operations={runsOperations} disabled={disabled} />
+
+          <div className="flex flex-wrap gap-3">
             <FormField name="priority" label="Priority" className="w-32">
               {(field) => (
                 <InputNumber
@@ -241,8 +343,8 @@ export const PresetConfigForm = ({
               <Switch
                 id="preset-enabled"
                 disabled={disabled}
-                checked={form.watch("enabled")}
-                onCheckedChange={(checked) => form.setValue("enabled", checked)}
+                checked={values.enabled}
+                onCheckedChange={(checked) => form.setValue("enabled", checked, { shouldDirty: true })}
               />
               <Label htmlFor="preset-enabled">Enabled</Label>
             </div>
@@ -250,16 +352,16 @@ export const PresetConfigForm = ({
               <Switch
                 id="preset-paused"
                 disabled={disabled}
-                checked={form.watch("paused")}
-                onCheckedChange={(checked) => form.setValue("paused", checked)}
+                checked={values.paused}
+                onCheckedChange={(checked) => form.setValue("paused", checked, { shouldDirty: true })}
               />
               <Label htmlFor="preset-paused">Paused</Label>
             </div>
           </div>
           <p className="-mt-2 text-xs text-muted-foreground">
-            Paused holds this preset&apos;s tables: they keep it and wait, nothing new runs, and its
-            queued jobs are cancelled (admitted and running jobs finish). Turning
-            Enabled off retires the preset, and its pinned tables fall through to rules or the default.
+            Paused holds this preset&apos;s tables: they keep it and wait, nothing new runs, and its queued jobs are
+            cancelled (admitted and running jobs finish). Turning Enabled off retires the preset, and its pinned
+            tables fall through to rules or the default.
           </p>
 
           <div className="space-y-1">
@@ -267,90 +369,28 @@ export const PresetConfigForm = ({
               <Switch
                 id="preset-default"
                 disabled={disabled}
-                checked={form.watch("is_default")}
-                onCheckedChange={(checked) => form.setValue("is_default", checked)}
+                checked={values.is_default}
+                onCheckedChange={(checked) => form.setValue("is_default", checked, { shouldDirty: true })}
               />
               <Label htmlFor="preset-default">Default preset</Label>
             </div>
             <p className="text-xs text-muted-foreground">
-              Runs for every table that has no pinned preset and matches no rule, including newly
-              discovered tables. Needs a schedule. Only one preset can be the default.
+              Runs for every table that has no pinned preset and matches no rule, including newly discovered tables.
+              Needs a schedule. Only one preset can be the default.
             </p>
           </div>
-
-          <div className="space-y-2">
-            <Label>Operations</Label>
-            <div className="flex flex-wrap gap-3">
-              {operationOptions.map(({ operation, supported, tooltip }) => (
-                <label key={operation} className="flex items-center gap-2 text-sm">
-                  {tooltip ? (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="flex items-center gap-2">
-                            <Checkbox
-                              disabled={disabled || !supported}
-                              checked={(selectedOps ?? []).includes(operation)}
-                              onCheckedChange={(checked) => {
-                                const current = form.getValues("operations") ?? [];
-                                form.setValue(
-                                  "operations",
-                                  checked
-                                    ? [...current, operation]
-                                    : current.filter((op) => op !== operation)
-                                );
-                              }}
-                            />
-                            <span>{operation}</span>
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>{tooltip}</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  ) : (
-                    <>
-                      <Checkbox
-                        disabled={disabled || !supported}
-                        checked={(selectedOps ?? []).includes(operation)}
-                        onCheckedChange={(checked) => {
-                          const current = form.getValues("operations") ?? [];
-                          form.setValue(
-                            "operations",
-                            checked ? [...current, operation] : current.filter((op) => op !== operation)
-                          );
-                        }}
-                      />
-                      <span>{operation}</span>
-                    </>
-                  )}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {operationOrderWarnings.length > 0 ? (
-            <Alert
-              variant="warning"
-              title="Operations are out of the recommended order"
-              description={
-                <ul className="m-0 list-inside list-disc pl-0">
-                  {operationOrderWarnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              }
-            />
-          ) : null}
 
           <div className="space-y-1.5">
             <Label htmlFor="schedule_cron">Schedule cron</Label>
             <CronInput
               allowEmpty
-              value={form.watch("schedule_cron") ?? ""}
-              onChange={(cron) => form.setValue("schedule_cron", cron)}
+              value={values.schedule_cron ?? ""}
+              onChange={(cron) => form.setValue("schedule_cron", cron, { shouldDirty: true })}
             />
             {form.formState.errors.schedule_cron?.message ? (
-              <p className="text-xs text-destructive" role="alert">{form.formState.errors.schedule_cron.message}</p>
+              <p className="text-xs text-destructive" role="alert">
+                {form.formState.errors.schedule_cron.message}
+              </p>
             ) : null}
           </div>
 
@@ -358,17 +398,58 @@ export const PresetConfigForm = ({
 
           <PresetConfigFields destinations={destinations.data ?? []} />
 
-          <Button type="submit" loading={save.isPending} disabled={disabled}>
-            Save preset
-          </Button>
+          {dirty && !disabled ? (
+            <div
+              role="region"
+              aria-label="Unsaved changes"
+              className="sticky bottom-0 z-20 -mx-4 mt-2 flex flex-wrap items-center gap-3 border-t border-border bg-background/95 px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] backdrop-blur"
+            >
+              <span className="inline-flex items-center gap-2 text-sm font-medium">
+                <span aria-hidden className="size-2 rounded-full bg-[var(--color-status-warning)]" />
+                Unsaved changes
+              </span>
+              <span className="hidden text-xs text-muted-foreground sm:inline">⌘S / Ctrl+S to save</span>
+              <div className="ml-auto flex gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={save.isPending}
+                  onClick={() => {
+                    if (baseline) resetTo(baseline);
+                  }}
+                >
+                  Discard
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={!modes.data}
+                  loading={save.isPending || reviewing}
+                >
+                  Save preset
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </form>
       </FormProvider>
-      {preset ? <PresetRulesSection presetId={preset.id} /> : null}
+
       <AlertDialog open={pendingSave !== null} onOpenChange={(open) => (open ? null : setPendingSave(null))}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Change who maintains these tables?</AlertDialogTitle>
-            <AlertDialogDescription>{pendingSave?.message}</AlertDialogDescription>
+            <AlertDialogTitle>
+              {pendingSave?.modeChange
+                ? `Switch to ${modeLabel(pendingSave.modeChange.to)} mode?`
+                : "Change who maintains these tables?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm" data-testid="save-review">
+                {pendingSave?.modeChange ? (
+                  <ModeChangeSummary change={pendingSave.modeChange} simulation={pendingSave.simulation} />
+                ) : null}
+                {pendingSave?.lifecycle ? <p>{pendingSave.lifecycle}</p> : null}
+              </div>
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setPendingSave(null)}>Cancel</AlertDialogCancel>
@@ -383,83 +464,49 @@ export const PresetConfigForm = ({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <DiscardChangesDialog
+        open={leaveGuard.pendingHref !== null}
+        onDiscard={leaveGuard.confirmLeave}
+        onCancel={leaveGuard.cancelLeave}
+      />
     </div>
   );
 };
 
-const PresetRulesSection = ({ presetId }: { presetId: UUID }) => {
-  const { api, role } = useAuth();
-  const [filters, setFilters] = useState<TableFilterState>({ activeOnly: true });
-  const rules = useQuery({
-    queryKey: ["preset-rules", presetId],
-    queryFn: () => listPresetRules(api, presetId)
-  });
-  const addRule = useMutation({
-    mutationFn: () => {
-      const predicate = tableFiltersToPredicate(filters);
-      if (!predicate) throw new Error("Choose at least one filter.");
-      const onlyActive =
-        "field" in predicate && predicate.field === "is_active" && predicate.op === "=" && predicate.value === true;
-      if (onlyActive) {
-        throw new Error("Choose at least one filter. Active tables alone matches the whole fleet.");
-      }
-      return createPresetRule(api, presetId, { predicate, enabled: true });
-    },
-    onSuccess: () => {
-      toast.success("Rule added");
-      void rules.refetch();
-    },
-    onError: (error) => toast.error((error as Error).message)
-  });
-  const removeRule = useMutation({
-    mutationFn: (ruleId: UUID) => deletePresetRule(api, presetId, ruleId),
-    onSuccess: () => {
-      toast.success("Rule deleted");
-      void rules.refetch();
-    },
-    onError: (error) => toast.error((error as Error).message)
-  });
-
-  type PresetRuleRow = { id: UUID; enabled: boolean; predicate: unknown };
-  const columns: DataTableColumnDef<PresetRuleRow, unknown>[] = [
-    { id: "enabled", header: "Enabled", cell: ({ row }) => String(row.original.enabled) },
-    {
-      id: "predicate",
-      header: "Predicate",
-      cell: ({ row }) => <pre className="inline-json">{JSON.stringify(row.original.predicate)}</pre>
-    },
-    ...(role === "admin"
-      ? [
-          {
-            id: "actions",
-            header: "Actions",
-            cell: ({ row }: { row: { original: PresetRuleRow } }) => (
-              <ConfirmAction title="Delete this rule?" onConfirm={() => removeRule.mutate(row.original.id)}>
-                <Button size="sm" variant="danger" loading={removeRule.isPending}>
-                  Delete
-                </Button>
-              </ConfirmAction>
-            )
-          } as DataTableColumnDef<PresetRuleRow, unknown>
-        ]
-      : [])
-  ];
-
+const ModeChangeSummary = ({
+  change,
+  simulation
+}: {
+  change: NonNullable<PendingSave["modeChange"]>;
+  simulation: PresetSimulationResponse | null;
+}) => {
+  const backlog = formatOrphanBacklog(simulation?.orphan_backlog_bytes, simulation?.orphan_backlog_tables);
+  const added = change.diff?.added ?? [];
+  const removed = change.diff?.removed ?? [];
   return (
-    <div className="space-y-3">
-      <h4 className="text-sm font-semibold">Assignment rules</h4>
-      <FilterBar value={filters} onChange={setFilters} />
-      <Button loading={addRule.isPending} disabled={role !== "admin"} onClick={() => addRule.mutate()}>
-        Add rule
-      </Button>
-      <DataTable
-        columns={columns}
-        data={(rules.data ?? []) as PresetRuleRow[]}
-        density="compact"
-        loading={rules.isLoading}
-        getRowId={(row) => row.id}
-        emptyTitle="No assignment rules"
-      />
-    </div>
+    <>
+      <p>
+        {modeLabel(change.from)} → {modeLabel(change.to)}.{" "}
+        {simulation
+          ? `The next scheduled run applies it to ${formatNumber(simulation.matched_count)} ${
+              simulation.matched_count === 1 ? "table" : "tables"
+            } this preset covers.`
+          : "Couldn't count the tables this preset covers."}
+      </p>
+      {added.length > 0 ? (
+        <p>
+          <span className="font-medium text-foreground">Adds: </span>
+          {added.map(operationLabel).join(", ")}
+        </p>
+      ) : null}
+      {removed.length > 0 ? (
+        <p>
+          <span className="font-medium text-foreground">Stops: </span>
+          {removed.map(operationLabel).join(", ")}
+        </p>
+      ) : null}
+      {added.includes("remove_orphan_files") && backlog ? <p>{backlog}</p> : null}
+    </>
   );
 };

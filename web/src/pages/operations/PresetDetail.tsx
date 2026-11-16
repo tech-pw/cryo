@@ -1,11 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { listPresetRules, listPresets, listRuns, simulatePreset } from "../../api/client";
-import type { RunRead } from "../../api/types";
+import { getPresetModes, listPresetRules, listPresets, listRuns, simulatePreset } from "../../api/client";
+import type { PresetRead, RunRead } from "../../api/types";
 import { OperationPipeline, maintenanceOpsToSteps } from "../../components/operations/OperationPipeline";
 import { MiniRunHistoryBar } from "../../components/operations/RunHistoryGrid";
 import { describeCronSchedule, nextCronRun } from "../../components/operations/scheduleSummary";
+import { DiscardChangesDialog } from "../../components/DiscardChangesDialog";
 import { StatusTag } from "../../components/status";
 import { Alert } from "../../components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
@@ -15,11 +16,22 @@ import { useAuth } from "../../lib/auth";
 import { formatGb, formatNumber, formatTime } from "../../lib/format";
 import { MAINTENANCE_OPERATION_ORDER, type MaintenanceOperation } from "../../lib/operationOrder";
 import { formatPresetSummary } from "../../lib/presetForm";
+import { modeOperations } from "../../lib/presetModes";
 import { shortRunId, targetLabel } from "../../lib/operations";
 import { WorkflowDetailShell, type WorkflowTabKey } from "./WorkflowDetailShell";
 import { PresetConfigTab } from "./preset/PresetConfigTab";
 
 const opLabel = (op: string) => op.replaceAll("_", " ");
+
+/** What the preset's mode runs; the stored `operations` list is only a fallback for older presets. */
+const usePresetOperations = (preset: PresetRead | undefined): string[] => {
+  const { api } = useAuth();
+  const modes = useQuery({ queryKey: ["preset-modes"], queryFn: () => getPresetModes(api), staleTime: Infinity });
+  return useMemo(
+    () => modeOperations(modes.data, preset?.mode) ?? preset?.operations ?? [],
+    [modes.data, preset?.mode, preset?.operations]
+  );
+};
 
 const PresetRunsTab = ({ presetId }: { presetId: string }) => {
   const { api, token } = useAuth();
@@ -98,13 +110,14 @@ const PresetOverviewTab = ({ presetId, presetName }: { presetId: string; presetN
 
   const scheduleSummary = describeCronSchedule(preset?.schedule_cron);
   const nextRun = nextCronRun(preset?.schedule_cron);
+  const presetOps = usePresetOperations(preset);
   const orderedOps = useMemo(() => {
-    const ops = preset?.operations ?? [];
+    const ops = presetOps;
     if (ops.length === 0) return [];
     const known = MAINTENANCE_OPERATION_ORDER.filter((op) => ops.includes(op));
     const unknown = ops.filter((op) => !MAINTENANCE_OPERATION_ORDER.includes(op as MaintenanceOperation));
     return [...known, ...unknown];
-  }, [preset?.operations]);
+  }, [presetOps]);
 
   const simulationContent = simulation.isLoading ? (
     <div className="flex flex-wrap gap-3">
@@ -202,7 +215,7 @@ const PresetGridTab = ({ presetId }: { presetId: string }) => {
     queryKey: ["preset-grid-runs", presetId, token],
     queryFn: () => listRuns(api, { limit: 10, preset_id: presetId })
   });
-  const ops = preset?.operations ?? [];
+  const ops = usePresetOperations(preset);
 
   const columns = useMemo<DataTableColumnDef<{ key: string; operation: string }, unknown>[]>(() => {
     const base: DataTableColumnDef<{ key: string; operation: string }, unknown>[] = [
@@ -232,10 +245,8 @@ const PresetGraphTab = ({ presetId }: { presetId: string }) => {
   const { api, token } = useAuth();
   const presets = useQuery({ queryKey: ["presets", token], queryFn: () => listPresets(api) });
   const preset = presets.data?.find((item) => item.id === presetId);
-  const steps = useMemo(
-    () => maintenanceOpsToSteps(preset?.operations ?? []),
-    [preset?.operations]
-  );
+  const ops = usePresetOperations(preset);
+  const steps = useMemo(() => maintenanceOpsToSteps(ops), [ops]);
   return <OperationPipeline steps={steps} title="Configured operations" />;
 };
 
@@ -262,37 +273,62 @@ export const PresetDetail = () => {
     | "runs"
     | "config";
 
+  const [configDirty, setConfigDirty] = useState(false);
+  const [pendingTab, setPendingTab] = useState<WorkflowTabKey | null>(null);
+  const onConfigDirtyChange = useCallback((dirty: boolean) => setConfigDirty(dirty), []);
+
+  const goToTab = (tab: WorkflowTabKey) => {
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        if (tab === "overview") next.delete("tab");
+        else next.set("tab", tab);
+        return next;
+      },
+      { replace: true }
+    );
+  };
+
   if (!presetId) return <Alert variant="error" title="Missing preset id" />;
 
   return (
-    <WorkflowDetailShell
-      title={preset?.name ?? "Preset"}
-      subtitle={preset?.description ?? "Maintenance workflow"}
-      activeTab={activeTab}
-      onTabChange={(tab) => {
-        setSearchParams(
-          (previous) => {
-            const next = new URLSearchParams(previous);
-            if (tab === "overview") next.delete("tab");
-            else next.set("tab", tab);
-            return next;
-          },
-          { replace: true }
-        );
-      }}
-      overview={<PresetOverviewTab presetId={presetId} presetName={preset?.name ?? "Preset"} />}
-      grid={<PresetGridTab presetId={presetId} />}
-      graph={<PresetGraphTab presetId={presetId} />}
-      runs={<PresetRunsTab presetId={presetId} />}
-      config={
-        <PresetConfigTab
-          preset={preset}
-          loading={presetsQuery.isLoading}
-          onSaved={() => {
-            void queryClient.invalidateQueries({ queryKey: ["presets"] });
-          }}
-        />
-      }
-    />
+    <>
+      <WorkflowDetailShell
+        title={preset?.name ?? "Preset"}
+        subtitle={preset?.description ?? "Maintenance workflow"}
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          if (activeTab === "config" && tab !== "config" && configDirty) {
+            setPendingTab(tab);
+            return;
+          }
+          goToTab(tab);
+        }}
+        overview={<PresetOverviewTab presetId={presetId} presetName={preset?.name ?? "Preset"} />}
+        grid={<PresetGridTab presetId={presetId} />}
+        graph={<PresetGraphTab presetId={presetId} />}
+        runs={<PresetRunsTab presetId={presetId} />}
+        config={
+          <PresetConfigTab
+            preset={preset}
+            loading={presetsQuery.isLoading}
+            onDirtyChange={onConfigDirtyChange}
+            onSaved={() => {
+              void queryClient.invalidateQueries({ queryKey: ["presets"] });
+            }}
+          />
+        }
+      />
+      <DiscardChangesDialog
+        open={pendingTab !== null}
+        onCancel={() => setPendingTab(null)}
+        onDiscard={() => {
+          const tab = pendingTab;
+          setPendingTab(null);
+          setConfigDirty(false);
+          if (tab) goToTab(tab);
+        }}
+      />
+    </>
   );
 };

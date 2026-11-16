@@ -632,6 +632,32 @@ class PresetPatch(BaseModel):
     continuous: ContinuousSettings | None = None
 
 
+class PresetModeInfo(BaseModel):
+    mode: Mode
+    description: str
+    operations: list[OperationType] = Field(
+        description="Upper bound of the operations this mode plans, in execution order."
+    )
+    recommended: bool = False
+
+
+class PresetParamDefault(BaseModel):
+    key: str
+    value: int
+    source: Literal["deployment", "built_in"] = Field(
+        description=(
+            "deployment: a Cryo setting the operator can change; built_in: a code constant. "
+            "A preset's params override either."
+        )
+    )
+    setting: str | None = Field(default=None, description="The Cryo setting behind the value.")
+
+
+class PresetModeCatalog(BaseModel):
+    modes: list[PresetModeInfo]
+    param_defaults: list[PresetParamDefault]
+
+
 class PresetRuleCreate(BaseModel):
     predicate: JsonDict
     enabled: bool = True
@@ -657,6 +683,14 @@ class PresetSimulationResponse(BaseModel):
     total_size_gb: float
     small_files_count: int
     sample: list[PresetSampleTable]
+    orphan_backlog_bytes: int | None = Field(
+        default=None,
+        description=(
+            "Orphan bytes the last storage listing found across the covered tables; null when "
+            "none of them has been listed."
+        ),
+    )
+    orphan_backlog_tables: int = 0
 
 
 PresetProvenance = Literal["assignment", "rule", "rule_after_stale_pin", "default", "none"]

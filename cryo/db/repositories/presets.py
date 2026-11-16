@@ -304,7 +304,7 @@ def simulate_preset(
     *,
     sample_limit: int = 20,
     tenant_id: uuid.UUID | None = None,
-) -> tuple[list[TableCandidate], dict[str, float | int]]:
+) -> tuple[list[TableCandidate], dict[str, float | int | None]]:
     presets, rules, assignments = load_resolution_inputs(session)
     table_stmt = (
         select(Table)
@@ -318,14 +318,35 @@ def simulate_preset(
         table_stmt = table_stmt.where(Table.tenant_id == tenant_id)
     candidates = [table_to_candidate(table) for table in session.scalars(table_stmt)]
     matched = tables_for_preset(preset_to_config(preset), candidates, presets, rules, assignments)
-    estimate = {
+    backlog_bytes, backlog_tables = orphan_backlog(
+        session, [uuid.UUID(item.id) for item in matched]
+    )
+    estimate: dict[str, float | int | None] = {
         "matched_count": len(matched),
+        "orphan_backlog_bytes": backlog_bytes,
+        "orphan_backlog_tables": backlog_tables,
         "total_size_gb": round(
             sum(float(item.stats.get("total_size_gb") or 0) for item in matched), 3
         ),
         "small_files_count": sum(int(item.stats.get("small_files_count") or 0) for item in matched),
     }
     return matched[:sample_limit], estimate
+
+
+def orphan_backlog(session: Session, table_ids: Sequence[uuid.UUID]) -> tuple[int | None, int]:
+    """(sum of listed orphan bytes, tables with any) over ``table_ids``, in one aggregate."""
+    if not table_ids:
+        return None, 0
+    total, listed, with_backlog = session.execute(
+        select(
+            func.sum(TableCost.orphan_bytes),
+            func.count(TableCost.orphan_bytes),
+            func.count().filter(TableCost.orphan_bytes > 0),
+        ).where(id_in(session, TableCost.table_id, table_ids))
+    ).one()
+    if not listed:
+        return None, 0
+    return int(total or 0), int(with_backlog or 0)
 
 
 def resolve_selection(
