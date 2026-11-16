@@ -43,11 +43,18 @@ from cryo.observability.metrics import (
     worker_commit_conflicts_total,
     worker_job_duration_seconds,
     worker_job_executions_total,
+    worker_writer_window_total,
 )
 from cryo.observability.tracing import trace_operation
 from cryo.planner.execution import build_execution_plan, skip_operations_from_preset
 from cryo.planner.planner import is_nothing_to_do_skip
 from cryo.planner.serialization import plan_from_dict, plan_to_dict
+from cryo.planner.writer_window import (
+    DATA_REWRITE_OPERATIONS,
+    WindowVerdict,
+    WriterWindow,
+    format_hold,
+)
 from cryo.queue.async_spark import AsyncSparkEntry, AsyncSparkRegistry
 from cryo.queue.job_release import release_job_claims
 from cryo.queue.locks import LockStore
@@ -59,6 +66,7 @@ from cryo.queue.run_events import (
     safe_publish,
 )
 from cryo.worker.safety_gates import requires_quiet_window, wait_for_table_quiet
+from cryo.worker.writer_window import WriterCommitReader, check_writer_window
 
 logger = logging.getLogger(__name__)
 
@@ -547,8 +555,10 @@ class Worker:
         quiet_max_wait_sec: float | None = 120.0,
         async_spark: AsyncSparkDispatch | None = None,
         request_rescan: Callable[[str], bool] | None = None,
+        writer_commit_reader: WriterCommitReader | None = None,
     ) -> None:
         self._async_spark = async_spark
+        self._writer_commit_reader = writer_commit_reader
         self._request_rescan = request_rescan
         self._queue = queue
         self._store = store
@@ -751,7 +761,7 @@ class Worker:
                     stats=table_data.stats,
                     partitions=table_data.partitions,
                     mode=job.mode,
-                    params=job.params,
+                    params=_worker_plan_params(job.params),
                     destination=destination,
                     operations=job.operations,
                     protected_snapshot_ids=_protected_snapshot_ids(job.table_id),
@@ -887,8 +897,10 @@ class Worker:
                 # dropped. Ordering still matters within a pass, so nothing is retried or
                 # reordered here; a failed op is simply not fatal to its successors.
                 failed_actions: dict[Any, str] = {}
+                # Operations the table's writer leaves no window for; skipped, not failed.
+                writer_blocked: dict[OperationType, str] = {}
                 for index, statement in enumerate(statements):
-                    if statement.action in failed_actions:
+                    if statement.action in failed_actions or statement.action in writer_blocked:
                         continue
                     existing_budget_error = _effect_budget_error(
                         active_intent,
@@ -994,6 +1006,39 @@ class Worker:
                         final_status = JobStatus.RUNNING
                         error = "table_not_quiet"
                         break
+
+                    window = (
+                        self._writer_window_before_step(
+                            job=job,
+                            stats=table_data.stats,
+                            table_ref=table_ref,
+                            operation=statement.action,
+                            engine=str(engine.type),
+                        )
+                        if resumed_state is None
+                        else None
+                    )
+                    if window is not None and window.verdict is WindowVerdict.HOLD:
+                        # Deferred, not failed: the reconciler re-queues it once retry_at
+                        # passes, and the step ledger skips the statements already done.
+                        final_status = JobStatus.DEFERRED
+                        error = format_hold(window)
+                        break
+                    if window is not None and window.verdict is WindowVerdict.NO_WINDOW:
+                        had_skip = True
+                        writer_blocked[statement.action] = format_hold(window)
+                        self._store.record_audit(
+                            AuditRecord(
+                                job_id=job.id,
+                                table_id=job.table_id,
+                                action=statement.action,
+                                status="SKIPPED",
+                                engine=engine.type,
+                                detail=writer_blocked[statement.action],
+                                actor=job.actor,
+                            )
+                        )
+                        continue
 
                     if self._step_ledger is not None and resumed_state is None:
                         self._step_ledger.begin_step(
@@ -1413,6 +1458,11 @@ class Worker:
                     error = "; ".join(
                         f"{action.value}: {detail}" for action, detail in failed_actions.items()
                     )
+                if writer_blocked and final_status is JobStatus.SUCCEEDED:
+                    final_status = JobStatus.PARTIAL if had_success else JobStatus.SKIPPED
+                    error = "; ".join(
+                        f"{action.value}: {detail}" for action, detail in writer_blocked.items()
+                    )
             if had_skip and not had_success and final_status is JobStatus.SUCCEEDED:
                 final_status = JobStatus.SKIPPED
             all_skips = requested_operation_skips(plan_to_dict(plan))
@@ -1694,6 +1744,58 @@ class Worker:
             operation_type=operation_type,
             status=metric_status,
         ).inc()
+
+    def _writer_window_before_step(
+        self,
+        *,
+        job: MaintenanceJobRecord,
+        stats: Mapping[str, Any],
+        table_ref: str | None,
+        operation: OperationType,
+        engine: str,
+    ) -> WriterWindow | None:
+        """Where the table's external writer is in its cycle, before a data rewrite starts.
+
+        Fails open: a catalog that cannot be read leaves the rewrite to run as it did before
+        the gate existed, and the commit-conflict handling still covers what it hits.
+        """
+        if self._writer_commit_reader is None or operation not in DATA_REWRITE_OPERATIONS:
+            return None
+        try:
+            window = check_writer_window(
+                self._writer_commit_reader,
+                stats,
+                job.params or {},
+                now_ms=int(time() * 1000),
+            )
+        except Exception as exc:
+            worker_writer_window_total.labels(verdict="probe_failed").inc()
+            logger.warning(
+                "Writer-window check failed for %s; running %s without it: %s",
+                table_ref or job.table_id,
+                operation.value,
+                exc,
+            )
+            return None
+        if window is None:
+            return None
+        worker_writer_window_total.labels(verdict=window.verdict.value).inc()
+        if window.cadence is not None:
+            safe_publish(
+                self._run_events,
+                job.run_id,
+                build_log_line(
+                    run_id=job.run_id,
+                    job_id=job.id,
+                    table_id=job.table_id,
+                    table_ref=table_ref,
+                    operation=operation.value,
+                    engine=engine,
+                    level="info" if window.allows_rewrite else "warning",
+                    message=f"Writer window {window.verdict.value}: {window.reason}",
+                ),
+            )
+        return window
 
     def _preflight_before_step(
         self,
@@ -3204,6 +3306,21 @@ def _table_ref_from_stats(stats: Mapping[str, Any]) -> str | None:
     if schema_name and table_name:
         return f"{schema_name}.{table_name}"
     return None
+
+
+def _worker_plan_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The job's params with the defaults the batch coordinator also sets.
+
+    Spark's rewrite_data_files otherwise picks files below 75% of the target, not the
+    scanner's small-file threshold the table was selected on: a table with 17 small files
+    rewrote 213 of its 310 files (2026-11-14), and 2026-09-24 saw the same thing on the batch
+    path before it was pinned there. A preset value still wins.
+    """
+    from cryo.config import get_settings
+
+    merged = dict(params or {})
+    merged.setdefault("min_file_size_mb", get_settings().scan_small_file_mb)
+    return merged
 
 
 def _shared_location_unknown() -> bool:

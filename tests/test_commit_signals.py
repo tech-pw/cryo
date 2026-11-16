@@ -102,6 +102,35 @@ def test_live_rows_subtract_position_deletes() -> None:
     assert commit_signals([commit], now=NOW)["live_rows"] == 950_000
 
 
+def test_an_hourly_overwrite_writer_is_recorded_as_a_writer_cadence() -> None:
+    merges = [
+        Commit(committed_at=NOW - timedelta(hours=h, minutes=50), operation="overwrite")
+        for h in range(12)
+    ]
+    compactions = [
+        Commit(committed_at=NOW - timedelta(hours=h, minutes=20), operation="replace")
+        for h in range(12)
+    ]
+
+    cadence = commit_signals(merges + compactions, now=NOW)["writer_cadence"]
+
+    assert cadence == {
+        "runs": 12,
+        "interval_minutes": 60.0,
+        "run_span_minutes": 0.0,
+        "last_run_at": "2026-09-24T11:10:00Z",
+    }
+
+
+def test_appends_alone_have_no_writer_cadence() -> None:
+    hourly_appends = [
+        Commit(committed_at=NOW - timedelta(hours=h), operation="append") for h in range(12)
+    ]
+
+    assert commit_signals(hourly_appends, now=NOW)["writer_cadence"] is None
+    assert commit_signals(_daily(8), now=NOW)["writer_cadence"] is None
+
+
 def test_pyiceberg_snapshots_and_go_payload_produce_the_same_commits() -> None:
     snapshots = [
         Snapshot(

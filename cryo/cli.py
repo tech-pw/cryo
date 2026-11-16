@@ -845,6 +845,7 @@ class WorkerRunner(DaemonRunner):
             from cryo.db.session import SessionLocal
             from cryo.worker.orphan_recovery import default_worker_holder_id
             from cryo.worker.worker import AsyncSparkDispatch, Worker
+            from cryo.worker.writer_window import build_live_writer_commit_reader
 
             wiring = self._get_wiring()
 
@@ -870,6 +871,13 @@ class WorkerRunner(DaemonRunner):
                 request_rescan=(
                     _post_maintenance_rescan(wiring)
                     if settings.maintenance_rescan_enabled
+                    else None
+                ),
+                writer_commit_reader=(
+                    build_live_writer_commit_reader(
+                        timeout_seconds=settings.worker_writer_window_probe_timeout_seconds
+                    )
+                    if settings.worker_writer_window_enabled
                     else None
                 ),
             )

@@ -666,6 +666,9 @@ if unpartitioned:
 elif table_total_size_gb <= chunk_size_gb:        # small-table bypass
     if table_small_files >= min_small_files -> 1 full-table OPTIMIZE
     else -> SKIP
+    # chunk_size_gb is first capped at contended_chunk_size_gb (default 4) when the last
+    # scan saw a regular overwrite/delete writer (§9.2), so such a table only takes the
+    # bypass when it is that small.
 else:
     candidates = partitions where small_files_in_partition_count >= min_small_files
     sort by (small_files DESC, size_gb ASC, value DESC)
@@ -1050,6 +1053,68 @@ files", REST "branch main has changed", Trino `ICEBERG_COMMIT_ERROR`) and never 
 `n` is the count of the job's audit rows whose detail starts with `[commit_conflict]`. The count
 comes from the audit log because the reconciler rewrites a deferred job's `error`. A conflict
 mixed with any other failure follows the normal FAILED/PARTIAL path.
+
+### 9.2 Writer window (external writers)
+
+Commit-conflict handling protects Cryo's commit. It does nothing for the writer's commit. A
+copy-on-write `overwrite` (MERGE/UPDATE/DELETE) plans the data files it will replace against the
+snapshot it read. If a rewrite commits a `replace` that removes any of them first, the writer
+fails with "Missing required files to delete". A merge-on-read row delta fails the same way when
+the data files its deletes reference were rewritten. On 2026-11-14 and 2026-11-15 two hourly
+ingestion DAGs failed all three attempts like this. The cause was a single full-table
+`rewrite_data_files` of about 35 GB that committed 34-38 partial-progress groups over 66-112
+minutes.
+
+Pure cadence math lives in `cryo/planner/writer_window.py`. Writer commits are `overwrite` and
+`delete` snapshots: appends never conflict, and `replace` is maintenance. Commits within
+`run_gap_minutes` (10) form one writer run. The cadence is the median gap between run starts,
+over the last `lookback_hours` (24). It needs at least `min_runs` (4) runs and an interval of at
+most `max_interval_minutes` (360). With `lead` the time a writer reads before it commits
+(`min(lead_minutes=15, interval/2)`):
+
+```
+no cadence, or now > last_run_start + 2*interval    -> UNTRACKED (run; writer absent/paused)
+interval - run_span - lead - settle < min_window     -> NO_WINDOW (skip the rewrite)
+now < last_run_end (or start + span) + settle        -> HOLD, retry_at = that + settle
+closes_at = last_run_start + interval - lead
+closes_at - now >= min_window_minutes (20)           -> OPEN until closes_at
+otherwise                                            -> HOLD, retry_at = max(next run + span +
+                                                        settle, now + overdue_poll_minutes)
+```
+
+Three places use it:
+
+- **Planner.** `contended_chunk_size_gb(stats, params)` reads `raw.commit_signals.writer_cadence`.
+  The scanner writes it via `commit_signals()`. Scans from before this change fall back to
+  `data_commits` and `arrival_gap_p50_hours`. When the table has a regular writer, OPTIMIZE and
+  `migrate_partition_spec` cap `chunk_size_gb` at `contended_chunk_size_gb` (default 4 GB) and add
+  a plan note. `effective_optimize_chunk_size_gb` applies the same cap.
+  **Parity note:** this narrows the small-table bypass for writer-contended tables only. Other
+  tables plan exactly as before.
+- **Worker.** Before each statement whose operation is in `DATA_REWRITE_OPERATIONS`, the worker
+  loads the table's snapshot list from the catalog (`LiveCatalogSnapshotProbe.snapshot_commits`,
+  one `load_table`, no manifests). The operations are optimize, convert_deletes,
+  convert_equality_deletes, expire_data and migrate_partition_spec. Each verdict leads to:
+  - HOLD: the job goes DEFERRED with `writer_window: <reason>; retry_at=<UTC>`. The step ledger
+    skips chunks that already succeeded when the job comes back.
+  - NO_WINDOW: that operation's statements are skipped with a SKIPPED audit row. The job ends
+    PARTIAL if anything else ran, SKIPPED if nothing did.
+  - A catalog read that fails or times out (`worker_writer_window_probe_timeout_seconds`) fails
+    open.
+  The gate is checked again between chunks, so a multi-chunk job yields to the writer.
+- **Governor.** `_still_blocked_reason` keeps a `writer_window:` job deferred until its
+  `retry_at`.
+
+Switches: `CRYO_WORKER_WRITER_WINDOW_ENABLED` (default on). Per preset, `writer_window: false`
+turns the gate and the chunk cap off, and a `writer_window: {...}` mapping overrides any policy
+field (`lead_minutes`, `min_window_minutes`, `contended_chunk_size_gb`, ...). The metric
+`cryo_worker_writer_window_total{verdict}` counts `untracked`, `open`, `hold`, `no_window` and
+`probe_failed`. Native-engine plans (`_run_native_plan`) are not gated yet.
+
+The worker also sets `min_file_size_mb` to `scan_small_file_mb` (89.6) unless the preset sets it,
+as the batch coordinator already did. Without it, Spark's `rewrite_data_files` selected files
+below 75% of the target (192 MB) rather than the scanner's small-file threshold. On 2026-11-14 a
+table with 17 small files rewrote 213 of its 310 files.
 
 ---
 
