@@ -534,6 +534,12 @@ or `cancelled` from any open status.
   and packs at most `maintenance_ops_batch_size` tables per lane (`plan_batched_lanes`).
   Its jobs carry `plan.batch_operations` and are excluded from `job_starts_cooldown`.
   Per-table SQL, audit rows, locks and failure isolation are those of the full pass.
+- Batch lanes resolve each table's catalog config from its **source**, as the worker does:
+  `apply_source_catalog_config` (`cryo/engines/spark/k8s.py`) is shared by
+  `SparkK8sEngine.with_source_config` and the coordinator. The source's URI and warehouse
+  win, and its S3 keys apply when the destination has none (#569). Tables whose sources
+  resolve differently get separate lanes (`LaneSpec.cfg`), with `max_lanes` split across
+  the groups. A table with no source fails with one error and never reaches a lane.
 - Batch runs (`cryo/maintenance/coordinator.py`) and smart-maintenance runs are created
   `running` directly. Scan runs use `accepted | queued | running` and their own terminal
   statuses (`cryo/db/repositories/scanner.py`).

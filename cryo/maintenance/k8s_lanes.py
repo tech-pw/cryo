@@ -69,6 +69,8 @@ class LaneSpec:
     cpu_milli: int
     mem_mib: int
     manifest: bytes
+    # The lane's own catalog config (its tables' source, #569); None uses the runner's.
+    cfg: SparkK8sConfig | None = None
 
 
 @dataclass
@@ -377,7 +379,7 @@ class LaneRunner:
             secret, job = build_lane_objects(
                 self._run_id,
                 spec,
-                self._cfg,
+                spec.cfg or self._cfg,
                 catalog=self._catalog,
                 deadline_epoch=deadline_epoch,
                 active_deadline_seconds=active_deadline_seconds,

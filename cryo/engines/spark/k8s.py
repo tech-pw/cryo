@@ -229,6 +229,48 @@ class SparkK8sConfig:
         )
 
 
+def apply_source_catalog_config(
+    cfg: SparkK8sConfig, source_config: Mapping[str, Any]
+) -> SparkK8sConfig:
+    """The Spark config for a table of this source: the worker and batch lanes share it (#569).
+
+    The source's URI and warehouse always win. The destination's are a static default
+    shared by every catalog routed to it, and they go stale when a metastore moves
+    (2026-10-22: a leftover destination catalog_uri kept every Spark job on a retired HMS
+    after the source was repointed). A REST catalog with no URI falls back to
+    spark_catalog and dies with "Invalid uri for http client: null" (#143). The source's
+    S3 keys apply only when the destination has none: keys set on the destination are an
+    operator override. Matches native_admit._fallback_engine_config.
+    """
+    changes: dict[str, Any] = {}
+    source_uri = source_config.get("uri") or source_config.get("catalog_uri")
+    if isinstance(source_uri, str) and source_uri:
+        changes["catalog_uri"] = source_uri
+    source_warehouse = source_config.get("warehouse")
+    if isinstance(source_warehouse, str) and source_warehouse:
+        changes["catalog_warehouse"] = source_warehouse
+    access_key = source_config.get("s3.access-key-id")
+    secret_key = source_config.get("s3.secret-access-key")
+    if (
+        isinstance(access_key, str)
+        and access_key
+        and isinstance(secret_key, str)
+        and secret_key
+        and not (cfg.s3_access_key and cfg.s3_secret_key)
+    ):
+        changes["s3_access_key"] = access_key
+        changes["s3_secret_key"] = secret_key
+    return replace(cfg, **changes) if changes else cfg
+
+
+def catalog_needs_uri(catalog_impl: str) -> bool:
+    """REST, Hive and JDBC catalogs cannot connect without a URI; Glue finds its endpoint."""
+    impl = catalog_impl.strip().lower()
+    return impl in {"rest", "hive", "jdbc"} or impl.endswith(
+        ("restcatalog", "hivecatalog", "jdbccatalog")
+    )
+
+
 def _parse_tolerations(raw: Any) -> tuple[dict[str, str], ...]:
     """``key=value:Effect`` or ``key:Effect``, comma-separated, or a list of toleration dicts."""
     if isinstance(raw, (list, tuple)):

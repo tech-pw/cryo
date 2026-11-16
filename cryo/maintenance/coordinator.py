@@ -23,7 +23,11 @@ from cryo.db.models import AuditLog, Destination, MaintenanceJob, MaintenanceRun
 from cryo.db.repositories.operation_exclusions import excluded_operations_by_table
 from cryo.domain.enums import EngineType, JobStatus, OperationType
 from cryo.engines.base import is_metastore_unreachable_error
-from cryo.engines.spark.k8s import SparkK8sConfig
+from cryo.engines.spark.k8s import (
+    SparkK8sConfig,
+    apply_source_catalog_config,
+    catalog_needs_uri,
+)
 from cryo.engines.spark.procedure_metrics import bytes_freed_from_procedure, expire_effect
 from cryo.engines.spark.sizing import lightweight_driver_heap_mib
 from cryo.maintenance.ernest import Calibration, DurationSample, calibrate
@@ -593,9 +597,23 @@ class BatchMaintenance:
                 )
             session.commit()
 
+        lane_configs, config_errors = self._source_configs(
+            self._spark_config(destination), [planned.table_id for _, planned in work]
+        )
+        for table_id, error in config_errors.items():
+            outcomes[table_id].status, outcomes[table_id].error = JobStatus.FAILED, error
+        if config_errors:
+            logger.error(
+                "%d table(s) have no usable catalog config and will not run: %s",
+                len(config_errors),
+                next(iter(config_errors.values())),
+            )
+
         lock_ttl = int((deadline - self._clock()).total_seconds()) + 1800
         runnable: list[tuple[RankedCandidate, TableWork]] = []
         for item, planned in work:
+            if planned.table_id in config_errors:
+                continue
             outcome = outcomes[planned.table_id]
             if not self._locks.acquire_table_lock(
                 str(planned.table_id), str(outcome.job_id), lock_ttl
@@ -612,7 +630,14 @@ class BatchMaintenance:
         try:
             if runnable:
                 runner = self._launch(
-                    run_id, destination, catalog, runnable, outcomes, deadline, report
+                    run_id,
+                    destination,
+                    catalog,
+                    runnable,
+                    outcomes,
+                    deadline,
+                    report,
+                    lane_configs=lane_configs,
                 )
                 self._watch(
                     runner,
@@ -689,16 +714,19 @@ class BatchMaintenance:
             row = rows[0]
             return _Destination(id=row.id, engine=row.engine, config=dict(row.config or {}))
 
-    def _plan_lanes(self, ranked: Sequence[RankedCandidate]) -> list[Lane]:
+    def _plan_lanes(
+        self, ranked: Sequence[RankedCandidate], limits: LaneLimits | None = None
+    ) -> list[Lane]:
+        limits = limits or self._lane_limits()
         if not self._operations:
             return plan_lanes(
                 [LaneTable(item.candidate.table_id, item.candidate.rewrite_gb) for item in ranked],
-                self._lane_limits(),
+                limits,
             )
         files = {item.candidate.table_id: item.candidate.total_files for item in ranked}
         return plan_batched_lanes(
             [item.candidate.table_id for item in ranked],
-            self._lane_limits(),
+            limits,
             max_tables_per_lane=self._settings.maintenance_ops_batch_size,
             # The heap the per-job path gives expire/orphan for this file count.
             mem_mib=lambda tid: lane_mem_for_heap(
@@ -844,20 +872,45 @@ class BatchMaintenance:
         return {**params, "max_chunks": max(1, int(cap_gb // chunk_gb))}
 
     def _spark_config(self, destination: _Destination) -> SparkK8sConfig:
-        cfg = SparkK8sConfig.from_config(destination.config)
-        if cfg.s3_access_key and cfg.s3_secret_key:
-            return cfg
-        from cryo.db.models import Source
+        return SparkK8sConfig.from_config(destination.config)
+
+    def _source_configs(
+        self, base: SparkK8sConfig, table_ids: Sequence[uuid.UUID]
+    ) -> tuple[dict[uuid.UUID, SparkK8sConfig], dict[uuid.UUID, str]]:
+        """Each table's Spark config from its own source, as the worker builds it (#569).
+
+        Returns (config by table, error by table). A table with no source row is an error
+        rather than a lane that dies once per table. A catalog that needs a URI and gets none
+        from either side is only logged: the image's own hive-site.xml may still supply one.
+        """
+        from cryo.db.models import Source, Table
 
         with self._session_factory() as session:
-            sources = list(session.scalars(select(Source).where(Source.enabled.is_(True))))
-        if len(sources) == 1:
-            source_config = sources[0].config or {}
-            access = source_config.get("s3.access-key-id")
-            secret = source_config.get("s3.secret-access-key")
-            if isinstance(access, str) and access and isinstance(secret, str) and secret:
-                return replace(cfg, s3_access_key=access, s3_secret_key=secret)
-        return cfg
+            rows = session.execute(
+                select(Table.id, Source.name, Source.config)
+                .join(Source, Source.id == Table.source_id)
+                .where(Table.id.in_(list(table_ids)))
+            ).all()
+        found = {row[0]: (row[1], row[2] or {}) for row in rows}
+        configs: dict[uuid.UUID, SparkK8sConfig] = {}
+        errors: dict[uuid.UUID, str] = {}
+        missing_uri: set[str] = set()
+        for table_id in table_ids:
+            if table_id not in found:
+                errors[table_id] = "no source maps to this table; cannot resolve its catalog"
+                continue
+            source_name, source_config = found[table_id]
+            cfg = apply_source_catalog_config(base, source_config)
+            if catalog_needs_uri(cfg.catalog_impl) and not cfg.catalog_uri:
+                missing_uri.add(source_name)
+            configs[table_id] = cfg
+        for source_name in sorted(missing_uri):
+            logger.warning(
+                "Source %s has no catalog URI and the destination sets none; its lanes rely "
+                "on the image's catalog defaults",
+                source_name,
+            )
+        return configs, errors
 
     def _launch(
         self,
@@ -868,9 +921,29 @@ class BatchMaintenance:
         outcomes: dict[uuid.UUID, TableOutcome],
         deadline: datetime,
         report: RunReport,
+        *,
+        lane_configs: Mapping[uuid.UUID, SparkK8sConfig] | None = None,
     ) -> LaneRunnerLike:
         by_id = {planned.table_id: planned for _, planned in runnable}
-        lanes = self._plan_lanes([item for item, _ in runnable])
+        base = self._spark_config(destination)
+        configs = lane_configs or {}
+        # A lane runs one catalog connection, so tables whose sources resolve to different
+        # catalog configs get separate lanes. One shared config (the usual case) plans as one.
+        groups: dict[tuple[Any, ...], tuple[SparkK8sConfig, list[RankedCandidate]]] = {}
+        for item, planned in runnable:
+            cfg = configs.get(planned.table_id, base)
+            key = (cfg.catalog_uri, cfg.catalog_warehouse, cfg.s3_access_key, cfg.s3_secret_key)
+            groups.setdefault(key, (cfg, []))[1].append(item)
+        limits = self._lane_limits()
+        if len(groups) > 1:
+            limits = replace(limits, max_lanes=max(1, limits.max_lanes // len(groups)))
+        lanes: list[Lane] = []
+        lane_cfg: dict[int, SparkK8sConfig] = {}
+        for cfg, items in groups.values():
+            for lane in self._plan_lanes(items, limits):
+                lane.index = len(lanes)
+                lanes.append(lane)
+                lane_cfg[lane.index] = cfg
         specs: list[LaneSpec] = []
         for lane in lanes:
             lane_work = [by_id[t.table_id] for t in lane.tables]
@@ -886,6 +959,7 @@ class BatchMaintenance:
                         lane.index,
                         lane_work,
                     ),
+                    cfg=lane_cfg[lane.index],
                 )
             )
             report.lanes.append(
@@ -900,7 +974,7 @@ class BatchMaintenance:
                         job.engine_ref = name
                         job.replica = name
             session.commit()
-        runner = self._lane_runner_factory(run_id, self._spark_config(destination), catalog)
+        runner = self._lane_runner_factory(run_id, base, catalog)
         now = self._clock()
         runner.launch(
             specs,
@@ -1030,6 +1104,7 @@ class BatchMaintenance:
                 index,
                 [work[o.table_id] for o in waiting],
             ),
+            cfg=dead.spec.cfg,
         )
         name = lane_names(run_id, index)
         with self._session_factory() as session:
