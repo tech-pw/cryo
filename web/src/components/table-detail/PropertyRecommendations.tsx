@@ -21,6 +21,7 @@ import {
   getPropertyRecommendations,
   type PropertyRecommendationRead
 } from "../../api/client";
+import { usePropertyChangeJob } from "../../hooks/usePropertyChangeJob";
 import { useAuth } from "../../lib/auth";
 import { useWriteControl } from "../../lib/useWriteControl";
 import { useTableDetailContext } from "../../pages/table-detail/TableDetailContext";
@@ -40,6 +41,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Skeleton } from "../ui/skeleton";
+import { PropertyChangeStatus } from "./PropertyChangeStatus";
 
 const tierVariant = {
   tier1: "success",
@@ -90,6 +92,18 @@ export const PropertyRecommendations = () => {
     enabled: Boolean(tableId)
   });
 
+  const refreshAfterChange = () => {
+    void queryClient.invalidateQueries({ queryKey: ["property-recommendations", tableId] });
+    void queryClient.invalidateQueries({ queryKey: ["table", tableId] });
+    void queryClient.invalidateQueries({ queryKey: ["table-audit", tableId] });
+  };
+
+  const propertyJob = usePropertyChangeJob((job, outcome, error) => {
+    if (outcome === "succeeded") toast.success(`${job.label} applied`);
+    else toast.error(`${job.label} failed${error ? `: ${error}` : ""}`);
+    refreshAfterChange();
+  });
+
   const applyMutation = useMutation({
     mutationFn: (item: PropertyRecommendationRead) =>
       applyTableProperties(api, tableId, {
@@ -97,15 +111,25 @@ export const PropertyRecommendations = () => {
         confirm_risky: item.needs_confirmation
       }),
     onSuccess: (result, item) => {
-      toast.success(
-        `${item.property_key} set to ${formatPropertyValue(result.applied[item.property_key])}`
-      );
-      void queryClient.invalidateQueries({ queryKey: ["property-recommendations", tableId] });
-      void queryClient.invalidateQueries({ queryKey: ["table", tableId] });
-      void queryClient.invalidateQueries({ queryKey: ["table-audit", tableId] });
+      const value = formatPropertyValue(result.applied[item.property_key]);
+      if (result.status === "queued" && result.job_id) {
+        // v3 table: the change runs as an engine job (#560). Follow it instead of claiming done.
+        propertyJob.follow({
+          jobId: result.job_id,
+          runId: result.run_id,
+          label: `${item.property_key} = ${value}`,
+          key: item.property_key
+        });
+        toast.info(`Applying ${item.property_key} through ${result.engine}…`);
+        void queryClient.invalidateQueries({ queryKey: ["table-audit", tableId] });
+        return;
+      }
+      toast.success(`${item.property_key} set to ${value}`);
+      refreshAfterChange();
     },
     onError: (error: Error) => toast.error(error.message)
   });
+  const applyingKey = propertyJob.pending?.key ?? null;
 
   const layoutMutation = useMutation({
     mutationFn: async (item: PropertyRecommendationRead) => {
@@ -148,20 +172,23 @@ export const PropertyRecommendations = () => {
       );
     }
     if (item.action === "apply" && item.recommended_value) {
+      const applying = applyingKey === item.property_key;
       return (
         <>
           <Button
             size="sm"
             variant="primary"
-            loading={applyMutation.isPending && applyMutation.variables?.property_key === item.property_key}
-            disabled={!applyAccess.allowed}
+            loading={
+              applying || (applyMutation.isPending && applyMutation.variables?.property_key === item.property_key)
+            }
+            disabled={!applyAccess.allowed || Boolean(applyingKey)}
             title={applyAccess.reason ?? undefined}
             onClick={() => {
               if (!applyAccess.allowed) return;
               confirmApply(item);
             }}
           >
-            Apply
+            {applying ? "Applying…" : "Apply"}
           </Button>
           {applyAccess.reason ? (
             <span className="mt-1 block max-w-48 text-right text-[11px] text-muted-foreground">{applyAccess.reason}</span>
@@ -257,6 +284,7 @@ export const PropertyRecommendations = () => {
           onRetry={() => void recommendations.refetch()}
           skeleton={<PropertyRecommendationsSkeleton />}
         >
+          <PropertyChangeStatus job={propertyJob.pending} status={propertyJob.status} />
           {gcBlocked ? (
             <div
               role="alert"

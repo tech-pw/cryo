@@ -31,6 +31,8 @@ export const GRID_OPERATIONS = [
   "expire_data",
   "expire_snapshots",
   "remove_orphan_files",
+  // A queued table-property change (#560): its own job, never part of maintenance.
+  "set_table_properties",
   STATS_SCAN_OP
 ] as const;
 
@@ -73,6 +75,7 @@ export const OPERATION_SHORT: Record<string, string> = {
   expire_data: "Expire data",
   expire_snapshots: "Expire snapshots",
   remove_orphan_files: "Orphan files",
+  set_table_properties: "Properties",
   [STATS_SCAN_OP]: "Stats scan"
 };
 

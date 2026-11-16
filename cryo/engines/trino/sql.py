@@ -81,6 +81,8 @@ def _render_operation(table_ref: str, operation: Operation, files_ref: str) -> R
         sql = _render_optimize(table_ref, operation)
     elif operation.type is OperationType.OPTIMIZE_MANIFESTS:
         sql = f"ALTER TABLE {table_ref} EXECUTE optimize_manifests"
+    elif operation.type is OperationType.SET_TABLE_PROPERTIES:
+        sql = _render_set_table_properties(table_ref, operation.params)
     elif operation.type is OperationType.COMPUTE_STATISTICS:
         sql = _render_compute_statistics(table_ref, operation.params)
     elif operation.type is OperationType.EXPIRE_DATA:
@@ -364,6 +366,22 @@ def render_set_table_properties(
     Values are rendered as integers only, so nothing from the request reaches the SQL text
     unparsed.
     """
+    name = ".".join(quote_identifier(part) for part in (catalog, schema, table))
+    return _set_properties(name, properties)
+
+
+def _render_set_table_properties(table_ref: str, params: dict[str, Any]) -> str:
+    """Trino's Iceberg connector cannot remove a table property, so a removal is refused
+    here rather than silently dropped. The property route never sends one to Trino."""
+    if params.get("remove"):
+        raise UnsupportedPredicateError(
+            "Trino cannot remove Iceberg table properties; route the change to a Spark destination."
+        )
+    sets = params.get("set") or {}
+    return _set_properties(table_ref, {str(k): str(v) for k, v in dict(sets).items()})
+
+
+def _set_properties(name: str, properties: dict[str, str]) -> str:
     if not properties:
         raise ValueError("no properties to set")
     assignments: list[str] = []
@@ -376,5 +394,4 @@ def render_set_table_properties(
         except ValueError as exc:
             raise ValueError(f"{key} must be an integer, got {value!r}") from exc
         assignments.append(f"{trino_name} = {number}")
-    name = ".".join(quote_identifier(part) for part in (catalog, schema, table))
     return f"ALTER TABLE {name} SET PROPERTIES {', '.join(assignments)}"

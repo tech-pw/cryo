@@ -8,7 +8,12 @@ any commit to a v3 table, including a metadata-only property change
 - Trino: ``ALTER TABLE ... SET PROPERTIES`` only for keys its Iceberg connector maps
   (``cryo.engines.trino.sql.TRINO_ICEBERG_TABLE_PROPERTIES``), and never for removals.
 
-v1/v2 tables keep the PyIceberg path. Setting ``CRYO_PYICEBERG_V3_WRITES=true`` sends v3
+The change runs as a ``set_table_properties`` job on the chosen destination (#560,
+``cryo.table_config.property_jobs``): per-table lock and governor admission like other
+engine work, so the HTTP request never waits on a Spark driver. The engine renderers
+(``engines/spark/sql.py``, ``engines/trino/sql.py``) own the DDL.
+
+v1/v2 tables keep the synchronous PyIceberg path. Setting ``CRYO_PYICEBERG_V3_WRITES=true`` sends v3
 tables back to PyIceberg once Cryo pins a release that writes v3 metadata.
 """
 
@@ -23,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from cryo.db.models import Destination, Source, Table, TableStats
-from cryo.domain.enums import EngineType, OperationType
+from cryo.domain.enums import EngineType
 
 PYICEBERG_ROUTE = "pyiceberg"
 ENGINE_ROUTE = "engine"
@@ -39,12 +44,6 @@ class NoPropertyRouteError(Exception):
 
     def __init__(self, message: str = NO_ROUTE_MESSAGE) -> None:
         super().__init__(message)
-
-
-class EnginePropertyApplyError(Exception):
-    def __init__(self, message: str, *, engine: str | None = None) -> None:
-        super().__init__(message)
-        self.engine = engine
 
 
 @dataclass(frozen=True)
@@ -210,73 +209,6 @@ def resolve_property_route(
     if source is None:
         return None
     return choose_route(source, candidate_destinations(session, table), set_keys, remove_keys)
-
-
-def render_statements(
-    route: PropertyRoute,
-    schema: str,
-    table: str,
-    set_properties: Mapping[str, str],
-    remove_properties: Sequence[str],
-) -> list[str]:
-    if route.engine is EngineType.SPARK_EMR:
-        from cryo.engines.spark import sql as spark_sql
-
-        out: list[str] = []
-        if set_properties:
-            out.append(
-                spark_sql.render_set_table_properties(
-                    route.catalog, schema, table, dict(set_properties)
-                )
-            )
-        if remove_properties:
-            out.append(
-                spark_sql.render_unset_table_properties(
-                    route.catalog, schema, table, remove_properties
-                )
-            )
-        return out
-    from cryo.engines.trino import sql as trino_sql
-
-    if remove_properties:
-        raise EnginePropertyApplyError("Trino cannot remove Iceberg table properties")
-    return [
-        trino_sql.render_set_table_properties(route.catalog, schema, table, dict(set_properties))
-    ]
-
-
-def apply_via_engine(
-    route: PropertyRoute,
-    schema: str,
-    table: str,
-    set_properties: Mapping[str, str],
-    remove_properties: Sequence[str] = (),
-) -> list[str]:
-    """Run the DDL on the route's destination through the engine's own ``execute``. Returns
-    the statements run; raises ``EnginePropertyApplyError`` on the first failure."""
-    from cryo.engines.base import RenderedStatement
-    from cryo.engines.factory import create_engine
-
-    statements = render_statements(route, schema, table, set_properties, remove_properties)
-    engine = create_engine(route.engine, route.config)
-    for sql in statements:
-        # The engines key retries, sizing and metrics off an OperationType. A property change
-        # is metadata-only like a manifest rewrite, so it carries that type; nothing here
-        # reads procedure metrics from it.
-        stmt = RenderedStatement(
-            action=OperationType.OPTIMIZE_MANIFESTS,
-            sql=sql,
-            engine=route.engine,
-            metadata={"catalog": route.catalog, "statement_kind": "table_properties"},
-        )
-        result = engine.execute(stmt)
-        if not result.ok:
-            raise EnginePropertyApplyError(
-                f"{route.engine.value} destination {route.destination_name} failed: "
-                f"{result.error or 'unknown error'}",
-                engine=route.engine.value,
-            )
-    return statements
 
 
 @dataclass(frozen=True)

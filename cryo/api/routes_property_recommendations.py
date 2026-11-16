@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from cryo.api.deps import SessionDep, require_editor, require_viewer
@@ -16,11 +16,11 @@ from cryo.scanner.property_recommendations import (
 )
 from cryo.table_config.engine_route import (
     NO_ROUTE_MESSAGE,
-    EnginePropertyApplyError,
     NoPropertyRouteError,
     property_route_status,
 )
 from cryo.table_config.models import PropertyRouteRead
+from cryo.table_config.property_jobs import PropertyChangeInProgressError
 
 router = APIRouter(prefix="/api/v1", tags=["tables"])
 ViewerPrincipalDep = Annotated[Principal, Depends(require_viewer)]
@@ -69,6 +69,11 @@ class ApplyTablePropertiesResponse(BaseModel):
     message: str
     route: Literal["pyiceberg", "engine"] = "pyiceberg"
     engine: str = "pyiceberg"
+    # "queued" (HTTP 202) on the engine route (#560): the change runs as a job; follow
+    # job_id. audit_log_id is then the QUEUED audit row, and the worker audits the result.
+    status: Literal["applied", "queued"] = "applied"
+    run_id: uuid.UUID | None = None
+    job_id: uuid.UUID | None = None
 
 
 @router.get(
@@ -123,12 +128,14 @@ def get_property_recommendations(
 @router.post(
     "/tables/{table_id}/properties/apply",
     response_model=ApplyTablePropertiesResponse,
+    responses={202: {"model": ApplyTablePropertiesResponse, "description": "Queued as a job"}},
 )
 def apply_table_properties_endpoint(
     table_id: uuid.UUID,
     payload: ApplyTablePropertiesRequest,
     session: SessionDep,
     principal: EditorPrincipalDep,
+    response: Response,
 ) -> ApplyTablePropertiesResponse:
     get_scoped_resource(session, Table, table_id, resource_type="Table")
 
@@ -147,16 +154,36 @@ def apply_table_properties_endpoint(
             table_id,
             payload.properties,
             confirm_risky=payload.confirm_risky,
+            actor=principal.subject,
+            note=payload.note,
         )
     except NoPropertyRouteError as exc:
         raise HTTPException(status_code=409, detail=str(exc) or NO_ROUTE_MESSAGE) from exc
+    except PropertyChangeInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except EnginePropertyApplyError as exc:
-        _audit_failure(session, table_id, payload, principal, str(exc), exc.engine)
-        raise HTTPException(status_code=502, detail=f"Property apply failed: {exc}") from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Property apply failed: {exc}") from exc
+
+    if result.queued is not None:
+        response.status_code = 202
+        queued = result.queued
+        return ApplyTablePropertiesResponse(
+            table_id=table_id,
+            applied=result.applied,
+            audit_log_id=queued.audit_ids[0] if queued.audit_ids else 0,
+            message=(
+                f"Applying {len(result.applied)} table property(ies) through {queued.engine} "
+                f"({queued.destination}). The change runs as a job; its result lands in the "
+                "audit log and the table's activity."
+            ),
+            route="engine",
+            engine=queued.engine,
+            status="queued",
+            run_id=queued.run_id,
+            job_id=queued.job_id,
+        )
 
     applied = result.applied
     stats = session.get(TableStats, table_id)
@@ -206,26 +233,3 @@ def apply_table_properties_endpoint(
         route="engine" if result.route == "engine" else "pyiceberg",
         engine=result.engine,
     )
-
-
-def _audit_failure(
-    session: SessionDep,
-    table_id: uuid.UUID,
-    payload: ApplyTablePropertiesRequest,
-    principal: Principal,
-    error: str,
-    engine: str | None,
-) -> None:
-    detail = " ".join(f"{k}={v}" for k, v in sorted(payload.properties.items()))
-    session.add(
-        AuditLog(
-            table_id=table_id,
-            action="apply_table_properties",
-            status="FAILED",
-            engine=engine,
-            detail=f"{detail} route=engine engine={engine} error={error}"[:4000],
-            result_metrics={"route": "engine", "engine": engine},
-            actor=principal.subject,
-        )
-    )
-    session.commit()

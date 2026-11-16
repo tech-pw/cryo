@@ -24,6 +24,7 @@ SUPPORTED_OPS: frozenset[OperationType] = frozenset(
         OperationType.OPTIMIZE,
         OperationType.OPTIMIZE_MANIFESTS,
         OperationType.EXPIRE_DATA,
+        OperationType.SET_TABLE_PROPERTIES,
     }
 )
 

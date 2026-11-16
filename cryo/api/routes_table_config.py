@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from cryo.api.deps import SessionDep, require_admin, require_operator, require_viewer
 from cryo.api.schemas import TableLifecycleResponse, TableLifecycleWrite
@@ -128,16 +128,24 @@ def preview_table_config(
     )
 
 
-@router.post("/tables/{table_id}/config/apply", response_model=ConfigApplyResponse)
+@router.post(
+    "/tables/{table_id}/config/apply",
+    response_model=ConfigApplyResponse,
+    responses={202: {"model": ConfigApplyResponse, "description": "Queued as a job"}},
+)
 def apply_table_config(
     table_id: uuid.UUID,
     payload: ConfigApplyRequest,
     session: SessionDep,
     principal: OperatorPrincipalDep,
+    response: Response,
 ) -> ConfigApplyResponse:
     """Apply a batch of setting changes. Properties go to the catalog in one metadata commit;
     Cryo retention settings become per-table preset overrides (admin only). Every change is
-    audited, and high-risk batches need ``confirm`` plus a written ``reason``."""
+    audited, and high-risk batches need ``confirm`` plus a written ``reason``.
+
+    On an Iceberg v3 table the catalog part runs as a job on an engine destination (#560):
+    the response is 202 with ``status="queued"`` and a ``job_id`` to follow."""
     inputs = _inputs(session, table_id)
     try:
         outcome = service.apply_config(
@@ -153,10 +161,26 @@ def apply_table_config(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     refreshed_inputs = _inputs(session, table_id)
     count = len(outcome.applied)
+    plural = "s" if count != 1 else ""
+    if outcome.queued is not None:
+        response.status_code = 202
+        queued = outcome.queued
+        return ConfigApplyResponse(
+            applied=outcome.applied,
+            audit_log_ids=outcome.audit_ids,
+            message=(
+                f"Applying {count} change{plural} through {queued.engine} "
+                f"({queued.destination}). The change runs as a job."
+            ),
+            config=service.build_response(refreshed_inputs, outcome.config),
+            status="queued",
+            run_id=queued.run_id,
+            job_id=queued.job_id,
+        )
     return ConfigApplyResponse(
         applied=outcome.applied,
         audit_log_ids=outcome.audit_ids,
-        message=f"Applied {count} change{'s' if count != 1 else ''}.",
+        message=f"Applied {count} change{plural}.",
         config=service.build_response(
             refreshed_inputs, outcome.config, catalog_error=outcome.catalog_error
         ),

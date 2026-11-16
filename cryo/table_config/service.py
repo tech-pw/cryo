@@ -62,6 +62,12 @@ from cryo.table_config.operations import (
     preset_mode,
 )
 from cryo.table_config.property_docs import describe_property
+from cryo.table_config.property_jobs import (
+    QUEUED_STATUS,
+    PropertyChangeInProgressError,
+    QueuedPropertyChange,
+    enqueue_property_change,
+)
 from cryo.table_config.recommend import advise
 from cryo.table_config.risk import Assessment, Risk, assess, max_risk, normalize
 from cryo.table_config.settings import (
@@ -661,42 +667,58 @@ class CommitRoute:
 PYICEBERG_COMMIT = CommitRoute(route=engine_route.PYICEBERG_ROUTE, engine="pyiceberg")
 
 
-def commit_catalog_write(
+@dataclass(frozen=True)
+class EngineCommit:
+    """A v3 catalog write resolved to an engine destination, not yet run (#560)."""
+
+    route: engine_route.PropertyRoute
+    set_properties: dict[str, str]
+    remove_properties: tuple[str, ...]
+
+    @property
+    def commit_route(self) -> CommitRoute:
+        return CommitRoute(
+            route=engine_route.ENGINE_ROUTE,
+            engine=self.route.engine.value,
+            destination=self.route.destination_name,
+        )
+
+
+def resolve_engine_commit(
+    session: Session | None,
     inputs: TableInputs,
     write: CatalogWrite,
     *,
-    session: Session | None = None,
     current_format_version: int | None = None,
-) -> CommitRoute:
-    """Commit through PyIceberg, or through an engine when the table is (or becomes) v3."""
-    if inputs.source is None:
-        raise CatalogReadError("Table has no source catalog")
-    if not engine_route.pyiceberg_can_commit(current_format_version, write.format_version):
-        return _commit_via_engine(session, inputs, write)
-    _commit_pyiceberg(inputs, write)
-    return PYICEBERG_COMMIT
+) -> EngineCommit | None:
+    """The engine route for a write PyIceberg cannot commit (the table is, or becomes, v3).
 
-
-def _commit_via_engine(
-    session: Session | None, inputs: TableInputs, write: CatalogWrite
-) -> CommitRoute:
+    None means PyIceberg commits it. Raises ``NoPropertyRouteError`` when no destination can.
+    """
+    if engine_route.pyiceberg_can_commit(current_format_version, write.format_version):
+        return None
     if session is None:
         raise engine_route.NoPropertyRouteError()
-    table = inputs.table
     sets = dict(write.set_properties)
     if write.format_version is not None:
         sets["format-version"] = str(write.format_version)
-    route = engine_route.resolve_property_route(session, table, list(sets), write.remove_properties)
+    route = engine_route.resolve_property_route(
+        session, inputs.table, list(sets), write.remove_properties
+    )
     if route is None:
         raise engine_route.NoPropertyRouteError()
-    engine_route.apply_via_engine(
-        route, table.schema_name, table.table_name, sets, write.remove_properties
+    return EngineCommit(
+        route=route, set_properties=sets, remove_properties=tuple(write.remove_properties)
     )
-    return CommitRoute(
-        route=engine_route.ENGINE_ROUTE,
-        engine=route.engine.value,
-        destination=route.destination_name,
-    )
+
+
+def commit_catalog_write(inputs: TableInputs, write: CatalogWrite) -> CommitRoute:
+    """Commit through PyIceberg. Engine-routed (v3) writes are queued instead, see
+    ``resolve_engine_commit`` and ``cryo.table_config.property_jobs``."""
+    if inputs.source is None:
+        raise CatalogReadError("Table has no source catalog")
+    _commit_pyiceberg(inputs, write)
+    return PYICEBERG_COMMIT
 
 
 def _commit_pyiceberg(inputs: TableInputs, write: CatalogWrite) -> None:
@@ -814,6 +836,8 @@ class ApplyOutcome:
     audit_ids: list[int]
     config: LiveTableConfig | None
     catalog_error: str | None
+    # Set when the catalog part was queued as an engine job (#560).
+    queued: QueuedPropertyChange | None = None
 
 
 def apply_config(
@@ -857,41 +881,45 @@ def apply_config(
     audit_entries: list[AuditLog] = []
 
     commit: CommitRoute | None = None
+    engine_commit: EngineCommit | None = None
     if catalog_items:
         write = plan_catalog_write(catalog_items, ctx)
+        if inputs.source is None:
+            raise ConfigApplyError(502, "Catalog commit failed: Table has no source catalog")
         try:
-            commit = commit_catalog_write(
-                inputs, write, session=session, current_format_version=ctx.format_version
+            engine_commit = resolve_engine_commit(
+                session, inputs, write, current_format_version=ctx.format_version
             )
         except engine_route.NoPropertyRouteError as exc:
             live.forget(inputs.table.id)
             raise ConfigApplyError(409, str(exc)) from exc
-        except (CatalogReadError, engine_route.EnginePropertyApplyError) as exc:
-            failed = (
-                CommitRoute(route=engine_route.ENGINE_ROUTE, engine=exc.engine or "engine")
-                if isinstance(exc, engine_route.EnginePropertyApplyError)
-                else None
-            )
-            for item in catalog_items:
-                audit_change(
-                    session,
-                    table_id=inputs.table.id,
-                    item=item,
-                    actor=actor,
-                    reason=reason,
-                    status="FAILED",
-                    error=str(exc)[:500],
-                    commit=failed,
-                )
-            session.commit()
-            raise ConfigApplyError(502, f"Catalog commit failed: {exc}") from exc
-        finally:
-            live.forget(inputs.table.id)
+        if engine_commit is not None:
+            commit = engine_commit.commit_route
+        else:
+            try:
+                commit = commit_catalog_write(inputs, write)
+            except CatalogReadError as exc:
+                for item in catalog_items:
+                    audit_change(
+                        session,
+                        table_id=inputs.table.id,
+                        item=item,
+                        actor=actor,
+                        reason=reason,
+                        status="FAILED",
+                        error=str(exc)[:500],
+                    )
+                session.commit()
+                raise ConfigApplyError(502, f"Catalog commit failed: {exc}") from exc
+            finally:
+                live.forget(inputs.table.id)
 
     if cryo_items:
         apply_overrides(session, inputs, cryo_items)
 
+    catalog_ids = {id(item) for item in catalog_items}
     for item in pending:
+        queued_item = engine_commit is not None and id(item) in catalog_ids
         audit_entries.append(
             audit_change(
                 session,
@@ -899,9 +927,39 @@ def apply_config(
                 item=item,
                 actor=actor,
                 reason=reason,
-                status="OK",
+                status=QUEUED_STATUS if queued_item else "OK",
                 commit=commit,
             )
+        )
+
+    if engine_commit is not None:
+        catalog_audits = [
+            entry
+            for entry, item in zip(audit_entries, pending, strict=True)
+            if id(item) in catalog_ids
+        ]
+        try:
+            queued = enqueue_property_change(
+                session,
+                inputs.table,
+                engine_commit.route,
+                set_properties=engine_commit.set_properties,
+                remove_properties=engine_commit.remove_properties,
+                actor=actor,
+                trigger="web-table-config",
+                origin="config",
+                audit_rows=catalog_audits,
+            )
+        except PropertyChangeInProgressError as exc:
+            raise ConfigApplyError(409, str(exc)) from exc
+        finally:
+            live.forget(inputs.table.id)
+        return ApplyOutcome(
+            applied=pending,
+            audit_ids=[int(entry.id) for entry in audit_entries],
+            config=config,
+            catalog_error=None,
+            queued=queued,
         )
 
     refreshed: LiveTableConfig | None = None

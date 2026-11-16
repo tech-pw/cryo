@@ -557,6 +557,7 @@ class OperationType(str, Enum):
     REWRITE_POSITION_DELETES = "rewrite_position_deletes"
     EXPIRE_DATA = "expire_data"
     MIGRATE_PARTITION_SPEC = "migrate_partition_spec"  # on request only, approval-gated (§6.5)
+    SET_TABLE_PROPERTIES = "set_table_properties"  # v3 property change job; in no mode, not in CORRECT_ORDER (#560)
 
 class EngineType(str, Enum):
     TRINO = "trino"
@@ -874,21 +875,41 @@ EMR Serverless adapter (`engines/spark/emr.py`): `boto3.client('emr-serverless')
 sparkSubmitParameters: "--conf spark.sql.catalog... "}, ...})`; poll `get_job_run` until terminal;
 fetch logs from the configured S3 location. Capacity = configured slot cap minus in-flight runs.
 
-**Table properties on format-version 3 tables (#557).** PyIceberg 0.11 raises
+**Table properties on format-version 3 tables (#557, #560).** PyIceberg 0.11 raises
 `NotImplementedError` on any commit to a v3 table, so `cryo/table_config/engine_route.py`
-sends v3 property writes (the Path to A / Property recommendations apply and the Config tab
-apply) through an engine. Rendering is per dialect: `engines/spark/sql.py::render_set_table_properties`
-/ `render_unset_table_properties` (backtick identifiers, `\`-escaped string literals) and
-`engines/trino/sql.py::render_set_table_properties` (only the keys in
-`TRINO_ICEBERG_TABLE_PROPERTIES`, values rendered as integers, never removals). The
-destination is the effective preset's destination if capable, then its
-`sql_fallback_destination_id`, then any enabled Spark destination, then a Trino destination
-bound to the source. The statement runs through the engine's normal `execute()` carrying
-`OperationType.OPTIMIZE_MANIFESTS` (metadata-only) with `statement_kind=table_properties`.
-No capable destination returns 409 and the UI hides the apply action. Audit rows record
-`engine` and `result_metrics.route`. v1/v2 tables keep PyIceberg. `CRYO_PYICEBERG_V3_WRITES=true`
-switches v3 back to PyIceberg once a release writes v3. The property autopilot skips v3
-tables (no engine job from a background sweep).
+picks an engine destination for v3 property writes (the Path to A / Property recommendations
+apply and the Config tab apply). The destination is the effective preset's destination if
+capable, then its `sql_fallback_destination_id`, then any enabled Spark destination, then a
+Trino destination bound to the source. No capable destination returns 409 and the UI hides
+the apply action.
+
+The change is not run inside the request (#560). `cryo/table_config/property_jobs.py`
+creates a one-table adhoc run (no preset; `summary.operations = ["set_table_properties"]`,
+`summary.table_properties = {set, remove, origin}`) and one job on the route's destination
+(`operations = ["set_table_properties"]`, `dedupe_key = "set_table_properties"`,
+`force_admit = true`), writes a `QUEUED` audit row carrying the job id, commits, and
+enqueues. The API answers **202** with `status = "queued"`, `run_id` and `job_id`. A second
+apply while one is active hits `ux_jobs_active_table_ops` and returns 409. The governor
+admits it like other engine work: engine capacity, the per-table lock, pause, ABAC, PII and
+QPP all apply; `force_admit` skips only the maintenance scheduling gates (cooldown, off-peak,
+deadline, fleet GB budget), and the ROI gate skips property jobs. `job_store._job_record`
+copies `summary.table_properties` into the job params; `build_execution_plan` sees
+`requested_operations = ["set_table_properties"]` and calls
+`planner/table_properties.py::build_property_plan`: one `SET_TABLE_PROPERTIES` operation with
+`{"set": {...}}` and one with `{"remove": [...]}`, nothing else. Renderers:
+`engines/spark/sql.py::_render_set_table_properties` (`ALTER TABLE ... SET TBLPROPERTIES` /
+`UNSET TBLPROPERTIES IF EXISTS`, `\`-escaped literals) and
+`engines/trino/sql.py::_render_set_table_properties` (only the keys in
+`TRINO_ICEBERG_TABLE_PROPERTIES`, integer values, removals refused). Spark sizing is the
+flat lightweight profile in local mode (`sizing._LIGHTWEIGHT_OPS`), and the Spark engine
+does not retry a `ValidationException` / `AnalysisException` / `IllegalArgumentException`
+for this operation. The worker audits each statement as `set_table_properties` and requests
+the usual post-run rescan, which refreshes the stored properties. A finished property job
+does not start the nightly cooldown (`selection.job_starts_cooldown`), and it is not a
+reclaim action. The UI shows "Applying…" and polls `GET /jobs/{id}` until the job is
+terminal. v1/v2 tables keep the synchronous PyIceberg path (200).
+`CRYO_PYICEBERG_V3_WRITES=true` switches v3 back to PyIceberg once a release writes v3. The
+property autopilot skips v3 tables (no engine job from a background sweep).
 
 A tiny PySpark entrypoint (`cryo_spark_runner.py`, shipped to S3) receives the list of `CALL`
 statements (as args/JSON) and executes them with the Iceberg-configured `SparkSession`.

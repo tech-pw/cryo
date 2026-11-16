@@ -19,6 +19,10 @@ class OperationType(StrEnum):
     # Rewrites every file of the partitions still in an older partition spec, so they move
     # into the table's default spec. Planned only on request, and approval-gated (#289).
     MIGRATE_PARTITION_SPEC = "migrate_partition_spec"
+    # A table-property (or format-version) change run as engine DDL, for tables PyIceberg
+    # cannot commit to (Iceberg v3, #557/#560). Not maintenance: in no mode, not in
+    # CORRECT_ORDER, planned only when a job names it.
+    SET_TABLE_PROPERTIES = "set_table_properties"
 
 
 class EngineType(StrEnum):

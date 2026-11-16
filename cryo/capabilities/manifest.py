@@ -178,6 +178,15 @@ _OPERATIONS = (
         ),
         destructive=False,
     ),
+    OperationDefinition(
+        operation=OperationType.SET_TABLE_PROPERTIES,
+        label="Set table properties",
+        description=(
+            "Apply a table-property or format-version change as engine DDL, for tables "
+            "PyIceberg cannot commit to (Iceberg v3). Runs only when a person applies a change."
+        ),
+        destructive=False,
+    ),
 )
 
 _ENGINES = (
@@ -461,6 +470,25 @@ _TRINO_CELLS = (
             "test_trino_renderer_refuses_migration",
         ),
     ),
+    _cell(
+        EngineType.TRINO,
+        OperationType.SET_TABLE_PROPERTIES,
+        SupportStatus.CONDITIONAL,
+        MaturityTier.BETA,
+        ExecutionMode.TRINO_SQL,
+        runtime_conditions=(
+            "Only keys the Trino Iceberg connector maps (format-version, "
+            "commit.retry.num-retries), set and never removed.",
+        ),
+        fallback_engines=(EngineType.SPARK_EMR,),
+        owner="engines/trino",
+        evidence=_evidence(
+            "cryo/engines/trino/sql.py",
+            "_render_set_table_properties",
+            "tests/test_set_table_properties.py",
+            "test_trino_renders_set_table_properties_golden",
+        ),
+    ),
 )
 
 
@@ -517,6 +545,13 @@ def _spark_cell(operation: OperationType) -> OperationCapability:
                 "test_spark_renders_migration_with_rewrite_all_and_filters",
             )
             if operation is OperationType.MIGRATE_PARTITION_SPEC
+            else _evidence(
+                "cryo/engines/spark/sql.py",
+                "_render_set_table_properties",
+                "tests/test_set_table_properties.py",
+                "test_spark_renders_set_table_properties_golden",
+            )
+            if operation is OperationType.SET_TABLE_PROPERTIES
             else _SPARK_EVIDENCE
         ),
     )
@@ -652,6 +687,24 @@ _NATIVE_CELLS = (
         fallback_engines=(EngineType.SPARK_EMR,),
         owner="engines/native",
         evidence=_NATIVE_EVIDENCE,
+    ),
+    _cell(
+        EngineType.NATIVE,
+        OperationType.SET_TABLE_PROPERTIES,
+        SupportStatus.UNSUPPORTED,
+        MaturityTier.BLOCKED,
+        ExecutionMode.NONE,
+        limitations=(
+            "Property changes route to a Spark or Trino destination, never to cryo-engine-go.",
+        ),
+        fallback_engines=(EngineType.SPARK_EMR, EngineType.TRINO),
+        owner="engines/native",
+        evidence=_evidence(
+            "cryo/table_config/engine_route.py",
+            "choose_route",
+            "tests/test_set_table_properties.py",
+            "test_native_destination_is_never_a_property_route",
+        ),
     ),
 )
 

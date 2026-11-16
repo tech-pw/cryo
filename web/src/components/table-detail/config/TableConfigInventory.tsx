@@ -6,11 +6,13 @@ import { toast } from "sonner";
 import { applyTableConfig, getTableConfig, previewTableConfig } from "../../../api/client";
 import type { TableConfigResponse, TableSettingRead } from "../../../api/types";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
+import { usePropertyChangeJob } from "../../../hooks/usePropertyChangeJob";
 import { useAuth } from "../../../lib/auth";
 import { formatTime } from "../../../lib/format";
 import { useWriteControl } from "../../../lib/useWriteControl";
 import { tableKeys } from "../../../pages/table-detail/tableKeys";
 import { AsyncBoundary } from "../../AsyncBoundary";
+import { PropertyChangeStatus } from "../PropertyChangeStatus";
 import { Button } from "../../ui/button";
 import { Input } from "../../ui/input";
 import { Segmented } from "../../ui/segmented";
@@ -90,6 +92,22 @@ export const TableConfigInventory = ({ tableId }: { tableId: string }) => {
     [preview.data, changes.length]
   );
 
+  const invalidateAfterChange = () => {
+    void queryClient.invalidateQueries({ queryKey: ["table-audit", tableId] });
+    void queryClient.invalidateQueries({ queryKey: tableKeys.effectiveParams(tableId, token) });
+    void queryClient.invalidateQueries({ queryKey: tableKeys.effectivePreset(tableId, token) });
+    void queryClient.invalidateQueries({ queryKey: ["property-recommendations", tableId] });
+    void queryClient.invalidateQueries({ queryKey: tableKeys.detail(tableId, token) });
+  };
+
+  const propertyJob = usePropertyChangeJob((job, outcome, error) => {
+    if (outcome === "succeeded") toast.success(`${job.label} applied`);
+    else toast.error(`${job.label} failed${error ? `: ${error}` : ""}`);
+    // The catalog changed under the cached config; read it again.
+    refresh.mutate();
+    invalidateAfterChange();
+  });
+
   const apply = useMutation({
     mutationFn: ({ confirm, reason }: { confirm: boolean; reason: string | null }) =>
       applyTableConfig(api, tableId, { changes, confirm, reason }),
@@ -98,12 +116,20 @@ export const TableConfigInventory = ({ tableId }: { tableId: string }) => {
       setStaged({});
       setEditing(null);
       setReviewOpen(false);
+      if (result.status === "queued" && result.job_id) {
+        // v3 table: the catalog change runs as an engine job (#560).
+        const count = result.applied.length;
+        propertyJob.follow({
+          jobId: result.job_id,
+          runId: result.run_id,
+          label: `${count} setting change${count === 1 ? "" : "s"}`
+        });
+        toast.info(result.message);
+        void queryClient.invalidateQueries({ queryKey: ["table-audit", tableId] });
+        return;
+      }
       toast.success(result.message);
-      void queryClient.invalidateQueries({ queryKey: ["table-audit", tableId] });
-      void queryClient.invalidateQueries({ queryKey: tableKeys.effectiveParams(tableId, token) });
-      void queryClient.invalidateQueries({ queryKey: tableKeys.effectivePreset(tableId, token) });
-      void queryClient.invalidateQueries({ queryKey: ["property-recommendations", tableId] });
-      void queryClient.invalidateQueries({ queryKey: tableKeys.detail(tableId, token) });
+      invalidateAfterChange();
     },
     onError: (error: Error) => toast.error(describeApplyError(error))
   });
@@ -134,6 +160,7 @@ export const TableConfigInventory = ({ tableId }: { tableId: string }) => {
 
   return (
     <div className="tc">
+      <PropertyChangeStatus job={propertyJob.pending} status={propertyJob.status} />
       <AsyncBoundary
         isLoading={config.isLoading}
         isError={Boolean(config.error)}
@@ -263,7 +290,7 @@ export const TableConfigInventory = ({ tableId }: { tableId: string }) => {
         loading={preview.isFetching || !previewFresh}
         settings={settingsByKey}
         adminAllowed={adminAccess.allowed}
-        applying={apply.isPending}
+        applying={apply.isPending || Boolean(propertyJob.pending)}
         onApply={(args) => apply.mutate(args)}
       />
     </div>

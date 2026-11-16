@@ -24,6 +24,7 @@ SUPPORTED_OPS: frozenset[OperationType] = frozenset(
         OperationType.REWRITE_POSITION_DELETES,
         OperationType.EXPIRE_DATA,
         OperationType.MIGRATE_PARTITION_SPEC,
+        OperationType.SET_TABLE_PROPERTIES,
     }
 )
 

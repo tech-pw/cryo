@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -29,7 +30,8 @@ const client = vi.hoisted(() => ({
   getTableConfig: vi.fn(),
   previewTableConfig: vi.fn(),
   applyTableConfig: vi.fn(),
-  putOperationExclusions: vi.fn()
+  putOperationExclusions: vi.fn(),
+  getJob: vi.fn()
 }));
 
 vi.mock("../../../api/client", async (importOriginal) => {
@@ -387,6 +389,46 @@ describe("TableConfigInventory", () => {
       expect(screen.queryByRole("region", { name: "Staged configuration changes" })).not.toBeInTheDocument()
     );
   });
+
+  it("follows a queued v3 apply until its job finishes", async () => {
+    client.applyTableConfig.mockResolvedValue({
+      applied: previewFor("low").changes,
+      audit_log_ids: [1],
+      message: "Applying 1 change through spark_emr (spark). The change runs as a job.",
+      config: response(),
+      status: "queued",
+      run_id: "run-9",
+      job_id: "job-9"
+    });
+    client.getJob.mockResolvedValueOnce({ id: "job-9", status: "running" });
+    client.getJob.mockResolvedValue({ id: "job-9", status: "succeeded" });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <CryoTooltipProvider>
+            <TableConfigInventory tableId="table-1" />
+          </CryoTooltipProvider>
+        </QueryClientProvider>
+      </MemoryRouter>
+    );
+    const row = await screen.findByTestId("setting-write.target-file-size-bytes");
+    fireEvent.click(within(row).getByRole("button", { name: /Stage recommendation/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review and apply" }));
+    const apply = await screen.findByRole("button", { name: "Apply change" });
+    await waitFor(() => expect(apply).toBeEnabled());
+    fireEvent.click(apply);
+
+    const status = await screen.findByTestId("property-change-status");
+    expect(within(status).getByText("Applying…")).toBeInTheDocument();
+    expect(within(status).getByRole("link", { name: "View run" })).toHaveAttribute("href", "/runs/run-9");
+    await waitFor(() => expect(client.getJob).toHaveBeenCalledWith(expect.anything(), "job-9"));
+    await waitFor(() => expect(screen.queryByTestId("property-change-status")).not.toBeInTheDocument(), {
+      timeout: 8000
+    });
+    // The catalog is re-read once the job lands.
+    await waitFor(() => expect(client.getTableConfig).toHaveBeenCalledWith(expect.anything(), "table-1", true));
+  }, 15000);
 
   it("requires acknowledgement and a reason before a high-risk apply", async () => {
     client.previewTableConfig.mockResolvedValue(previewFor("high", "gc.enabled"));

@@ -17,8 +17,9 @@ from cryo.planner.orphan_cadence import (
     estimated_listing_keys,
     orphan_backlog_bytes,
 )
-from cryo.planner.planner import build_plan
+from cryo.planner.planner import _table_ref, build_plan
 from cryo.planner.schema_gates import gate_spark_time_columns
+from cryo.planner.table_properties import build_property_plan, is_property_job
 
 
 class ExecutionDestination(Protocol):
@@ -68,6 +69,10 @@ def build_execution_plan(
     # should run, and the planner adding expire_snapshots to an optimize request
     # submitted a procedure nobody asked for (issue #142, 2026-10-21).
     requested = params.get("requested_operations")
+    if is_property_job(requested):
+        # A property change is its own job and never carries maintenance (#560).
+        property_plan = build_property_plan(_table_ref(stats, plan_params), mode, params)
+        return gate_engine_unsupported(property_plan, destination=destination)
     if isinstance(requested, (list, tuple)) and requested:
         plan_params = {**plan_params, "skip_operations": _skips_for_request(requested)}
     if destination_is_native(destination):
