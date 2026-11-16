@@ -482,10 +482,6 @@
   background: color-mix(in srgb, var(--color-destructive, #dc2626) 7%, transparent);
 }
 
-.ops-workflow-row--failing > td:first-child {
-  box-shadow: inset 3px 0 0 var(--color-destructive, #dc2626);
-}
-
 .ops-workflow-alert {
   display: flex;
   flex-wrap: wrap;
@@ -528,7 +524,7 @@
 
 .ops-workflow-card.is-failing {
   border-color: color-mix(in srgb, var(--color-destructive, #dc2626) 45%, transparent);
-  box-shadow: inset 3px 0 0 var(--color-destructive, #dc2626);
+  background: color-mix(in srgb, var(--color-destructive, #dc2626) 6%, transparent);
 }
 
 .ops-workflow-card__head {
