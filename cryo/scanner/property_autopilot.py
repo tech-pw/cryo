@@ -39,6 +39,7 @@ from cryo.scanner.property_recommendations import (
     apply_table_properties,
     compute_property_recommendations,
 )
+from cryo.sources.missing import is_missing_table_error, note_missing_table, table_not_held_missing
 from cryo.table_config.engine_route import NoPropertyRouteError
 
 AUTOPILOT_ACTOR = "cryo-property-autopilot"
@@ -91,7 +92,11 @@ def run_property_autopilot(
         session.scalars(
             select(Table.id)
             .outerjoin(TableStats, TableStats.table_id == Table.id)
-            .where(Table.is_active.is_(True), TableStats.table_id.is_(None))
+            .where(
+                Table.is_active.is_(True),
+                TableStats.table_id.is_(None),
+                table_not_held_missing(),
+            )
             .order_by(Table.first_seen_at.desc())
             .limit(max_tables)
         )
@@ -103,7 +108,7 @@ def run_property_autopilot(
             session.scalars(
                 select(TableStats.table_id)
                 .join(Table, Table.id == TableStats.table_id)
-                .where(Table.is_active.is_(True))
+                .where(Table.is_active.is_(True), table_not_held_missing())
                 .order_by(TableStats.scan_at.desc())
                 .limit(remaining)
             )
@@ -118,6 +123,10 @@ def run_property_autopilot(
         try:
             safe_props = _safe_recommendations(session, table_id)
         except Exception as exc:  # noqa: BLE001 - one table's analysis must not stop the batch
+            if is_missing_table_error(exc):
+                session.rollback()
+                note_missing_table(session, table_id, component="property_autopilot")
+                continue
             per_table.append(PropertyAutopilotTableResult(table_id, {}, error=str(exc)))
             tables_failed += 1
             continue
@@ -136,6 +145,10 @@ def run_property_autopilot(
             # v3 tables: an engine job per table is not a background sweep's call to make.
             continue
         except Exception as exc:  # noqa: BLE001 - one table's apply must not stop the batch
+            if is_missing_table_error(exc):
+                session.rollback()
+                note_missing_table(session, table_id, component="property_autopilot")
+                continue
             per_table.append(PropertyAutopilotTableResult(table_id, {}, error=str(exc)))
             tables_failed += 1
             continue

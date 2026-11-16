@@ -231,6 +231,7 @@ def build_event_watcher(wiring: RuntimeWiring | None = None) -> RefreshingCommit
         publish,
         max_tables_per_poll=settings.events_probe_max_tables_per_poll,
         min_table_interval_seconds=settings.events_probe_min_table_interval_seconds,
+        on_missing=partial(hold_missing_watch_target, SessionLocal),
     )
     return RefreshingCommitWatcher(
         watcher,
@@ -246,11 +247,19 @@ def poll_events_once(wiring: RuntimeWiring | None = None) -> dict[str, int]:
     return {"handled": result.handled, "failed": result.failed}
 
 
+def hold_missing_watch_target(session_factory: Callable[[], Session], table_id: str) -> None:
+    from cryo.sources.missing import note_missing_table
+
+    with session_factory() as session:
+        note_missing_table(session, table_id, component="commit_watcher")
+
+
 def load_watch_targets(session_factory: Callable[[], Session]) -> list[WatchTarget]:
     """Tables whose health moves between nightly scans: active streaming tables, plus every
     table whose effective preset has continuous maintenance enabled."""
     from cryo.db.model_utils import qualified_table_name
     from cryo.db.repositories.exclusions import table_is_excluded
+    from cryo.sources.missing import table_not_held_missing
 
     continuous_ids = continuous_table_ids(session_factory)
     with session_factory() as session:
@@ -261,7 +270,12 @@ def load_watch_targets(session_factory: Callable[[], Session]) -> list[WatchTarg
             select(Table, TableStats.snapshot_watermark, TableStats.raw)
             .join(TableStats, TableStats.table_id == Table.id)
             .options(selectinload(Table.source))
-            .where(Table.is_active.is_(True), ~table_is_excluded(), watched)
+            .where(
+                Table.is_active.is_(True),
+                ~table_is_excluded(),
+                table_not_held_missing(),
+                watched,
+            )
         ).all()
         targets: list[WatchTarget] = []
         for table, watermark, raw in rows:

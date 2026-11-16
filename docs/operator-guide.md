@@ -522,6 +522,15 @@ What keeps a bad listing from removing real tables:
 Turn it off with `CRYO_SCAN_REMOVE_MISSING_TABLES_ENABLED=false`. After a guard abort, check
 the catalog. If the drop was real, raise `CRYO_SCAN_MISSING_TABLE_MAX_FRACTION` for one scan.
 
+Between scans, a periodic loop can still reach a dropped table, usually a short-lived temp
+table (#561). The layout analyzer, layout effectiveness check, property autopilot and commit
+watcher skip it with one INFO line instead of a traceback, and increment
+`cryo_table_load_skipped_total{component, reason="table_missing"}`. They also hold the table
+for 24 hours (`maintenance_missing_metadata_reason = table_missing_from_catalog`, plus
+`maintenance_retry_after`), so no loop retries it every tick and maintenance does not dispatch
+it. The next scan's reconcile tombstones it, or restores it if the catalog lists it again. A
+table that exists but is not Iceberg (`NoSuchIcebergTableError`) is not treated as missing.
+
 ### Unmatched tables (no effective preset)
 
 **Symptoms:**

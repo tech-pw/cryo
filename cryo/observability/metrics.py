@@ -241,6 +241,12 @@ tables_removed_from_catalog_total = Counter(
     ["source"],
 )
 
+table_load_skipped_total = Counter(
+    "cryo_table_load_skipped_total",
+    "Periodic loops that skipped a table by name, e.g. it was dropped from the catalog (#561)",
+    ["component", "reason"],
+)
+
 missing_table_reconcile_aborted_total = Counter(
     "cryo_missing_table_reconcile_aborted_total",
     "Missing-table reconciles that removed nothing because a safety guard tripped",

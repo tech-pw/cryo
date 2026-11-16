@@ -199,7 +199,12 @@ def get_bloom_filter_recommendations(
             message="No table_stats yet; bloom filter recommendations require the scanner.",
         )
 
-    analysis = analyze_table_layout(session, table_id)
+    from cryo.sources.missing import TableMissingFromCatalogError
+
+    try:
+        analysis = analyze_table_layout(session, table_id)
+    except TableMissingFromCatalogError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return BloomFilterRecommendationsResponse(
         table_id=table_id,
