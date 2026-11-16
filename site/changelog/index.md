@@ -19,6 +19,10 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ## [Unreleased](https://github.com/tech-pw/cryo/compare/v0.2.0...HEAD)
 
+### Fixed
+
+- Maintenance no longer fails ingestion that writes on a schedule. Cryo used to compact a ~35 GB table written by an hourly MERGE in one full-table rewrite. Its partial-progress commits landed for up to 2 hours and failed every ingestion retry they overlapped. - Before each data rewrite the worker now reads the table's snapshot list. When a regular overwrite/delete writer is about to commit, the job is deferred until it has. - Such tables are planned in rewrite statements of at most 4 GB. - Spark worker jobs rewrite only files under the scanner's small-file threshold (`min_file_size_mb`), as batch runs already did. - Controls: `CRYO_WORKER_WRITER_WINDOW_ENABLED`, and the per-preset `writer_window` param.
+
 ### Changed
 
 - **Behavior change:** the default preset now runs in deep mode, so scheduled maintenance removes orphan files and rewrites manifests. New presets default to deep. Migration `20261113_1300` switches the seeded `default-spark-compact` preset only if it was never edited; an edited default keeps its mode (set it to deep in the preset editor to opt in). Operation order is unchanged (#541).
