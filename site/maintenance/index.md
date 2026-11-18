@@ -2,7 +2,7 @@
 title: Maintenance
 description: Why Iceberg tables need maintenance, the seven operations Cryo runs in a fixed order, how the planner chunks work, how admission works, and the guardrails that stay on.
 canonical: https://tech-pw.github.io/cryo/maintenance/
-updated: 2026-11-16
+updated: 2026-11-18
 ---
 
 # Maintenance
@@ -177,7 +177,9 @@ cryo.local/runs/workflows/nightly-standard?tab=config
 
 **Assignment rules** sit in their own section below the form. Adding or deleting a rule takes effect immediately and is not part of Save preset.
 
-The API behind the page: `GET /api/v1/presets/modes` returns each mode's operations, description and the deep-mode defaults, and `POST /api/v1/presets/{id}/simulate` now reports `orphan_backlog_bytes` and `orphan_backlog_tables` for the covered tables. The preset's `operations` field is written from the mode for older readers; scheduled runs never read it.
+The API behind the page: `GET /api/v1/presets/modes` returns each mode's operations, description and the deep-mode defaults, and `POST /api/v1/presets/{id}/simulate` now reports `orphan_backlog_bytes` and `orphan_backlog_tables` for the covered tables. The preset's `operations` field always holds its mode's list: create and update write it from the mode, whatever the request sends, and migration `20261118_1200` rewrote presets saved before the mode cards existed. Scheduled runs never read it. A manual run that names its operations must stay within it, unless it is started from a table page.
+
+The workflow's **Overview**, **Grid** and **Graph** tabs show the same mode list as Config, in execution order. While that list loads, the Graph tab shows a placeholder rather than a guess. If the server can't return it, the tabs fall back to the preset's stored `operations`.
 
 ## Pausing maintenance
 

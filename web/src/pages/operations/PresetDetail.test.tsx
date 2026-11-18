@@ -135,6 +135,57 @@ describe("PresetDetail overview", () => {
   });
 });
 
+describe("PresetDetail grid and graph tabs", () => {
+  const stale = { ...preset, mode: "deep" as const, operations: ["optimize"] };
+  const deepCatalog = {
+    modes: [
+      {
+        mode: "deep" as const,
+        description: "Plus orphans.",
+        operations: ["optimize" as const, "optimize_manifests" as const, "remove_orphan_files" as const],
+        recommended: true
+      }
+    ],
+    param_defaults: []
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(listPresets).mockResolvedValue([stale]);
+    vi.mocked(listPresetRules).mockResolvedValue(rules);
+    vi.mocked(listRuns).mockResolvedValue([]);
+    vi.mocked(simulatePreset).mockResolvedValue(simulation);
+  });
+
+  it("grid rows follow the mode, not the stored operations", async () => {
+    vi.mocked(getPresetModes).mockResolvedValue(deepCatalog);
+    renderPage([`/operations/presets/${preset.id}?tab=grid`]);
+    expect(await screen.findByText("remove_orphan_files")).toBeInTheDocument();
+    expect(screen.getByText("optimize_manifests")).toBeInTheDocument();
+  });
+
+  it("graph steps follow the mode, not the stored operations", async () => {
+    vi.mocked(getPresetModes).mockResolvedValue(deepCatalog);
+    renderPage([`/operations/presets/${preset.id}?tab=graph`]);
+    expect(await screen.findByText(/remove orphan files/i)).toBeInTheDocument();
+    expect(screen.getByText(/optimize manifests/i)).toBeInTheDocument();
+  });
+
+  it("shows neither the stored list nor every operation while the modes load", async () => {
+    vi.mocked(getPresetModes).mockReturnValue(new Promise(() => {}));
+    renderPage([`/operations/presets/${preset.id}?tab=graph`]);
+    expect(await screen.findByLabelText("Loading operations")).toBeInTheDocument();
+    expect(screen.queryByText(/expire snapshots/i)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the stored operations when the modes catalog fails", async () => {
+    vi.mocked(getPresetModes).mockRejectedValue(new Error("boom"));
+    renderPage([`/operations/presets/${preset.id}?tab=grid`]);
+    expect(await screen.findByText("optimize")).toBeInTheDocument();
+    expect(screen.queryByText("remove_orphan_files")).not.toBeInTheDocument();
+  });
+});
+
 describe("PresetDetail config tab", () => {
   beforeEach(() => {
     vi.clearAllMocks();

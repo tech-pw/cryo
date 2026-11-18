@@ -1331,7 +1331,7 @@ POST  /api/v1/anomalies/shared-s3/refresh                     # operator; live c
 POST  /api/v1/anomalies/shared-s3/notify                      # Slack only if overlapping groups exist
 
 # Presets, rules, assignments
-GET/POST/PATCH/DELETE  /api/v1/presets
+GET/POST/PATCH/DELETE  /api/v1/presets                       # stored `operations` is always the mode's list (MODE_OPERATIONS, CORRECT_ORDER); a sent list is ignored
 POST  /api/v1/presets/{id}/simulate                           # -> {matched_count, total_size_gb, sample, orphan_backlog_bytes, orphan_backlog_tables}
 GET   /api/v1/presets/modes                                   # -> {modes: [{mode, description, operations, recommended}], param_defaults: [{key, value, source}]}
 GET/POST/DELETE        /api/v1/presets/{id}/rules
