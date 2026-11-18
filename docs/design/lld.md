@@ -326,9 +326,13 @@ CREATE INDEX ON cryo.table_cost_history (table_id, scan_at);
 > and the model can self-calibrate. This is additive to §3.4's `audit_log`.
 >
 > On Trino the value is the drop in `SUM(file_size_in_bytes)` over `catalog.schema."table$files"`
-> read just before and just after the statement (expire_snapshots, optimize, convert_deletes,
-> expire_data). These two live `$files` reads are the only exception to the no-live-scans rule,
-> are best-effort (any failure leaves the value null), and never feed the planner.
+> read just before and just after the statement (optimize, convert_deletes, expire_data). These
+> two live `$files` reads are the only exception to the no-live-scans rule, are best-effort (any
+> failure leaves the value null), and never feed the planner. Trino `expire_snapshots` is not
+> diffed: `$files` lists only the current snapshot, and expiry deletes files that only older
+> snapshots hold, so the diff is always about zero. The engine leaves it null and
+> `cryo/maintenance/reclaim_measure.py` prices it from the scan's expire ledger
+> (`bytes_source: scan_estimate`), the same as Spark; the next scan confirms it (#591).
 
 ### 3.3 Presets, rules, assignments (binding layer)
 

@@ -1,11 +1,12 @@
 """Bytes freed by cleanup actions the engine cannot size (#538).
 
 Spark's expire_snapshots reports file counts, and remove_orphan_files reports paths, not
-sizes. Sizing them on the cluster needs a second listing, which has OOM'd Spark. The
-scanner already holds the sizes: the metadata cost pass knows which snapshots reference
-each file, and the orphan listing knows each object's size and age. This module turns
-the stored scan data into an estimate for the action's own cutoff. It reads no live
-``$files`` and does no listing.
+sizes. Trino's ``$files`` diff cannot size expire_snapshots either, because ``$files`` lists
+only the current snapshot (#591). Sizing them on the cluster needs a second listing, which
+has OOM'd Spark. The scanner already holds the sizes: the metadata cost pass knows which
+snapshots reference each file, and the orphan listing knows each object's size and age.
+This module turns the stored scan data into an estimate for the action's own cutoff. It
+reads no live ``$files`` and does no listing.
 
 Every reclaim audit row with bytes carries ``result_metrics.bytes_source``:
 

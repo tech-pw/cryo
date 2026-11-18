@@ -26,11 +26,13 @@ _SQL_LOG_TRUNCATE = 200
 # itself already needed. remove_orphan_files is deliberately excluded: orphan files are by
 # definition *not* in `$files` (that's what makes them orphans), so a $files diff is always
 # zero for that operation regardless of how much was actually deleted on S3 -- reporting 0
-# there would be a silent wrong answer, not an honest "unmeasured". optimize_manifests and
+# there would be a silent wrong answer, not an honest "unmeasured". expire_snapshots is
+# excluded for the same reason: `$files` lists only the current snapshot, and expiry deletes
+# files only older snapshots hold, so it is left None and priced from the scanner's expire
+# ledger (cryo/maintenance/reclaim_measure.py, #591). optimize_manifests and
 # compute_statistics don't touch data files at all.
 _BYTES_MEASURABLE_VIA_FILES_DIFF = frozenset(
     {
-        OperationType.EXPIRE_SNAPSHOTS,
         OperationType.OPTIMIZE,
         OperationType.CONVERT_DELETES,
         OperationType.EXPIRE_DATA,
@@ -174,7 +176,7 @@ class TrinoEngine:
             if bytes_before is not None and files_ref:
                 bytes_after = _live_file_bytes(cursor, files_ref)
                 if bytes_after is not None:
-                    # Clamp at zero: OPTIMIZE/expire_snapshots only remove/rewrite files, they
+                    # Clamp at zero: OPTIMIZE/expire_data only remove/rewrite files, they
                     # never add net live bytes, but a concurrent writer landing between the
                     # before- and after- $files reads could otherwise produce a negative delta.
                     actual_bytes_freed = max(bytes_before - bytes_after, 0)

@@ -109,8 +109,10 @@ When touching scanner/planner/governor/engines, keep all of these (ported from t
 
 - Partition-aware OPTIMIZE from **pre-computed scan data** (no live `$files` scans on hot paths).
   One deliberate exception: the Trino engine sums `file_size_in_bytes` from `"table$files"`
-  before and after expire_snapshots / optimize / convert_deletes / expire_data to record
-  `actual_bytes_freed`. It is best-effort (failure means unmeasured) and never drives planning.
+  before and after optimize / convert_deletes / expire_data to record `actual_bytes_freed`.
+  It is best-effort (failure means unmeasured) and never drives planning. Trino
+  expire_snapshots is not diffed (`$files` only lists the current snapshot); like Spark's, it
+  is priced from the scan's expire ledger (#591).
 - **GB-budgeted chunking** + **max partitions/chunk** cap (avoid Trino `FilterNode` complexity).
 - **Oversize partition runs alone**; **small-table bypass** (single full-table OPTIMIZE).
 - Partition **transform handling**: identity/day/month/year + `$partitions` introspection.
