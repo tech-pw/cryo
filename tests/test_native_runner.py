@@ -88,6 +88,32 @@ def test_source_catalog_config_forwards_storage_and_auth() -> None:
     assert config["catalog_properties"]["token"] == "test-token"
 
 
+def test_source_catalog_config_forwards_external_oauth2_server_keys() -> None:
+    """A REST catalog whose OAuth2 server is a different host needs both keys.
+
+    iceberg-go reads the token endpoint from `rest.authorization-url` (not from
+    `oauth2-server-uri`, which it ignores) and sends `audience` as an endpoint
+    param on the token request. If either is dropped here, the client falls back
+    to `<catalog_uri>/oauth/tokens` and/or omits the audience, and the whole
+    native path fails with "failed to connect to catalog".
+    """
+    config = source_catalog_config(
+        {
+            "uri": "https://catalog.example.com/catalog",
+            "warehouse": "warehouse",
+            "credential": "client-id:client-secret",
+            "rest.authorization-url": "https://idp.example.com/oauth/token",
+            "audience": "https://catalog.example.com",
+            "scope": "catalog",
+        }
+    )
+    properties = config["catalog_properties"]
+    assert properties["rest.authorization-url"] == "https://idp.example.com/oauth/token"
+    assert properties["audience"] == "https://catalog.example.com"
+    assert properties["credential"] == "client-id:client-secret"
+    assert properties["scope"] == "catalog"
+
+
 def test_source_catalog_config_forwards_hive_catalog_type() -> None:
     config = source_catalog_config(
         {
