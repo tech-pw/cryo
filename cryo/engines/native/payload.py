@@ -97,6 +97,15 @@ def source_catalog_config(source_config: Mapping[str, Any]) -> dict[str, Any]:
             continue
         if key.startswith("s3.") and key not in catalog_properties:
             catalog_properties[key] = value
+    # PyIceberg (the scanner) reads the token endpoint from `oauth2-server-uri`; iceberg-go
+    # (the native engine) ignores that key and reads `rest.authorization-url`. Copy it over
+    # so one source config authenticates both, unless the source sets the iceberg-go key.
+    server_uri = catalog_properties.get("oauth2-server-uri")
+    if server_uri and "rest.authorization-url" not in catalog_properties:
+        explicit = source_config.get("rest.authorization-url")
+        catalog_properties["rest.authorization-url"] = (
+            explicit if isinstance(explicit, str) and explicit else server_uri
+        )
     if catalog_properties:
         payload["catalog_properties"] = catalog_properties
     return payload

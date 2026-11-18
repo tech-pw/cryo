@@ -62,6 +62,16 @@ Each type needs a different endpoint. Everything else on the form is shared.
 | Apache Polaris | `http://host:8181/api/catalog` | REST under the hood. Credentials go in Advanced properties. |
 | Project Nessie | `http://host:19120/api/v1` | REST under the hood. Branch or ref selection belongs in Advanced properties. |
 
+### OAuth2 for REST catalogs
+
+For a REST catalog behind a separate identity provider, set these in **Advanced properties**:
+
+- `credential` — `client-id:client-secret` for the client-credentials flow.
+- `oauth2-server-uri` — the identity provider's token endpoint. Cryo copies it to `rest.authorization-url` for the native engine, which reads that key instead. Set `rest.authorization-url` yourself only if the two must differ.
+- `audience` and `scope` — when the provider needs them to issue a token the catalog accepts.
+
+Without a token endpoint, the clients fall back to `<catalog-uri>/oauth/tokens`, which fails with "failed to connect to catalog" when the catalog only validates tokens.
+
 ## S3 authentication
 
 Three methods, in the order you should prefer them.

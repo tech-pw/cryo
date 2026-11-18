@@ -7,6 +7,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 ## [Unreleased]
 
 ### Fixed
+- Native engine: a source that sets PyIceberg's `oauth2-server-uri` now also authenticates the native engine, which reads `rest.authorization-url` (#587).
 - Maintenance no longer fails ingestion that writes on a schedule. Cryo used to compact a ~35 GB
   table written by an hourly MERGE in one full-table rewrite. Its partial-progress commits
   landed for up to 2 hours and failed every ingestion retry they overlapped.
