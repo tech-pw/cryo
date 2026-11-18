@@ -9,6 +9,7 @@ import {
   SESSION_BASELINE_KEY,
   firstUnseen,
   resolveBaseline,
+  spanLabel,
   type Baseline,
   type ChangeSummary,
   type LakeScore,
@@ -201,11 +202,15 @@ export const DailyBriefing = ({ baseline, score, changes, action, milestone, loa
                 <span className="sr-only">Lake score {score.score} out of 100.</span>
               </div>
               <div className="home-brief-score-side">
-                {score.weekDelta != null ? (
+                {score.weekDelta == null || score.deltaDays == null ? (
+                  <span className="home-brief-chip">Weekly change after 7 days of history</span>
+                ) : score.weekDelta === 0 ? (
+                  <span className="home-brief-chip">Steady {spanLabel(score.deltaDays)}</span>
+                ) : (
                   <span className={`home-brief-chip ${score.weekDelta > 0 ? "home-brief-chip-up" : "home-brief-chip-down"}`}>
-                    {score.weekDelta > 0 ? "▲" : "▼"} {Math.abs(score.weekDelta).toLocaleString(undefined, { maximumFractionDigits: 1 })} pts this week
+                    {score.weekDelta > 0 ? "▲" : "▼"} {Math.abs(score.weekDelta).toLocaleString(undefined, { maximumFractionDigits: 1 })} pts {spanLabel(score.deltaDays)}
                   </span>
-                ) : <span className="home-brief-chip">Steady this week</span>}
+                )}
                 <AreaSpark values={score.series} />
                 <span className="home-brief-caption">
                   {score.series.length > 1
