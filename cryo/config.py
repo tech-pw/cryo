@@ -349,6 +349,13 @@ class Settings(BaseSettings):
             "a scheduled pass selects at most max_lanes x this many tables."
         ),
     )
+    maintenance_fail_on_partial: bool = Field(
+        default=False,
+        description=(
+            "Exit non-zero when a batch run maintained some tables but others failed, so the "
+            "Kubernetes Job is marked failed. A run where no table succeeded always exits 1."
+        ),
+    )
     maintenance_lane_max_cpu_milli: int = Field(default=4000, ge=500)
     maintenance_lane_max_mem_mib: int = Field(default=16384, ge=2048)
     maintenance_lane_max_node_cpu: int = Field(

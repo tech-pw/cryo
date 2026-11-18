@@ -57,6 +57,21 @@ def _rescan(table_ids: Sequence[uuid.UUID]) -> int:
     return summary.scanned
 
 
+def exit_code(report: RunReport, *, fail_on_partial: bool) -> int:
+    """1 when tables failed and none was maintained (or, opted in, when only some were).
+
+    Skipped tables (locked, deadline, interrupted) and tables with nothing to do are not
+    failures, so a run made only of those exits 0. Planning failures count: a table Cryo
+    could not even plan was not maintained.
+    """
+    failures = report.failed + report.partial + report.planning_failed
+    if failures == 0:
+        return 0
+    if report.maintained == 0:
+        return 1
+    return 1 if fail_on_partial else 0
+
+
 def _exit_on_sigterm(signum: int, _frame: object) -> None:
     # Python's default SIGTERM action kills the process without unwinding, which would skip
     # the coordinator's teardown and leave lane pods, Secrets and running jobs behind.
@@ -112,7 +127,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             default=str,
         )
     )
-    return 0
+    return exit_code(report, fail_on_partial=settings.maintenance_fail_on_partial)
 
 
 if __name__ == "__main__":

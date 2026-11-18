@@ -357,6 +357,9 @@ maintenance:
   # Hours before a maintained table is eligible again. Longer than a day lets the ranking move
   # past the hottest tables so the run rotates through the fleet instead of re-picking them.
   cooldownHours: 20
+  # A run where no table succeeded and at least one failed always exits 1, so its Job is
+  # Failed. true also fails the Job when some tables were maintained and others failed.
+  failOnPartial: false
   # Expiry-only pass (#443): a second CronJob running expire_snapshots for up to
   # maxLanes x batchSize tables, batchSize tables per Spark application, instead of one
   # Spark application per table on the worker path. Independent of maintenance.enabled.

@@ -7,6 +7,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 ## [Unreleased]
 
 ### Fixed
+- Batch maintenance (`python -m cryo.maintenance.run`) exits 1 when no table was maintained and at least one failed, so its Kubernetes Job is marked Failed and Job-failure alerts fire. `CRYO_MAINTENANCE_FAIL_ON_PARTIAL` (Helm `maintenance.failOnPartial`, default off) also fails the Job when only some tables failed (#590).
 - Native engine: a source that sets PyIceberg's `oauth2-server-uri` now also authenticates the native engine, which reads `rest.authorization-url` (#587).
 - Maintenance no longer fails ingestion that writes on a schedule. Cryo used to compact a ~35 GB
   table written by an hourly MERGE in one full-table rewrite. Its partial-progress commits

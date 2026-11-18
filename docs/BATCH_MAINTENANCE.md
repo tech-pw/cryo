@@ -48,6 +48,24 @@ Runs are `kind=scheduled, trigger=batch-cron` for the nightly run and
 `"batch"`. A run is `succeeded` only when no job is failed, partial or skipped. It is
 `partial` when at least one table was maintained, and `failed` otherwise.
 
+### Exit code
+
+The process prints its JSON summary and then exits:
+
+| Exit code | When |
+|-----------|------|
+| `1` | No table was maintained and at least one table failed, either in Spark or at planning. |
+| `1` | Some tables were maintained and others failed or were partial, but only with `maintenance.failOnPartial: true` (`CRYO_MAINTENANCE_FAIL_ON_PARTIAL`, default `false`). |
+| `0` | Everything else: every table succeeded, the tables that did not run were only skipped (locked, deadline, interrupted), every table had nothing to do, no table was selected, or maintenance is on hold. |
+
+A run where every table was skipped is recorded `failed` on the Runs page but exits 0. A
+skipped table did not fail and is picked up by a later run. The CronJob has
+`backoffLimit: 0`, so a non-zero exit marks the Job `Failed` without a retry. Alert on that,
+for example `kube_job_status_failed{namespace="cryo", job_name=~"cryo-maintenance.*"} > 0`,
+or on `kube_cronjob_status_last_successful_time` falling behind the schedule. Before
+2026-11-18 the process always exited 0, so the Job stayed `Succeeded` even on nights when
+every table failed.
+
 ## Operating it
 
 ### Resource placement and worker scaling
