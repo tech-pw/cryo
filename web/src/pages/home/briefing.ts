@@ -54,8 +54,10 @@ const sortedTrend = (trend: readonly FleetHealthTrendPoint[] | null | undefined)
 
 export interface LakeScore {
   score: number;
-  /** Change against the point closest to 7 days earlier; null when the trend is too short. */
+  /** Change against the newest point at least 7 days older than the latest; null until one exists. */
   weekDelta: number | null;
+  /** Days between the two points `weekDelta` compares: 7, or more when the trend has gaps. */
+  deltaDays: number | null;
   series: number[];
   best: boolean;
 }
@@ -64,17 +66,20 @@ export const lakeScore = (trend: readonly FleetHealthTrendPoint[] | null | undef
   const points = sortedTrend(trend);
   if (!points.length) return null;
   const latest = points[points.length - 1];
-  const weekAgoDay = utcDay(Date.parse(`${latest.day}T00:00:00Z`) - 7 * DAY);
-  const prior = [...points].reverse().find((point) => point.day <= weekAgoDay) ?? (points.length > 1 ? points[0] : null);
+  const latestMs = Date.parse(`${latest.day}T00:00:00Z`);
+  const weekAgoDay = utcDay(latestMs - 7 * DAY);
+  const prior = [...points].reverse().find((point) => point.day <= weekAgoDay) ?? null;
   const series = points.map((point) => point.avg_health_score);
-  const delta = prior && prior !== latest ? Math.round((latest.avg_health_score - prior.avg_health_score) * 10) / 10 : null;
   return {
     score: Math.round(latest.avg_health_score),
-    weekDelta: delta === 0 ? null : delta,
+    weekDelta: prior ? Math.round((latest.avg_health_score - prior.avg_health_score) * 10) / 10 : null,
+    deltaDays: prior ? Math.round((latestMs - Date.parse(`${prior.day}T00:00:00Z`)) / DAY) : null,
     series,
     best: series.length >= 7 && latest.avg_health_score >= Math.max(...series) && latest.avg_health_score > series[0]
   };
 };
+
+export const spanLabel = (days: number): string => (days === 7 ? "this week" : `in ${days} days`);
 
 export interface ChangeSummary {
   improved: { count: number; capped: boolean; top: DashboardImprovedTable | null } | null;

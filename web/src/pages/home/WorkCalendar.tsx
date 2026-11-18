@@ -15,6 +15,10 @@ const TOP = 16;
 const DAY_LABELS = ["Mon", "", "Wed", "", "Fri", "", ""];
 
 const monthLabel = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleString(undefined, { month: "short", timeZone: "UTC" });
+const sharePct = (share: number) => {
+  const pct = share * 100;
+  return `${pct > 0 && pct < 10 ? pct.toLocaleString(undefined, { maximumSignificantDigits: 2 }) : Math.round(pct)}%`;
+};
 const longDate = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 
 export const cellDescription = (cell: CalendarCell): string => {
@@ -63,7 +67,8 @@ export const WorkCalendar = ({ days, today, loading, error }: { days: readonly I
               <span className="sr-only">{formatBytesGb(totals.bytes)} freed in {WORK_WEEKS} weeks.</span>
               <span className="home-caption">
                 {totals.partial ? "Measured actions only; some days were partly measured." : "Every working day fully measured."}
-                {wow != null ? <> <span className={wow >= 0 ? "home-work-up" : "home-work-down"}>{wow >= 0 ? "▲" : "▼"} {Math.abs(wow)}% vs last week</span></> : null}
+                {wow?.kind === "change" ? <> <span className={wow.pct >= 0 ? "home-work-up" : "home-work-down"}>{wow.pct >= 0 ? "▲" : "▼"} {Math.abs(wow.pct)}% vs last week</span></> : null}
+                {wow?.kind === "coverage_changed" ? <> Not compared with last week: {sharePct(wow.recentShare)} of actions were measured this week, {sharePct(wow.priorShare)} the week before.</> : null}
               </span>
             </div>
             <dl className="home-work-figures">
@@ -76,7 +81,7 @@ export const WorkCalendar = ({ days, today, loading, error }: { days: readonly I
               <div>
                 <strong>{streak.current > 0 ? `${formatNumber(streak.current)}-day clean streak` : "Streak starts with the next clean night"}</strong>
                 <span className="home-caption">
-                  {streak.brokeRecently ? "The last working day had failed jobs. " : ""}Best: {formatNumber(streak.best)} days. Quiet days don't break it.
+                  {streak.brokeRecently ? "The last working day failed 1% of its jobs or more. " : ""}Best: {formatNumber(streak.best)} days. A night is clean when under 1% of its jobs fail. Quiet days don't break it.
                 </span>
               </div>
             </div>

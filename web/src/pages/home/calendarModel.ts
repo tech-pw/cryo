@@ -93,13 +93,26 @@ export const workTotals = (days: readonly ImpactDay[]): WorkTotals => {
 export interface Streak {
   current: number;
   best: number;
-  /** True when the latest working day had failures, so the current streak just reset. */
+  /** True when the latest working day failed too many jobs, so the current streak just reset. */
   brokeRecently: boolean;
 }
 
 /**
- * Consecutive days on which Cryo did work without a failed job. Days with nothing to do, or with
- * no ledger row, neither extend nor break the streak.
+ * A night stays clean while fewer than this share of its jobs fail. The ledger has per-day job
+ * counts but no retry outcome, so a fleet running thousands of jobs a night needs a rate, not zero.
+ */
+export const CLEAN_NIGHT_MAX_FAILURE_RATE = 0.01;
+
+export const isFailedNight = (day: ImpactDay): boolean => {
+  const failed = Math.max(0, day.jobs_failed || 0);
+  if (failed === 0) return false;
+  const total = failed + Math.max(0, day.jobs_succeeded || 0);
+  return failed / total >= CLEAN_NIGHT_MAX_FAILURE_RATE;
+};
+
+/**
+ * Consecutive days on which Cryo did work and failed under 1% of its jobs. Days with nothing to
+ * do, or with no ledger row, neither extend nor break the streak.
  */
 export const workStreak = (days: readonly ImpactDay[]): Streak => {
   const sorted = [...days].sort((a, b) => a.report_date.localeCompare(b.report_date));
@@ -107,7 +120,7 @@ export const workStreak = (days: readonly ImpactDay[]): Streak => {
   let best = 0;
   let brokeRecently = false;
   for (const day of sorted) {
-    if (day.jobs_failed > 0) {
+    if (isFailedNight(day)) {
       current = 0;
       brokeRecently = true;
       continue;
@@ -122,15 +135,44 @@ export const workStreak = (days: readonly ImpactDay[]): Streak => {
 
 const sumBytes = (days: readonly ImpactDay[]) => days.filter(hasBytes).reduce((sum, day) => sum + day.bytes_freed, 0);
 
-/** Percent change in measured bytes freed, last 7 days against the 7 before. Null without a base. */
-export const weekOverWeek = (days: readonly ImpactDay[], today: string): number | null => {
+/** Share of successful actions that reported bytes freed; null when nothing ran. */
+export const measuredShare = (days: readonly ImpactDay[]): number | null => {
+  const actions = days.reduce((sum, day) => sum + Math.max(0, day.actions_succeeded || 0), 0);
+  if (actions <= 0) return null;
+  const measured = days.reduce((sum, day) => sum + Math.max(0, day.actions_with_bytes_evidence || 0), 0);
+  return Math.min(1, measured / actions);
+};
+
+/**
+ * Measured bytes only compare when both weeks measured a similar share of actions. Wider gaps,
+ * like a release that starts measuring a new action type, move the total far more than real work.
+ */
+export const MAX_COVERAGE_RATIO = 1.25;
+
+export type WeekOverWeek =
+  | { kind: "change"; pct: number }
+  | { kind: "coverage_changed"; recentShare: number; priorShare: number };
+
+/**
+ * Percent change in measured bytes freed, last 7 days against the 7 before. Null without a base;
+ * a coverage note instead of a number when the two weeks measured very different shares of actions.
+ */
+export const weekOverWeek = (days: readonly ImpactDay[], today: string): WeekOverWeek | null => {
   const end = dayMs(today);
   const inRange = (from: number, to: number) => days.filter((day) => {
     const ms = dayMs(day.report_date);
     return ms > end - to * DAY && ms <= end - from * DAY;
   });
-  const recent = sumBytes(inRange(0, 7));
-  const prior = sumBytes(inRange(7, 14));
+  const recentDays = inRange(0, 7);
+  const priorDays = inRange(7, 14);
+  const prior = sumBytes(priorDays);
   if (prior <= 0) return null;
-  return Math.round(((recent - prior) / prior) * 100);
+  const recentShare = measuredShare(recentDays);
+  const priorShare = measuredShare(priorDays);
+  if (recentShare != null && priorShare != null) {
+    const low = Math.min(recentShare, priorShare);
+    const high = Math.max(recentShare, priorShare);
+    if (low <= 0 || high / low > MAX_COVERAGE_RATIO) return { kind: "coverage_changed", recentShare, priorShare };
+  }
+  return { kind: "change", pct: Math.round(((sumBytes(recentDays) - prior) / prior) * 100) };
 };

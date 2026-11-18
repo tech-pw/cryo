@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { FleetHealthTrendPoint } from "../../api/types";
 import type { ImpactDay } from "../../lib/impactHistory";
 import { linksThroughNode, shareOf, truncateLabel } from "../../components/charts/FlowSankey";
-import { firstUnseen, milestones, nextBestAction, resolveBaseline } from "./briefing";
-import { buildCalendar, quartileThresholds, weekOverWeek, workStreak, workTotals } from "./calendarModel";
+import { firstUnseen, lakeScore, milestones, nextBestAction, resolveBaseline, spanLabel } from "./briefing";
+import { buildCalendar, isFailedNight, measuredShare, quartileThresholds, weekOverWeek, workStreak, workTotals } from "./calendarModel";
 import { decadeTicks } from "./fixFirst";
 import { cleanupProgress, storageTrendDelta } from "./storageStory";
 import { storageFixture } from "./storageFixture";
@@ -16,6 +17,8 @@ const day = (report_date: string, overrides: Partial<ImpactDay> = {}): ImpactDay
   measurement_state: "complete",
   bytes_freed: TB,
   actions_succeeded: 10,
+  actions_with_bytes_evidence: 10,
+  jobs_succeeded: 10,
   jobs_failed: 0,
   tables_touched: 5,
   optimize_files_in: 100,
@@ -81,11 +84,51 @@ describe("work calendar", () => {
     expect(streak).toEqual({ current: 1, best: 3, brokeRecently: false });
   });
 
+  it("keeps the streak through a handful of failures at fleet scale", () => {
+    const night = (date: string, failed: number) => day(date, { jobs_succeeded: 2_000 - failed, jobs_failed: failed });
+    expect(isFailedNight(night("2026-09-20", 5))).toBe(false);
+    expect(isFailedNight(night("2026-09-20", 20))).toBe(true);
+    expect(workStreak([night("2026-09-20", 3), night("2026-09-21", 12), night("2026-09-22", 0)])).toEqual({ current: 3, best: 3, brokeRecently: false });
+    expect(workStreak([night("2026-09-20", 3), night("2026-09-21", 40)])).toEqual({ current: 0, best: 1, brokeRecently: true });
+  });
+
+  it("breaks the streak when a small fleet fails one job in ten", () => {
+    expect(workStreak([day("2026-09-20", { jobs_succeeded: 9, jobs_failed: 1 })]).brokeRecently).toBe(true);
+  });
+
   it("totals measured bytes and compares the last two weeks", () => {
-    const days = [day("2026-09-27", { bytes_freed: 3 * TB }), day("2026-09-18", { bytes_freed: 2 * TB }), day("2026-09-26", { measurement_state: "unmeasured" })];
+    const days = [day("2026-09-27", { bytes_freed: 3 * TB }), day("2026-09-18", { bytes_freed: 2 * TB }), day("2026-09-26", { measurement_state: "unmeasured", actions_with_bytes_evidence: 0 })];
     expect(workTotals(days)).toMatchObject({ bytes: 5 * TB, measuredDays: 2, activeDays: 3, partial: true, filesCompacted: 270 });
-    expect(weekOverWeek(days, "2026-09-28")).toBe(50);
+    expect(weekOverWeek(days.slice(0, 2), "2026-09-28")).toEqual({ kind: "change", pct: 50 });
+    expect(weekOverWeek(days, "2026-09-28")).toMatchObject({ kind: "coverage_changed", recentShare: 0.5, priorShare: 1 });
     expect(weekOverWeek([day("2026-09-27")], "2026-09-28")).toBeNull();
+  });
+
+  it("does not compare weeks that measured very different shares of actions", () => {
+    const week = (start: number, measured: number, bytes: number) =>
+      Array.from({ length: 7 }, (_, i) => day(`2026-09-${String(start + i).padStart(2, "0")}`, { measurement_state: "partial", actions_succeeded: 1_000, actions_with_bytes_evidence: measured, bytes_freed: bytes }));
+    const jump = [...week(14, 5, TB), ...week(21, 300, 60 * TB)];
+    expect(measuredShare(week(14, 5, TB))).toBeCloseTo(0.005);
+    expect(weekOverWeek(jump, "2026-09-27")).toEqual({ kind: "coverage_changed", recentShare: 0.3, priorShare: 0.005 });
+    const steady = [...week(14, 280, 10 * TB), ...week(21, 300, 12 * TB)];
+    expect(weekOverWeek(steady, "2026-09-27")).toEqual({ kind: "change", pct: 20 });
+  });
+});
+
+describe("lake score", () => {
+  const point = (date: string, score: number) => ({ day: date, avg_health_score: score }) as FleetHealthTrendPoint;
+
+  it("hides the weekly change until a point at least 7 days old exists", () => {
+    const short = lakeScore([point("2026-09-25", 60), point("2026-09-28", 70)]);
+    expect(short).toMatchObject({ score: 70, weekDelta: null, deltaDays: null });
+  });
+
+  it("compares against the newest point a week or more back and reports the real span", () => {
+    expect(lakeScore([point("2026-09-20", 50), point("2026-09-21", 55), point("2026-09-25", 60), point("2026-09-28", 62)])).toMatchObject({ weekDelta: 7, deltaDays: 7 });
+    expect(lakeScore([point("2026-09-18", 50), point("2026-09-26", 58), point("2026-09-28", 60)])).toMatchObject({ weekDelta: 10, deltaDays: 10 });
+    expect(lakeScore([point("2026-09-21", 60), point("2026-09-28", 60)])).toMatchObject({ weekDelta: 0, deltaDays: 7 });
+    expect(spanLabel(7)).toBe("this week");
+    expect(spanLabel(10)).toBe("in 10 days");
   });
 });
 

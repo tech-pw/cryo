@@ -32,6 +32,13 @@ updated: 2026-11-18
 <p>When there is nothing to show yet, the card says why and what fills it in, instead of showing zero.</p>
 <screenshot name="home-storage" url="cryo.local/" alt="Storage impact card. A ring shows 41.0 TB freed so far, 64% reclaimed. Last 24 hours, measured: Cryo freed 1.5 TB, 212 tables cleaned, about $35 a month saved, measured on 75% of actions (300 of 400); 41.0 TB freed since Sep 28 and 23.0 TB still to go. Where your 224 TB lives, estimate, as a grid of 100 squares: live data 180 TB (80%), snapshot history 22.0 TB (10%, partly estimated), dead 14.0 TB (6%, freeable), orphans 6.0 TB (3%, freeable, partly estimated), metadata 2.0 TB. 20.0 TB is freeable. Listed within 7 days: 300 of 1,044 tables; 512 more use an older listing, so 4.0 TB of orphans and 15.0 TB of retained history are estimates. A 60-day chart shows total storage down 35.4 TB toward 224 TB, live data flat near 180 TB, and cumulative freed bytes rising." caption="The Storage impact card with demo data. Measured results on the left, the estimated breakdown on the right, the 60-day trend below." />
 
+<h2 id="home-trends">Lake score and daily work on home</h2>
+<ul>
+  <li><b>Lake score change.</b> The chip next to the lake score compares today with the newest trend point at least 7 days older. Until the trend has such a point, the chip says the weekly change comes after 7 days of history. When the trend has gaps, it names the real span, for example "in 10 days".</li>
+  <li><b>Clean streak.</b> The day-by-day calendar counts consecutive working nights in which under 1% of jobs failed, so a large fleet with a few failures a night keeps its streak. Days with nothing to do don't break it. The calendar still marks every day that had a failed job.</li>
+  <li><b>Week over week.</b> The change in measured bytes freed against the week before is shown only when both weeks measured a similar share of actions (within 25% of each other). When the share changed, for example after Cryo started measuring a new kind of action, the card shows both shares instead of a percentage that would reflect the measurement change rather than the work.</li>
+</ul>
+
 <h2 id="deductions">Deductions</h2>
 <p>There are two deduction sizes and no others: a warning costs 8 points and a critical finding costs 20. Two warnings and one critical is 100 − 8 − 8 − 20 = 64, grade C. The <a href="@/maintenance/#canonical-order">seeded demo run</a> is the same lake, not a production fleet.</p>
 <div class="tbl">

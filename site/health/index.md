@@ -39,6 +39,12 @@ cryo.local/
 
 *The Storage impact card with demo data. Measured results on the left, the estimated breakdown on the right, the 60-day trend below.*
 
+## Lake score and daily work on home
+
+- **Lake score change.** The chip next to the lake score compares today with the newest trend point at least 7 days older. Until the trend has such a point, the chip says the weekly change comes after 7 days of history. When the trend has gaps, it names the real span, for example "in 10 days".
+- **Clean streak.** The day-by-day calendar counts consecutive working nights in which under 1% of jobs failed, so a large fleet with a few failures a night keeps its streak. Days with nothing to do don't break it. The calendar still marks every day that had a failed job.
+- **Week over week.** The change in measured bytes freed against the week before is shown only when both weeks measured a similar share of actions (within 25% of each other). When the share changed, for example after Cryo started measuring a new kind of action, the card shows both shares instead of a percentage that would reflect the measurement change rather than the work.
+
 ## Deductions
 
 There are two deduction sizes and no others: a warning costs 8 points and a critical finding costs 20. Two warnings and one critical is 100 − 8 − 8 − 20 = 64, grade C. The [seeded demo run](https://tech-pw.github.io/cryo/maintenance/#canonical-order) is the same lake, not a production fleet.
