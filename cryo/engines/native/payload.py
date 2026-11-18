@@ -28,6 +28,15 @@ _CATALOG_PROPERTY_KEYS = (
     "token",
     "credential",
     "oauth2-server-uri",
+    # iceberg-go reads the token endpoint from `rest.authorization-url`, not from
+    # `oauth2-server-uri`, and sends `audience` as an endpoint param on the token
+    # request (see catalog/rest/rest.go `fromProps`). Without them a catalog whose
+    # OAuth2 server is a different host than the catalog itself cannot authenticate:
+    # the client falls back to `<catalog_uri>/oauth/tokens`, which a catalog that
+    # validates tokens rather than issuing them does not serve, and the failure
+    # surfaces as "failed to connect to catalog".
+    "rest.authorization-url",
+    "audience",
     "scope",
     "rest.sigv4-enabled",
     "rest.signing-name",
