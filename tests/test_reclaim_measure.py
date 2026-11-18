@@ -222,6 +222,42 @@ def test_spark_expire_gets_scan_estimated_bytes(session: Any) -> None:
     assert row.result_metrics["deleted_data_files_count"] == 2
 
 
+def test_trino_expire_gets_scan_estimated_bytes_not_a_measured_zero(session: Any) -> None:
+    from cryo.domain.enums import EngineType, OperationType
+    from cryo.engines.base import RenderedStatement
+    from cryo.engines.trino.engine import TrinoEngine
+    from tests.test_trino_engine import FakeConnection, FilesDiffCursor
+
+    table_id = _table(session)
+    _cost(session, table_id)
+    cursor = FilesDiffCursor([(1,)], files_sums=[5000, 5000])
+    engine = TrinoEngine(
+        {"host": "localhost", "catalog": "iceberg"}, connector=lambda _c: FakeConnection(cursor)
+    )
+    result = engine.execute(
+        RenderedStatement(
+            action=OperationType.EXPIRE_SNAPSHOTS,
+            sql=(
+                "ALTER TABLE s.t "
+                "EXECUTE expire_snapshots(retention_threshold => '5d', retain_last => 1)"
+            ),
+            engine=EngineType.TRINO,
+            metadata={"files_ref": 's."t$files"'},
+        )
+    )
+    row = _row(table_id, "expire_snapshots", result.actual_bytes_freed)
+    row.engine = "trino"
+
+    apply_reclaim_measurement(session, row, sql=result.detail, now=NOW)
+
+    assert row.actual_bytes_freed == 1300
+    assert row.result_metrics == {
+        "bytes_source": "scan_estimate",
+        "bytes_estimate": 1300,
+        "bytes_scan_at": SCAN_AT.isoformat(),
+    }
+
+
 def test_orphan_removal_gets_listing_bytes_and_respects_the_flag(session: Any) -> None:
     table_id = _table(session)
     _cost(session, table_id)

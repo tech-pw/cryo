@@ -389,8 +389,8 @@ def test_trino_engine_clamps_negative_files_diff_to_zero() -> None:
     engine = TrinoEngine({"host": "localhost", "catalog": "iceberg"}, connector=connector)
     result = engine.execute(
         RenderedStatement(
-            action=OperationType.EXPIRE_SNAPSHOTS,
-            sql="ALTER TABLE iceberg.demo.t EXECUTE expire_snapshots(retention_threshold => '7d')",
+            action=OperationType.OPTIMIZE,
+            sql="ALTER TABLE iceberg.demo.t EXECUTE optimize(file_size_threshold => '256MB')",
             engine=EngineType.TRINO,
             metadata={"files_ref": 'iceberg.demo."t$files"'},
         ),
@@ -425,6 +425,53 @@ def test_trino_engine_leaves_bytes_freed_unmeasured_for_remove_orphan_files() ->
     assert result.ok is True
     assert result.actual_bytes_freed is None
     assert not any('$files"' in sql for sql in cursor.executed)
+
+
+def test_trino_engine_leaves_expire_snapshots_bytes_for_the_scan_ledger() -> None:
+    """$files lists only the current snapshot; expiry deletes files only older snapshots
+    held, so a diff is always ~0. It must stay None so the scan ledger prices it (#591)."""
+    cursor = FilesDiffCursor([(1,)], files_sums=[700_000_000, 700_000_000])
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost", "catalog": "iceberg"}, connector=connector)
+    result = engine.execute(
+        RenderedStatement(
+            action=OperationType.EXPIRE_SNAPSHOTS,
+            sql=(
+                "ALTER TABLE iceberg.demo.t "
+                "EXECUTE expire_snapshots(retention_threshold => '7d', retain_last => 1)"
+            ),
+            engine=EngineType.TRINO,
+            metadata={"files_ref": 'iceberg.demo."t$files"'},
+        ),
+    )
+
+    assert result.ok is True
+    assert result.actual_bytes_freed is None
+    assert not any('$files"' in sql for sql in cursor.executed)
+
+
+def test_trino_engine_still_measures_expire_data_via_files_diff() -> None:
+    """A partition-aligned DELETE drops whole data files from the current snapshot."""
+    cursor = FilesDiffCursor([(5,)], files_sums=[900_000_000, 250_000_000])
+
+    def connector(_coordinator):
+        return FakeConnection(cursor)
+
+    engine = TrinoEngine({"host": "localhost", "catalog": "iceberg"}, connector=connector)
+    result = engine.execute(
+        RenderedStatement(
+            action=OperationType.EXPIRE_DATA,
+            sql="DELETE FROM iceberg.demo.t WHERE \"ds\" < DATE '2026-01-01'",
+            engine=EngineType.TRINO,
+            metadata={"files_ref": 'iceberg.demo."t$files"'},
+        ),
+    )
+
+    assert result.ok is True
+    assert result.actual_bytes_freed == 650_000_000
 
 
 def test_trino_engine_bytes_freed_none_when_files_query_fails() -> None:
