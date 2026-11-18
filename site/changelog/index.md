@@ -21,6 +21,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Fixed
 
+- Native engine: a source that sets PyIceberg's `oauth2-server-uri` now also authenticates the native engine, which reads `rest.authorization-url` (#587).
 - Maintenance no longer fails ingestion that writes on a schedule. Cryo used to compact a ~35 GB table written by an hourly MERGE in one full-table rewrite. Its partial-progress commits landed for up to 2 hours and failed every ingestion retry they overlapped. - Before each data rewrite the worker now reads the table's snapshot list. When a regular overwrite/delete writer is about to commit, the job is deferred until it has. - Such tables are planned in rewrite statements of at most 4 GB. - Spark worker jobs rewrite only files under the scanner's small-file threshold (`min_file_size_mb`), as batch runs already did. - Controls: `CRYO_WORKER_WRITER_WINDOW_ENABLED`, and the per-preset `writer_window` param.
 
 ### Changed

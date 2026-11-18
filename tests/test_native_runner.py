@@ -697,3 +697,31 @@ def test_native_supported_operations_includes_cow_optimize_with_go(
         OperationType.REMOVE_ORPHAN_FILES,
         OperationType.OPTIMIZE,
     ]
+
+
+def test_source_catalog_config_maps_pyiceberg_oauth2_server_uri_for_iceberg_go() -> None:
+    config = source_catalog_config(
+        {
+            "uri": "https://catalog.example.com/catalog",
+            "warehouse": "warehouse",
+            "credential": "client-id:client-secret",
+            "oauth2-server-uri": "https://idp.example.com/oauth/token",
+        }
+    )
+    properties = config["catalog_properties"]
+    assert properties["rest.authorization-url"] == "https://idp.example.com/oauth/token"
+    assert properties["oauth2-server-uri"] == "https://idp.example.com/oauth/token"
+
+
+def test_source_catalog_config_keeps_an_explicit_rest_authorization_url() -> None:
+    config = source_catalog_config(
+        {
+            "uri": "https://catalog.example.com/catalog",
+            "warehouse": "warehouse",
+            "oauth2-server-uri": "https://idp.example.com/pyiceberg",
+            "rest.authorization-url": "https://idp.example.com/iceberg-go",
+        }
+    )
+    assert config["catalog_properties"]["rest.authorization-url"] == (
+        "https://idp.example.com/iceberg-go"
+    )

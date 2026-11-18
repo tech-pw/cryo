@@ -52,6 +52,15 @@ updated: 2026-10-16
   </tbody>
 </table>
 
+<h3 id="rest-oauth2">OAuth2 for REST catalogs</h3>
+<p>For a REST catalog behind a separate identity provider, set these in <strong>Advanced properties</strong>:</p>
+<ul>
+  <li><code>credential</code> — <code>client-id:client-secret</code> for the client-credentials flow.</li>
+  <li><code>oauth2-server-uri</code> — the identity provider's token endpoint. Cryo copies it to <code>rest.authorization-url</code> for the native engine, which reads that key instead. Set <code>rest.authorization-url</code> yourself only if the two must differ.</li>
+  <li><code>audience</code> and <code>scope</code> — when the provider needs them to issue a token the catalog accepts.</li>
+</ul>
+<p>Without a token endpoint, the clients fall back to <code>&lt;catalog-uri&gt;/oauth/tokens</code>, which fails with "failed to connect to catalog" when the catalog only validates tokens.</p>
+
 <h2 id="auth">S3 authentication</h2>
 <p>Three methods, in the order you should prefer them.</p>
 
