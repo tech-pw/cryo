@@ -74,6 +74,7 @@ print.
 | `CRYO_MAINTENANCE_MAX_LANES` | `int` | `4` | Max Spark pods. |
 | `CRYO_MAINTENANCE_OPERATIONS` | `str` | `""` | Comma-separated metadata operations for an operation-scoped pass, e.g. expire_snapshots (#443). Empty runs every operation a table needs. |
 | `CRYO_MAINTENANCE_OPS_BATCH_SIZE` | `int` | `25` | Most tables one lane (one Spark application) runs in an operation-scoped pass; a scheduled pass selects at most max_lanes x this many tables. |
+| `CRYO_MAINTENANCE_FAIL_ON_PARTIAL` | `bool` | `false` | Exit non-zero when a batch run maintained some tables but others failed, so the Kubernetes Job is marked failed. A run where no table succeeded always exits 1. |
 | `CRYO_MAINTENANCE_LANE_MAX_CPU_MILLI` | `int` | `4000` | - |
 | `CRYO_MAINTENANCE_LANE_MAX_MEM_MIB` | `int` | `16384` | - |
 | `CRYO_MAINTENANCE_LANE_MAX_NODE_CPU` | `int` | `0` | Optional inclusive Karpenter node vCPU ceiling for maintenance lanes. Zero disables it; enabling requires karpenter.k8s.aws/instance-cpu node labels. Prevents small protected lanes from pinning very large shared nodes. |
