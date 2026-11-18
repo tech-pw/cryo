@@ -93,6 +93,8 @@ spec:
                   value: {{ .Values.maintenance.maxRuntimeMinutes | quote }}
                 - name: CRYO_MAINTENANCE_COOLDOWN_HOURS
                   value: {{ .Values.maintenance.cooldownHours | quote }}
+                - name: CRYO_MAINTENANCE_FAIL_ON_PARTIAL
+                  value: {{ .Values.maintenance.failOnPartial | default false | quote }}
                 - name: CRYO_SPARK_K8S_NAMESPACE
                   valueFrom:
                     fieldRef:
