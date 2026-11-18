@@ -24,7 +24,7 @@ describe("PartitionHistogram", () => {
 
     expect(screen.getByText("Top 15 of 16 partitions")).toBeInTheDocument();
     expect(screen.getByText("a-very-long-partition-name-that-must-stay-visible")).toBeInTheDocument();
-    expect(screen.getByText("10 GB")).toBeInTheDocument();
+    expect(screen.getByText("10.7 GB")).toBeInTheDocument();
     expect(screen.getByText("25%")).toBeInTheDocument();
     expect(screen.queryByText("p-13")).not.toBeInTheDocument();
     const names = screen.getAllByRole("row").slice(1).map((row) => row.textContent ?? "");

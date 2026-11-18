@@ -27,13 +27,13 @@ describe("impact history states", () => {
   it("renders all four measurement states without a zero bar for an unmeasured day", () => {
     const unmeasured = day("unmeasured", { bytes_freed: 0, actions_succeeded: 4 });
     const partial = day("partial", {
-      bytes_freed: 2 * 1024 ** 3,
+      bytes_freed: 2e9,
       actions_succeeded: 4,
       actions_with_bytes_evidence: 1,
       actions_without_bytes_evidence: 3
     });
     const complete = day("complete", {
-      bytes_freed: 5 * 1024 ** 3,
+      bytes_freed: 5e9,
       actions_succeeded: 2,
       actions_with_bytes_evidence: 2
     });
@@ -52,7 +52,7 @@ describe("impact history states", () => {
     expect(engineBytesLabel({ bytes_freed_by_engine: {} })).toBe("Unknown");
     expect(
       engineBytesLabel({
-        bytes_freed_by_engine: { native: { bytes: 5 * 1024 ** 3 } }
+        bytes_freed_by_engine: { native: { bytes: 5e9 } }
       })
     ).toBe("native 5.00 GB");
   });

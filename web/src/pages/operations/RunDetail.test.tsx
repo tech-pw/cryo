@@ -109,7 +109,7 @@ describe("RunDetail", () => {
   it("shows measured bytes freed and does not invent a zero", async () => {
     vi.mocked(getRun).mockResolvedValue({
       ...baseRun,
-      realized_bytes_freed: 1024 ** 3,
+      realized_bytes_freed: 1e9,
       realized_actions_measured: 1,
       realized_actions_succeeded: 2
     });

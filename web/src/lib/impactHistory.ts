@@ -25,14 +25,14 @@ export const impactBytesLabel = (day: ImpactDay): string => {
     return `Partial ${day.actions_with_bytes_evidence} of ${day.actions_succeeded}`;
   }
   if (day.measurement_state !== "complete") return "Unknown";
-  return `${(day.bytes_freed / 1024 ** 3).toFixed(2)} GB`;
+  return `${(day.bytes_freed / 1e9).toFixed(2)} GB`;
 };
 
 /** Chart value. Unmeasured and no-action days are gaps, never zero bars. */
 export const impactChartGb = (day: ImpactDay): number | null => {
   if (day.measurement_state === "unmeasured" || day.measurement_state === "no_actions") return null;
   if (day.measurement_state === "partial" || day.measurement_state === "complete") {
-    return day.bytes_freed / 1024 ** 3;
+    return day.bytes_freed / 1e9;
   }
   return null;
 };
@@ -49,7 +49,7 @@ export const engineBytesLabel = (raw: ImpactDay["raw"]): string => {
     .map(([engine, entry]) => {
       const bytes = typeof entry === "number" ? entry : Number(entry?.bytes);
       if (!Number.isFinite(bytes)) return `${engine} Unknown`;
-      return `${engine} ${(bytes / 1024 ** 3).toFixed(2)} GB`;
+      return `${engine} ${(bytes / 1e9).toFixed(2)} GB`;
     })
     .join(", ");
 };

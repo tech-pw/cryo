@@ -13951,6 +13951,23 @@ export interface components {
             tables_with_cost: number;
             /** Tables With Listing */
             tables_with_listing: number;
+            /**
+             * Tables Listed Recently
+             * @description Tables whose S3 listing ran within listing_fresh_days.
+             */
+            tables_listed_recently: number;
+            /**
+             * Orphan Bytes Estimated
+             * @description Part of orphan_bytes carried forward from listings older than listing_fresh_days.
+             */
+            orphan_bytes_estimated: number;
+            /**
+             * Retained History Bytes Estimated
+             * @description Part of retained_history_bytes carried forward from listings older than listing_fresh_days.
+             */
+            retained_history_bytes_estimated: number;
+            /** Listing Fresh Days */
+            listing_fresh_days: number;
             /** Price Per Gb Month */
             price_per_gb_month: number | null;
         };

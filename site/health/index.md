@@ -2,7 +2,7 @@
 title: Health and cost
 description: How Cryo grades tables from A to F, how deductions work with a worked example, and what each maintenance operation projects.
 canonical: https://tech-pw.github.io/cryo/health/
-updated: 2026-11-13
+updated: 2026-11-18
 ---
 
 # Health and cost
@@ -28,7 +28,8 @@ The home screen rolls those grades up across the lake, so you can see at a glanc
 The **Storage impact** card at the top of home answers one question: is Cryo making the lake smaller? Every figure carries a **Measured** or **Estimate** label.
 
 - **Last 24 hours (measured).** Bytes freed by successful cleanup actions, the number of tables cleaned and a monthly saving at list price. "Measured on 75% of actions" means three in four actions reported a byte count. The rest still ran, they just were not counted. Below it, a running total of bytes freed since the first daily report, counting measured days only.
-- **Where storage goes (estimate).** One bar splits the lake into live data, snapshot history still inside retention, dead data that snapshot expiry frees, orphan files that orphan cleanup frees, and metadata. Dead and orphans are marked **freeable**. Orphans and retained history need an S3 listing of the table, so the card says how many tables have one ("Storage listing for 812 of 1,044 tables"). A compaction estimate sits under the bar.
+- **Where storage goes (estimate).** One bar splits the lake into live data, snapshot history still inside retention, dead data that snapshot expiry frees, orphan files that orphan cleanup frees, and metadata. Dead and orphans are marked **freeable**. Orphans and retained history need an S3 listing of the table. The scanner keeps a table's last listing between full cost scans, so the card counts only listings from the last 7 days ("Listed within 7 days: 300 of 1,044 tables"). Tables with an older listing still count, but the card says how many there are, and the Orphans and Snapshot history rows carry an **estimated** or **partly estimated** tag. Hover the tag to see how many bytes come from those older listings. A compaction estimate sits under the bar.
+- **Units.** Sizes use decimal units, the ones S3 bills in: 1 GB is 1,000,000,000 bytes and 1 TB is 1,000 GB. The Cost page uses the same units.
 - **Last 60 days.** Total storage, live data and the running total freed by Cryo, one point per daily report. The gap between total and live is what maintenance can still remove. Days recorded before this card existed show the total only.
 - **Versioned buckets.** When the scanner reports that a bucket has versioning on without a noncurrent-version expiration rule, a warning names the bucket. Deletes there leave billed old versions, so cleanup does not lower the bill until a lifecycle rule is added.
 

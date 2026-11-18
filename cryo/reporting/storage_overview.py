@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 TREND_DAYS = 60
 TIB = 1024**4
 GIB = 1024**3
+LISTING_FRESH_DAYS = 7
 # Bucket-versioning findings are capped; the home chip only needs to name a few buckets.
 _MAX_VERSIONING_FINDINGS = 20
 _MAX_VERSIONING_ROWS = 20_000
@@ -51,6 +52,11 @@ class StorageBreakdown:
     ``retained_history_bytes`` is only knowable where an S3 listing ran: it is listed bytes
     that are neither live, dead, orphaned nor metadata, i.e. files older snapshots still
     reference inside the retention window.
+
+    The scanner carries a table's last listing forward between full cost scans, so
+    ``tables_with_listing`` includes listings that can be weeks old. ``tables_listed_recently``
+    counts only listings newer than ``listing_fresh_days``; the ``*_estimated`` byte fields are
+    the parts of the orphan and retained-history totals that come from older listings.
     """
 
     live_bytes: int
@@ -63,6 +69,10 @@ class StorageBreakdown:
     tables_with_cost: int
     tables_with_listing: int
     price_per_gb_month: float | None
+    tables_listed_recently: int = 0
+    orphan_bytes_estimated: int = 0
+    retained_history_bytes_estimated: int = 0
+    listing_fresh_days: int = LISTING_FRESH_DAYS
 
     @property
     def total_bytes(self) -> int:
@@ -130,8 +140,13 @@ def _int(value: object) -> int:
     return int(value) if isinstance(value, (int, float, Decimal)) else 0
 
 
-def fleet_storage_breakdown(session: Session) -> StorageBreakdown:
+def fleet_storage_breakdown(session: Session, *, now: datetime | None = None) -> StorageBreakdown:
+    cutoff = (now or datetime.now(UTC)) - timedelta(days=LISTING_FRESH_DAYS)
     listed = TableCost.listed_bytes.isnot(None)
+    # A listing that never recorded its time (skipped or truncated) cannot be called fresh.
+    stale = listed & (
+        TableCost.last_full_cost_scan_at.is_(None) | (TableCost.last_full_cost_scan_at < cutoff)
+    )
     accounted = (
         TableCost.live_bytes
         + TableCost.dead_bytes
@@ -154,6 +169,9 @@ def fleet_storage_breakdown(session: Session) -> StorageBreakdown:
             func.coalesce(func.sum(TableCost.metadata_bytes), 0),
             func.coalesce(func.sum(TableCost.reclaim_optimize_bytes), 0),
             func.avg(TableCost.price_per_gb_month),
+            func.coalesce(func.sum(case((listed & ~stale, 1), else_=0)), 0),
+            func.coalesce(func.sum(case((stale, TableCost.orphan_bytes), else_=0)), 0),
+            func.coalesce(func.sum(case((stale, retained), else_=0)), 0),
         )
         .select_from(Table)
         .outerjoin(TableCost, TableCost.table_id == Table.id)
@@ -171,6 +189,9 @@ def fleet_storage_breakdown(session: Session) -> StorageBreakdown:
         metadata_bytes=_int(row[7]),
         compaction_savings_bytes=_int(row[8]),
         price_per_gb_month=float(price) if price is not None else None,
+        tables_listed_recently=_int(row[10]),
+        orphan_bytes_estimated=_int(row[11]),
+        retained_history_bytes_estimated=_int(row[12]),
     )
 
 
@@ -323,7 +344,7 @@ def storage_overview(session: Session, *, now: datetime | None = None) -> Storag
     now = now or datetime.now(UTC)
     return StorageOverview(
         generated_at=now,
-        breakdown=fleet_storage_breakdown(session),
+        breakdown=fleet_storage_breakdown(session, now=now),
         freed_24h=freed_last_24h(session, now=now),
         cumulative=cumulative_freed(session),
         trend=storage_trend(session, today=now.date()),

@@ -174,7 +174,7 @@ describe("CostOverviewTab", () => {
   it("renders the opportunity page from the same filter as the candidate count", async () => {
     vi.mocked(getCostDashboard).mockResolvedValue(dashboard);
     vi.mocked(listTables).mockResolvedValue({
-      items: [opportunityRow("t-orders", "orders", 2 * 1024 ** 3), opportunityRow("t-events", "events", null)],
+      items: [opportunityRow("t-orders", "orders", 2e9), opportunityRow("t-events", "events", null)],
       total: 3,
       limit: 50,
       offset: 0
@@ -187,7 +187,7 @@ describe("CostOverviewTab", () => {
     expect(screen.getByText("2 of 3 candidates")).toBeInTheDocument();
 
     const orders = screen.getByRole("row", { name: /gold\.orders/ });
-    expect(within(orders).getByText("12 GB")).toBeInTheDocument();
+    expect(within(orders).getByText("12.9 GB")).toBeInTheDocument();
     expect(within(orders).getByText("2 GB")).toBeInTheDocument();
 
     const events = screen.getByRole("row", { name: /gold\.events/ });
@@ -221,7 +221,7 @@ describe("CostOverviewTab", () => {
   it("renders independent cards while getCostDashboard is still pending (#494)", async () => {
     vi.mocked(getCostDashboard).mockReturnValue(new Promise(() => {}));
     vi.mocked(listTables).mockResolvedValue({
-      items: [opportunityRow("t-orders", "orders", 2 * 1024 ** 3)],
+      items: [opportunityRow("t-orders", "orders", 2e9)],
       total: 1,
       limit: 50,
       offset: 0
@@ -235,7 +235,7 @@ describe("CostOverviewTab", () => {
   it("pages opportunities from oppOffset without downloading the fleet", async () => {
     vi.mocked(getCostDashboard).mockResolvedValue(dashboard);
     vi.mocked(listTables).mockResolvedValue({
-      items: [opportunityRow("t-late", "late", 1024 ** 3)],
+      items: [opportunityRow("t-late", "late", 1e9)],
       total: 60,
       limit: 50,
       offset: 50
@@ -258,7 +258,7 @@ describe("CostOverviewTab", () => {
     authRole.current = "viewer";
     vi.mocked(getCostDashboard).mockResolvedValue(dashboard);
     vi.mocked(listTables).mockResolvedValue({
-      items: [opportunityRow("t-orders", "orders", 2 * 1024 ** 3), opportunityRow("t-events", "events", null)],
+      items: [opportunityRow("t-orders", "orders", 2e9), opportunityRow("t-events", "events", null)],
       total: 3,
       limit: 50,
       offset: 0

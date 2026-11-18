@@ -125,7 +125,7 @@ export const getSignalMatrix = (
   }
 
   if (normName.includes("cost") || normName.includes("anomaly")) {
-    const reclaimGb = (reclaimableBytes / (1024 * 1024 * 1024)).toFixed(1);
+    const reclaimGb = (reclaimableBytes / 1e9).toFixed(1);
     return {
       what: "Storage Footprint & Orphan File Buildup",
       why: "Deleted transactional records are retained in older snapshots for point-in-time snapshot recovery. Without automated expiry and orphan removal, cold S3 storage files accumulate indefinitely.",

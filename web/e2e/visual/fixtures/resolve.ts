@@ -294,22 +294,23 @@ function dashboardBody(profile: VisualProfile) {
 }
 
 function storageOverviewBody(profile: VisualProfile) {
-  const TIB = 1024 ** 4;
+  const TB = 1e12;
   const bare = profile.empty || profile.flags.unknown;
   return {
     generated_at: VISUAL_NOW_ISO,
     breakdown: {
-      live_bytes: bare ? 0 : 96 * TIB, retained_history_bytes: bare ? 0 : 11 * TIB, dead_bytes: bare ? 0 : 9 * TIB,
-      orphan_bytes: bare ? 0 : 4 * TIB, metadata_bytes: bare ? 0 : TIB, total_bytes: bare ? 0 : 121 * TIB,
-      compaction_savings_bytes: bare ? 0 : 2 * TIB, tables_total: profile.tablesTotal, tables_with_cost: bare ? 0 : profile.tablesTotal,
-      tables_with_listing: bare ? 0 : 2, price_per_gb_month: 0.023
+      live_bytes: bare ? 0 : 96 * TB, retained_history_bytes: bare ? 0 : 11 * TB, dead_bytes: bare ? 0 : 9 * TB,
+      orphan_bytes: bare ? 0 : 4 * TB, metadata_bytes: bare ? 0 : TB, total_bytes: bare ? 0 : 121 * TB,
+      compaction_savings_bytes: bare ? 0 : 2 * TB, tables_total: profile.tablesTotal, tables_with_cost: bare ? 0 : profile.tablesTotal,
+      tables_with_listing: bare ? 0 : 2, tables_listed_recently: bare ? 0 : 1, orphan_bytes_estimated: bare ? 0 : TB,
+      retained_history_bytes_estimated: bare ? 0 : 3 * TB, listing_fresh_days: 7, price_per_gb_month: 0.023
     },
     freed_24h: {
-      bytes_freed: bare ? 0 : 1.2 * TIB, actions_succeeded: bare ? 0 : 42, actions_measured: bare ? 0 : 38,
+      bytes_freed: bare ? 0 : 1.2 * TB, actions_succeeded: bare ? 0 : 42, actions_measured: bare ? 0 : 38,
       tables_cleaned: bare ? 0 : 3, window_start: VISUAL_NOW_ISO, window_end: VISUAL_NOW_ISO, bytes_by_source: null,
       savings_usd_month: bare ? null : 28.26
     },
-    cumulative: { bytes_freed: bare ? 0 : 18 * TIB, since: bare ? null : "2026-08-01", days_recorded: bare ? 0 : 58, days_unmeasured: bare ? 0 : 2 },
+    cumulative: { bytes_freed: bare ? 0 : 18 * TB, since: bare ? null : "2026-08-01", days_recorded: bare ? 0 : 58, days_unmeasured: bare ? 0 : 2 },
     trend: [],
     versioning_findings: null
   };
