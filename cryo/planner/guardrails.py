@@ -71,6 +71,11 @@ MODE_DESCRIPTIONS: Mapping[Mode, str] = {
 RECOMMENDED_MODE = Mode.DEEP
 
 
+def mode_operation_values(mode: Mode) -> list[str]:
+    """What a preset in ``mode`` runs, in CORRECT_ORDER: the list ``Preset.operations`` stores."""
+    return [op.value for op in sort_operations_canonically(MODE_OPERATIONS[mode])]
+
+
 def canonical_rank(operation: OperationType | str) -> int:
     """Sort rank for an operation. Unknown/future ops sink to the end rather than raising."""
     try:

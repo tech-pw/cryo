@@ -203,6 +203,7 @@ from cryo.planner.guardrails import (
     MODE_DESCRIPTIONS,
     MODE_OPERATIONS,
     RECOMMENDED_MODE,
+    mode_operation_values,
     sort_operations_canonically,
     validate_guardrails,
     validate_operation_order,
@@ -1066,8 +1067,8 @@ def create_preset(
     )
     if continuous_errors:
         raise HTTPException(status_code=400, detail={"continuous": continuous_errors})
-    if values.get("operations"):
-        values["operations"] = sort_operations_canonically(values["operations"])
+    # The mode decides what runs, so the stored list mirrors it whatever the client sent.
+    values["operations"] = mode_operation_values(payload.mode)
     previous_default: uuid.UUID | None = None
     if values.get("is_default"):
         previous_default = session.scalar(
@@ -1095,6 +1096,14 @@ def create_preset(
     session.commit()
     session.refresh(preset)
     return preset
+
+
+def _stored_operations(mode: str, values: dict[str, Any]) -> list[str]:
+    """``Preset.operations`` for a write: the mode's list, or the sent list for an unknown mode."""
+    try:
+        return mode_operation_values(Mode(mode))
+    except ValueError:
+        return sort_operations_canonically(values.get("operations") or [])
 
 
 @router.patch(
@@ -1139,8 +1148,8 @@ def patch_preset(
         )
         if continuous_errors:
             raise HTTPException(status_code=400, detail={"continuous": continuous_errors})
-    if values.get("operations"):
-        values["operations"] = sort_operations_canonically(values["operations"])
+    if "mode" in values or "operations" in values:
+        values["operations"] = _stored_operations(values.get("mode") or preset.mode, values)
     if "is_default" in values or "schedule_cron" in values:
         preset_lifecycle.ensure_default_has_schedule(
             is_default=bool(values.get("is_default", preset.is_default)),
@@ -3183,6 +3192,12 @@ def _build_plan_for_table(
                 )
             except ValueError:
                 continue
+    # build_plan emits convert_equality_deletes only on this opt-in (no engine runs it yet,
+    # so an opted-in run is meant to be rejected); every standard/deep list names it.
+    if not bool((preset.params or {}).get("convert_equality_deletes")):
+        parsed_ops = [
+            op for op in parsed_ops if op.type is not OperationType.CONVERT_EQUALITY_DELETES
+        ]
     if not parsed_ops:
         return None
     # Match the order the worker will actually execute (build_plan sorts by CORRECT_ORDER),

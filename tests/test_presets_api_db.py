@@ -36,6 +36,8 @@ from cryo.db.models import (
     TableStats,
     TableStatsHistory,
 )
+from cryo.domain.enums import Mode
+from cryo.planner.guardrails import mode_operation_values
 from tests.auth_helpers import (
     ADMIN_HEADERS,
     OPERATOR_HEADERS,
@@ -1361,6 +1363,7 @@ def _create_preset(
     destination_id: uuid.UUID,
     *,
     priority: int,
+    mode: str = "deep",
 ) -> str:
     response = client.post(
         "/api/v1/presets",
@@ -1368,6 +1371,7 @@ def _create_preset(
         json={
             "name": name,
             "destination_id": str(destination_id),
+            "mode": mode,
             "operations": ["expire_snapshots", "optimize"],
             "params": {"min_small_files": 10},
             "priority": priority,
@@ -1416,7 +1420,7 @@ def test_table_operation_run_allows_operations_outside_the_workflow(api_db: ApiD
     )
     assert unassigned.status_code == 409
 
-    preset_id = _create_preset(client, "standard", destination_id, priority=100)
+    preset_id = _create_preset(client, "standard", destination_id, priority=100, mode="standard")
     assert (
         client.post(
             "/api/v1/assignments",
@@ -1546,6 +1550,42 @@ def test_preset_modes_catalog_lists_mode_operations_and_deep_defaults(api_db: Ap
         "source": "built_in",
         "setting": None,
     }
+
+
+def test_preset_writes_store_the_modes_operations(api_db: ApiDb) -> None:
+    _, destination_id = _seed_source_destination(api_db.session_factory)
+    client = api_db.client
+    created = client.post(
+        "/api/v1/presets",
+        headers=ADMIN_HEADERS,
+        json={
+            "name": "stale-ops",
+            "destination_id": str(destination_id),
+            "mode": "deep",
+            "operations": ["optimize"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["operations"] == mode_operation_values(Mode.DEEP)
+    preset_id = created.json()["id"]
+
+    mode_only = client.patch(
+        f"/api/v1/presets/{preset_id}", headers=ADMIN_HEADERS, json={"mode": "light"}
+    )
+    assert mode_only.status_code == 200, mode_only.text
+    assert mode_only.json()["operations"] == ["expire_data", "expire_snapshots"]
+
+    ops_only = client.patch(
+        f"/api/v1/presets/{preset_id}",
+        headers=ADMIN_HEADERS,
+        json={"operations": ["optimize"]},
+    )
+    assert ops_only.json()["operations"] == mode_operation_values(Mode.LIGHT)
+
+    untouched = client.patch(
+        f"/api/v1/presets/{preset_id}", headers=ADMIN_HEADERS, json={"priority": 5}
+    )
+    assert untouched.json()["operations"] == mode_operation_values(Mode.LIGHT)
 
 
 def test_patch_preset_accepts_and_validates_deep_mode_params(api_db: ApiDb) -> None:

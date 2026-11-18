@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { createPreset, getPresetModes, listDestinations, patchPreset, simulatePreset } from "../../api/client";
+import { createPreset, listDestinations, patchPreset, simulatePreset } from "../../api/client";
 import type { DestinationRead, PresetRead, PresetSimulationResponse, PresetWrite } from "../../api/types";
 import { CronInput } from "../CronInput";
 import { DiscardChangesDialog } from "../DiscardChangesDialog";
@@ -46,6 +46,7 @@ import {
   operationLabel,
   type OperationDiff
 } from "../../lib/presetModes";
+import { usePresetModes } from "../../lib/usePresetModes";
 import { useUnsavedChangesGuard } from "../../lib/useUnsavedChangesGuard";
 
 interface PendingSave {
@@ -73,11 +74,7 @@ export const PresetConfigForm = ({
   const { api, role } = useAuth();
   const queryClient = useQueryClient();
   const destinations = useQuery({ queryKey: ["destinations"], queryFn: () => listDestinations(api) });
-  const modes = useQuery({
-    queryKey: ["preset-modes"],
-    queryFn: () => getPresetModes(api),
-    staleTime: Infinity
-  });
+  const modes = usePresetModes();
 
   const form = useForm<PresetFormValues>({
     defaultValues: presetToFormValues(null, destinations.data ?? []) as PresetFormValues
