@@ -31,7 +31,7 @@ describe("realizedSavingsLabel", () => {
         run({
           realized_actions_succeeded: 2,
           realized_actions_measured: 1,
-          realized_bytes_freed: 1024 ** 3
+          realized_bytes_freed: 1e9
         })
       )
     ).toBe("Freed 1 GB (1 of 2 actions measured)");

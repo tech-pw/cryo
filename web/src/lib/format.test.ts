@@ -1,15 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { bytesToGb, formatBytesGb, formatGb, formatPercent, formatTime, humanizeInstants } from "./format";
+import { bytesToGib, formatBytesGb, formatGb, formatPercent, formatTime, humanizeInstants } from "./format";
 
 describe("format helpers", () => {
-  it("converts bytes to GB", () => {
-    expect(bytesToGb(1024 ** 3)).toBeCloseTo(1);
-    expect(bytesToGb(null)).toBe(0);
+  it("converts bytes to GiB", () => {
+    expect(bytesToGib(1024 ** 3)).toBeCloseTo(1);
+    expect(bytesToGib(null)).toBe(0);
   });
 
-  it("formats bytes with TB rollover", () => {
-    expect(formatBytesGb(1024 ** 4)).toContain("TB");
-    expect(formatBytesGb(1024 ** 3)).toContain("GB");
+  it("formats bytes in decimal units with TB rollover", () => {
+    expect(formatBytesGb(1e12)).toBe("1 TB");
+    expect(formatBytesGb(999e9)).toBe("999 GB");
+    expect(formatBytesGb(24.96e12)).toBe("25 TB");
+    expect(formatBytesGb(2.5e9)).toBe("2.5 GB");
+  });
+
+  it("labels binary byte counts by their decimal size", () => {
+    // 22.7 TiB is 24.96 TB; the home card used to print "22.7 TB" for it.
+    expect(formatBytesGb(22.7 * 1024 ** 4)).toBe("25 TB");
+    expect(formatBytesGb(1024 ** 3)).toBe("1.1 GB");
+  });
+
+  it("reads API *_gb fields as GiB and shows them in the same units as bytes", () => {
+    expect(formatGb(1)).toBe(formatBytesGb(1024 ** 3));
+    expect(formatGb(1024)).toBe("1.1 TB");
+    expect(formatGb(null)).toBe("-");
   });
 
   it("formats percent edge cases", () => {
@@ -21,8 +35,8 @@ describe("format helpers", () => {
     expect(formatBytesGb(null)).toBe("-");
     expect(formatBytesGb(undefined)).toBe("-");
     expect(formatBytesGb(Number.NaN)).toBe("-");
-    expect(formatBytesGb(40 * 1024 * 1024)).toBe("40 MB");
-    expect(formatGb(40 / 1024)).toBe("40 MB");
+    expect(formatBytesGb(40e6)).toBe("40 MB");
+    expect(formatGb(40 / 1024)).toBe("41.9 MB");
     expect(formatBytesGb(0)).toBe("0 GB");
   });
 

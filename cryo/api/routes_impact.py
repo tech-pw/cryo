@@ -14,7 +14,7 @@ from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -154,6 +154,18 @@ class StorageBreakdownRead(BaseModel):
     tables_total: int
     tables_with_cost: int
     tables_with_listing: int
+    tables_listed_recently: int = Field(
+        description="Tables whose S3 listing ran within listing_fresh_days."
+    )
+    orphan_bytes_estimated: int = Field(
+        description="Part of orphan_bytes carried forward from listings older than "
+        "listing_fresh_days."
+    )
+    retained_history_bytes_estimated: int = Field(
+        description="Part of retained_history_bytes carried forward from listings older than "
+        "listing_fresh_days."
+    )
+    listing_fresh_days: int
     price_per_gb_month: float | None
 
 

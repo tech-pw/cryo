@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, Tooltip, XAxis, YAxis } from "recharts";
 import type { CostByOperation, OperationType } from "../api/types";
 import { ChartFrame } from "./common";
-import { bytesToGb, formatCurrency, formatGb } from "../lib/format";
+import { bytesToGib, formatCurrency, formatGb } from "../lib/format";
 import { chartAxisTick, cryoColors, operationLabels } from "../lib/theme";
 import { Segmented } from "./ui/segmented";
 
@@ -63,9 +63,11 @@ const colorFor = (row: WaterfallRow): string => {
 const compactAmount = (value: number, measure: Measure): string => {
   const abs = Math.abs(value);
   if (measure === "storage") {
-    if (abs >= 1024) return `${(value / 1024).toFixed(1)} TB`;
-    if (abs >= 10) return `${Math.round(value)} GB`;
-    return `${value.toFixed(1)} GB`;
+    // Rows are in GiB (bytesToGib); labels use decimal units like formatGb.
+    const gb = (value * 1024 ** 3) / 1e9;
+    if (Math.abs(gb) >= 1000) return `${(gb / 1000).toFixed(1)} TB`;
+    if (Math.abs(gb) >= 10) return `${Math.round(gb)} GB`;
+    return `${gb.toFixed(1)} GB`;
   }
   if (abs >= 1000) {
     const thousands = value / 1000;
@@ -106,9 +108,9 @@ export const CostSavingsWaterfall = ({
     const byOp = new Map(
       byOperation
         .filter((item) => item.reclaimable_bytes != null)
-        .map((item) => [item.operation, bytesToGb(item.reclaimable_bytes)])
+        .map((item) => [item.operation, bytesToGib(item.reclaimable_bytes)])
     );
-    return buildWaterfallRows(bytesToGb(currentStorageBytes), byOp);
+    return buildWaterfallRows(bytesToGib(currentStorageBytes), byOp);
   }, [measure, byOperation, currentCostUsd, currentStorageBytes]);
 
   const hasSavings = byOperation.some(

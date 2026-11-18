@@ -27,11 +27,26 @@ export const formatDecimal = (value?: number | null): string => {
   return decimalNumber.format(value);
 };
 
-export const formatGb = (value?: number | null): string => {
-  if (value === null || value === undefined || Number.isNaN(value)) return "-";
-  if (value > 0 && value < 0.1) return `${decimalNumber.format(value * 1024)} MB`;
-  if (value >= 1024) return `${decimalNumber.format(value / 1024)} TB`;
-  return `${decimalNumber.format(value)} GB`;
+const BYTES_PER_MB = 1e6;
+const BYTES_PER_GB = 1e9;
+const BYTES_PER_TB = 1e12;
+const BYTES_PER_GIB = 1024 ** 3;
+
+/** Decimal units (1 GB = 10^9 bytes), the units object storage is billed in. */
+export const formatBytesGb = (bytes?: number | null): string => {
+  if (bytes === null || bytes === undefined || Number.isNaN(bytes)) return "-";
+  if (bytes > 0 && bytes < 0.1 * BYTES_PER_GB) return `${decimalNumber.format(bytes / BYTES_PER_MB)} MB`;
+  if (bytes >= BYTES_PER_TB) return `${decimalNumber.format(bytes / BYTES_PER_TB)} TB`;
+  return `${decimalNumber.format(bytes / BYTES_PER_GB)} GB`;
+};
+
+/**
+ * Formats a GiB quantity in the same decimal units as `formatBytesGb`. The API's `*_gb` fields
+ * are GiB (bytes / 1024^3), so pass them here rather than labelling them GB directly.
+ */
+export const formatGb = (gib?: number | null): string => {
+  if (gib === null || gib === undefined || Number.isNaN(gib)) return "-";
+  return formatBytesGb(gib * BYTES_PER_GIB);
 };
 
 export const formatCurrency = (value?: number | null): string => {
@@ -172,13 +187,9 @@ export const humanizeInstants = (text: string): string =>
     return formatted === "-" ? match : formatted;
   });
 
-export const bytesToGb = (bytes?: number | null): number =>
-  bytes && Number.isFinite(bytes) ? bytes / 1024 ** 3 : 0;
-
-export const formatBytesGb = (bytes?: number | null): string => {
-  if (bytes === null || bytes === undefined || Number.isNaN(bytes)) return "-";
-  return formatGb(bytes / 1024 ** 3);
-};
+/** Bytes to GiB, the unit `formatGb` takes. */
+export const bytesToGib = (bytes?: number | null): number =>
+  bytes && Number.isFinite(bytes) ? bytes / BYTES_PER_GIB : 0;
 
 export const formatPercent = (value?: number | null, digits = 0): string => {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";

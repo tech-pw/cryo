@@ -18,7 +18,7 @@ export const isStorageOverview = (value: unknown): value is StorageOverview => {
   const { breakdown, freed_24h: freed, cumulative, trend, versioning_findings: findings } = value;
   return (
     isRecord(breakdown) &&
-    ["total_bytes", "live_bytes", "retained_history_bytes", "dead_bytes", "orphan_bytes", "metadata_bytes", "tables_total", "tables_with_listing", "tables_with_cost"].every((key) => isNumber(breakdown[key])) &&
+    ["total_bytes", "live_bytes", "retained_history_bytes", "dead_bytes", "orphan_bytes", "metadata_bytes", "tables_total", "tables_with_listing", "tables_with_cost", "tables_listed_recently", "orphan_bytes_estimated", "retained_history_bytes_estimated", "listing_fresh_days"].every((key) => isNumber(breakdown[key])) &&
     isRecord(freed) &&
     isNumber(freed.actions_succeeded) &&
     isNumber(freed.actions_measured) &&

@@ -14,6 +14,7 @@ import {
   freeableBytes,
   heroView,
   listingCoverage,
+  staleListingTables,
   storageSegments,
   trendData
 } from "../../lib/storageOverview";
@@ -136,6 +137,7 @@ const Breakdown = ({ data }: { data: StorageOverview }) => {
   const b = data.breakdown;
   const segments = storageSegments(b);
   const coverage = listingCoverage(b);
+  const stale = staleListingTables(b);
   if (b.tables_with_cost === 0) {
     return (
       <section className="home-storage-breakdown" aria-label="Where storage goes">
@@ -184,7 +186,15 @@ const Breakdown = ({ data }: { data: StorageOverview }) => {
               onBlur={() => setFocus(null)}
             >
               <span className={`home-storage-swatch home-seg-${s.key}${s.freeable ? " is-freeable" : ""}`} aria-hidden="true" />
-              <span className="home-storage-legend-label">{s.label}{s.freeable ? <span className="home-storage-freeable">freeable</span> : null}</span>
+              <span className="home-storage-legend-label">
+                {s.label}
+                {s.freeable ? <span className="home-storage-freeable">freeable</span> : null}
+                {s.estimatedBytes > 0 ? (
+                  <span className="home-storage-estimated" title={`${formatStorage(s.estimatedBytes)} from listings older than ${b.listing_fresh_days} days`}>
+                    {s.estimatedBytes >= s.bytes ? "estimated" : "partly estimated"}
+                  </span>
+                ) : null}
+              </span>
               <span className="home-storage-legend-value">{formatStorage(s.bytes)}</span>
               <span className="home-storage-legend-pct">{s.pct.toFixed(s.pct > 0 && s.pct < 1 ? 1 : 0)}%</span>
             </li>
@@ -200,12 +210,19 @@ const Breakdown = ({ data }: { data: StorageOverview }) => {
         </span>
       </div>
       <p className="home-caption">
-        Storage listing for {formatNumber(b.tables_with_listing)} of {formatNumber(b.tables_total)} tables.{" "}
-        {coverage === "none"
-          ? "Orphans and retained history need an S3 listing, so they read 0 until the cost scan lists table storage."
-          : coverage === "partial"
-            ? "Orphans and retained history count only listed tables, so the real totals are higher."
-            : null}
+        Listed within {b.listing_fresh_days} days: {formatNumber(b.tables_listed_recently)} of {formatNumber(b.tables_total)} tables.{" "}
+        {coverage === "none" ? (
+          "Orphans and retained history need an S3 listing, so they read 0 until the cost scan lists table storage."
+        ) : (
+          <>
+            {stale > 0
+              ? `${formatNumber(stale)} more ${stale === 1 ? "table uses" : "tables use"} an older listing, so ${formatStorage(b.orphan_bytes_estimated)} of orphans and ${formatStorage(b.retained_history_bytes_estimated)} of retained history are estimates. `
+              : null}
+            {b.tables_with_listing < b.tables_total
+              ? "Orphans and retained history count only listed tables, so the real totals are higher."
+              : null}
+          </>
+        )}
       </p>
     </section>
   );

@@ -51,6 +51,7 @@ def _cost(
     meta: int = 0,
     orphan: int | None = None,
     listed: int | None = None,
+    listed_at: datetime | None = NOW,
     raw: dict[str, Any] | None = None,
 ) -> None:
     session.add(
@@ -64,6 +65,7 @@ def _cost(
             metadata_bytes=meta,
             orphan_bytes=orphan,
             listed_bytes=listed,
+            last_full_cost_scan_at=listed_at if listed is not None else None,
             reclaim_optimize_bytes=GIB,
             current_monthly_cost_usd=1.0,
             projected_monthly_cost_usd=1.0,
@@ -116,6 +118,41 @@ def test_breakdown_splits_listed_history_and_counts_coverage(session: Session) -
     assert b.compaction_savings_bytes == 2 * GIB
     assert b.total_bytes == (150 + 30 + 25 + 9 + 2) * GIB
     assert b.price_per_gb_month == 0.02
+
+
+def test_breakdown_counts_only_recent_listings_and_marks_carried_forward_bytes(
+    session: Session,
+) -> None:
+    fresh = _table(session)
+    _cost(session, fresh, live=10 * GIB, orphan=2 * GIB, listed=15 * GIB, listed_at=NOW)
+    carried = _table(session)
+    _cost(
+        session,
+        carried,
+        live=10 * GIB,
+        orphan=4 * GIB,
+        listed=20 * GIB,
+        listed_at=NOW - timedelta(days=30),
+    )
+    untimed = _table(session)
+    _cost(session, untimed, live=GIB, orphan=0, listed=0, listed_at=None)
+    edge = _table(session)
+    _cost(session, edge, live=GIB, orphan=0, listed=GIB, listed_at=NOW - timedelta(days=6))
+
+    b = fleet_storage_breakdown(session, now=NOW)
+    assert b.tables_total == 4
+    assert b.tables_with_listing == 4
+    assert b.tables_listed_recently == 2
+    assert b.listing_fresh_days == 7
+    assert b.orphan_bytes == 6 * GIB
+    assert b.orphan_bytes_estimated == 4 * GIB
+    # Fresh: 15 - (10 + 2) = 3. Carried forward: 20 - (10 + 4) = 6.
+    assert b.retained_history_bytes == 9 * GIB
+    assert b.retained_history_bytes_estimated == 6 * GIB
+
+    later = fleet_storage_breakdown(session, now=NOW + timedelta(days=8))
+    assert later.tables_listed_recently == 0
+    assert later.orphan_bytes_estimated == later.orphan_bytes
 
 
 def test_freed_24h_counts_only_successful_reclaim_in_window(session: Session) -> None:
@@ -237,6 +274,8 @@ def test_api_requires_auth_and_returns_overview(session: Session) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["breakdown"]["tables_with_listing"] == 1
+    assert body["breakdown"]["listing_fresh_days"] == 7
+    assert body["breakdown"]["orphan_bytes_estimated"] == 0
     assert body["freed_24h"]["bytes_freed"] == GIB
     assert body["freed_24h"]["savings_usd_month"] == 0.02
     assert body["versioning_findings"] is None

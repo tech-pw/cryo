@@ -29,9 +29,33 @@ describe("StorageCard", () => {
       expect(within(breakdown).getByText(label)).toBeInTheDocument();
     }
     expect(within(breakdown).getAllByText("freeable")).toHaveLength(2);
-    expect(breakdown).toHaveTextContent("Storage listing for 812 of 1,044 tables");
+    expect(breakdown).toHaveTextContent("Listed within 7 days: 300 of 1,044 tables");
+    expect(breakdown).toHaveTextContent("512 more tables use an older listing, so 4.0 TB of orphans and 15.0 TB of retained history are estimates");
+    expect(breakdown).toHaveTextContent("count only listed tables");
     expect(breakdown).toHaveTextContent("20.0 TB is freeable");
     expect(breakdown).toHaveTextContent("Estimate");
+  });
+
+  it("marks orphans and retained history from carried-forward listings as estimated", () => {
+    renderCard();
+    const breakdown = screen.getByRole("region", { name: "Where storage goes" });
+    const orphans = within(breakdown).getByText("Orphans").closest("li");
+    const history = within(breakdown).getByText("Snapshot history").closest("li");
+    expect(orphans).toHaveTextContent("partly estimated");
+    expect(within(orphans as HTMLElement).getByText("partly estimated")).toHaveAttribute("title", "4.0 TB from listings older than 7 days");
+    expect(history).toHaveTextContent("partly estimated");
+    expect(within(breakdown).getByText("Live data").closest("li")).not.toHaveTextContent("estimated");
+  });
+
+  it("drops the estimate note once every table has a fresh listing", () => {
+    const base = storageFixture();
+    renderCard(storageFixture({
+      breakdown: { ...base.breakdown, tables_with_listing: 1044, tables_listed_recently: 1044, orphan_bytes_estimated: 0, retained_history_bytes_estimated: 0 }
+    }));
+    const breakdown = screen.getByRole("region", { name: "Where storage goes" });
+    expect(breakdown).toHaveTextContent("Listed within 7 days: 1,044 of 1,044 tables.");
+    expect(breakdown).not.toHaveTextContent("older listing");
+    expect(breakdown).not.toHaveTextContent("estimated");
   });
 
   it("teaches when actions ran without byte counts and when nothing ran", () => {
@@ -48,7 +72,7 @@ describe("StorageCard", () => {
   it("explains missing listing, missing trend and versioning", () => {
     const base = storageFixture();
     renderCard(storageFixture({
-      breakdown: { ...base.breakdown, tables_with_listing: 0 },
+      breakdown: { ...base.breakdown, tables_with_listing: 0, tables_listed_recently: 0 },
       trend: [],
       cumulative: { bytes_freed: 0, since: null, days_recorded: 0, days_unmeasured: 0 },
       versioning_findings: [{ bucket: "bucket-a", tables: 12 }]
@@ -62,8 +86,9 @@ describe("StorageCard", () => {
 });
 
 describe("storage helpers", () => {
-  it("formats binary units and computes shares", () => {
-    expect(formatStorage(1024 ** 4 * 24.7)).toBe("24.7 TB");
+  it("formats decimal units and computes shares", () => {
+    expect(formatStorage(24.7e12)).toBe("24.7 TB");
+    expect(formatStorage(22.7 * 1024 ** 4)).toBe("25.0 TB");
     expect(formatStorage(0)).toBe("0 GB");
     const segments = storageSegments(storageFixture().breakdown);
     expect(Math.round(segments.reduce((sum, s) => sum + s.pct, 0))).toBe(100);

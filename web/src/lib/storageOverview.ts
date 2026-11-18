@@ -1,16 +1,16 @@
 import type { StorageBreakdown, StorageOverview, StorageTrendPoint } from "../api/storageOverview";
 
-const TIB = 1024 ** 4;
-const GIB = 1024 ** 3;
-const MIB = 1024 ** 2;
+const TB = 1e12;
+const GB = 1e9;
+const MB = 1e6;
 
-/** Binary units, labelled TB/GB/MB like the rest of the app. */
+/** Decimal units (1 TB = 10^12 bytes), matching `formatBytesGb` and S3 billing. */
 export const formatStorage = (bytes: number | null | undefined): string => {
   if (bytes == null || !Number.isFinite(bytes)) return "-";
   const abs = Math.abs(bytes);
-  if (abs >= TIB) return `${(bytes / TIB).toFixed(abs >= 100 * TIB ? 0 : 1)} TB`;
-  if (abs >= GIB) return `${(bytes / GIB).toFixed(abs >= 100 * GIB ? 0 : 1)} GB`;
-  if (abs >= MIB) return `${(bytes / MIB).toFixed(0)} MB`;
+  if (abs >= TB) return `${(bytes / TB).toFixed(abs >= 100 * TB ? 0 : 1)} TB`;
+  if (abs >= GB) return `${(bytes / GB).toFixed(abs >= 100 * GB ? 0 : 1)} GB`;
+  if (abs >= MB) return `${(bytes / MB).toFixed(0)} MB`;
   return bytes > 0 ? "< 1 MB" : "0 GB";
 };
 
@@ -23,6 +23,8 @@ export interface StorageSegment {
   bytes: number;
   pct: number;
   freeable: boolean;
+  /** Bytes carried forward from listings older than the fresh window; 0 for segments that need no listing. */
+  estimatedBytes: number;
 }
 
 export const SEGMENT_META: Record<SegmentKey, { label: string; hint: string; freeable: boolean }> = {
@@ -41,20 +43,29 @@ export const storageSegments = (b: StorageBreakdown): StorageSegment[] => {
     orphan: b.orphan_bytes,
     metadata: b.metadata_bytes
   };
+  const estimated: Partial<Record<SegmentKey, number>> = {
+    history: b.retained_history_bytes_estimated,
+    orphan: b.orphan_bytes_estimated
+  };
   const total = b.total_bytes;
   return (Object.keys(bytes) as SegmentKey[]).map((key) => ({
     key,
     ...SEGMENT_META[key],
     bytes: bytes[key],
-    pct: total > 0 ? (bytes[key] / total) * 100 : 0
+    pct: total > 0 ? (bytes[key] / total) * 100 : 0,
+    estimatedBytes: estimated[key] ?? 0
   }));
 };
 
 export const freeableBytes = (b: StorageBreakdown) => b.dead_bytes + b.orphan_bytes;
 
+/** Coverage by listings newer than `listing_fresh_days`; carried-forward listings do not count. */
 export type CoverageState = "none" | "partial" | "full";
 export const listingCoverage = (b: StorageBreakdown): CoverageState =>
-  b.tables_with_listing === 0 ? "none" : b.tables_with_listing >= b.tables_total ? "full" : "partial";
+  b.tables_with_listing === 0 ? "none" : b.tables_listed_recently >= b.tables_total ? "full" : "partial";
+
+/** Tables whose orphan and retained-history figures come from a listing older than the fresh window. */
+export const staleListingTables = (b: StorageBreakdown) => Math.max(0, b.tables_with_listing - b.tables_listed_recently);
 
 export type HeroState = "idle" | "unmeasured" | "measured";
 export interface HeroView {
@@ -85,9 +96,9 @@ export interface TrendDatum {
 export const trendData = (points: StorageTrendPoint[]): TrendDatum[] =>
   points.map((p) => ({
     day: p.day,
-    total: p.total_bytes == null ? null : p.total_bytes / TIB,
-    live: p.live_bytes == null ? null : p.live_bytes / TIB,
-    freed: p.cumulative_freed_bytes / TIB
+    total: p.total_bytes == null ? null : p.total_bytes / TB,
+    live: p.live_bytes == null ? null : p.live_bytes / TB,
+    freed: p.cumulative_freed_bytes / TB
   }));
 
-export const formatTb = (tb: number | null | undefined) => (tb == null ? "-" : formatStorage(tb * TIB));
+export const formatTb = (tb: number | null | undefined) => (tb == null ? "-" : formatStorage(tb * TB));

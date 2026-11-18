@@ -7,6 +7,7 @@ import { Badge } from "../ui/badge";
 import { MetricTile } from "../ui/stat";
 import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { formatGb } from "../../lib/format";
 import { ChartCard } from "./ChartCard";
 
 interface Props {
@@ -23,11 +24,7 @@ const priorityVariant = (priority: string): "danger" | "warning" | "secondary" =
 const formatNumber = (n: number | null | undefined): string =>
   n == null ? "—" : n.toLocaleString();
 
-const formatGb = (n: number | null | undefined): string => {
-  if (n == null) return "—";
-  if (n < 1) return `${(n * 1024).toFixed(0)} MB`;
-  return `${n.toFixed(2)} GB`;
-};
+const formatPartitionSize = (gib: number | null | undefined): string => (gib == null ? "—" : formatGb(gib));
 
 const formatUsd = (n: number | null | undefined): string =>
   n == null ? "—" : `$${n.toFixed(0)}`;
@@ -135,7 +132,7 @@ export const CompactionCandidatesTab = ({ api, tableId }: Props) => {
                     <Badge variant={priorityVariant(row.priority)}>{row.priority}</Badge>
                   </td>
                   <td>{formatNumber(row.small_files)}</td>
-                  <td>{formatGb(row.partition_size_gb)}</td>
+                  <td>{formatPartitionSize(row.partition_size_gb)}</td>
                   <td>{row.query_freq_per_day.toFixed(1)}</td>
                   <td>{formatNumber(row.p95_latency_ms)}</td>
                   <td>{formatUsd(row.savings_estimate_usd)}</td>

@@ -167,8 +167,8 @@ export interface Milestone {
   detail: string;
 }
 
-const TB = 1024 ** 4;
-const FREED_STEPS: Array<[number, string]> = [[100 * TB, "100 TB"], [10 * TB, "10 TB"], [TB, "1 TB"], [100 * 1024 ** 3, "100 GB"]];
+const TB = 1e12;
+const FREED_STEPS: Array<[number, string]> = [[100 * TB, "100 TB"], [10 * TB, "10 TB"], [TB, "1 TB"], [0.1 * TB, "100 GB"]];
 
 /** Every milestone currently true, most impressive first. The caller shows the first unseen one. */
 export const milestones = (input: {

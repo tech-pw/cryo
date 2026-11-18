@@ -121,7 +121,7 @@ describe("PresetDetail overview", () => {
   it("shows matched-count and size once simulation resolves", async () => {
     renderPage();
     expect(await screen.findByText(/Matched tables: 3/)).toBeInTheDocument();
-    expect(screen.getByText(/42.5/)).toBeInTheDocument();
+    expect(screen.getByText(/45.6 GB/)).toBeInTheDocument();
   });
 
   it("distinguishes a simulation failure from a genuine zero match", async () => {

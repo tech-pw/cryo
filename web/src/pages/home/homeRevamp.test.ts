@@ -9,7 +9,7 @@ import { storageFixture } from "./storageFixture";
 
 const HOUR = 3_600_000;
 const NOW = Date.parse("2026-09-28T04:30:00Z");
-const TB = 1024 ** 4;
+const TB = 1e12;
 
 const day = (report_date: string, overrides: Partial<ImpactDay> = {}): ImpactDay => ({
   report_date,
