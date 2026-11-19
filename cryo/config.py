@@ -798,6 +798,18 @@ class Settings(BaseSettings):
             "scan_engine_memlimit_ratio of the cgroup memory limit."
         ),
     )
+    maintenance_inline_memory_budget_bytes: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Explicit compaction memory budget, in bytes, for a maintenance job executed "
+            "INLINE in the worker. 0 derives it from the worker container's own cgroup "
+            "memory limit, the same proportion the k8s-dispatch path applies to a Job's "
+            "request. Only used when the cgroup limit cannot be read does a fixed fallback "
+            "apply. The dispatch path is unaffected: it sets the budget from the per-table "
+            "Job spec before the request is built."
+        ),
+    )
     scan_table_timeout_seconds: float = Field(
         default=180.0,
         gt=0,

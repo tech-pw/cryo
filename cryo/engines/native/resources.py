@@ -350,6 +350,68 @@ def compaction_memory_budget_bytes(mem_mib: int) -> int:
     return budget_mib * 1024 * 1024
 
 
+# cgroup v1 reports "no limit" as a page-rounded value near 2^63. Anything at or above
+# this is not a container limit. Lives here rather than in the scanner because both the
+# scan engine and the maintenance engine need it, and scanner already imports from this
+# module (see cryo/scanner/resources.py); the reverse direction does not exist.
+_NO_CGROUP_LIMIT = 1 << 60
+_CGROUP_MEMORY_FILES = (
+    "/sys/fs/cgroup/memory.max",
+    "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+)
+
+# The fixed budget used when the container's own limit cannot be read. Kept as the
+# fallback rather than the default so an unreadable cgroup degrades to the old behaviour
+# instead of to something unbounded.
+INLINE_BUDGET_FALLBACK_BYTES = 3 * 1024 * 1024 * 1024
+
+
+def cgroup_memory_limit_bytes(
+    paths: Sequence[str] = _CGROUP_MEMORY_FILES,
+) -> int | None:
+    """Container memory limit from the cgroup, or None when this process is unlimited."""
+    for path in paths:
+        try:
+            raw = open(path).read().strip()
+        except OSError:
+            continue
+        if not raw or raw == "max":
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        if value <= 0 or value >= _NO_CGROUP_LIMIT:
+            continue
+        return value
+    return None
+
+
+def inline_compaction_memory_budget(
+    explicit_bytes: int = 0,
+    *,
+    limit_bytes: int | None = None,
+) -> tuple[int, str]:
+    """Budget for an engine running INLINE in the worker, plus where it came from.
+
+    The k8s-dispatch path sizes a Job per table and derives the budget from that Job's
+    own request (see cryo.governor.native_admit). A job executed inline has no such
+    spec, so without this it falls back to a fixed constant and plans every rewrite as
+    if it had that much memory however large the worker actually is -- which makes the
+    worker's memory limit look like a tuning knob while barely reaching the engine.
+
+    Returns the source alongside the value so callers can log it: a budget unrelated to
+    the memory the process was given is the kind of thing that should never be silent.
+    """
+    if explicit_bytes > 0:
+        return explicit_bytes, "setting"
+    limit = cgroup_memory_limit_bytes() if limit_bytes is None else limit_bytes
+    if limit is None:
+        return INLINE_BUDGET_FALLBACK_BYTES, "fallback"
+    mem_mib = int(limit // (1024 * 1024))
+    return compaction_memory_budget_bytes(mem_mib), "cgroup"
+
+
 def packing_floor_bytes(
     params: Mapping[str, Any] | None = None,
     *,

@@ -14,6 +14,7 @@ from typing import Any
 from cryo.config import Settings, get_settings
 from cryo.cost.model import CostStatsInput
 from cryo.engines.native.payload import source_catalog_config
+from cryo.engines.native.resources import cgroup_memory_limit_bytes
 from cryo.engines.native.runner import resolve_binary_path
 from cryo.observability.metrics import (
     scan_manifest_cache_hits_total,
@@ -41,14 +42,6 @@ from cryo.scanner.health import compute_design_findings, compute_health_score
 from cryo.scanner.signals import enrich_stats_signals, manifest_stats
 
 logger = logging.getLogger(__name__)
-
-# cgroup v1 reports "no limit" as a page-rounded value near 2^63. Anything at or above this
-# is not a container limit, so it must not become a GOMEMLIMIT.
-_NO_CGROUP_LIMIT = 1 << 60
-_CGROUP_MEMORY_FILES = (
-    "/sys/fs/cgroup/memory.max",
-    "/sys/fs/cgroup/memory/memory.limit_in_bytes",
-)
 
 
 def analyze_catalog_table_go(
@@ -142,27 +135,6 @@ def _parse_engine_payload(
     if stderr:
         detail = f"{detail} | stderr: {stderr[:200]}"
     raise RuntimeError(detail)
-
-
-def cgroup_memory_limit_bytes(
-    paths: Sequence[str] = _CGROUP_MEMORY_FILES,
-) -> int | None:
-    """Container memory limit from the cgroup, or None when this process is unlimited."""
-    for path in paths:
-        try:
-            raw = open(path).read().strip()
-        except OSError:
-            continue
-        if not raw or raw == "max":
-            continue
-        try:
-            value = int(raw)
-        except ValueError:
-            continue
-        if value <= 0 or value >= _NO_CGROUP_LIMIT:
-            continue
-        return value
-    return None
 
 
 def scan_engine_gomemlimit(settings: Settings) -> str | None:

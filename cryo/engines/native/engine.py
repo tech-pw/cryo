@@ -26,6 +26,7 @@ from cryo.engines.native.payload import (
     operation_from_dict,
     operation_to_dict,
 )
+from cryo.engines.native.resources import inline_compaction_memory_budget
 from cryo.engines.native.routing import (
     NATIVE_BASE_OPERATIONS,
     NATIVE_LEGACY_DISCONNECTED_DETAIL,
@@ -55,6 +56,51 @@ NATIVE_DISCONNECTED_DETAIL = NATIVE_LEGACY_DISCONNECTED_DETAIL
 def is_native_available(config: Mapping[str, Any] | None = None) -> bool:
     """Return True when cryo-engine binary is available for worker execution."""
     return is_cryo_engine_available(config or {})
+
+
+def _apply_inline_memory_budget(
+    request: dict[str, Any],
+    settings: Settings,
+    *,
+    table_ref: str,
+    logger_: logging.Logger,
+) -> None:
+    """Give an INLINE rewrite a budget derived from the worker's own memory limit.
+
+    The k8s-dispatch path sizes a Job per table and derives budget, chunk size and group
+    size from that Job's request (cryo.governor.native_admit), so pod and plan agree. A
+    job executed inline has no spec, and without this the payload defaults apply a fixed
+    constant -- so the engine plans every rewrite as if it had that much memory however
+    large the worker is. The worker's memory limit then looks like a tuning knob while
+    barely reaching the engine: raising it buys headroom before the kernel intervenes
+    rather than a different plan, which makes the relationship between the limit and
+    success non-monotonic and very hard to diagnose.
+
+    Only fills what the caller has not set, so the dispatch path (which sets the budget
+    explicitly before the request is built) is untouched.
+    """
+    budget, source = inline_compaction_memory_budget(
+        settings.maintenance_inline_memory_budget_bytes
+    )
+    applied = False
+    for op in request.get("operations") or []:
+        if not isinstance(op, dict) or op.get("type") != "rewrite_data_files":
+            continue
+        params = op.setdefault("params", {})
+        if "compaction_memory_budget_bytes" in params:
+            continue
+        params["compaction_memory_budget_bytes"] = budget
+        applied = True
+    if applied:
+        # Logged because a budget unrelated to the memory the process was given is
+        # exactly the kind of thing that should not be silent -- the failure it causes
+        # looks like "needs more memory" and does not respond to more memory.
+        logger_.info(
+            "inline compaction memory budget: %d bytes (source=%s) for %s",
+            budget,
+            source,
+            table_ref,
+        )
 
 
 @dataclass
@@ -214,6 +260,10 @@ class NativeEngine:
                 source_config=self.source_config,
                 destination_config=self.config,
             )
+            if not bool(self.config.get("k8s_dispatch", False)):
+                _apply_inline_memory_budget(
+                    request, self.settings, table_ref=plan.table_ref, logger_=logger
+                )
             use_k8s = bool(self.config.get("k8s_dispatch", False))
             timeout_seconds = int(self.config.get("timeout_seconds", 3600))
 
@@ -383,6 +433,10 @@ class NativeEngine:
                 source_config=self.source_config,
                 destination_config=self.config,
             )
+            if not bool(self.config.get("k8s_dispatch", False)):
+                _apply_inline_memory_budget(
+                    request, self.settings, table_ref=plan.table_ref, logger_=logger
+                )
             result = execute_request(
                 request,
                 config=self.config,
