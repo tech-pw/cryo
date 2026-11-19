@@ -60,7 +60,7 @@ def is_native_available(config: Mapping[str, Any] | None = None) -> bool:
 
 def _apply_inline_memory_budget(
     request: dict[str, Any],
-    settings: Settings,
+    settings: Settings | None,
     *,
     table_ref: str,
     logger_: logging.Logger,
@@ -79,8 +79,9 @@ def _apply_inline_memory_budget(
     Only fills what the caller has not set, so the dispatch path (which sets the budget
     explicitly before the request is built) is untouched.
     """
+    resolved = settings or get_settings()
     budget, source = inline_compaction_memory_budget(
-        settings.maintenance_inline_memory_budget_bytes
+        resolved.maintenance_inline_memory_budget_bytes
     )
     applied = False
     for op in request.get("operations") or []:
