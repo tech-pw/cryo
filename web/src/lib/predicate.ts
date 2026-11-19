@@ -63,6 +63,11 @@ export interface TableFilterState {
   minSmallFiles?: number | null;
   minMonthlySavings?: number | null;
   minReclaimableGb?: number | null;
+  minOrphanGb?: number | null;
+  minSnapshotGb?: number | null;
+  minJunkGb?: number | null;
+  /** Object-store buckets, from each table's location. */
+  buckets?: string[];
   costPrecision?: CostPrecision | null;
   freshnessBucket?: FreshnessBucketKey | null;
   freshnessAsOf?: string | null;
@@ -119,10 +124,20 @@ export const tableFiltersToPredicate = (filters: TableFilterState): Predicate | 
     typeof filters.minReclaimableGb === "number" && Number.isFinite(filters.minReclaimableGb)
       ? leaf("reclaimable_bytes", ">=", Math.round(filters.minReclaimableGb * 1024 ** 3))
       : null,
+    filters.buckets?.length ? leaf("bucket", "in", filters.buckets) : null,
+    bytesAtLeast("orphan_bytes", filters.minOrphanGb),
+    bytesAtLeast("snapshot_bytes", filters.minSnapshotGb),
+    bytesAtLeast("junk_bytes", filters.minJunkGb),
     filters.costPrecision ? leaf("cost_precision", "=", filters.costPrecision) : null,
     filters.lifecycle ? leaf("lifecycle", "=", filters.lifecycle) : null,
     freshnessPredicate(filters.freshnessBucket, filters.freshnessAsOf)
   ]);
+
+// A 0 threshold means "any measured amount", so it filters with > 0, not >= 0.
+const bytesAtLeast = (field: string, gb: number | null | undefined): Predicate | null => {
+  if (typeof gb !== "number" || !Number.isFinite(gb)) return null;
+  return gb > 0 ? leaf(field, ">=", Math.round(gb * 1024 ** 3)) : leaf(field, ">", 0);
+};
 
 const freshnessPredicate = (
   bucket: FreshnessBucketKey | null | undefined,
@@ -202,6 +217,16 @@ export const predicateSummary = (
       : null,
     typeof filters.minReclaimableGb === "number" && Number.isFinite(filters.minReclaimableGb)
       ? `Reclaimable ≥ ${filters.minReclaimableGb} GB`
+      : null,
+    filters.buckets?.length ? `Bucket: ${filters.buckets.join(", ")}` : null,
+    typeof filters.minOrphanGb === "number" && Number.isFinite(filters.minOrphanGb)
+      ? filters.minOrphanGb > 0 ? `Orphans ≥ ${filters.minOrphanGb} GB` : "Has orphans"
+      : null,
+    typeof filters.minSnapshotGb === "number" && Number.isFinite(filters.minSnapshotGb)
+      ? filters.minSnapshotGb > 0 ? `Snapshots ≥ ${filters.minSnapshotGb} GB` : "Has snapshot data"
+      : null,
+    typeof filters.minJunkGb === "number" && Number.isFinite(filters.minJunkGb)
+      ? filters.minJunkGb > 0 ? `Junk ≥ ${filters.minJunkGb} GB` : "Has junk"
       : null,
     filters.costPrecision
       ? `Cost: ${filters.costPrecision === "heuristic" ? "estimated" : filters.costPrecision.replace("_", " ")}`

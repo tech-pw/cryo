@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from cryo.api.schemas import TableRead
 from cryo.db.model_utils import catalog_name_for_table, qualified_table_name
 from cryo.db.models import Table
+from cryo.db.table_storage import bucket_of, storage_fields
 from cryo.domain.enums import CostPrecision
 from cryo.domain.lifecycle import is_archive_candidate
 from cryo.scanner.failure_classifier import (
@@ -37,6 +38,9 @@ def table_to_read(table: Table, *, include_raw: bool = True) -> TableRead:
     else:
         read = TableRead.model_validate(_Masked(table, stats=_Masked(table.stats, raw=None)))
     updates: dict[str, object] = {}
+    bucket = bucket_of(table.location)
+    if bucket is not None:
+        updates["bucket"] = bucket
     if table.last_scan_error:
         category = classify_scan_failure(table.last_scan_error)
         updates["failure_category"] = category
@@ -72,6 +76,7 @@ def table_to_read(table: Table, *, include_raw: bool = True) -> TableRead:
             update={
                 "cost_precision": cost_precision,
                 "cost_last_full_scan_at": table.cost.last_full_cost_scan_at,
+                **storage_fields(table.cost),
             }
         )
     if not updates:

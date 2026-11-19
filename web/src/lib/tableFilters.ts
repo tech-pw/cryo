@@ -35,6 +35,11 @@ export const HIDEABLE_COLUMN_IDS = [
   "needs",
   "total_files",
   "reclaimable_bytes",
+  "live_bytes",
+  "snapshot_bytes",
+  "orphan_bytes",
+  "junk_bytes",
+  "bucket",
   "cost_precision",
   "partition",
   "freshness",
@@ -100,7 +105,11 @@ const CANONICAL_FILTER_KEYS = [
   "minMonthlySavings",
   "precision",
   "lifecycle",
-  "freshnessAsOf"
+  "freshnessAsOf",
+  "bucket",
+  "orphans",
+  "snapshots",
+  "junk"
 ] as const;
 
 /** Old links. Read and cleared; never written. */
@@ -184,6 +193,10 @@ export const filtersFromSearchParams = (params: URLSearchParams): TableFilterSta
     minSmallFiles: numberParam(firstParam(params, "small", "minSmallFiles")) ?? null,
     minMonthlySavings: numberParam(params.get("minMonthlySavings")) ?? null,
     minReclaimableGb: numberParam(firstParam(params, "delete", "minReclaimableGb")) ?? null,
+    buckets: csvParam(params.get("bucket")),
+    minOrphanGb: numberParam(params.get("orphans")) ?? null,
+    minSnapshotGb: numberParam(params.get("snapshots")) ?? null,
+    minJunkGb: numberParam(params.get("junk")) ?? null,
     costPrecision: (params.get("precision") as TableFilterState["costPrecision"]) ?? null,
     lifecycle: lifecycleParam(params.get("lifecycle")),
     freshnessBucket: isFreshnessBucketKey(freshness)
@@ -244,6 +257,10 @@ export const filtersToSearchParamEntries = (
   if (typeof filters.minReclaimableGb === "number") {
     entries.push(["delete", String(filters.minReclaimableGb)]);
   }
+  if (filters.buckets?.length) entries.push(["bucket", filters.buckets.join(",")]);
+  if (typeof filters.minOrphanGb === "number") entries.push(["orphans", String(filters.minOrphanGb)]);
+  if (typeof filters.minSnapshotGb === "number") entries.push(["snapshots", String(filters.minSnapshotGb)]);
+  if (typeof filters.minJunkGb === "number") entries.push(["junk", String(filters.minJunkGb)]);
   if (filters.costPrecision) entries.push(["precision", filters.costPrecision]);
   if (filters.lifecycle) entries.push(["lifecycle", filters.lifecycle]);
   if (filters.freshnessBucket) entries.push(["freshness", filters.freshnessBucket]);

@@ -36,12 +36,13 @@ updated: 2026-10-18
 <p>One row per connected catalog: its whole-number health score, table count, size, modelled storage cost a month and modelled monthly savings. Click a row to filter the list to that catalog. <b>Cost</b> opens the cost page. Every dollar figure is a model, as <a href="@/health/">Health and cost</a> explains.</p>
 
 <h2 id="explorer">The table list</h2>
-<screenshot name="tables-explorer" url="cryo.local/tables" alt="Table list with quick views (All tables, Needs work 8, Failed last run 1, Queued or running 2, Skipped with work 2, Health dropped 2, Scan issues 1, Savings 9), a search box, Workflow, Grade and Priority filters, More filters, Active only, Ask in plain English, grouping, Columns 7 of 21, Saved views, Export and refresh. Rows show table, health grade and score with 7-day change, maintenance status with reason, last run, small-file ratio, size, reads in 30 days and savings a month." caption="Each row says how healthy the table is, what maintenance is doing about it, and what it would save." />
+<screenshot name="tables-explorer" url="cryo.local/tables" alt="Table list with quick views (All tables, Needs work 8, Failed last run 1, Queued or running 2, Skipped with work 2, Health dropped 2, Scan issues 1, Savings 9), a search box, Workflow, Grade and Priority filters, More filters, Active only, Ask in plain English, grouping, Columns 7 of 26, Saved views, Export and refresh. Rows show table, health grade and score with 7-day change, maintenance status with reason, last run, small-file ratio, size, reads in 30 days and savings a month." caption="Each row says how healthy the table is, what maintenance is doing about it, and what it would save." />
 <h3 id="quick-views">Quick views</h3>
 <p>The chips above the filters are the triage cards as views, plus <b>Needs work</b> and <b>Savings</b>. Each shows its count. The address bar carries the view as <code>?view=</code>, along with the catalog, sort and page, so a link opens the same list.</p>
 <h3 id="filters">Search and filters</h3>
 <p>The search box matches schema or table names. <b>Workflow</b>, <b>Grade</b> and <b>Priority</b> are multi-select filters; <b>Catalog</b> appears too once more than one catalog is connected. <b>Active only</b> hides tables the catalog no longer lists. <b>Ask in plain English</b> turns a sentence such as "grade F tables over 100 GB" into filters you can review before applying them. <b>Clear all</b> resets everything.</p>
-<screenshot name="tables-filters" url="cryo.local/tables" alt="The More filters popover, open. Show tables with at least: size in GB, small files, savings in dollars a month, reclaimable GB, and a savings basis select set to Any basis." caption="Threshold filters live behind More filters, each with its unit." />
+<p><b>More filters</b> also takes storage thresholds: <b>Orphans</b>, <b>Snapshot size</b> and <b>Junk</b>, in GB. Enter 0 to keep every table with any measured amount. A <b>Bucket</b> filter comes from grouping by bucket (below) or from a link, and shows as a chip you can remove.</p>
+<screenshot name="tables-filters" url="cryo.local/tables" alt="The More filters popover, open. Show tables with at least: size in GB, small files, savings in dollars a month, reclaimable GB, orphans GB, snapshot size GB, junk GB, and a savings basis select set to Any basis." caption="Threshold filters live behind More filters, each with its unit." />
 <h3 id="columns">Columns</h3>
 <div class="tbl">
 <table>
@@ -53,11 +54,20 @@ updated: 2026-10-18
     <tr><td>Small files</td><td>Small files as a share of all files, with both counts and a bar.</td></tr>
     <tr><td>Size, Reads 30d</td><td>Table size and the number of queries that read it in 30 days.</td></tr>
     <tr><td>Savings/mo</td><td>Modelled monthly saving from maintenance. <code>-</code> means none, <code>&lt;$1</code> means under a dollar.</td></tr>
+    <tr><td>Live data</td><td>Bytes the current snapshot reads. Hidden by default, like the rest of this group.</td></tr>
+    <tr><td>Snapshot size</td><td>Files only older snapshots still use: retained history inside the retention window, plus files snapshot expiry can delete now.</td></tr>
+    <tr><td>Orphans</td><td>Files in the table's storage that no snapshot references. <b>Not measured</b> means the cost scan has not listed the table's storage yet, which is different from 0.</td></tr>
+    <tr><td>Junk</td><td>Everything that is neither live data nor table metadata (snapshot size plus orphans), and its share of the table's storage.</td></tr>
+    <tr><td>Bucket</td><td>The object-store bucket the table lives in, from its location.</td></tr>
   </tbody>
 </table>
 </div>
+<p>These figures come from the cost scan and can be days old: hover a value to see when it was measured. Each storage column sorts the list.</p>
 <p>Hover a row for <b>Scan now</b> and a shortcut to the table's Maintenance tab.</p>
-<screenshot name="tables-columns" url="cryo.local/tables" alt="The Columns menu, open, 7 of 21 shown, in four groups. Health: Health, Grade only, Priority, Needs compaction, Scan failures. Maintenance: Maintenance status, Last run, Workflow. Storage and cost: Small files, Size, Savings/mo, Total files, Reclaimable, Savings basis. Usage and metadata: Reads 30d, Last scan, Catalog, Owner, Partition, Last commit, First seen. Reset to default and Show all at the bottom." caption="Columns are grouped by the question they answer. Choices and widths are saved per browser." />
+<screenshot name="tables-columns" url="cryo.local/tables" alt="The Columns menu, open, 7 of 26 shown, in four groups. Health: Health, Grade only, Priority, Needs compaction, Scan failures. Maintenance: Maintenance status, Last run, Workflow. Storage and cost: Small files, Size, Savings/mo, Total files, Reclaimable, Live data, Snapshot size, Orphans, Junk, Savings basis. Usage and metadata: Reads 30d, Last scan, Catalog, Owner, Partition, Last commit, First seen, Bucket. Reset to default and Show all at the bottom." caption="Columns are grouped by the question they answer. Choices and widths are saved per browser." />
+<h3 id="grouping">Grouping</h3>
+<p>The grouping menu rolls the list up by catalog, schema, grade, priority, compaction need, size or <b>bucket</b>. Each group shows its table count, size, small files and savings, plus live data, snapshot size, orphans and junk. In the bucket grouping, click a bucket to list its tables with the bucket filter applied.</p>
+<p>On Home, each row of the Storage impact breakdown links here: Orphans opens the tables that have orphans, largest first; Snapshot history and Dead open them ranked by snapshot size.</p>
 <h3 id="saved-views">Saved views and export</h3>
 <p><b>Saved views</b> stores the current filters, columns and sort under a name, and can make one your default. Built-in views include <b>Health triage</b> (grades D and F), <b>Biggest tables that need work</b>, <b>Most-read tables</b> and <b>Top savings opportunities</b>. <b>Export</b> downloads the filtered list as CSV.</p>
 

@@ -65,6 +65,8 @@ The chips above the filters are the triage cards as views, plus **Needs work** a
 
 The search box matches schema or table names. **Workflow**, **Grade** and **Priority** are multi-select filters; **Catalog** appears too once more than one catalog is connected. **Active only** hides tables the catalog no longer lists. **Ask in plain English** turns a sentence such as "grade F tables over 100 GB" into filters you can review before applying them. **Clear all** resets everything.
 
+**More filters** also takes storage thresholds: **Orphans**, **Snapshot size** and **Junk**, in GB. Enter 0 to keep every table with any measured amount. A **Bucket** filter comes from grouping by bucket (below) or from a link, and shows as a chip you can remove.
+
 cryo.local/tables
 
 *Threshold filters live behind More filters, each with its unit.*
@@ -79,12 +81,25 @@ cryo.local/tables
 | Small files | Small files as a share of all files, with both counts and a bar. |
 | Size, Reads 30d | Table size and the number of queries that read it in 30 days. |
 | Savings/mo | Modelled monthly saving from maintenance. `-` means none, `<$1` means under a dollar. |
+| Live data | Bytes the current snapshot reads. Hidden by default, like the rest of this group. |
+| Snapshot size | Files only older snapshots still use: retained history inside the retention window, plus files snapshot expiry can delete now. |
+| Orphans | Files in the table's storage that no snapshot references. **Not measured** means the cost scan has not listed the table's storage yet, which is different from 0. |
+| Junk | Everything that is neither live data nor table metadata (snapshot size plus orphans), and its share of the table's storage. |
+| Bucket | The object-store bucket the table lives in, from its location. |
+
+These figures come from the cost scan and can be days old: hover a value to see when it was measured. Each storage column sorts the list.
 
 Hover a row for **Scan now** and a shortcut to the table's Maintenance tab.
 
 cryo.local/tables
 
 *Columns are grouped by the question they answer. Choices and widths are saved per browser.*
+
+### Grouping
+
+The grouping menu rolls the list up by catalog, schema, grade, priority, compaction need, size or **bucket**. Each group shows its table count, size, small files and savings, plus live data, snapshot size, orphans and junk. In the bucket grouping, click a bucket to list its tables with the bucket filter applied.
+
+On Home, each row of the Storage impact breakdown links here: Orphans opens the tables that have orphans, largest first; Snapshot history and Dead open them ranked by snapshot size.
 
 ### Saved views and export
 

@@ -665,6 +665,11 @@ Fields = columns of `table_stats` (+ `schema_name`/`table_name`), including the 
 summary fields `projected_savings_usd_month`, `projected_monthly_s3_cost_usd`, and
 `reclaimable_bytes` — so "select all tables with projected savings > $50/mo → Run now" is one
 selection spec. Ops: `=,!=,<,<=,>,>=,in,like,glob`.
+Explorer-only storage fields (not usable in preset rules) come from `table_cost` through
+`cryo/db/table_storage.py`, which Home's storage breakdown also uses: `live_bytes`,
+`snapshot_bytes` (dead + retained history), `orphan_bytes` (null without an S3 listing),
+`metadata_bytes`, `junk_bytes` (snapshot + orphans) and `bucket` (from `tables.location`).
+They are sortable on `GET /tables`, and `bucket` is a `GET /tables/group-by` field.
 
 ### 6.3 OPTIMIZE planning algorithm (ported from `_partition_aware_optimize`)
 ```

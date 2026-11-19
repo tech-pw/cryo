@@ -9,6 +9,12 @@ from sqlalchemy import ColumnElement, and_, false, func, not_, or_, select, true
 
 from cryo.api.table_maintenance import COMPUTED_FIELDS
 from cryo.db.models import Source, Table, TableAssignment, TableCost, TableStats
+from cryo.db.table_storage import (
+    bucket_expr,
+    junk_bytes_expr,
+    orphan_bytes_expr,
+    snapshot_bytes_expr,
+)
 from cryo.domain.predicates import (
     LEAF_OPERATORS,
     LIKE_ESCAPE,
@@ -53,7 +59,16 @@ FIELD_MAP = {
 # Explorer-only fields: not in SUPPORTED_FIELDS, so preset rules (evaluated in Python against
 # candidate rows that carry none of these) can't reference them.
 _TIMESTAMP_FIELDS = frozenset({"last_snapshot_committed_at", "scan_at"})
-EXPLORER_FIELDS = frozenset({"scan_at", "last_scan_error_kind", *COMPUTED_FIELDS})
+# Explorer-only storage fields, built per query because they are expressions over TableCost.
+STORAGE_FIELDS = {
+    "live_bytes": lambda: TableCost.live_bytes,
+    "snapshot_bytes": snapshot_bytes_expr,
+    "orphan_bytes": orphan_bytes_expr,
+    "metadata_bytes": lambda: TableCost.metadata_bytes,
+    "junk_bytes": junk_bytes_expr,
+    "bucket": bucket_expr,
+}
+EXPLORER_FIELDS = frozenset({"scan_at", "last_scan_error_kind", *COMPUTED_FIELDS, *STORAGE_FIELDS})
 
 
 def compile_predicate(predicate: Mapping[str, Any] | None) -> ColumnElement[bool] | None:
@@ -86,7 +101,7 @@ def _compile_leaf(predicate: Mapping[str, Any]) -> ColumnElement[bool]:
             value = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError as exc:
             raise ValueError(f"{field_name} must be an ISO-8601 timestamp") from exc
-    computed = COMPUTED_FIELDS.get(field_name)
+    computed = COMPUTED_FIELDS.get(field_name) or STORAGE_FIELDS.get(field_name)
     column = computed() if computed is not None else FIELD_MAP.get(field_name)
     if column is None:
         raise ValueError(f"Unsupported filter field: {field_name}")

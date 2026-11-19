@@ -131,6 +131,30 @@ export const buildFilterChips = (
     });
   }
 
+  for (const bucket of filters.buckets ?? []) {
+    chips.push({
+      key: `bucket-${bucket}`,
+      label: `Bucket: ${bucket}`,
+      onRemove: () => onPatch({ buckets: filters.buckets?.filter((b) => b !== bucket) })
+    });
+  }
+
+  const storageChips = [
+    ["minOrphanGb", "orphans", "Orphans", "Has orphans"],
+    ["minSnapshotGb", "snapshots", "Snapshot size", "Has snapshot data"],
+    ["minJunkGb", "junk", "Junk", "Has junk"]
+  ] as const;
+  for (const [field, key, label, anyLabel] of storageChips) {
+    const gb = filters[field];
+    if (typeof gb === "number" && Number.isFinite(gb)) {
+      chips.push({
+        key: `min-${key}`,
+        label: gb > 0 ? `${label} ≥ ${gb} GB` : anyLabel,
+        onRemove: () => onPatch({ [field]: null })
+      });
+    }
+  }
+
   if (filters.costPrecision) {
     chips.push({
       key: "cost-precision",

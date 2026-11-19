@@ -22,6 +22,16 @@ describe("StorageCard", () => {
     expect(hero).toHaveTextContent("3 unmeasured days not counted");
   });
 
+  it("links each storage segment to Tables ranked by that kind of storage", () => {
+    renderCard();
+    const breakdown = screen.getByRole("region", { name: "Where storage goes" });
+    const orphans = within(breakdown).getByRole("link", { name: "Show tables ranked by orphans" });
+    expect(orphans.getAttribute("href")).toContain("orphans=0&sort=-orphan_bytes");
+    expect(orphans.getAttribute("href")).toContain("orphan_bytes");
+    const live = within(breakdown).getByRole("link", { name: "Show tables ranked by live data" });
+    expect(live.getAttribute("href")).toContain("sort=-live_bytes");
+  });
+
   it("breaks storage into labelled estimated segments with listing coverage", () => {
     renderCard();
     const breakdown = screen.getByRole("region", { name: "Where storage goes" });

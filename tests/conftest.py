@@ -156,6 +156,15 @@ def _register_sqlite_jsonb_array_length(
     dbapi_connection.create_function("jsonb_array_length", 1, _jsonb_array_length)
     dbapi_connection.create_function("jsonb_typeof", 1, _jsonb_typeof)
 
+    def _split_part(value: str | None, delimiter: str, index: int) -> str | None:
+        # Postgres split_part: 1-based, '' past the end, NULL in -> NULL out.
+        if value is None:
+            return None
+        parts = value.split(delimiter)
+        return parts[index - 1] if 0 < index <= len(parts) else ""
+
+    dbapi_connection.create_function("split_part", 3, _split_part)
+
 
 @event.listens_for(Engine, "connect")
 def _register_sqlite_percentile_cont(dbapi_connection: object, connection_record: object) -> None:
