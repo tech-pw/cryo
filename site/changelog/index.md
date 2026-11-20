@@ -19,6 +19,10 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ## [Unreleased](https://github.com/tech-pw/cryo/compare/v0.2.0...HEAD)
 
+### Security
+
+- Native engine built with Go 1.27.4 (was 1.27.3) for CVE-2026-97054 in the Go standard library's `net/http` `MaxBytesReader`.
+
 ### Fixed
 
 - Batch maintenance (`python -m cryo.maintenance.run`) exits 1 when no table was maintained and at least one failed, so its Kubernetes Job is marked Failed and Job-failure alerts fire. `CRYO_MAINTENANCE_FAIL_ON_PARTIAL` (Helm `maintenance.failOnPartial`, default off) also fails the Job when only some tables failed (#590).
