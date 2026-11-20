@@ -365,6 +365,12 @@ _CGROUP_MEMORY_FILES = (
 # instead of to something unbounded.
 INLINE_BUDGET_FALLBACK_BYTES = 3 * 1024 * 1024 * 1024
 
+# Inline, the engine shares the pod with the Python worker, unlike a dispatched Job pod
+# that runs the engine alone. Reserve this much of the limit for the worker before
+# applying the Job-pod ratio, so a large rewrite cannot push the pod into an OOM kill
+# that takes the worker down with it.
+INLINE_WORKER_RESERVE_MIB = 1024
+
 
 def cgroup_memory_limit_bytes(
     paths: Sequence[str] = _CGROUP_MEMORY_FILES,
@@ -408,7 +414,7 @@ def inline_compaction_memory_budget(
     limit = cgroup_memory_limit_bytes() if limit_bytes is None else limit_bytes
     if limit is None:
         return INLINE_BUDGET_FALLBACK_BYTES, "fallback"
-    mem_mib = int(limit // (1024 * 1024))
+    mem_mib = int(limit // (1024 * 1024)) - INLINE_WORKER_RESERVE_MIB
     return compaction_memory_budget_bytes(mem_mib), "cgroup"
 
 

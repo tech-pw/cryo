@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -61,6 +61,7 @@ def is_native_available(config: Mapping[str, Any] | None = None) -> bool:
 def _apply_inline_memory_budget(
     request: dict[str, Any],
     settings: Settings | None,
+    operations: Iterable[Operation],
     *,
     table_ref: str,
     logger_: logging.Logger,
@@ -76,9 +77,15 @@ def _apply_inline_memory_budget(
     rather than a different plan, which makes the relationship between the limit and
     success non-monotonic and very hard to diagnose.
 
-    Only fills what the caller has not set, so the dispatch path (which sets the budget
-    explicitly before the request is built) is untouched.
+    The request builder always writes its fixed default into the rewrite params, so the
+    request cannot tell a default from a choice. A budget the preset or operator set on
+    the planned operation is kept; otherwise the default is replaced.
     """
+    if any(
+        op.type is OperationType.OPTIMIZE and "compaction_memory_budget_bytes" in op.params
+        for op in operations
+    ):
+        return
     resolved = settings or get_settings()
     budget, source = inline_compaction_memory_budget(
         resolved.maintenance_inline_memory_budget_bytes
@@ -88,8 +95,6 @@ def _apply_inline_memory_budget(
         if not isinstance(op, dict) or op.get("type") != "rewrite_data_files":
             continue
         params = op.setdefault("params", {})
-        if "compaction_memory_budget_bytes" in params:
-            continue
         params["compaction_memory_budget_bytes"] = budget
         applied = True
     if applied:
@@ -261,11 +266,11 @@ class NativeEngine:
                 source_config=self.source_config,
                 destination_config=self.config,
             )
-            if not bool(self.config.get("k8s_dispatch", False)):
-                _apply_inline_memory_budget(
-                    request, self.settings, table_ref=plan.table_ref, logger_=logger
-                )
             use_k8s = bool(self.config.get("k8s_dispatch", False))
+            if not use_k8s:
+                _apply_inline_memory_budget(
+                    request, self.settings, operations, table_ref=plan.table_ref, logger_=logger
+                )
             timeout_seconds = int(self.config.get("timeout_seconds", 3600))
 
             if use_k8s:
@@ -436,7 +441,7 @@ class NativeEngine:
             )
             if not bool(self.config.get("k8s_dispatch", False)):
                 _apply_inline_memory_budget(
-                    request, self.settings, table_ref=plan.table_ref, logger_=logger
+                    request, self.settings, (operation,), table_ref=plan.table_ref, logger_=logger
                 )
             result = execute_request(
                 request,

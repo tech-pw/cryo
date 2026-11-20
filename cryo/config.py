@@ -349,6 +349,17 @@ class Settings(BaseSettings):
             "a scheduled pass selects at most max_lanes x this many tables."
         ),
     )
+    maintenance_inline_memory_budget_bytes: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Compaction memory budget, in bytes, for a native rewrite run inline in the worker. "
+            "0 derives it from the worker's cgroup memory limit: 1 GiB is kept for the worker "
+            "itself, then the dispatch path's ratio applies (75%, at most 16 GiB). Falls back to "
+            "3 GiB when the limit cannot be read. A budget set on the preset still wins, and "
+            "dispatched Jobs keep their per-table sizing."
+        ),
+    )
     maintenance_fail_on_partial: bool = Field(
         default=False,
         description=(
@@ -796,18 +807,6 @@ class Settings(BaseSettings):
         description=(
             "Explicit GOMEMLIMIT for the scan subprocess, such as 2400MiB. Empty uses "
             "scan_engine_memlimit_ratio of the cgroup memory limit."
-        ),
-    )
-    maintenance_inline_memory_budget_bytes: int = Field(
-        default=0,
-        ge=0,
-        description=(
-            "Explicit compaction memory budget, in bytes, for a maintenance job executed "
-            "INLINE in the worker. 0 derives it from the worker container's own cgroup "
-            "memory limit, the same proportion the k8s-dispatch path applies to a Job's "
-            "request. Only used when the cgroup limit cannot be read does a fixed fallback "
-            "apply. The dispatch path is unaffected: it sets the budget from the per-table "
-            "Job spec before the request is built."
         ),
     )
     scan_table_timeout_seconds: float = Field(

@@ -8,10 +8,16 @@ as if it had that much memory however large the worker actually was.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
+from cryo.domain.enums import Mode, OperationType
+from cryo.domain.models import MaintenancePlan, Operation
+from cryo.engines.native.payload import build_execute_request
 from cryo.engines.native.resources import (
     INLINE_BUDGET_FALLBACK_BYTES,
+    INLINE_WORKER_RESERVE_MIB,
     cgroup_memory_limit_bytes,
     compaction_memory_budget_bytes,
     inline_compaction_memory_budget,
@@ -23,7 +29,7 @@ GiB = 1024**3
 def test_budget_follows_the_cgroup_limit() -> None:
     budget, source = inline_compaction_memory_budget(limit_bytes=10 * GiB)
     assert source == "cgroup"
-    assert budget == compaction_memory_budget_bytes(10 * 1024)
+    assert budget == compaction_memory_budget_bytes(10 * 1024 - INLINE_WORKER_RESERVE_MIB)
 
 
 def test_budget_scales_with_the_limit() -> None:
@@ -95,23 +101,65 @@ def test_inline_application_fills_only_the_rewrite_op() -> None:
 
     req = _request_with_rewrite()
     _apply_inline_memory_budget(
-        req, get_settings(), table_ref="c.s.t", logger_=logging.getLogger(__name__)
+        req, get_settings(), (), table_ref="c.s.t", logger_=logging.getLogger(__name__)
     )
     rewrite, expire = req["operations"]
     assert rewrite["params"]["compaction_memory_budget_bytes"] > 0
     assert "params" not in expire
 
 
-def test_inline_application_never_overrides_a_caller_value() -> None:
-    """The dispatch path sets the budget from the Job spec before the request is built.
-    This is the regression that would silently undo per-table sizing."""
-    import logging
-
-    from cryo.config import get_settings
-    from cryo.engines.native.engine import _apply_inline_memory_budget
-
-    req = _request_with_rewrite({"compaction_memory_budget_bytes": 123})
-    _apply_inline_memory_budget(
-        req, get_settings(), table_ref="c.s.t", logger_=logging.getLogger(__name__)
+def _plan(optimize_params: dict) -> MaintenancePlan:
+    return MaintenancePlan(
+        table_ref="demo.mart.events",
+        mode=Mode.STANDARD,
+        operations=(Operation(OperationType.OPTIMIZE, optimize_params),),
     )
-    assert req["operations"][0]["params"]["compaction_memory_budget_bytes"] == 123
+
+
+def _built_request(plan: MaintenancePlan) -> dict:
+    return build_execute_request(
+        plan=plan,
+        operation=plan.operations[0],
+        source_config={"uri": "http://rest:8181", "warehouse": "s3://wh/"},
+        destination_config={},
+    )
+
+
+def test_replaces_the_payload_default_on_a_real_request(monkeypatch) -> None:
+    """The request builder always writes its 3 GiB default, so 'fill only if unset' would
+    never fire. The inline budget must replace that default."""
+    from cryo.engines.native import engine as engine_mod
+
+    monkeypatch.setattr(
+        engine_mod, "inline_compaction_memory_budget", lambda _explicit: (5 * GiB, "cgroup")
+    )
+    plan = _plan({"file_size_mb": 256})
+    request = _built_request(plan)
+    assert request["operations"][0]["params"]["compaction_memory_budget_bytes"] == 3 * GiB
+    engine_mod._apply_inline_memory_budget(
+        request, None, plan.operations, table_ref=plan.table_ref, logger_=logging.getLogger()
+    )
+    assert request["operations"][0]["params"]["compaction_memory_budget_bytes"] == 5 * GiB
+
+
+def test_keeps_a_budget_the_preset_set(monkeypatch) -> None:
+    from cryo.engines.native import engine as engine_mod
+
+    monkeypatch.setattr(
+        engine_mod, "inline_compaction_memory_budget", lambda _explicit: (5 * GiB, "cgroup")
+    )
+    plan = _plan({"file_size_mb": 256, "compaction_memory_budget_bytes": 2 * GiB})
+    request = _built_request(plan)
+    engine_mod._apply_inline_memory_budget(
+        request, None, plan.operations, table_ref=plan.table_ref, logger_=logging.getLogger()
+    )
+    assert request["operations"][0]["params"]["compaction_memory_budget_bytes"] == 2 * GiB
+
+
+def test_reserves_memory_for_the_worker_process() -> None:
+    """Inline, the engine shares the pod with the Python worker, so it must not get the
+    full Job-pod share of the limit."""
+    budget, _ = inline_compaction_memory_budget(limit_bytes=6 * GiB)
+    assert budget == compaction_memory_budget_bytes(6 * 1024 - INLINE_WORKER_RESERVE_MIB)
+    assert budget < compaction_memory_budget_bytes(6 * 1024)
+    assert budget > 3 * GiB
