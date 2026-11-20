@@ -349,6 +349,17 @@ class Settings(BaseSettings):
             "a scheduled pass selects at most max_lanes x this many tables."
         ),
     )
+    maintenance_inline_memory_budget_bytes: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Compaction memory budget, in bytes, for a native rewrite run inline in the worker. "
+            "0 derives it from the worker's cgroup memory limit: 1 GiB is kept for the worker "
+            "itself, then the dispatch path's ratio applies (75%, at most 16 GiB). Falls back to "
+            "3 GiB when the limit cannot be read. A budget set on the preset still wins, and "
+            "dispatched Jobs keep their per-table sizing."
+        ),
+    )
     maintenance_fail_on_partial: bool = Field(
         default=False,
         description=(

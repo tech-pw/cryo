@@ -74,6 +74,7 @@ print.
 | `CRYO_MAINTENANCE_MAX_LANES` | `int` | `4` | Max Spark pods. |
 | `CRYO_MAINTENANCE_OPERATIONS` | `str` | `""` | Comma-separated metadata operations for an operation-scoped pass, e.g. expire_snapshots (#443). Empty runs every operation a table needs. |
 | `CRYO_MAINTENANCE_OPS_BATCH_SIZE` | `int` | `25` | Most tables one lane (one Spark application) runs in an operation-scoped pass; a scheduled pass selects at most max_lanes x this many tables. |
+| `CRYO_MAINTENANCE_INLINE_MEMORY_BUDGET_BYTES` | `int` | `0` | Compaction memory budget, in bytes, for a native rewrite run inline in the worker. 0 derives it from the worker's cgroup memory limit: 1 GiB is kept for the worker itself, then the dispatch path's ratio applies (75%, at most 16 GiB). Falls back to 3 GiB when the limit cannot be read. A budget set on the preset still wins, and dispatched Jobs keep their per-table sizing. |
 | `CRYO_MAINTENANCE_FAIL_ON_PARTIAL` | `bool` | `false` | Exit non-zero when a batch run maintained some tables but others failed, so the Kubernetes Job is marked failed. A run where no table succeeded always exits 1. |
 | `CRYO_MAINTENANCE_LANE_MAX_CPU_MILLI` | `int` | `4000` | - |
 | `CRYO_MAINTENANCE_LANE_MAX_MEM_MIB` | `int` | `16384` | - |
