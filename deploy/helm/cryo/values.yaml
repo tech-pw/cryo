@@ -572,6 +572,13 @@ redis:
   # the worst thing to do next to a memory limit. Durability here is Postgres: both
   # reconcile_queued_jobs and orphan recovery rebuild Redis state from it after a restart.
   save: ""
+  # Redis is a single pod holding the live queue and table locks. When a node autoscaler
+  # consolidates its node, every scheduler tick and worker claim fails until it is back and
+  # the queue is rebuilt from Postgres. Opt it out of voluntary consolidation; node upgrades,
+  # spot interruptions and failures still move it. To allow consolidation, set the key to
+  # null in your values (Helm merges maps, so {} keeps the default).
+  podAnnotations:
+    karpenter.sh/do-not-disrupt: "true"
   # The official redis:7-alpine image's `redis` user.
   podSecurityContext:
     runAsUser: 999
