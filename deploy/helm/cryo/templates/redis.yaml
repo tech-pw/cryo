@@ -27,6 +27,10 @@ spec:
       labels:
         {{- include "cryo.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redis
+      {{- with .Values.redis.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- include "cryo.podSecurityContext" (list $ $.Values.redis.podSecurityContext) | nindent 6 }}
       containers:
