@@ -49,7 +49,7 @@ from cryo.api.pagination import (
     make_filter_repr,
     make_sort_repr,
 )
-from cryo.api.predicates import compile_predicate
+from cryo.api.predicates import STORAGE_FIELDS, compile_predicate
 from cryo.api.preview_cost import (
     savings_projection_for_plan,
     savings_projection_to_dict,
@@ -175,6 +175,12 @@ from cryo.db.repositories.sources import (
     normalize_maintenance_schema_names,
 )
 from cryo.db.session import SessionLocal
+from cryo.db.table_storage import (
+    bucket_expr,
+    junk_bytes_expr,
+    orphan_bytes_expr,
+    snapshot_bytes_expr,
+)
 from cryo.db.tenant_scope import (
     assert_resource_tenant,
     bind_tenant,
@@ -256,7 +262,10 @@ SORT_FIELDS = {
     "scan_at": TableStats.scan_at,
 }
 
-COMPUTED_SORT_FIELDS = {"score_delta_7d": score_delta_expr}
+COMPUTED_SORT_FIELDS = {
+    "score_delta_7d": score_delta_expr,
+    **{name: build for name, build in STORAGE_FIELDS.items() if name != "bucket"},
+}
 
 
 @router.get(
@@ -1680,6 +1689,7 @@ _GROUP_BY_FIELDS = {
     "compaction_priority": TableStats.compaction_priority,
     "needs_compaction": TableStats.needs_compaction,
     "size_bucket": _SIZE_BUCKET_EXPR,
+    "bucket": bucket_expr(),
 }
 
 
@@ -1731,6 +1741,10 @@ def group_tables(
             func.coalesce(func.sum(TableStats.projected_savings_usd_month), 0).label(
                 "total_savings_usd_month"
             ),
+            func.coalesce(func.sum(TableCost.live_bytes), 0).label("total_live_bytes"),
+            func.coalesce(func.sum(snapshot_bytes_expr()), 0).label("total_snapshot_bytes"),
+            func.coalesce(func.sum(orphan_bytes_expr()), 0).label("total_orphan_bytes"),
+            func.coalesce(func.sum(junk_bytes_expr()), 0).label("total_junk_bytes"),
         )
         .select_from(Table)
         .outerjoin(TableStats)
@@ -1759,6 +1773,10 @@ def group_tables(
                 total_size_gb=float(row.total_size_gb),
                 total_small_files=int(row.total_small_files),
                 total_savings_usd_month=float(row.total_savings_usd_month),
+                total_live_bytes=int(row.total_live_bytes),
+                total_snapshot_bytes=int(row.total_snapshot_bytes),
+                total_orphan_bytes=int(row.total_orphan_bytes),
+                total_junk_bytes=int(row.total_junk_bytes),
             )
             for row in rows
         ],

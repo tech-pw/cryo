@@ -12,3 +12,5 @@ optional deep dives (route tracing, presentation mode) and are linked from the A
 - `maintenance.sequence.html` — sequence — Scheduler enqueues, Governor probes live load, the Worker asks the Planner, the engine executes, and the audit is written.
 - `job.lifecycle.html` — lifecycle — A job is queued, admitted, then running, and ends succeeded, failed, or deferred; a failure does not stop the run.
 - `assign.workflow.html` — workflow — Filter tables, select every match as a filter spec, assign a preset, preview the plan, then run.
+
+The five Archify exports share one runtime: `archify.css` and `archify.js` hold the stylesheet and script that every export used to inline (about 600 KB each, which kept the published site at its 15 MB budget). After re-exporting a diagram, replace its inline main `<style>` and `<script>` with `<link rel="stylesheet" href="archify.css">` and `<script src="archify.js"></script>`. Keep `<style id="archify-fonts">` inline: the SVG export reads it by id.

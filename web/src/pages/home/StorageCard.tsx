@@ -22,6 +22,17 @@ import { HomeCard } from "./HomeCard";
 import { cleanupProgress, storageTrendDelta, waffleCells } from "./storageStory";
 import { useCountUp } from "./useCountUp";
 
+const BASE_COLS = "health,maintenance,total_size_gb";
+
+// Each legend row opens Tables ranked by that kind of storage, with the matching column shown.
+const SEGMENT_DRILL: Record<SegmentKey, string> = {
+  live: `/tables?sort=-live_bytes&cols=${BASE_COLS},live_bytes,junk_bytes,bucket`,
+  history: `/tables?snapshots=0&sort=-snapshot_bytes&cols=${BASE_COLS},snapshot_bytes,junk_bytes,bucket`,
+  dead: `/tables?snapshots=0&sort=-snapshot_bytes&cols=${BASE_COLS},snapshot_bytes,reclaimable_bytes,bucket`,
+  orphan: `/tables?orphans=0&sort=-orphan_bytes&cols=${BASE_COLS},orphan_bytes,junk_bytes,bucket`,
+  metadata: `/tables?sort=-metadata_bytes&cols=${BASE_COLS},junk_bytes,bucket`
+};
+
 const Kind = ({ measured }: { measured: boolean }) => (
   <Badge variant={measured ? "success" : "outline"} className="home-storage-kind">{measured ? "Measured" : "Estimate"}</Badge>
 );
@@ -197,6 +208,14 @@ const Breakdown = ({ data }: { data: StorageOverview }) => {
               </span>
               <span className="home-storage-legend-value">{formatStorage(s.bytes)}</span>
               <span className="home-storage-legend-pct">{s.pct.toFixed(s.pct > 0 && s.pct < 1 ? 1 : 0)}%</span>
+              <Link
+                className="home-storage-legend-drill"
+                to={SEGMENT_DRILL[s.key]}
+                aria-label={`Show tables ranked by ${s.label.toLowerCase()}`}
+                title={`Show tables ranked by ${s.label.toLowerCase()}`}
+              >
+                <ArrowUpRight size={13} aria-hidden="true" />
+              </Link>
             </li>
           ))}
         </ul>

@@ -45,7 +45,8 @@ vi.mock("../../api/client", () => ({
   unassignTables: vi.fn()
 }));
 
-import { listTables } from "../../api/client";
+import { groupTables, listTables } from "../../api/client";
+import { formatBytesGb } from "../../lib/format";
 
 const LocationProbe = () => {
   const location = useLocation();
@@ -396,5 +397,42 @@ describe("EffectivePresetCell", () => {
   it("says Unmaintained when nothing covers the table", () => {
     render(<EffectivePresetCell effective={{ provenance: "none", paused: false }} />);
     expect(screen.getByText("Unmaintained")).toBeInTheDocument();
+  });
+});
+
+describe("bucket grouping (#602)", () => {
+  beforeEach(() => {
+    vi.mocked(listTables).mockReset();
+    vi.mocked(listTables).mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 });
+    vi.mocked(groupTables).mockReset();
+    vi.mocked(groupTables).mockResolvedValue({
+      field: "bucket",
+      rows: [
+        {
+          group_value: "audit-bucket",
+          count: 16,
+          total_size_gb: 144,
+          total_small_files: 10,
+          total_savings_usd_month: 0,
+          total_live_bytes: 50 * 1024 ** 3,
+          total_snapshot_bytes: 0,
+          total_orphan_bytes: 95 * 1024 ** 3,
+          total_junk_bytes: 95 * 1024 ** 3
+        }
+      ]
+    });
+  });
+
+  it("shows per-bucket storage totals and opens a bucket's tables", async () => {
+    renderExplorer("/tables?groupBy=bucket");
+    const bucket = await screen.findByRole("button", { name: "audit-bucket" });
+    expect(vi.mocked(groupTables).mock.calls.at(-1)?.[1]).toEqual(expect.objectContaining({ field: "bucket" }));
+    expect(screen.getAllByText(formatBytesGb(95 * 1024 ** 3)).length).toBe(2);
+    fireEvent.click(bucket);
+    await waitFor(() => {
+      const location = screen.getByTestId("location-probe").textContent ?? "";
+      expect(location).toContain("bucket=audit-bucket");
+      expect(location).not.toContain("groupBy=");
+    });
   });
 });

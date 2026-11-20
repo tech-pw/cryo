@@ -203,7 +203,8 @@ const GROUP_BY_LABELS: Record<TableGroupByField, string> = {
   grade: "Grade",
   compaction_priority: "Priority",
   needs_compaction: "Needs compaction",
-  size_bucket: "Size"
+  size_bucket: "Size",
+  bucket: "Bucket"
 };
 
 const groupByLabel = (field: TableGroupByField): string => GROUP_BY_LABELS[field];
@@ -218,6 +219,10 @@ const SORT_LABELS: Record<string, string> = {
   scan_at: "last scan",
   total_files: "files",
   reclaimable_bytes: "reclaimable storage",
+  live_bytes: "live data",
+  snapshot_bytes: "snapshot size",
+  orphan_bytes: "orphan size",
+  junk_bytes: "junk",
   grade: "grade",
   compaction_priority: "priority"
 };
@@ -276,6 +281,11 @@ const COLUMN_META: Record<HideableColumnId, { label: string; group: string }> = 
   total_size_gb: { label: "Size", group: "Storage & cost" },
   projected_savings_usd_month: { label: "Savings/mo", group: "Storage & cost" },
   reclaimable_bytes: { label: "Reclaimable", group: "Storage & cost" },
+  live_bytes: { label: "Live data", group: "Storage & cost" },
+  snapshot_bytes: { label: "Snapshot size", group: "Storage & cost" },
+  orphan_bytes: { label: "Orphans", group: "Storage & cost" },
+  junk_bytes: { label: "Junk", group: "Storage & cost" },
+  bucket: { label: "Bucket", group: "Usage & metadata" },
   cost_precision: { label: "Savings basis", group: "Storage & cost" },
   reads_30d: { label: "Reads (30d)", group: "Usage & metadata" },
   last_scan: { label: "Last scan", group: "Usage & metadata" },
@@ -472,13 +482,15 @@ const SortHeader = ({
   label,
   sort,
   onSort,
-  align = "left"
+  align = "left",
+  hint
 }: {
   field: string;
   label: string;
   sort?: string;
   onSort: (next: string | undefined) => void;
   align?: "left" | "right";
+  hint?: string;
 }) => {
   const desc = sort === `-${field}`;
   const asc = sort === field;
@@ -489,6 +501,7 @@ const SortHeader = ({
         "inline-flex w-full items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground hover:text-foreground",
         align === "right" ? "justify-end text-right" : "text-left"
       )}
+      title={hint}
       onClick={() => {
         if (!asc && !desc) onSort(`-${field}`);
         else if (desc) onSort(field);
@@ -590,6 +603,37 @@ type GroupRow = {
   total_size_gb: number;
   total_small_files: number;
   total_savings_usd_month: number;
+  total_live_bytes?: number;
+  total_snapshot_bytes?: number;
+  total_orphan_bytes?: number;
+  total_junk_bytes?: number;
+};
+
+const measuredAt = (at: string | null | undefined): string =>
+  at ? `Measured by the cost scan on ${new Date(at).toLocaleString()}` : "Not measured by a cost scan yet";
+
+const StorageBytesCell = ({
+  bytes,
+  measuredOn,
+  unmeasuredLabel = "-"
+}: {
+  bytes: number | null | undefined;
+  measuredOn: string | null | undefined;
+  unmeasuredLabel?: string;
+}) => (
+  <span
+    className={`numeric-cell block whitespace-nowrap text-right${bytes == null ? " text-muted-foreground" : ""}`}
+    title={bytes == null ? "Needs an S3 listing from the cost scan" : measuredAt(measuredOn)}
+  >
+    {bytes == null ? unmeasuredLabel : formatBytesGb(bytes)}
+  </span>
+);
+
+const junkShare = (stats: TableRead["stats"]): number | null => {
+  const junk = stats?.junk_bytes;
+  if (junk == null) return null;
+  const total = (stats?.live_bytes ?? 0) + (stats?.metadata_bytes ?? 0) + junk;
+  return total > 0 ? Math.round((junk / total) * 100) : null;
 };
 
 export const TableExplorerSection = () => {
@@ -630,6 +674,16 @@ export const TableExplorerSection = () => {
     const params = new URLSearchParams(searchParams);
     stripFilterParams(params);
     filtersToSearchParamEntries(next, { schema: nextSchema }).forEach(([key, value]) => params.set(key, value));
+    params.delete("page");
+    setSearchParams(params, { replace: true });
+  };
+  const openBucket = (bucket: string) => {
+    const params = new URLSearchParams(searchParams);
+    stripFilterParams(params);
+    filtersToSearchParamEntries({ ...filters, buckets: [bucket] }, { schema }).forEach(([key, value]) =>
+      params.set(key, value)
+    );
+    params.delete("groupBy");
     params.delete("page");
     setSearchParams(params, { replace: true });
   };
@@ -1082,7 +1136,21 @@ export const TableExplorerSection = () => {
             {
               accessorKey: "group_value",
               header: groupByLabel(groupByField),
-              cell: ({ getValue }) => (getValue() as string | null) ?? "(not scanned)"
+              cell: ({ getValue }) => {
+                const value = getValue() as string | null;
+                if (groupByField !== "bucket") return value ?? "(not scanned)";
+                if (value == null) return <span className="text-muted-foreground">(no object-store location)</span>;
+                return (
+                  <button
+                    type="button"
+                    className="table-name-link text-left font-medium"
+                    onClick={() => openBucket(value)}
+                    title={`Show the tables in ${value}`}
+                  >
+                    {value}
+                  </button>
+                );
+              }
             },
             {
               accessorKey: "count",
@@ -1103,10 +1171,26 @@ export const TableExplorerSection = () => {
               accessorKey: "total_savings_usd_month",
               header: () => <span className="block text-right">Savings/mo</span>,
               cell: ({ getValue }) => <span className="block text-right">{formatCurrency(getValue() as number)}</span>
-            }
+            },
+            ...(
+              [
+                ["total_live_bytes", "Live data"],
+                ["total_snapshot_bytes", "Snapshots"],
+                ["total_orphan_bytes", "Orphans"],
+                ["total_junk_bytes", "Junk"]
+              ] as const
+            ).map(([key, label]) => ({
+              accessorKey: key,
+              header: () => <span className="block text-right">{label}</span>,
+              cell: ({ getValue }: { getValue: () => unknown }) => (
+                <span className="block text-right">{formatBytesGb(getValue() as number | undefined)}</span>
+              )
+            }))
           ]
         : [],
-    [groupByField]
+    // openBucket reads the current filters and URL, so the memo follows them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [groupByField, filters, schema, searchParams]
   );
 
   const tableColumns = useMemo<DataTableColumnDef<TableRead, unknown>[]>(
@@ -1319,6 +1403,99 @@ export const TableExplorerSection = () => {
             {formatBytesGb(row.original.stats?.reclaimable_bytes)}
           </span>
         )
+      },
+      {
+        id: "live_bytes",
+        header: () => (
+          <SortHeader field="live_bytes" label="Live data" sort={sort} onSort={applySort} align="right" />
+        ),
+        size: 112,
+        cell: ({ row }) => (
+          <StorageBytesCell
+            bytes={row.original.stats?.live_bytes}
+            measuredOn={row.original.stats?.cost_last_full_scan_at}
+          />
+        )
+      },
+      {
+        id: "snapshot_bytes",
+        header: () => (
+          <SortHeader
+            field="snapshot_bytes"
+            label="Snapshot size"
+            hint="Files only older snapshots still use: retained history plus files expiry can delete now."
+            sort={sort}
+            onSort={applySort}
+            align="right"
+          />
+        ),
+        size: 128,
+        cell: ({ row }) => (
+          <StorageBytesCell
+            bytes={row.original.stats?.snapshot_bytes}
+            measuredOn={row.original.stats?.cost_last_full_scan_at}
+          />
+        )
+      },
+      {
+        id: "orphan_bytes",
+        header: () => (
+          <SortHeader
+            field="orphan_bytes"
+            label="Orphans"
+            hint="Files in the table's storage that no snapshot references. Needs an S3 listing."
+            sort={sort}
+            onSort={applySort}
+            align="right"
+          />
+        ),
+        size: 112,
+        cell: ({ row }) => (
+          <StorageBytesCell
+            bytes={row.original.stats?.orphan_bytes}
+            measuredOn={row.original.stats?.cost_last_full_scan_at}
+            unmeasuredLabel="Not measured"
+          />
+        )
+      },
+      {
+        id: "junk_bytes",
+        header: () => (
+          <SortHeader
+            field="junk_bytes"
+            label="Junk"
+            hint="Everything that is not live data or table metadata: snapshot size plus orphans."
+            sort={sort}
+            onSort={applySort}
+            align="right"
+          />
+        ),
+        size: 128,
+        cell: ({ row }) => {
+          const share = junkShare(row.original.stats);
+          return (
+            <span
+              className="numeric-cell block whitespace-nowrap text-right"
+              title={measuredAt(row.original.stats?.cost_last_full_scan_at)}
+            >
+              {formatBytesGb(row.original.stats?.junk_bytes)}
+              {share != null ? <span className="ml-1 text-xs text-muted-foreground">{share}%</span> : null}
+            </span>
+          );
+        }
+      },
+      {
+        id: "bucket",
+        header: "Bucket",
+        size: 180,
+        cell: ({ row }) =>
+          row.original.bucket ? (
+            <TruncationTooltip content={row.original.bucket}>
+              <span className="block truncate">{row.original.bucket}</span>
+            </TruncationTooltip>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          )
       },
       {
         id: "cost_precision",
@@ -1550,7 +1727,8 @@ export const TableExplorerSection = () => {
                 { label: "Group: grade", value: "grade" },
                 { label: "Group: priority", value: "compaction_priority" },
                 { label: "Group: compaction", value: "needs_compaction" },
-                { label: "Group: size", value: "size_bucket" }
+                { label: "Group: size", value: "size_bucket" },
+                { label: "Group: bucket", value: "bucket" }
               ]}
             />
             <ColumnVisibilityMenu

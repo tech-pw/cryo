@@ -196,6 +196,12 @@ export interface TableStatsRead {
   reclaimable_bytes?: number;
   cost_precision?: CostPrecision;
   cost_last_full_scan_at?: string | null;
+  live_bytes?: number | null;
+  snapshot_bytes?: number | null;
+  /** Null until an S3 listing ran: not measured, not zero. */
+  orphan_bytes?: number | null;
+  metadata_bytes?: number | null;
+  junk_bytes?: number | null;
   query_count_30d?: number;
   raw?: JsonObject | null;
   format_version?: number | null;
@@ -210,6 +216,7 @@ export interface TableRead {
   source_name?: string | null;
   qualified_table_name?: string | null;
   location?: string | null;
+  bucket?: string | null;
   first_seen_at: string;
   is_active: boolean;
   removed_from_catalog_at?: string | null;
@@ -603,7 +610,8 @@ export type TableGroupByField =
   | "grade"
   | "compaction_priority"
   | "needs_compaction"
-  | "size_bucket";
+  | "size_bucket"
+  | "bucket";
 
 export interface TableGroupByRow {
   group_value: string | null;
@@ -611,6 +619,10 @@ export interface TableGroupByRow {
   total_size_gb: number;
   total_small_files: number;
   total_savings_usd_month: number;
+  total_live_bytes?: number;
+  total_snapshot_bytes?: number;
+  total_orphan_bytes?: number;
+  total_junk_bytes?: number;
 }
 
 export interface TableGroupByResponse {

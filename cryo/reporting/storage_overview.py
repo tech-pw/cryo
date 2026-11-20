@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from cryo.db import models as db_models
 from cryo.db.models import AuditLog, FleetImpactHistory, Table, TableCost
+from cryo.db.table_storage import retained_history_expr
 from cryo.reporting.impact_signals import realized_reclaim_conditions
 
 logger = logging.getLogger(__name__)
@@ -147,16 +148,7 @@ def fleet_storage_breakdown(session: Session, *, now: datetime | None = None) ->
     stale = listed & (
         TableCost.last_full_cost_scan_at.is_(None) | (TableCost.last_full_cost_scan_at < cutoff)
     )
-    accounted = (
-        TableCost.live_bytes
-        + TableCost.dead_bytes
-        + TableCost.metadata_bytes
-        + func.coalesce(TableCost.orphan_bytes, 0)
-    )
-    retained = case(
-        (listed & (TableCost.listed_bytes > accounted), TableCost.listed_bytes - accounted),
-        else_=0,
-    )
+    retained = retained_history_expr()
     row = session.execute(
         select(
             func.count(Table.id),

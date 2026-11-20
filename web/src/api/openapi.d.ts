@@ -14254,6 +14254,26 @@ export interface components {
             total_small_files: number;
             /** Total Savings Usd Month */
             total_savings_usd_month: number;
+            /**
+             * Total Live Bytes
+             * @default 0
+             */
+            total_live_bytes: number;
+            /**
+             * Total Snapshot Bytes
+             * @default 0
+             */
+            total_snapshot_bytes: number;
+            /**
+             * Total Orphan Bytes
+             * @default 0
+             */
+            total_orphan_bytes: number;
+            /**
+             * Total Junk Bytes
+             * @default 0
+             */
+            total_junk_bytes: number;
         };
         /** TableHealthThresholdsResponse */
         TableHealthThresholdsResponse: {
@@ -14685,6 +14705,8 @@ export interface components {
             qualified_table_name?: string | null;
             /** Location */
             location?: string | null;
+            /** Bucket */
+            bucket?: string | null;
             /**
              * First Seen At
              * Format: date-time
@@ -15011,6 +15033,16 @@ export interface components {
             cost_precision?: components["schemas"]["CostPrecision"] | null;
             /** Cost Last Full Scan At */
             cost_last_full_scan_at?: string | null;
+            /** Live Bytes */
+            live_bytes?: number | null;
+            /** Snapshot Bytes */
+            snapshot_bytes?: number | null;
+            /** Orphan Bytes */
+            orphan_bytes?: number | null;
+            /** Metadata Bytes */
+            metadata_bytes?: number | null;
+            /** Junk Bytes */
+            junk_bytes?: number | null;
             /**
              * Query Count 30D
              * @default 0

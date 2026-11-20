@@ -59,6 +59,9 @@ const ADVANCED_KEYS = [
   "minSmallFiles",
   "minMonthlySavings",
   "minReclaimableGb",
+  "minOrphanGb",
+  "minSnapshotGb",
+  "minJunkGb",
   "costPrecision",
   "lifecycle"
 ] as const satisfies readonly (keyof TableFilterState)[];
@@ -268,6 +271,27 @@ export const FilterBar = ({
                   unit="GB"
                   value={value.minReclaimableGb}
                   onChange={(minReclaimableGb) => patch({ minReclaimableGb })}
+                />
+                <NumberField
+                  id="filter-min-orphans"
+                  label="Orphans"
+                  unit="GB"
+                  value={value.minOrphanGb}
+                  onChange={(minOrphanGb) => patch({ minOrphanGb })}
+                />
+                <NumberField
+                  id="filter-min-snapshots"
+                  label="Snapshot size"
+                  unit="GB"
+                  value={value.minSnapshotGb}
+                  onChange={(minSnapshotGb) => patch({ minSnapshotGb })}
+                />
+                <NumberField
+                  id="filter-min-junk"
+                  label="Junk"
+                  unit="GB"
+                  value={value.minJunkGb}
+                  onChange={(minJunkGb) => patch({ minJunkGb })}
                 />
                 <div className="col-span-2 flex flex-col gap-1">
                   <Label htmlFor="filter-cost-precision" className="text-xs text-muted-foreground">

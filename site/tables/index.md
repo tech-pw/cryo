@@ -65,6 +65,8 @@ The chips above the filters are the triage cards as views, plus **Needs work** a
 
 The search box matches schema or table names. **Workflow**, **Grade** and **Priority** are multi-select filters; **Catalog** appears too once more than one catalog is connected. **Active only** hides tables the catalog no longer lists. **Ask in plain English** turns a sentence such as "grade F tables over 100 GB" into filters you can review before applying them. **Clear all** resets everything.
 
+**More filters** also takes **Orphans**, **Snapshot size** and **Junk** thresholds in GB; 0 means any amount.
+
 cryo.local/tables
 
 *Threshold filters live behind More filters, each with its unit.*
@@ -79,12 +81,20 @@ cryo.local/tables
 | Small files | Small files as a share of all files, with both counts and a bar. |
 | Size, Reads 30d | Table size and the number of queries that read it in 30 days. |
 | Savings/mo | Modelled monthly saving from maintenance. `-` means none, `<$1` means under a dollar. |
+| Live data, Snapshot size | Bytes the current snapshot reads; files only older snapshots use. |
+| Orphans, Junk | Files no snapshot references (**Not measured** until storage is listed); snapshot size plus orphans. |
+
+Hover a storage value to see when it was measured.
 
 Hover a row for **Scan now** and a shortcut to the table's Maintenance tab.
 
 cryo.local/tables
 
 *Columns are grouped by the question they answer. Choices and widths are saved per browser.*
+
+### Grouping
+
+Group by catalog, schema, grade, priority, size or **bucket**; groups show storage totals. Click a bucket to list its tables.
 
 ### Saved views and export
 

@@ -772,6 +772,14 @@ class TableStatsRead(OrmModel):
     reclaimable_bytes: int | None = None
     cost_precision: CostPrecision | None = None
     cost_last_full_scan_at: datetime | None = None
+    # Storage by category, from the scanner's cost accounting (cryo/db/table_storage.py).
+    # orphan_bytes is null until an S3 listing ran; snapshot_bytes counts retained history
+    # only for listed tables.
+    live_bytes: int | None = None
+    snapshot_bytes: int | None = None
+    orphan_bytes: int | None = None
+    metadata_bytes: int | None = None
+    junk_bytes: int | None = None
     query_count_30d: int = 0
     raw: JsonDict | None = None
 
@@ -797,6 +805,7 @@ class TableRead(OrmModel):
     # field (docs/s3-request-cost-tracking.md §6.1) -- also the join key S3 request-cost
     # bucket discovery uses.
     location: str | None = None
+    bucket: str | None = None
     first_seen_at: datetime
     is_active: bool
     # Set when the scanner found the table gone from the catalog (#120). The row is kept
@@ -998,6 +1007,10 @@ class TableGroupByRow(BaseModel):
     total_size_gb: float
     total_small_files: int
     total_savings_usd_month: float
+    total_live_bytes: int = 0
+    total_snapshot_bytes: int = 0
+    total_orphan_bytes: int = 0
+    total_junk_bytes: int = 0
 
 
 class TableGroupByResponse(BaseModel):
