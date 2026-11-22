@@ -30,10 +30,12 @@ FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:f5116ed4606f3eb015dd4a8e28
 # nginx itself comes from nginx.org's Alpine repo, which the base image uses only at build
 # time, so the plain upgrade above never reaches it. On 2026-11-20 every nginx-unprivileged
 # tag still shipped 1.30.6 while nginx.org had 1.30.7 (CVE-2026-113425, -121810, -123007,
-# -123633 critical; -118899, -123634 high), which failed the release Trivy gate. Upgrade
-# nginx and its modules from that repo too; the base image already trusts its signing key.
+# -123633 critical; -118899, -123634 high), which failed the release Trivy gate. The base
+# image pins nginx and its modules to exact versions in /etc/apk/world, so drop those pins
+# before upgrading from that repo (the base image already trusts its signing key).
 USER root
 RUN apk upgrade --no-cache \
+    && sed -i -E 's/^(nginx[a-z0-9-]*)=.*/\1/' /etc/apk/world \
     && apk upgrade --no-cache \
        -X "https://nginx.org/packages/alpine/v$(grep -oE '^[0-9]+\.[0-9]+' /etc/alpine-release)/main" \
     && nginx -v
