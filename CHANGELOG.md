@@ -7,6 +7,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 ## [Unreleased]
 
 ### Security
+- Web image: nginx upgraded to 1.30.7 from nginx.org's repo (critical CVE-2026-113425, -121810, -123007, -123633; high -118899, -123634); no nginx-unprivileged tag has it yet.
 - Native engine built with Go 1.27.4 (was 1.27.3) for CVE-2026-97054 in the Go standard library's `net/http` `MaxBytesReader`.
 
 ### Fixed

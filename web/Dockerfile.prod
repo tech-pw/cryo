@@ -27,8 +27,16 @@ FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:f5116ed4606f3eb015dd4a8e28
 # Alpine ships fixes between upstream nginx-unprivileged rebuilds. On 2026-10-26 the pinned
 # digest above still had brotli-libs 1.2.0 (CVE-2026-111497) and curl/libcurl 8.22
 # (CVE-2026-92392), both HIGH with fixes in the 3.24 repo, which failed the release Trivy gate.
+# nginx itself comes from nginx.org's Alpine repo, which the base image uses only at build
+# time, so the plain upgrade above never reaches it. On 2026-11-20 every nginx-unprivileged
+# tag still shipped 1.30.6 while nginx.org had 1.30.7 (CVE-2026-113425, -121810, -123007,
+# -123633 critical; -118899, -123634 high), which failed the release Trivy gate. Upgrade
+# nginx and its modules from that repo too; the base image already trusts its signing key.
 USER root
-RUN apk upgrade --no-cache
+RUN apk upgrade --no-cache \
+    && apk upgrade --no-cache \
+       -X "https://nginx.org/packages/alpine/v$(grep -oE '^[0-9]+\.[0-9]+' /etc/alpine-release)/main" \
+    && nginx -v
 COPY --from=build /app/dist /usr/share/nginx/html
 # envsubst at start: NGINX_LOCAL_RESOLVERS from the pod's /etc/resolv.conf, and
 # CRYO_API_UPSTREAM from Helm (API Service FQDN). Do not bake kube-dns here.
