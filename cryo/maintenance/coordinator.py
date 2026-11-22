@@ -664,8 +664,7 @@ class BatchMaintenance:
             )
             self._finalize_unfinished(runner, outcomes, default_reason=reason)
             for outcome in outcomes.values():
-                self._locks.release_job_owner(str(outcome.job_id), self._holder)
-                self._locks.release_table_lock(str(outcome.table_id), str(outcome.job_id))
+                self._release(outcome)
             if interrupted is not None:
                 self._tally(report, outcomes)
                 report.failures.insert(0, {"table": "(run)", "error": reason})
@@ -1014,10 +1013,29 @@ class BatchMaintenance:
                 return
             for outcome in outcomes.values():
                 if outcome.status is None:
-                    self._locks.renew_job_owner(
-                        str(outcome.job_id), self._holder, _OWNER_TTL_SECONDS
+                    self._lock_bookkeeping(
+                        "renew job owner",
+                        self._locks.renew_job_owner,
+                        str(outcome.job_id),
+                        self._holder,
+                        _OWNER_TTL_SECONDS,
                     )
             self._sleep(self._settings.maintenance_poll_seconds)
+
+    def _lock_bookkeeping(self, what: str, call: Callable[..., object], *args: object) -> None:
+        """Renew or release a lock without letting a lock-store outage end the run.
+
+        These locks expire on their own TTL and the governor reconciles leftovers, so a
+        failed renewal or release costs nothing the next reconcile does not fix. Raising
+        here instead abandoned every running lane: one Redis restart during a nightly pass
+        failed the whole Job.
+        """
+        try:
+            call(*args)
+        except Exception:
+            logger.warning(
+                "Could not %s for %s; leaving it to expire", what, args[0], exc_info=True
+            )
 
     def _apply(
         self,
@@ -1057,8 +1075,18 @@ class BatchMaintenance:
                 session.commit()
         self._persist_finished(finished)
         for outcome in finished:
-            self._locks.release_job_owner(str(outcome.job_id), self._holder)
-            self._locks.release_table_lock(str(outcome.table_id), str(outcome.job_id))
+            self._release(outcome)
+
+    def _release(self, outcome: TableOutcome) -> None:
+        self._lock_bookkeeping(
+            "release job owner", self._locks.release_job_owner, str(outcome.job_id), self._holder
+        )
+        self._lock_bookkeeping(
+            "release table lock",
+            self._locks.release_table_lock,
+            str(outcome.table_id),
+            str(outcome.job_id),
+        )
 
     def _respawn(
         self,
@@ -1091,8 +1119,7 @@ class BatchMaintenance:
             _close_mid_table(outcome, reason)
         self._persist_finished(in_flight)
         for outcome in in_flight:
-            self._locks.release_job_owner(str(outcome.job_id), self._holder)
-            self._locks.release_table_lock(str(outcome.table_id), str(outcome.job_id))
+            self._release(outcome)
 
         index = max(lane.spec.index for lane in runner.lanes) + 1
         spec = LaneSpec(
