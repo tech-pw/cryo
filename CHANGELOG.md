@@ -11,6 +11,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 - Native engine built with Go 1.27.4 (was 1.27.3) for CVE-2026-97054 in the Go standard library's `net/http` `MaxBytesReader`.
 
 ### Fixed
+- Batch maintenance no longer aborts when Redis is briefly unavailable: lock renewals and releases are logged and left to expire, so one Redis restart during a nightly pass no longer fails the Job and abandons its running lanes.
 - Helm: the Redis pod carries `karpenter.sh/do-not-disrupt` (new `redis.podAnnotations`), so node consolidation no longer restarts the queue.
 - Batch maintenance (`python -m cryo.maintenance.run`) exits 1 when no table was maintained and at least one failed, so its Kubernetes Job is marked Failed and Job-failure alerts fire. `CRYO_MAINTENANCE_FAIL_ON_PARTIAL` (Helm `maintenance.failOnPartial`, default off) also fails the Job when only some tables failed (#590).
 - Home: the clean streak counts a working night as clean when under 1% of its jobs failed, so a large fleet with a few failures keeps its streak. The week-over-week change in freed bytes is hidden, with both measured shares shown instead, when the two weeks measured very different shares of actions. The lake score chip shows a weekly change only once a trend point at least 7 days old exists, and names the real span when the trend has gaps (#593).

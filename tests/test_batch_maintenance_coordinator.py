@@ -835,3 +835,28 @@ def test_unsupported_operation_scope_is_rejected(session_factory) -> None:
     _seed(session_factory, tables=1)
     with pytest.raises(ValueError, match="unsupported --operations"):
         _harness(session_factory).coordinator.run(trigger="batch-cron", operations="optimize")
+
+
+def test_a_lock_store_outage_mid_run_does_not_abandon_the_run(session_factory) -> None:
+    """A Redis restart during a nightly pass made lock release raise and failed the whole
+    Job, abandoning every running lane. Locks expire on their own, so the run must finish."""
+    ids = _seed(session_factory)
+    h = _harness(session_factory)
+
+    def unavailable(*_args: Any) -> None:
+        raise ConnectionError("Error 111 connecting to redis:6379. Connection refused.")
+
+    h.locks.release_job_owner = unavailable  # type: ignore[method-assign]
+    h.locks.release_table_lock = unavailable  # type: ignore[method-assign]
+    h.locks.renew_job_owner = unavailable  # type: ignore[method-assign]
+
+    report = h.coordinator.run(trigger="batch-cron")
+
+    jobs = _jobs(session_factory)
+    assert set(jobs) == set(ids)
+    assert {job.status for job in jobs.values()} == {"succeeded"}
+    with session_factory() as session:
+        run = session.get(MaintenanceRun, report.run_id)
+    assert run is not None and run.status == "succeeded"
+    assert h.runners[0].torn_down
+    assert len(h.notified) == 1
