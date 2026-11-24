@@ -39,6 +39,7 @@
 </ul>
 <h3 id="unreleased-fixed">Fixed<a class="anchor" href="#unreleased-fixed" aria-label="Link to Fixed">#</a></h3>
 <ul>
+  <li>Home storage card: the 24-hour total is labelled Estimate when most of its bytes were priced from scan data, confirmed bytes read &quot;confirmed by the next scan&quot; instead of <code>scan_confirmed</code>, and the storage trend change compares only days measured on the same basis, so wider measurement coverage no longer shows as growth.</li>
   <li>Batch maintenance no longer aborts when Redis is briefly unavailable: lock renewals and releases are logged and left to expire, so one Redis restart during a nightly pass no longer fails the Job and abandons its running lanes.</li>
   <li>Helm: the Redis pod carries <code>karpenter.sh/do-not-disrupt</code> (new <code>redis.podAnnotations</code>), so node consolidation no longer restarts the queue.</li>
   <li>Batch maintenance (<code>python -m cryo.maintenance.run</code>) exits 1 when no table was maintained and at least one failed, so its Kubernetes Job is marked Failed and Job-failure alerts fire. <code>CRYO_MAINTENANCE_FAIL_ON_PARTIAL</code> (Helm <code>maintenance.failOnPartial</code>, default off) also fails the Job when only some tables failed (#590).</li>

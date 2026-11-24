@@ -162,8 +162,24 @@ describe("storage story", () => {
     expect(cleanupProgress(null, { ...b, dead_bytes: 0, orphan_bytes: 0, compaction_savings_bytes: 0 }).pct).toBeNull();
   });
 
-  it("measures the trend change between the first and last recorded day", () => {
-    expect(storageTrendDelta(storageFixture().trend)).toMatchObject({ days: 59 });
+  it("measures the trend change over days recorded on the same basis", () => {
+    // Live data is recorded from day 20; totals before that used a narrower definition.
+    expect(storageTrendDelta(storageFixture().trend)).toMatchObject({ days: 39 });
     expect(storageTrendDelta([])).toBeNull();
+  });
+
+  it("does not report wider measurement coverage as storage growth", () => {
+    const point = (day: string, total: number, live: number | null) => ({
+      day, total_bytes: total * TB, live_bytes: live == null ? null : live * TB,
+      bytes_freed: 0, cumulative_freed_bytes: 0, measurement_state: "complete"
+    });
+    const trend = [
+      point("2026-09-28", 250, null),
+      point("2026-11-12", 270, null),
+      point("2026-11-14", 415, 270),
+      point("2026-11-21", 340, 275)
+    ];
+    // The jump on 11-14 is orphans starting to be counted; the real change since is a drop.
+    expect(storageTrendDelta(trend)).toMatchObject({ bytes: -75 * TB, days: 7 });
   });
 });

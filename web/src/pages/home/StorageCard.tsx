@@ -97,6 +97,7 @@ const ReclaimRing = ({ data }: { data: StorageOverview }) => {
 const Hero = ({ data }: { data: StorageOverview }) => {
   const freed = data.freed_24h;
   const view = heroView(freed);
+  const counted = view.state === "measured" || view.state === "estimated";
   const sources = Object.entries(freed.bytes_by_source ?? {}).filter(([, bytes]) => bytes > 0);
   const cumulative = data.cumulative;
   const progress = cleanupProgress(cumulative.days_recorded > 0 ? cumulative.bytes_freed : 0, data.breakdown);
@@ -104,7 +105,7 @@ const Hero = ({ data }: { data: StorageOverview }) => {
     <section className="home-storage-hero" aria-label="Last 24 hours">
       <ReclaimRing data={data} />
       <div className="home-storage-hero-copy">
-        <div className="home-storage-eyebrow"><span className="home-caption">Last 24 hours</span>{view.state === "measured" ? <Kind measured /> : null}</div>
+        <div className="home-storage-eyebrow"><span className="home-caption">Last 24 hours</span>{view.state === "measured" ? <Kind measured /> : view.state === "estimated" ? <Kind measured={false} /> : null}</div>
         {view.state === "idle" ? (
           <>
             <p className="home-storage-headline">No cleanup ran in the last 24 hours</p>
@@ -113,14 +114,16 @@ const Hero = ({ data }: { data: StorageOverview }) => {
         ) : (
           <>
             <p className="home-storage-headline">
-              {view.state === "measured" ? <>Cryo freed <strong className="home-storage-pop"><CountUpBytes bytes={freed.bytes_freed} /></strong></> : <>Cryo cleaned <strong>{formatNumber(freed.tables_cleaned)}</strong> {freed.tables_cleaned === 1 ? "table" : "tables"}</>}
+              {counted ? <>Cryo freed {view.state === "estimated" ? "about " : ""}<strong className="home-storage-pop"><CountUpBytes bytes={freed.bytes_freed} /></strong></> : <>Cryo cleaned <strong>{formatNumber(freed.tables_cleaned)}</strong> {freed.tables_cleaned === 1 ? "table" : "tables"}</>}
             </p>
             <p className="home-storage-chips">
-              {view.state === "measured" ? <span className="home-storage-chip">{formatNumber(freed.tables_cleaned)} {freed.tables_cleaned === 1 ? "table" : "tables"} cleaned</span> : null}
-              {view.state === "measured" && freed.savings_usd_month != null && freed.savings_usd_month > 0 ? <span className="home-storage-chip is-money">≈ {formatCurrency(freed.savings_usd_month)}/month saved</span> : null}
+              {counted ? <span className="home-storage-chip">{formatNumber(freed.tables_cleaned)} {freed.tables_cleaned === 1 ? "table" : "tables"} cleaned</span> : null}
+              {counted && freed.savings_usd_month != null && freed.savings_usd_month > 0 ? <span className="home-storage-chip is-money">≈ {formatCurrency(freed.savings_usd_month)}/month saved</span> : null}
             </p>
             <p className="home-caption">
-              {view.state === "measured"
+              {view.state === "estimated"
+                ? `About ${view.estimatedPct}% of this is estimated from scan data rather than counted, so treat it as an estimate. ${formatNumber(freed.actions_measured)} of ${formatNumber(freed.actions_succeeded)} actions reported a byte count. Savings are estimated at list price.`
+                : view.state === "measured"
                 ? `Measured on ${view.measuredPct}% of actions (${formatNumber(freed.actions_measured)} of ${formatNumber(freed.actions_succeeded)}). The rest freed space too, but did not report a byte count. Savings are estimated at list price.`
                 : `${formatNumber(freed.actions_succeeded)} cleanup actions succeeded, but none reported a byte count. Cryo counts table files before and after each action; engines that skip that step still clean, they just are not counted here.`}
             </p>
@@ -257,7 +260,10 @@ const Trend = ({ data }: { data: StorageOverview }) => {
       <div className="home-storage-eyebrow">
         <span className="home-caption">{hasLive ? "The waste gap: total storage against live data, last 60 days" : "Last 60 days"}</span>
         {delta && delta.bytes !== 0 ? (
-          <span className={`home-storage-delta ${delta.bytes < 0 ? "is-down" : "is-up"}`}>
+          <span
+            className={`home-storage-delta ${delta.bytes < 0 ? "is-down" : "is-up"}`}
+            title="Compares only days measured the same way. Earlier totals left out orphans and retained history, so including them would show measurement coverage growing as storage growth."
+          >
             Total storage {delta.bytes < 0 ? "down" : "up"} {formatStorage(Math.abs(delta.bytes))} ({Math.abs(delta.pct)}%) in {delta.days} days
           </span>
         ) : null}
