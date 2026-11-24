@@ -67,20 +67,31 @@ export const listingCoverage = (b: StorageBreakdown): CoverageState =>
 /** Tables whose orphan and retained-history figures come from a listing older than the fresh window. */
 export const staleListingTables = (b: StorageBreakdown) => Math.max(0, b.tables_with_listing - b.tables_listed_recently);
 
-export type HeroState = "idle" | "unmeasured" | "measured";
+export type HeroState = "idle" | "unmeasured" | "estimated" | "measured";
 export interface HeroView {
   state: HeroState;
   measuredPct: number | null;
+  /** Share of the freed bytes priced from scan data rather than counted, 0-100. */
+  estimatedPct: number;
 }
 
+/**
+ * A byte count on an action is not the same as a measurement: `scan_estimate` bytes are priced
+ * from the last scan. Untagged bytes predate source tags and come from the engine's before/after
+ * file count, so they count as measured. Mostly-estimated totals must not wear a Measured badge.
+ */
 export const heroView = (freed: StorageOverview["freed_24h"]): HeroView => {
-  if (freed.actions_succeeded === 0) return { state: "idle", measuredPct: null };
+  if (freed.actions_succeeded === 0) return { state: "idle", measuredPct: null, estimatedPct: 0 };
   const measuredPct = Math.round((freed.actions_measured / freed.actions_succeeded) * 100);
-  return { state: freed.actions_measured === 0 ? "unmeasured" : "measured", measuredPct };
+  if (freed.actions_measured === 0) return { state: "unmeasured", measuredPct, estimatedPct: 0 };
+  const estimated = freed.bytes_by_source?.scan_estimate ?? 0;
+  const estimatedPct = freed.bytes_freed > 0 ? Math.round((estimated / freed.bytes_freed) * 100) : 0;
+  return { state: estimatedPct > 50 ? "estimated" : "measured", measuredPct, estimatedPct };
 };
 
 export const SOURCE_LABELS: Record<string, string> = {
   engine: "measured by the engine",
+  scan_confirmed: "confirmed by the next scan",
   listing_confirmed: "confirmed by S3 listing",
   scan_estimate: "estimated from scan data"
 };

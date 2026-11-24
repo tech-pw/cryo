@@ -26,6 +26,7 @@ All notable changes to Cryo will be documented in this file. The format is based
 
 ### Fixed
 
+- Home storage card: the 24-hour total is labelled Estimate when most of its bytes were priced from scan data, confirmed bytes read "confirmed by the next scan" instead of `scan_confirmed`, and the storage trend change compares only days measured on the same basis, so wider measurement coverage no longer shows as growth.
 - Batch maintenance no longer aborts when Redis is briefly unavailable: lock renewals and releases are logged and left to expire, so one Redis restart during a nightly pass no longer fails the Job and abandons its running lanes.
 - Helm: the Redis pod carries `karpenter.sh/do-not-disrupt` (new `redis.podAnnotations`), so node consolidation no longer restarts the queue.
 - Batch maintenance (`python -m cryo.maintenance.run`) exits 1 when no table was maintained and at least one failed, so its Kubernetes Job is marked Failed and Job-failure alerts fire. `CRYO_MAINTENANCE_FAIL_ON_PARTIAL` (Helm `maintenance.failOnPartial`, default off) also fails the Job when only some tables failed (#590).

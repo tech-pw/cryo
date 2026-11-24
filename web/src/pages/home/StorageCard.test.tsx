@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { CryoTooltipProvider } from "../../components/ui/tooltip";
 import { formatStorage, heroView, listingCoverage, storageSegments } from "../../lib/storageOverview";
 import { StorageCard } from "./StorageCard";
+
+const TB = 1e12;
 import { storageFixture } from "./storageFixture";
 import { waffleCells } from "./storageStory";
 
@@ -104,6 +106,31 @@ describe("storage helpers", () => {
     expect(Math.round(segments.reduce((sum, s) => sum + s.pct, 0))).toBe(100);
     expect(listingCoverage(storageFixture().breakdown)).toBe("partial");
     expect(heroView({ ...storageFixture().freed_24h, actions_succeeded: 0 }).state).toBe("idle");
+  });
+
+  it("labels a mostly-estimated 24h total as an estimate, and names confirmed bytes", async () => {
+    const base = storageFixture();
+    renderCard({
+      ...base,
+      freed_24h: {
+        ...base.freed_24h,
+        bytes_freed: 3.6 * TB,
+        bytes_by_source: { engine: 0.25e9, scan_estimate: 3.4 * TB, scan_confirmed: 155e9 }
+      }
+    });
+    const hero = screen.getByRole("region", { name: "Last 24 hours" });
+    expect(within(hero).getByText("Estimate")).toBeInTheDocument();
+    expect(within(hero).queryByText("Measured")).not.toBeInTheDocument();
+    await waitFor(() => expect(hero).toHaveTextContent("Cryo freed about"));
+    expect(hero).toHaveTextContent("About 94% of this is estimated from scan data");
+    expect(hero).toHaveTextContent("confirmed by the next scan");
+    expect(hero).not.toHaveTextContent("scan_confirmed");
+  });
+
+  it("keeps the Measured badge when most freed bytes were counted", () => {
+    const base = storageFixture();
+    const view = heroView({ ...base.freed_24h, bytes_freed: 2 * TB, bytes_by_source: { engine: 1.5 * TB, scan_estimate: 0.5 * TB } });
+    expect(view).toMatchObject({ state: "measured", estimatedPct: 25 });
   });
 
   it("shows the reclaim ring, the what-if line and the trend change", () => {

@@ -26,8 +26,15 @@ export interface TrendDelta {
 }
 
 /** Change in total storage between the first and last recorded day; null with fewer than two. */
+/**
+ * Change in total storage over days measured the same way. Live data is recorded from the day
+ * listing-based accounting began, and totals before that counted less (no orphans, no retained
+ * history), so a delta across that boundary reports the measurement widening as growth.
+ */
 export const storageTrendDelta = (trend: readonly StorageTrendPoint[]): TrendDelta | null => {
-  const points = trend.filter((point) => point.total_bytes != null).sort((a, b) => a.day.localeCompare(b.day));
+  const totals = trend.filter((point) => point.total_bytes != null);
+  const sameBasis = totals.filter((point) => point.live_bytes != null);
+  const points = (sameBasis.length >= 2 ? sameBasis : totals).sort((a, b) => a.day.localeCompare(b.day));
   if (points.length < 2) return null;
   const first = points[0];
   const last = points[points.length - 1];
