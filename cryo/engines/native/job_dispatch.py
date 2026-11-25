@@ -222,6 +222,7 @@ def _capacity_scheduling(
     *,
     use_spot: bool,
     dedicated_nodepool: bool = False,
+    capacity_type_selector: bool = True,
 ) -> tuple[dict[str, str], list[dict[str, str]], dict[str, str]]:
     """Return (node_selector extras, tolerations, annotations) for capacity type.
 
@@ -230,17 +231,35 @@ def _capacity_scheduling(
     these Jobs land on their own Karpenter-managed nodes instead of sharing
     the default node pool -- off by default so existing scheduling is
     unaffected until that NodePool is actually installed for a cluster.
+
+    ``capacity_type_selector`` (default True, i.e. unchanged behaviour) emits the
+    ``karpenter.sh/capacity-type`` node selector and its paired spot toleration. Set it
+    false on a cluster that does not run Karpenter and restricts node selectors: GKE
+    Autopilot, for instance, rejects the Job at admission --
+
+        GKE Warden rejected the request because it violates one or more constraints.
+        Violations details: {"[denied by autogke-node-affinity-selector-limitation]":
+        ["Key 'karpenter.sh/capacity-type' is not allowed with node selector if not
+        using workload separation; Autopilot only allows labels with keys:
+        cloud.google.com/compute-class, ..."]}
+
+    -- so every dispatched Job fails and maintenance silently never runs through the
+    k8s path. The annotations are kept either way: they are descriptive, are not
+    validated against a node-label allowlist, and are useful for attribution.
     """
     annotations = {
         "cryo.io/capacity-type": "spot" if use_spot else "on-demand",
     }
-    node_selector: dict[str, str] = {
-        "karpenter.sh/capacity-type": "spot" if use_spot else "on-demand"
-    }
+    node_selector: dict[str, str] = {}
+    if capacity_type_selector:
+        node_selector["karpenter.sh/capacity-type"] = "spot" if use_spot else "on-demand"
     tolerations: list[dict[str, str]] = []
     if not use_spot:
         annotations["karpenter.sh/do-not-disrupt"] = "true"
-    else:
+    elif capacity_type_selector:
+        # Only meaningful alongside the selector it tolerates; a toleration for a taint
+        # no node carries is harmless but misleading, and on a restricted cluster the
+        # selector it pairs with is exactly what was rejected.
         tolerations.append(
             {
                 "key": "karpenter.sh/capacity-type",
@@ -349,8 +368,16 @@ def create_native_job(
     dedicated_nodepool = _bool_cfg(
         dict(config), "k8s_dedicated_nodepool", "CRYO_NATIVE_DEDICATED_NODEPOOL", default=False
     )
+    capacity_type_selector = _bool_cfg(
+        dict(config),
+        "k8s_capacity_type_selector",
+        "CRYO_NATIVE_CAPACITY_TYPE_SELECTOR",
+        default=True,
+    )
     node_extras, tolerations, capacity_annotations = _capacity_scheduling(
-        use_spot=use_spot, dedicated_nodepool=dedicated_nodepool
+        use_spot=use_spot,
+        dedicated_nodepool=dedicated_nodepool,
+        capacity_type_selector=capacity_type_selector,
     )
     if not use_spot and _bool_cfg(
         dict(config), "k8s_spot_allow", "CRYO_NATIVE_SPOT_ALLOW", default=False
